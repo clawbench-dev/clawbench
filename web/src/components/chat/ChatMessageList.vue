@@ -344,24 +344,11 @@ let lastScrollAt = 0
 let scrollStopTimer = null
 let pendingFollow = false
 
-// Whether the current context is streaming (assistant content still arriving).
-// Mirrors the `streaming` argument callers passed to scrollToBottom — a single
-// call with streaming=true opens a follow window for the whole stream.
-const streamingFollowRef = ref(false)
-// Timestamp of the most recent stream-follow window open. Re-opened when the
-// user scrolls back to the bottom during streaming (see handleScroll) so follow
-// resumes the moment they return, and when a new stream starts.
-let streamStartAt = 0
-
-function openStreamFollowWindow() {
-  streamingFollowRef.value = true
-  streamStartAt = Date.now()
-}
-
-function endStreamFollowWindow() {
-  streamingFollowRef.value = false
-  streamStartAt = 0
-}
+// Whether the user has deliberately scrolled away from the bottom during a
+// stream. While set, ALL stream follow is suppressed — a user reading older
+// content must never be yanked back to the bottom. Cleared only when the user
+// scrolls back to the bottom, or on session switch.
+let userLeftBottom = false
 
 // Hide the floating scroll buttons while the user is selecting text.
 const { active: textSelecting } = useTextSelectionActive()
@@ -419,11 +406,14 @@ function handleScroll() {
   if (!programmaticScrolling) {
     scrollOwner.value = 'user'
     lastScrollAt = Date.now()
-    // The user scrolled back to the bottom during streaming: re-open the
-    // stream-follow window so a static-distance gate (grace band) can never
-    // permanently strand follow — the moment they return, follow resumes.
-    if (streamingFollowRef.value && nearBottom) {
-      streamStartAt = Date.now()
+    // Track whether the user deliberately left the bottom. ANY scroll away past
+    // the near-bottom threshold marks a deliberate leave — a user reading older
+    // content must never be yanked back, regardless of how much new content
+    // arrives. Clearing happens when they scroll back to the bottom below.
+    if (distFromBottom > NEAR_EDGE_THRESHOLD) {
+      userLeftBottom = true
+    } else {
+      userLeftBottom = false
     }
   }
 
@@ -528,13 +518,6 @@ function onScrollStopped() {
       scrollToBottom(true)
     }
   }
-  // Streaming: the user stopped scrolling (250ms of silence) — restore follow
-  // by pinning to the bottom now that the scroll gesture is over. Without this,
-  // a user who briefly scrolls during a burst (or whose fling takes them a
-  // little way up) is never pulled back once the stream resumes.
-  if (streamingFollowRef.value && dist > NEAR_EDGE_THRESHOLD) {
-    scrollToBottom(false, true)
-  }
 }
 
 // Hide scroll FAB on outside click
@@ -582,7 +565,6 @@ onBeforeUnmount(() => {
 })
 
 function scrollToBottom(force = false, streaming = false) {
-  if (streaming) openStreamFollowWindow()
   nextTick(() => {
     if (!messagesRef.value) return
     const el = messagesRef.value
@@ -596,7 +578,7 @@ function scrollToBottom(force = false, streaming = false) {
       now: Date.now(),
       nearBottomDist: dist,
       streaming,
-      streamStartAt,
+      userLeftBottom,
     })
 
     // User is actively scrolling/flinging → never yank the view. A force pin
@@ -642,7 +624,7 @@ function followToBottom(streaming, force) {
       now: Date.now(),
       nearBottomDist: gap,
       streaming,
-      streamStartAt,
+      userLeftBottom,
     }
     if (isUserScrolling(state2)) return
     if (shouldFollowStream(state2, force)) {
@@ -655,7 +637,6 @@ function followToBottom(streaming, force) {
   // is handled by the rAF correction above; if the user started scrolling in
   // between, pendingFollow + onScrollStopped take over instead of fighting.
 }
-// [deleted dangling brace]
 
 function scrollToTop() {
   if (!messagesRef.value) return
@@ -842,7 +823,7 @@ watch(() => props.currentSessionId, () => {
   setProgrammatic(false)
   lastScrollAt = 0
   pendingFollow = false
-  endStreamFollowWindow()
+  userLeftBottom = false
   clearTimeout(scrollStopTimer)
   scrollStopTimer = null
   userTouching = false
