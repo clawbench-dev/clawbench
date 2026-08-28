@@ -264,7 +264,7 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 .completion-popover-summary {
-    max-height: 40vh;
+    max-height: 28vh;
     overflow-y: auto;
     font-size: 13px;
     line-height: 1.6;
