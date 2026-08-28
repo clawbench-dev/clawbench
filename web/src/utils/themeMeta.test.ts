@@ -12,6 +12,7 @@ import {
   getThemeStatusBarColor,
   getThemePreviewColor,
   applyThemeAttributes,
+  buildThemePalette,
 } from '@/utils/themeMeta'
 
 function stubMatchMedia(matches: boolean): void {
@@ -145,5 +146,34 @@ describe('applyThemeAttributes', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('catppuccin-latte')
     expect(document.documentElement.getAttribute('data-theme-base')).toBe('light')
     expect(document.querySelector('meta[name="theme-color"]')?.getAttribute('content')).toBe('#e6e9ef')
+  })
+})
+
+describe('buildThemePalette', () => {
+  it('builds theme palette from THEMES metadata', () => {
+    const p = buildThemePalette('github-dark')
+    expect(p.bg).toBe('#161b22')
+    expect(p.text).toBe('#c9d1d9')
+    expect(p.textSecondary).toBe('#8b949e')
+    expect(p.accent).toBe('#58a6ff')
+  })
+
+  it('falls back to github-dark for unknown theme', () => {
+    const p = buildThemePalette('not-a-theme')
+    expect(p.bg).toBe('#161b22')
+    expect(p.text).toBe('#c9d1d9')
+    expect(p.textSecondary).toBe('#8b949e')
+    expect(p.accent).toBe('#58a6ff')
+  })
+
+  it('reads textSecondary from the --text-secondary CSS variable when available', () => {
+    const stub = vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      getPropertyValue: (name: string) => (name === '--text-secondary' ? '#123456' : ''),
+    } as CSSStyleDeclaration)
+    try {
+      expect(buildThemePalette('github-light').textSecondary).toBe('#123456')
+    } finally {
+      stub.mockRestore()
+    }
   })
 })

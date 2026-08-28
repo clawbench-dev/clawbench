@@ -105,6 +105,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_SERVER_LIST = "server_list";
     private static final String KEY_THEME = "theme_base";
+    private static final String KEY_THEME_BG = "theme_bg";
+    private static final String KEY_THEME_TEXT = "theme_text";
+    private static final String KEY_THEME_TEXT_SECONDARY = "theme_text_secondary";
+    private static final String KEY_THEME_ACCENT = "theme_accent";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -3335,13 +3339,33 @@ public class MainActivity extends AppCompatActivity {
          * Persist the full theme ID set from the WebView (e.g. 'github-light', 'nord').
          * The login page reads this via getTheme() on next launch to match
          * the main interface's color scheme.
+         *
+         * New 5-arg overload: also persists the resolved palette (bg / text /
+         * textSecondary / accent) that the floating status window consumes via
+         * FloatingThemeColors. The JS always sends 5 args.
+         */
+        @JavascriptInterface
+        public void setTheme(String theme, String bg, String text, String textSecondary, String accent) {
+            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
+            activity.prefs.edit()
+                    .putString(KEY_THEME, id)
+                    .putString(KEY_THEME_BG, bg != null ? bg : "")
+                    .putString(KEY_THEME_TEXT, text != null ? text : "")
+                    .putString(KEY_THEME_TEXT_SECONDARY, textSecondary != null ? textSecondary : "")
+                    .putString(KEY_THEME_ACCENT, accent != null ? accent : "")
+                    .apply();
+            // Apply theme to native views (splash overlay, status/nav bar)
+            activity.runOnUiThread(() -> activity.applyThemeColors());
+        }
+
+        /**
+         * Legacy 1-arg overload, kept for callers that only know the theme ID
+         * (e.g. the static login page). Persists only the theme ID; the color
+         * slots stay empty so FloatingThemeColors falls back to github-dark.
          */
         @JavascriptInterface
         public void setTheme(String theme) {
-            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
-            activity.prefs.edit().putString(KEY_THEME, id).apply();
-            // Apply theme to native views (splash overlay, status/nav bar)
-            activity.runOnUiThread(() -> activity.applyThemeColors());
+            setTheme(theme, null, null, null, null);
         }
     }
 

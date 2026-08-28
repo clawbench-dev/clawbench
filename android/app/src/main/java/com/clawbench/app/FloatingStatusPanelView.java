@@ -42,11 +42,9 @@ public class FloatingStatusPanelView extends FrameLayout {
     private static final int COLOR_RUNNING = 0xFF00CC00; // green
     private static final int COLOR_PERMISSION_PENDING = 0xFFE6A23C; // yellow
 
-    // github-dark palette.
-    private static final int COLOR_BG = 0xF0161B22; // translucent dark background
+    // github-dark fallback palette (overridden at construction by the
+    // persisted theme palette via FloatingThemeColors).
     private static final int COLOR_BORDER = 0xFF30363D;
-    private static final int COLOR_TEXT_PRIMARY = 0xFFE6EDF3;
-    private static final int COLOR_TEXT_SECONDARY = 0xFF9DA7B3;
     private static final int COLOR_UNREAD_BADGE = 0xFFE53935; // red
     private static final int COLOR_UNREAD_BADGE_TEXT = 0xFFFFFFFF;
 
@@ -72,6 +70,8 @@ public class FloatingStatusPanelView extends FrameLayout {
     private final float density;
     private final TextView headerTitleView;
     private final LinearLayout listContainer;
+    private final int colorTextPrimary;
+    private final int colorTextSecondary;
     private Runnable onCollapseClick;
 
     /**
@@ -154,11 +154,19 @@ public class FloatingStatusPanelView extends FrameLayout {
         super(context);
         density = getResources().getDisplayMetrics().density;
 
-        // Background: rounded dark translucent panel with a thin border.
+        // Theme palette read once at construction (floating window rebuilds on
+        // theme change pick up the new colors).
+        int[] palette = FloatingThemeColors.get(context);
+        int bgColor = (palette[0] & 0x00FFFFFF) | 0xF0000000; // keep ~94% opacity
+        int borderColor = (palette[0] & 0x00FFFFFF) | 0xFF000000; // border = bg, opaque
+        colorTextPrimary = palette[1];
+        colorTextSecondary = palette[2];
+
+        // Background: rounded translucent theme panel with a thin border.
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(COLOR_BG);
+        bg.setColor(bgColor);
         bg.setCornerRadius(dp(CORNER_RADIUS_DP));
-        bg.setStroke(dp(1), COLOR_BORDER);
+        bg.setStroke(dp(1), borderColor);
         setBackground(bg);
         setPadding(dp(PADDING_H_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
 
@@ -171,7 +179,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         header.setGravity(Gravity.CENTER_VERTICAL);
         headerTitleView = new TextView(context);
         headerTitleView.setTextSize(HEADER_TITLE_SIZE_SP);
-        headerTitleView.setTextColor(COLOR_TEXT_PRIMARY);
+        headerTitleView.setTextColor(colorTextPrimary);
         headerTitleView.setTypeface(Typeface.DEFAULT_BOLD);
         headerTitleView.setIncludeFontPadding(false);
         header.addView(headerTitleView, new LinearLayout.LayoutParams(
@@ -180,7 +188,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         TextView collapseBtn = new TextView(context);
         collapseBtn.setText("×");
         collapseBtn.setTextSize(COLLAPSE_BTN_TEXT_SIZE_SP);
-        collapseBtn.setTextColor(COLOR_TEXT_SECONDARY);
+        collapseBtn.setTextColor(colorTextSecondary);
         collapseBtn.setGravity(Gravity.CENTER);
         collapseBtn.setClickable(true);
         collapseBtn.setOnClickListener(v -> {
@@ -253,7 +261,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         TextView header = new TextView(getContext());
         header.setText(name);
         header.setTextSize(PROJECT_HEADER_SIZE_SP);
-        header.setTextColor(COLOR_TEXT_SECONDARY);
+        header.setTextColor(colorTextSecondary);
         header.setTypeface(Typeface.DEFAULT_BOLD);
         header.setIncludeFontPadding(false);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -286,7 +294,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         TextView title = new TextView(getContext());
         title.setText(session.title == null || session.title.isEmpty() ? "(无标题)" : session.title);
         title.setTextSize(SESSION_TITLE_SIZE_SP);
-        title.setTextColor(COLOR_TEXT_PRIMARY);
+        title.setTextColor(colorTextPrimary);
         title.setSingleLine(true);
         title.setMaxLines(1);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);

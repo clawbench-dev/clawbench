@@ -36,8 +36,6 @@ public class FloatingStatusView extends FrameLayout {
     private static final int COLOR_UNKNOWN = 0x00000000; // transparent
 
     // Layout / animation constants.
-    private static final int BG_COLOR = 0xEEFFFFFF;
-    private static final int TEXT_COLOR = 0xFF333333;
     private static final int CORNER_RADIUS_DP = 18;
     private static final int PADDING_H_DP = 12;
     private static final int PADDING_V_DP = 6;
@@ -58,9 +56,15 @@ public class FloatingStatusView extends FrameLayout {
         super(context);
         density = getResources().getDisplayMetrics().density;
 
-        // Background: rounded capsule, light translucent.
+        // Theme palette read once at construction (floating window rebuilds on
+        // theme change pick up the new colors).
+        int[] palette = FloatingThemeColors.get(context);
+        int bgColor = (palette[0] & 0x00FFFFFF) | 0xEE000000; // keep ~93% opacity
+        int textColor = palette[1];
+
+        // Background: rounded capsule, translucent theme background.
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(BG_COLOR);
+        bg.setColor(bgColor);
         bg.setCornerRadius(dp(CORNER_RADIUS_DP));
         setBackground(bg);
         setPadding(dp(PADDING_H_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
@@ -93,7 +97,7 @@ public class FloatingStatusView extends FrameLayout {
         labelView.setSingleLine(true);
         labelView.setMaxLines(1);
         labelView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        labelView.setTextColor(TEXT_COLOR);
+        labelView.setTextColor(textColor);
         labelView.setIncludeFontPadding(false);
         row.addView(labelView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));

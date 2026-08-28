@@ -130,6 +130,44 @@ export function getThemePreviewColor(themeId: string): ThemePreview | null {
   return preview
 }
 
+// ── Full theme palette (for native floating window) ──────────────────────────
+
+export interface ThemePalette {
+  bg: string
+  text: string
+  textSecondary: string
+  accent: string
+}
+
+/** Default palette for github-dark, used when no color has been persisted. */
+export const DEFAULT_THEME_PALETTE: ThemePalette = {
+  bg: '#161b22',
+  text: '#c9d1d9',
+  textSecondary: '#8b949e',
+  accent: '#58a6ff',
+}
+
+/**
+ * Build the full palette (bg/text/textSecondary/accent) for a resolved theme.
+ * bg/text/accent come from THEMES metadata; textSecondary is read from the
+ * live `--text-secondary` CSS variable when available (falls back to the
+ * github-dark secondary color). Unknown theme ids fall back to github-dark.
+ */
+export function buildThemePalette(themeId: string): ThemePalette {
+  const meta = THEMES.find(t => t.id === themeId)
+  if (!meta) {
+    appLog.w('ThemeMeta', `buildThemePalette: unknown theme '${themeId}', falling back to github-dark`)
+    const fallback = THEMES.find(t => t.id === 'github-dark')!
+    return { bg: fallback.preview.bg, text: fallback.preview.text, textSecondary: '#8b949e', accent: fallback.preview.accent }
+  }
+  let textSecondary = '#8b949e'
+  try {
+    const cs = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim()
+    if (cs) textSecondary = cs
+  } catch { /* not in browser */ }
+  return { bg: meta.preview.bg, text: meta.preview.text, textSecondary, accent: meta.preview.accent }
+}
+
 // ── Apply to DOM ──────────────────────────────────────────────────────────────
 
 /**
