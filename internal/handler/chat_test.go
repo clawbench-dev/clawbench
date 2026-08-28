@@ -2617,7 +2617,7 @@ func TestExecuteStreamRun_CtxCancelled(t *testing.T) {
 	// executeStreamRun should hit the ctx.Done() branch because the
 	// backend.ExecuteStream call will fail (no claude CLI), and during
 	// the event loop iteration, the cancelled context will be selected.
-	result := executeStreamRun(ctx, req, env.ProjectDir, sessionID, "claude", "default", chatReq, "")
+	result := executeStreamRun(ctx, req, env.ProjectDir, sessionID, "claude", "default", chatReq, "", "")
 	// The result should indicate an error (no backend available) but
 	// the ctx.Done() path should still be covered in the select statement.
 	_ = result
@@ -3376,4 +3376,63 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
 	assert.Contains(t, req.Prompt, "/src/baz.rs", "prompt should include path without line info for baz.rs")
+}
+
+// --- HTTP chat path must record queue_id on the reply to a drained message ---
+
+// queueReplyBackend returns a trivial successful stream (content + done) so a
+// full POST /api/ai/chat cycle (direct run + drain) can complete end-to-end
+// without launching a real CLI.
+type queueReplyBackend struct{}
+
+func (m *queueReplyBackend) Name() string { return "mock-qreply" }
+func (m *queueReplyBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 4)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// TestDrainReplyQueueID_HTTPPath verifies the WebSocket/HTTP chat path: when a
+// second message is enqueued while the session is running, its reply must carry
+// the consumed message's queue_id in chat_history so the frontend can anchor the
+// reply to its own question (anchorRepliesToQuestions). Without this the reply
+// falls back to raw DB id order (msg2,msg3,reply2,reply3) — the display looks
+// identical to the old pre-queue behavior.
+func TestDrainReplyQueueID_HTTPPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const backendID = "mock-qreply"
+	ai.RegisterBackend(backendID, func() ai.AIBackend { return &queueReplyBackend{} })
+	model.Agents["qreply-agent"] = &model.Agent{ID: "qreply-agent", Backend: backendID}
+
+	sessionID, err := service.CreateSession(env.ProjectDir, backendID, "qreply", "qreply-agent", "", "default", "chat")
+	assert.NoError(t, err)
+
+	send := func(msg, queueID string) *httptest.ResponseRecorder {
+		body := map[string]any{"message": msg, "agentId": "qreply-agent", "queueId": queueID}
+		req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+		withProjectCookie(req, env.ProjectDir)
+		return callHandler(AIChat, req)
+	}
+
+	// Message 1 executes directly.
+	w1 := send("1", "pending-q1")
+	assert.Equal(t, http.StatusOK, w1.Code)
+	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
+
+	// Message 2 enqueued — session is idle again, so it starts a fresh run.
+	w2 := send("2", "pending-q2")
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
+
+	// The LATEST assistant row (the reply to message 2) must carry queue_id pending-q2.
+	var qid string
+	err = service.ReadDB().QueryRow(
+		"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sessionID,
+	).Scan(&qid)
+	assert.NoError(t, err, "assistant reply row should exist")
+	assert.Equal(t, "pending-q2", qid, "drain reply must record the consumed message's queue_id so the frontend can anchor it")
 }
