@@ -290,7 +290,90 @@ git commit -m "feat(android): grouped session list panel view for floating windo
 
 ---
 
-### Task 5: Android 集成（overview 拉取 + 面板切换 + 事件刷新）
+### Task 5: 主题配色同步（前端传色 → 原生持久化 → 悬浮窗应用）
+
+**Files:**
+- Modify: `web/src/utils/themeMeta.ts`（或调用 setTheme 的位置，如 useSettingsConfig）
+- Modify: `android/app/src/main/java/com/clawbench/app/MainActivity.java`（setTheme 桥扩展接收 4 色）
+- Modify: `android/app/src/main/java/com/clawbench/app/FloatingStatusView.java` + `FloatingStatusPanelView.java`（应用主题色）
+- Test: `android/app/src/test/java/com/clawbench/app/MainActivityThemeTest.java`（新）+ 前端测试
+
+**Step 1: 写失败测试（前端）**
+
+`web/src/composables/__tests__/useSettingsConfig.test.ts` 添加：
+```ts
+it('passes theme colors to native setTheme bridge', () => {
+  // mock window.ClawBenchNative.setTheme
+  // 调用 syncThemeToNative / setTheme 路径
+  // 断言 setTheme 被调用，参数含 themeId + bg + text + textSecondary + accent
+})
+```
+需要先找到前端哪里调用 `getNative()?.setTheme(...)`（grep setTheme in web/src）。
+
+**Step 2: 运行确认失败（前端）**
+
+Run: `cd /home/xulongzhe/projects/clawbench/.worktrees/floating-panel/web && npx vitest run src/composables/__tests__/useSettingsConfig.test.ts`
+Expected: FAIL
+
+**Step 3: 写失败测试（Android）**
+
+`MainActivityThemeTest.java`（参照 MainActivityNotificationTest 的 Robolectric 模式）：
+```java
+// setTheme 桥带 4 色参数 → SharedPreferences 持久化，getThemeColors 能读回
+@Test public void setTheme_withColors_persistsFourColors() { ... }
+```
+
+**Step 4: 运行确认失败（Android）**
+
+Run: `cd /home/xulongzhe/projects/clawbench/.worktrees/floating-panel/android && ./gradlew :app:testDebugUnitTest --tests "com.clawbench.app.MainActivityThemeTest"`
+Expected: FAIL
+
+**Step 5: 实现**
+
+前端（找到 setTheme 调用点，如 useSettingsConfig 或 theme 应用逻辑）：
+```ts
+// 在主题变化时调用
+function syncThemeToNative(themeId: string) {
+  const meta = THEMES.find(t => t.id === themeId)
+  if (!meta) return
+  const bg = meta.preview.bg
+  const text = meta.preview.text
+  const accent = meta.preview.accent
+  const textSecondary = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || text
+  getNative()?.setTheme?.(themeId, bg, text, textSecondary, accent)
+}
+```
+注意：需要确认 `setTheme` 桥现有签名（`setTheme(String)`），扩展为 `setTheme(String, String bg, String text, String textSecondary, String accent)`。Electron preload 的 setTheme 也要兼容（no-op 或同步）。
+
+Android MainActivity setTheme 桥：
+```java
+@JavascriptInterface
+public void setTheme(String theme, String bg, String text, String textSecondary, String accent) {
+    // 原逻辑 + 存 4 色到 SharedPreferences
+    // KEY_THEME_BG / KEY_THEME_TEXT / KEY_THEME_TEXT_SECONDARY / KEY_THEME_ACCENT
+}
+// 兼容旧签名 setTheme(String)？JS 传 5 参时 Android @JavascriptInterface 会匹配新签名。
+```
+
+FloatingStatusView / PanelView：
+- 新增 `applyThemeColors(int bg, int text, int textSecondary, int accent)` 方法
+- 读取 SharedPreferences 默认值（github-dark: bg=#161b22, text=#c9d1d9, textSecondary=#8b949e, accent=#58a6ff）
+- 背景/文字/次级/强调改用主题色；状态色（绿/黄/红）保持固定
+
+**Step 6: 运行确认通过**
+
+前端 + Android 各自测试 PASS。
+
+**Step 7: Commit**
+
+```bash
+git add web/src web/src/__tests__ android/app/src/main/java/com/clawbench/app/MainActivity.java android/app/src/main/java/com/clawbench/app/FloatingStatusView.java android/app/src/test/java/com/clawbench/app/MainActivityThemeTest.java
+git commit -m "feat(theme): sync theme colors from webview to floating window"
+```
+
+---
+
+### Task 6: Android 集成（overview 拉取 + 面板切换 + 事件刷新）
 
 **Files:**
 - Modify: `android/app/src/main/java/com/clawbench/app/BackgroundService.java`（fetchRunningSessions 升级为 fetchOverview、事件驱动刷新）
@@ -337,7 +420,7 @@ git commit -m "feat(android): wire overview fetch and panel expand/collapse into
 
 ---
 
-### Task 6: 全量验证 + 收尾
+### Task 7: 全量验证 + 收尾
 
 **Step 1: 后端全量测试**
 
