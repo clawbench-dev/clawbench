@@ -206,20 +206,19 @@ describe('useChatStream', () => {
       expect(assistantMsg.backend).toBe('claude-code')
     })
 
-    it('should disconnect previous stream before connecting new one', () => {
+    it('should unsubscribe previous session before connecting new one', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
       connectStream('session-1')
       mockSendWsMessage.mockClear()
 
-      // disconnectStream sends unsubscribe for currentSessionId ('test-session-1')
-      // because isStreaming is set, then connectStream sends subscribe for session-2
+      // connectStream('session-2') now only unsubscribes the session it was
+      // actually subscribed to ('session-1') — not currentSessionId — then
+      // subscribes to session-2.
       connectStream('session-2')
 
-      // Should unsubscribe from test-session-1 (currentSessionId at disconnect time)
-      // and subscribe to session-2
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'session-1' })
       expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'session-2' })
     })
 
@@ -430,6 +429,104 @@ describe('useChatStream', () => {
       disconnectStream()
 
       expect(mockSendWsMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Subscription lifecycle (decoupled from streaming) ──
+
+  describe('subscription lifecycle', () => {
+    it('subscribe 去重：重复 subscribe 同一会话只发一次', () => {
+      const options = createOptions()
+      const { subscribe } = useChatStream(options)
+
+      subscribe('s1')
+      subscribe('s1')
+
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+      expect(subscribeCalls[0][0]).toEqual({ type: 'subscribe', session_id: 's1' })
+    })
+
+    it('subscribe 切换会话：先退订旧会话再订阅新会话', () => {
+      const options = createOptions()
+      const { subscribe } = useChatStream(options)
+
+      subscribe('s1')
+      mockSendWsMessage.mockClear()
+      subscribe('s2')
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 's1' })
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 's2' })
+    })
+
+    it('done 事件不退订（订阅常驻）', async () => {
+      const options = createOptions()
+      const { connectStream, disconnectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      simulateWsEvent('done', {})
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+      // done stops streaming but keeps the subscription — no unsubscribe sent
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'unsubscribe' })
+      )
+      // Subscription is still live: a later explicit disconnect DOES unsubscribe.
+      disconnectStream()
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+    })
+
+    it('WS 重连后重订阅（恰好一次）', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      mockConnected.value = false
+      await new Promise(r => setTimeout(r, 0))
+      mockSendWsMessage.mockClear()
+      mockConnected.value = true
+      await new Promise(r => setTimeout(r, 0))
+
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe' && c[0]?.session_id === 'test-session-1'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+    })
+
+    it('WS 重连但不活跃（未订阅）时不重订阅', async () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      mockSendWsMessage.mockClear()
+      mockConnected.value = false
+      await new Promise(r => setTimeout(r, 0))
+      mockConnected.value = true
+      await new Promise(r => setTimeout(r, 50))
+
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'subscribe' })
+      )
+    })
+
+    it('disconnectStream 发送 unsubscribe', () => {
+      const options = createOptions()
+      const { connectStream, disconnectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      disconnectStream()
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
     })
   })
 
@@ -837,7 +934,7 @@ describe('useChatStream', () => {
   // ── Done / Cancelled / Error ──
 
   describe('WS event handling — done', () => {
-    it('should disconnect and load history on done', async () => {
+    it('should stop streaming and load history on done (subscription kept)', async () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -847,8 +944,9 @@ describe('useChatStream', () => {
 
       simulateWsEvent('done', {})
 
-      // Should send unsubscribe
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // done stops streaming but keeps the persistent subscription — no
+      // unsubscribe is sent (the session stays subscribed while open).
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(options.onLoadHistory).toHaveBeenCalled()
     })
 
@@ -985,7 +1083,7 @@ describe('useChatStream', () => {
   })
 
   describe('WS event handling — cancelled', () => {
-    it('should disconnect and mark message as cancelled', () => {
+    it('should stop streaming and mark message as cancelled (subscription kept)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -995,7 +1093,8 @@ describe('useChatStream', () => {
 
       simulateWsEvent('cancelled', {})
 
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // cancelled stops streaming but keeps the persistent subscription.
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       const assistantMsg = options.messages.value.find(
         (m: any) => m.role === 'assistant'
       )
@@ -1040,7 +1139,7 @@ describe('useChatStream', () => {
   })
 
   describe('WS event handling — error', () => {
-    it('should disconnect stream and call onStreamEnd with error', () => {
+    it('should stop streaming and call onStreamEnd with error (subscription kept)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1050,7 +1149,8 @@ describe('useChatStream', () => {
 
       simulateWsEvent('error', { error: 'session not running' })
 
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // error stops streaming but keeps the persistent subscription.
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(options.onStreamEnd).toHaveBeenCalledWith('error')
     })
 
@@ -1998,78 +2098,12 @@ describe('useChatStream', () => {
 
 
 
-  // ── Stream timeout ──
+  // ── streamTimeout removed ──
+  // The 30s no-event stream timeout was removed: an idle session with no WS
+  // events is normal (the user may be reading), so no forced reload fires.
 
-  describe('stream timeout', () => {
-    it('should disconnect and reload from DB on stream timeout (session done)', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      // Simulate loadHistory finding the session is no longer running
-      options.onLoadHistory = vi.fn().mockImplementation(() => {
-        options.loading.value = false
-        return Promise.resolve()
-      })
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-      mockSendWsMessage.mockClear()
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.onLoadHistory).toHaveBeenCalled()
-      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should keep loading=true on stream timeout when session is still running', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      // Simulate loadHistory finding the session is still running
-      options.onLoadHistory = vi.fn().mockImplementation(() => {
-        // loadHistory internally sets loading=true when data.running=true
-        options.loading.value = true
-        return Promise.resolve()
-      })
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-      mockSendWsMessage.mockClear()
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.onLoadHistory).toHaveBeenCalled()
-      // Session is still running — loading must stay true
-      expect(options.loading.value).toBe(true)
-      // onStreamEnd should NOT be called because the session is still active
-      expect(options.onStreamEnd).not.toHaveBeenCalled()
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should set loading=false and call onStreamEnd when loadHistory fails on timeout', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      options.onLoadHistory = vi.fn().mockRejectedValue(new Error('network error'))
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should reset timeout on content event', async () => {
+  describe('streamTimeout removed — idle session no forced reload', () => {
+    it('does not reload from DB after 30s+ of silence on a connected stream', async () => {
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -2077,16 +2111,17 @@ describe('useChatStream', () => {
       options.loading.value = true
       connectStream('test-session-1')
       options.onLoadHistory.mockClear()
+      options.onStreamEnd.mockClear()
 
-      // Advance 20s — still within timeout
-      await vi.advanceTimersByTimeAsync(20000)
+      // Advance well past the old STREAM_TIMEOUT_MS (30000) — no events arrive.
+      await vi.advanceTimersByTimeAsync(70000)
 
-      // Receive a content event — resets timeout
-      simulateWsEvent('content', { content: 'still alive' })
-
-      // Advance another 20s — should NOT have timed out yet
-      await vi.advanceTimersByTimeAsync(20000)
+      // No forced reload, no error, no unsubscribe — the subscription stays.
       expect(options.onLoadHistory).not.toHaveBeenCalled()
+      expect(options.onStreamEnd).not.toHaveBeenCalled()
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'unsubscribe' })
+      )
 
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
@@ -2239,7 +2274,7 @@ describe('useChatStream', () => {
       expect(mockSendWsMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'subscribe' }))
     })
 
-    it('should reset stream timeout on re-subscription', async () => {
+    it('reconnects a still-subscribed session exactly once (fake timers)', async () => {
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -2248,21 +2283,20 @@ describe('useChatStream', () => {
       connectStream('test-session-1')
       options.onLoadHistory.mockClear()
 
-      // Advance 20s
-      await vi.advanceTimersByTimeAsync(20000)
-
-      // WS reconnects — resets timeout
+      // WS drops and reconnects while the session is still open/subscribed.
       mockConnected.value = false
       await vi.advanceTimersByTimeAsync(0)
       mockSendWsMessage.mockClear()
       mockConnected.value = true
       await vi.advanceTimersByTimeAsync(0)
 
-      // Verify re-subscribe was sent (timeout was reset)
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'test-session-1' })
-
-      // Advance another 20s — should NOT have timed out (timeout was reset)
-      await vi.advanceTimersByTimeAsync(20000)
+      // Re-subscribe was sent exactly once (backend cleared it on disconnect).
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe' && c[0]?.session_id === 'test-session-1'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+      // Idle afterwards: no forced reload (streamTimeout removed).
+      await vi.advanceTimersByTimeAsync(70000)
       expect(options.onLoadHistory).not.toHaveBeenCalled()
 
       vi.advanceTimersByTime(10000)
