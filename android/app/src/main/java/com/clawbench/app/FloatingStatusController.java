@@ -660,12 +660,15 @@ public class FloatingStatusController {
                 attachView(expanded ? buildPanelView() : buildCapsuleView());
             }
             applyViewSizing();
+            // Fade in on first show (the window appearing from nothing), like
+            // the capsule<->panel swap animation in attachView.
+            attachedView.setAlpha(0f);
             windowManager.addView(attachedView, params);
             windowShowing = true;
             // Ensure right-edge placement accounts for the real view width now
             // that it is laid out (no-op when a saved position is in effect).
             snapRightEdgeIfNeeded();
-            attachedView.setAlpha(1f);
+            attachedView.animate().alpha(1f).setDuration(FADE_MS).start();
             if (attachedView instanceof FloatingStatusView) {
                 // The capsule's stats render on the next event / overview; the
                 // breathing animation is driven by renderStats, so nothing to
@@ -717,7 +720,13 @@ public class FloatingStatusController {
         applyViewSizing();
         if (windowShowing) {
             try {
+                // Fade the new view in so capsule<->panel swaps are not a
+                // jarring cut. The old view was removed above; animate only the
+                // freshly added view (ensureWindow's other paths set alpha 1f
+                // directly and are unaffected).
+                newView.setAlpha(0f);
                 windowManager.addView(attachedView, params);
+                newView.animate().alpha(1f).setDuration(FADE_MS).start();
                 if (attachedView instanceof FloatingStatusView) {
                     renderCapsuleStats();
                 }
