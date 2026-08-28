@@ -76,6 +76,10 @@ export interface UseChatSessionOptions {
   onDisconnectStream: () => void
   onOpen: () => void
   onStreamDone?: () => void
+  /** Defensive fallback: create the streaming placeholder when a running event
+   *  arrives while loading is false but the stream_start event hasn't created
+   *  one yet (delayed/lost). The placeholder is normally event-driven. */
+  onEnsureStreamingPlaceholder?: () => void
 }
 
 export function useChatSession(options: UseChatSessionOptions) {
@@ -93,6 +97,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     onRenderUpdate,
     onScrollBottom,
     onDisconnectStream,
+    onEnsureStreamingPlaceholder,
   } = options
 
   const toast = useToast()
@@ -853,9 +858,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (sid === currentSessionId.value && !loading.value) {
         appLog.w(TAG, `session_update running received but loading is false — recovering streaming state`)
         loading.value = true
-        // The streaming placeholder is created by the backend's stream_start
-        // event (broadcast per prompt), which always follows the running event
-        // — no connectStream call needed here.
+        // Defensive: create the streaming placeholder now in case the backend's
+        // stream_start event is delayed/lost. Normally stream_start follows the
+        // running event and would create it; this covers the gap.
+        onEnsureStreamingPlaceholder?.()
       }
     } else if (data.status === 'permission_pending' || data.status === 'permission_resolved') {
       // Permission approval state changed — reload sessions to update dot indicators

@@ -66,9 +66,6 @@ export function useChatStream(options: UseChatStreamOptions) {
   const toolUseWatchdog = new ToolUseWatchdog()
   // Counter for assigning stable _key to thinking blocks during streaming
   let thinkingBlockCounter = 0
-  // Whether there is an active AI stream for the current turn. Per-turn: true
-  // while streaming, false on done/error/cancelled. Independent of subscription.
-  let isStreaming = false
   // Whether the WS subscription to a session is live. Persistent: set on session
   // open, cleared on session switch/unmount, re-established on WS reconnect.
   let isSubscribed = false
@@ -197,7 +194,6 @@ export function useChatStream(options: UseChatStreamOptions) {
   function stopStreaming() {
     clearToolUseTimeouts()
     thinkingBlockCounter = 0
-    isStreaming = false
   }
 
   function disconnectStream() {
@@ -222,7 +218,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Subscribe (deduped) — connectStream now guarantees the subscription
     // exists without tearing it down on stream end.
     subscribe(sessionId)
-    isStreaming = true
   }
 
   // ── WS event handler for chat_stream events ──
@@ -682,14 +677,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
   })
 
-  function handleOnline() {
-    if (!loading.value || !currentSessionId.value) return
-    if (isStreaming) {
-      appLog.i(TAG, 'Network recovered, stream will re-subscribe via WS')
-    }
-  }
-  window.addEventListener('online', handleOnline)
-
   onUnmounted(() => {
     disconnectStream()
     clearToolUseTimeouts()
@@ -697,7 +684,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     unsubscribeFromWs()
     stopConnectedWatch()
     stopSessionWatch()
-    window.removeEventListener('online', handleOnline)
   })
 
   return {
@@ -705,6 +691,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     disconnectStream,
     subscribe,
     unsubscribe,
+    ensureStreamingPlaceholder,
     cancelStream,
   }
 }

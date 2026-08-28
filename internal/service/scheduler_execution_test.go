@@ -7,7 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/ai"
+	"clawbench/internal/model"
+	"clawbench/internal/ws"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- Scheduler runningExecutions ----------
@@ -471,6 +476,117 @@ func TestScheduler_ExternalSessionID_MetadataFallback(t *testing.T) {
 	// but the event loop code guards it. Verify the guard logic:
 	currentExtID := GetExternalSessionID(sessionID)
 	assert.Equal(t, "ses_later_id", currentExtID, "DB update is unconditional; the guard is in the event loop code")
+}
+
+// mockSchedBlockingBackend returns a short stream (content + done) once its
+// gate is closed. The test closes the gate only after subscribing to the
+// session, guaranteeing the stream_start broadcast is observed.
+type mockSchedBlockingBackend struct {
+	gate chan struct{}
+}
+
+func (m *mockSchedBlockingBackend) Name() string { return "test-sched-stream-start" }
+func (m *mockSchedBlockingBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	<-m.gate
+	ch := make(chan ai.StreamEvent, 4)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// TestScheduler_ExecuteTask_BroadcastsStreamStart verifies that the scheduled
+// task path broadcasts a stream_start event carrying the streaming message's
+// real DB id, matching the interactive paths (executeStreamRunShared and the
+// web POST handler). Without this, a client that opens the task's session in
+// the gap between the streaming row being created and the first content event
+// has no data-driven placeholder, so content events are dropped.
+func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
+	gate := make(chan struct{})
+	ai.RegisterBackend("test-sched-stream-start", func() ai.AIBackend { return &mockSchedBlockingBackend{gate: gate} })
+
+	setupSchedulerExecDB(t)
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test Agent", Backend: "test-sched-stream-start", SystemPrompt: "test prompt"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	// Fresh scheduler (no cron entries — the cron callback never fires; we call
+	// executeTask directly below).
+	s := NewScheduler()
+	defer s.Stop()
+
+	task := &model.ScheduledTask{
+		ProjectPath: "/tmp",
+		Name:        "Sched Test",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "do the thing",
+		Status:      "active",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, s.AddTask(task), "AddTask should succeed")
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "sched-stream-start-client", "")
+
+	execDone := make(chan struct{})
+	go func() {
+		defer close(execDone)
+		s.executeTask(task, "/tmp", "manual")
+	}()
+
+	// executeTask creates its own session (via CreateSession) and blocks inside
+	// the mock backend's ExecuteStream before creating the streaming row. Find
+	// the session id, subscribe to it, then unblock — the stream_start broadcast
+	// happens after the gate closes, so the subscriber is guaranteed to see it.
+	var sessionID string
+	assert.Eventually(t, func() bool {
+		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_path = '/tmp' ORDER BY created_at DESC LIMIT 1").Scan(&sessionID)
+		return err == nil && sessionID != ""
+	}, 2*time.Second, 20*time.Millisecond)
+	require.NotEmpty(t, sessionID, "executeTask must create a session")
+
+	mgr.StreamHub().Subscribe("sched-stream-start-client", sessionID)
+	close(gate)
+	<-execDone
+
+	// The stream_start event must be broadcast with the real DB streaming row id.
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "stream_start" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond)
+	require.NotNil(t, found, "expected a stream_start chat_stream event in the subscriber buffer")
+
+	streamData := found.Data.(ws.ChatStreamData)
+	payload, ok := streamData.Payload.(map[string]int64)
+	require.True(t, ok, "stream_start payload must be map[string]int64")
+	assert.Greater(t, payload["message_id"], int64(0), "stream_start must carry the streaming message DB id")
+
+	// The broadcast id must match the assistant row created for this execution.
+	// The row is finalized (streaming=0) by the time the fast mock stream ends,
+	// but its id is unchanged — so match by the latest assistant row id.
+	var dbMsgID int64
+	err := dbRead.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&dbMsgID)
+	require.NoError(t, err, "an assistant row must exist")
+	assert.Equal(t, dbMsgID, payload["message_id"], "stream_start message_id must equal the streaming row id")
 }
 
 // TestScheduler_ExternalSessionID_ContinueInheritance verifies that

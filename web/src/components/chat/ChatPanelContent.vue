@@ -366,6 +366,7 @@ const session = useChatSession({
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
+  onEnsureStreamingPlaceholder: () => stream.ensureStreamingPlaceholder({ reuseExistingStreaming: true }),
 })
 
 // onStreamEnd: fires when current session stream completes with a reason

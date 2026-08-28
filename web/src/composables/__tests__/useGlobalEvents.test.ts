@@ -1085,5 +1085,61 @@ describe('useGlobalEvents', () => {
             await vi.waitFor(() => expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_user_3'))
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
         })
+
+        it('断线期间 pending user_message 与流式 content 事件按到达顺序交错分发', async () => {
+            // Scenario: device B was offline while device A sent a message. On
+            // reconnect, fetchPendingEvents returns the missed user_message
+            // (write-ahead stored while disconnected), while the live WS stream
+            // for that same turn delivers stream_start/content events. Both
+            // channels flow through the same shared handlers, so the reducer
+            // (in useChatStream) sees them in arrival order and can build the
+            // _remote bubble BEFORE the streaming content lands.
+            const received: Array<{ event: string; data: any }> = []
+            events.onEvent((event, data) => received.push({ event, data }))
+
+            // The pending pull carries the user_message for the turn that
+            // happened while offline.
+            mockPendingFetch([userMessageRow('evt_pending_user', 200, { content: 'hi while offline', senderClientId: 'device-a', queueId: 'remote-q-1' })])
+            const ws = connectAndGetWs()
+
+            // Wait until the pending user_message was dispatched through the
+            // handler (fetchPendingEvents is async, fired on WS open).
+            await vi.waitFor(() => {
+                expect(received.some((r) => r.event === 'chat_stream' &&
+                    r.data?.event_type === 'user_message' &&
+                    r.data?.payload?.messageId === 200)).toBe(true)
+            })
+
+            // Now the live streaming events for the same turn arrive over WS.
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'chat_stream',
+                data: { session_id: 's1', event_type: 'stream_start', payload: { message_id: 201 } },
+            })
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'chat_stream',
+                data: { session_id: 's1', event_type: 'content', payload: { content: 'reply to your message' } },
+            })
+
+            await vi.waitFor(() => {
+                expect(received.some((r) => r.event === 'chat_stream' && r.data?.event_type === 'content')).toBe(true)
+            })
+
+            // Ordering: the offline-compensated user_message arrives BEFORE the
+            // live stream events — so a reducer that inserts the _remote bubble
+            // first and then finds the streaming placeholder is never starved.
+            const types = received.map((r) => `${r.event}:${r.data?.event_type}`)
+            const umIdx = types.indexOf('chat_stream:user_message')
+            const ssIdx = types.indexOf('chat_stream:stream_start')
+            expect(umIdx).toBeGreaterThanOrEqual(0)
+            expect(ssIdx).toBeGreaterThan(umIdx)
+
+            // Cursor advanced past the pending user_message so it won't be
+            // re-delivered on the next reconnect.
+            expect(localStorage.getItem(LAST_SEEN_KEY)).toBe('evt_pending_user')
+        })
     })
 })

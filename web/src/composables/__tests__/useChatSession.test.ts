@@ -385,6 +385,7 @@ function createSessionInternal() {
     onConnectStream: vi.fn(),
     onDisconnectStream: vi.fn(),
     onOpen: vi.fn(),
+    onEnsureStreamingPlaceholder: vi.fn(),
   }
   const session = useChatSession(options)
   lastSessionOptions = options
@@ -643,10 +644,11 @@ describe('onSessionEvent', () => {
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
 
-    // Should recover: loading=true. The streaming placeholder is created by
-    // the backend's stream_start event (which always follows the running
-    // event), so no connectStream call is needed.
+    // Should recover: loading=true, and the defensive placeholder fallback is
+    // invoked (normally the backend's stream_start event creates the placeholder;
+    // this covers the gap when that event is delayed/lost).
     expect(options.loading.value).toBe(true)
+    expect(options.onEnsureStreamingPlaceholder).toHaveBeenCalledTimes(1)
     expect(options.onConnectStream).not.toHaveBeenCalled()
   })
 
@@ -660,6 +662,7 @@ describe('onSessionEvent', () => {
 
     // Should NOT recover — it's a different session
     expect(options.loading.value).toBe(false)
+    expect(options.onEnsureStreamingPlaceholder).not.toHaveBeenCalled()
     expect(options.onConnectStream).not.toHaveBeenCalled()
   })
 
