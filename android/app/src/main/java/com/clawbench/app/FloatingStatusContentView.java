@@ -52,6 +52,8 @@ public class FloatingStatusContentView extends LinearLayout {
     private static final float BREATH_ALPHA_MIN = 0.3f;
     private static final float BREATH_ALPHA_MAX = 1.0f;
     private static final long BREATH_MS = 800;
+    /** Duration of the logo-only collapse (stat groups fade out). */
+    static final long COLLAPSE_MS = 200;
 
     private final View runningDot;
     private final LinearLayout runningItem;
@@ -59,6 +61,8 @@ public class FloatingStatusContentView extends LinearLayout {
     private final LinearLayout unreadItem;
     private final ObjectAnimator breathAnim;
     private final float density;
+    /** True while a collapse-to-logo fade is in flight (set by collapseStats). */
+    private boolean statsCollapsed;
 
     public FloatingStatusContentView(Context context) {
         super(context);
@@ -178,6 +182,53 @@ public class FloatingStatusContentView extends LinearLayout {
         } else {
             item.setVisibility(GONE);
         }
+    }
+
+    /**
+     * Collapse the row to a logo-only circle: the running / pending / unread
+     * groups fade out (the logo keeps full opacity) and {@code onDone} fires
+     * when the fade finishes. This is the first stage of the capsule hide
+     * animation — the host (FloatingStatusView / controller) shrinks the
+     * window width to the logo diameter in parallel. UI thread only.
+     */
+    public void collapseStats(Runnable onDone) {
+        AppLog.d("FloatingStatusContent", "collapseStats");
+        statsCollapsed = true;
+        if (breathAnim.isRunning()) {
+            breathAnim.cancel();
+            runningDot.setAlpha(BREATH_ALPHA_MAX);
+        }
+        for (LinearLayout item : new LinearLayout[]{runningItem, pendingItem, unreadItem}) {
+            if (item.getVisibility() == View.VISIBLE) {
+                item.animate().alpha(0f).setDuration(COLLAPSE_MS).start();
+            }
+        }
+        if (onDone != null) {
+            // Delayed on the main looper, not via view.postDelayed: the row may
+            // be detached from a window (which would queue the runnable in the
+            // view's HandlerActionQueue until re-attach) and the callback must
+            // fire even when every group is already GONE (no animation runs).
+            new android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed(onDone, COLLAPSE_MS);
+        }
+    }
+
+    /** True while a collapse-to-logo fade is in flight. */
+    public boolean isStatsCollapsed() {
+        return statsCollapsed;
+    }
+
+    /**
+     * Restore all stat groups to full opacity. Called when the host is
+     * re-attached or the collapse animation is superseded, so a re-shown
+     * capsule never keeps the faded groups. UI thread only.
+     */
+    public void restoreStats() {
+        for (LinearLayout item : new LinearLayout[]{runningItem, pendingItem, unreadItem}) {
+            item.animate().cancel();
+            item.setAlpha(1f);
+        }
+        statsCollapsed = false;
     }
 
     /**

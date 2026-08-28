@@ -277,6 +277,67 @@ public class FloatingStatusViewTest {
     }
 
     // =====================================================
+    // Collapse-to-logo: stat groups fade out (hide animation stage 1)
+    // =====================================================
+
+    @Test
+    public void collapseStats_fadesVisibleGroupsAndRunsCallback() throws Exception {
+        FloatingStatusView capsule = newCapsule();
+        capsule.renderStats(1, 1, 1);
+        final boolean[] done = {false};
+
+        capsule.collapseToCircle(38, () -> done[0] = true);
+
+        assertTrue("collapse must be flagged while the fade is in flight",
+                capsule.isStatsCollapsed());
+        assertEquals("the logo must not be faded", 1f,
+                content(capsule).getChildAt(0).getAlpha(), 0.001f);
+
+        // Robolectric runs the animation to completion; every stat group must
+        // settle at full transparency and the callback must fire.
+        org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertTrue("the collapse callback must fire after the fade", done[0]);
+        for (int i = 1; i < content(capsule).getChildCount(); i++) {
+            assertEquals("each visible group must fade to transparent", 0f,
+                    content(capsule).getChildAt(i).getAlpha(), 0.001f);
+        }
+        capsule.stopBreathing();
+    }
+
+    @Test
+    public void collapseStats_hiddenGroups_areNotTouched() throws Exception {
+        // Groups with zero count are GONE and must not be animated.
+        FloatingStatusView capsule = newCapsule();
+        capsule.renderStats(0, 0, 0); // all groups hidden
+
+        capsule.collapseToCircle(38, null);
+
+        for (int i = 1; i < content(capsule).getChildCount(); i++) {
+            assertEquals("GONE groups must stay GONE (visibility untouched)",
+                    View.GONE, content(capsule).getChildAt(i).getVisibility());
+        }
+        capsule.stopBreathing();
+    }
+
+    @Test
+    public void expandFromCircle_restoresStatGroupAlphas() throws Exception {
+        FloatingStatusView capsule = newCapsule();
+        capsule.renderStats(1, 1, 1);
+        capsule.collapseToCircle(38, null);
+        assertTrue(capsule.isStatsCollapsed());
+
+        capsule.expandFromCircle();
+
+        assertFalse("expandFromCircle must clear the collapsed flag",
+                capsule.isStatsCollapsed());
+        for (int i = 1; i < content(capsule).getChildCount(); i++) {
+            assertEquals("re-shown capsule must keep groups fully opaque", 1f,
+                    content(capsule).getChildAt(i).getAlpha(), 0.001f);
+        }
+        capsule.stopBreathing();
+    }
+
+    // =====================================================
     // Capsule sizing: compact 38dp pill (7dp padding + 24dp logo)
     // =====================================================
 

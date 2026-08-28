@@ -53,9 +53,13 @@ public class FloatingStatusController {
     /** How long the "done" terminal state stays visible before fading out. */
     private static final long TERMINAL_SHOW_MS = 3000;
     private static final long FADE_MS = 300;
+    /** Duration of the collapse-to-logo stage of the hide animation. */
+    private static final long COLLAPSE_MS = 200;
     private static final int EDGE_MARGIN_DP = 8;
     /** Fallback capsule width estimate (dp) used before the view is measured. */
     private static final int DEFAULT_CAPSULE_WIDTH_DP = 120;
+    /** Capsule height = logo diameter + 2 * 7dp vertical padding (38dp). */
+    private static final int CAPSULE_HEIGHT_DP = 38;
     /** Drag opacity while moving. */
     private static final float DRAG_ALPHA = 0.85f;
 
@@ -83,6 +87,7 @@ public class FloatingStatusController {
     private volatile boolean userDismissed;
     private volatile boolean expanded;
     private Runnable fadeHideRunnable;
+    private android.animation.ValueAnimator collapseAnimator;
     private BiConsumer<String, String> onSessionClick;
     private OverviewRequestListener overviewRequestListener;
     /** Last time an event-triggered overview refresh was requested (throttle). */
@@ -132,10 +137,12 @@ public class FloatingStatusController {
     /**
      * Whether the floating window should be shown right now. Pure: no framework
      * deps. The window is only meaningful while the app is in the background,
-     * there is an active task, and the user has not dismissed it.
+     * there is an active task or an unread session (either is worth drawing
+     * the user's attention to), and the user has not dismissed it.
      */
-    public static boolean shouldShow(boolean appForeground, boolean hasActive, boolean userDismissed) {
-        return !appForeground && hasActive && !userDismissed;
+    public static boolean shouldShow(boolean appForeground, boolean hasActive,
+                                     boolean hasUnread, boolean userDismissed) {
+        return !appForeground && (hasActive || hasUnread) && !userDismissed;
     }
 
     /**
@@ -259,7 +266,7 @@ public class FloatingStatusController {
             } else {
                 // Collapse: back to the capsule if a session is still active,
                 // otherwise hide the window entirely.
-                if (shouldShow(appForeground, hasActive, userDismissed)) {
+                if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, userDismissed)) {
                     attachView(view != null ? view : buildCapsuleView());
                 } else {
                     hideWindow();
@@ -302,7 +309,7 @@ public class FloatingStatusController {
                 // The overview changed the panel's content (group/session
                 // count), so re-fit the window height to the new content.
                 resizePanelIfNeeded();
-            } else if (shouldShow(appForeground, hasActive, userDismissed) && !windowShowing) {
+            } else if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, userDismissed) && !windowShowing) {
                 // WS-connect fallback: a running session discovered via the
                 // overview (whose start event was missed while the WS was down)
                 // must bring up the capsule even though no event triggered it.
@@ -461,7 +468,7 @@ public class FloatingStatusController {
         postToUi(() -> {
             cancelPendingHide();
             if (active) {
-                if (shouldShow(appForeground, true, userDismissed)) {
+                if (shouldShow(appForeground, true, lastUnreadCount > 0, userDismissed)) {
                     ensureWindow();
                     // Render the capsule instantly from locally tracked state
                     // (running/pending sets, last overview's unread count) so a
@@ -483,9 +490,16 @@ public class FloatingStatusController {
                         // The overview refresh re-seeds the running set and the
                         // fresh overview drives the capsule's stats.
                         requestOverviewRefresh();
+                    } else if (lastUnreadCount > 0) {
+                        // Last session ended but unread sessions remain: keep
+                        // the capsule up (showing the unread count) instead of
+                        // auto-hiding, so the user is reminded to read them.
+                        renderCapsuleStats();
+                        requestOverviewRefresh();
                     } else {
-                        // Last session ended: reflect the empty counts instantly
-                        // (breathing stops, groups hide) before the fade-out.
+                        // Last session ended with nothing left worth showing:
+                        // reflect the empty counts instantly (breathing stops,
+                        // groups hide) before the fade-out.
                         renderCapsuleStats();
                         requestOverviewRefresh();
                         scheduleTerminalHide();
@@ -526,7 +540,7 @@ public class FloatingStatusController {
         postToUi(() -> {
             if (foreground) {
                 hideWindow();
-            } else if (shouldShow(false, hasActive, userDismissed)) {
+            } else if (shouldShow(false, hasActive, lastUnreadCount > 0, userDismissed)) {
                 cancelPendingHide();
                 ensureWindow();
                 renderCapsuleStats();
@@ -541,7 +555,7 @@ public class FloatingStatusController {
             if (dismissed) {
                 cancelPendingHide();
                 hideWindow();
-            } else if (shouldShow(appForeground, hasActive, false)) {
+            } else if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, false)) {
                 // Re-evaluate: un-dismissing should restore the window if conditions hold.
                 cancelPendingHide();
                 ensureWindow();
@@ -564,6 +578,7 @@ public class FloatingStatusController {
         // window is never removed from the WindowManager.
         Runnable cleanup = () -> {
             cancelPendingHide();
+            cancelCollapse();
             if (view != null) {
                 view.animate().cancel();
                 view.stopBreathing();
@@ -644,6 +659,12 @@ public class FloatingStatusController {
             if (attachedView != null) {
                 attachedView.animate().cancel();
                 attachedView.setAlpha(1f);
+                // A collapse-to-logo hide may also be in flight: restore the
+                // window width and the faded stat groups.
+                cancelCollapse();
+                if (attachedView instanceof FloatingStatusView) {
+                    ((FloatingStatusView) attachedView).expandFromCircle();
+                }
             }
             return;
         }
@@ -808,15 +829,80 @@ public class FloatingStatusController {
         if (!windowShowing || attachedView == null) {
             return;
         }
-        View fadeView = attachedView;
-        fadeView.animate()
-                .alpha(0f)
-                .setDuration(FADE_MS)
-                .withEndAction(() -> {
-                    hideWindow();
-                    fadeView.setAlpha(1f);
-                })
-                .start();
+        final View fadeView = attachedView;
+        if (fadeView instanceof FloatingStatusView && params != null) {
+            // Two-stage hide for the capsule: first collapse to a logo-only
+            // circle (stat groups fade out while the window width shrinks to
+            // the logo diameter), then fade the whole window out.
+            collapseToCircle((FloatingStatusView) fadeView, () -> {
+                if (destroyed) {
+                    return;
+                }
+                fadeView.animate()
+                        .alpha(0f)
+                        .setDuration(FADE_MS)
+                        .withEndAction(() -> {
+                            if (destroyed) {
+                                return;
+                            }
+                            hideWindow();
+                            fadeView.setAlpha(1f);
+                            if (attachedView instanceof FloatingStatusView) {
+                                ((FloatingStatusView) attachedView).expandFromCircle();
+                            }
+                        })
+                        .start();
+            });
+        } else {
+            fadeView.animate()
+                    .alpha(0f)
+                    .setDuration(FADE_MS)
+                    .withEndAction(() -> {
+                        if (destroyed) {
+                            return;
+                        }
+                        hideWindow();
+                        fadeView.setAlpha(1f);
+                    })
+                    .start();
+        }
+    }
+
+    /**
+     * Collapse a FloatingStatusView capsule to a logo-only circle: the stat
+     * groups fade out in the content row while the window width animates from
+     * its current width down to the logo diameter. Width is a WindowManager
+     * layout property, so each animation frame re-issues updateViewLayout.
+     * UI thread only.
+     */
+    private void collapseToCircle(final FloatingStatusView capsule, final Runnable onDone) {
+        int startWidth = capsule.getMeasuredWidth();
+        if (startWidth <= 0) {
+            startWidth = capsuleWidthPx;
+        }
+        int targetWidth = Math.round(CAPSULE_HEIGHT_DP * context.getResources().getDisplayMetrics().density);
+        // Re-center the circle: keep the capsule's left edge (which anchors at
+        // the drag/restored x) and let the extra width disappear on the right.
+        params.width = startWidth;
+        try {
+            windowManager.updateViewLayout(capsule, params);
+        } catch (IllegalArgumentException e) {
+            AppLog.w(TAG, "collapseToCircle updateViewLayout failed", e);
+        }
+        capsule.collapseToCircle(targetWidth, onDone);
+        android.animation.ValueAnimator anim = android.animation.ValueAnimator.ofInt(startWidth, targetWidth);
+        anim.setDuration(COLLAPSE_MS);
+        anim.setInterpolator(new android.view.animation.DecelerateInterpolator());
+        anim.addUpdateListener(a -> {
+            params.width = (Integer) a.getAnimatedValue();
+            try {
+                windowManager.updateViewLayout(capsule, params);
+            } catch (IllegalArgumentException e) {
+                AppLog.w(TAG, "collapseToCircle updateViewLayout failed", e);
+            }
+        });
+        collapseAnimator = anim;
+        anim.start();
     }
 
     private void cancelPendingHide() {
@@ -826,11 +912,26 @@ public class FloatingStatusController {
         }
     }
 
+    /**
+     * Cancel the collapse-to-logo width animation and restore the window to
+     * wrap-content so a re-shown capsule sizes itself normally. UI thread only.
+     */
+    private void cancelCollapse() {
+        if (collapseAnimator != null) {
+            collapseAnimator.cancel();
+            collapseAnimator = null;
+        }
+        if (params != null) {
+            params.width = WindowManager.LayoutParams.WRAP_CONTENT;
+        }
+    }
+
     private void scheduleTerminalHide() {
         fadeHideRunnable = () -> {
             fadeHideRunnable = null;
-            if (shouldShow(appForeground, hasActive, userDismissed)) {
-                // A newer active event superseded the terminal display.
+            if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, userDismissed)) {
+                // A newer active event superseded the terminal display, or
+                // unread sessions remain (worth keeping the window up).
                 return;
             }
             hideWithFade();

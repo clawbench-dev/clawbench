@@ -154,6 +154,42 @@ public class FloatingStatusView extends android.widget.FrameLayout {
         contentView.stopBreathing();
     }
 
+    /**
+     * Collapse the capsule to a logo-only circle: stat groups fade out while
+     * the window width animates down to the logo diameter (equal horizontal
+     * padding on both sides so the logo stays centered and the pill becomes a
+     * true circle). The host animates the WindowManager width in parallel;
+     * {@code onDone} fires when both finish. UI thread only.
+     */
+    public void collapseToCircle(int targetWidthPx, Runnable onDone) {
+        contentView.collapseStats(() -> {
+            if (onDone != null) {
+                onDone.run();
+            }
+        });
+        animate().scaleX(1f).scaleY(1f).setDuration(1).start();
+        // The content row is a WRAP_CONTENT FrameLayout child; since it never
+        // relayouts during the width animation, re-measure it against the
+        // target width so the frame actually contracts to the new window size.
+        contentView.measure(
+                View.MeasureSpec.makeMeasureSpec(targetWidthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+    }
+
+    /**
+     * Undo a previous collapseToCircle: restore all stat groups to full
+     * opacity (visibility never changed, only alpha). Called by the controller
+     * when the collapse is superseded by a fresh show. UI thread only.
+     */
+    public void expandFromCircle() {
+        contentView.restoreStats();
+    }
+
+    /** True after collapseToCircle started, i.e. while the hide is in flight. */
+    public boolean isStatsCollapsed() {
+        return contentView.isStatsCollapsed();
+    }
+
     private int dp(int value) {
         return Math.round(value * density);
     }

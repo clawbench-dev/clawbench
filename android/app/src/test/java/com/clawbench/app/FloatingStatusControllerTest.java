@@ -91,27 +91,35 @@ public class FloatingStatusControllerTest {
 
     @Test
     public void shouldShow_backgroundActiveNotDismissed_true() {
-        assertTrue(FloatingStatusController.shouldShow(false, true, false));
+        assertTrue(FloatingStatusController.shouldShow(false, true, false, false));
+    }
+
+    @Test
+    public void shouldShow_backgroundUnreadNotDismissed_true() {
+        // Unread sessions are worth showing even with nothing active.
+        assertTrue(FloatingStatusController.shouldShow(false, false, true, false));
     }
 
     @Test
     public void shouldShow_foreground_false() {
-        assertFalse(FloatingStatusController.shouldShow(true, true, false));
+        assertFalse(FloatingStatusController.shouldShow(true, true, false, false));
     }
 
     @Test
-    public void shouldShow_noActive_false() {
-        assertFalse(FloatingStatusController.shouldShow(false, false, false));
+    public void shouldShow_noActiveNoUnread_false() {
+        assertFalse(FloatingStatusController.shouldShow(false, false, false, false));
     }
 
     @Test
     public void shouldShow_userDismissed_false() {
-        assertFalse(FloatingStatusController.shouldShow(false, true, true));
+        assertFalse(FloatingStatusController.shouldShow(false, true, false, true));
+        assertFalse("dismissal must win over unread too",
+                FloatingStatusController.shouldShow(false, false, true, true));
     }
 
     @Test
     public void shouldShow_foregroundNoActiveDismissed_false() {
-        assertFalse(FloatingStatusController.shouldShow(true, false, true));
+        assertFalse(FloatingStatusController.shouldShow(true, false, true, true));
     }
 
     // --- snapX ---
@@ -740,6 +748,33 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
+    public void onOverviewLoaded_background_unreadOnly_showsCapsuleWithUnread() throws Exception {
+        // Overview fallback must also cover the unread case: with no running
+        // session but an unread one, the capsule appears (and shows 未读 N) to
+        // remind the user — previously only running/pending triggered it.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"u\",\"title\":\"t1\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
+                        + "]}]}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("an unread session from the overview must show the capsule",
+                controller.isWindowShowing());
+        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
+        assertNotNull("capsule view must be built for the unread fallback", capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule must render the unread count, got: " + texts,
+                texts.contains("未读 1"));
+        controller.destroy();
+    }
+
+    @Test
     public void onOverviewLoaded_noRunningAndTotalZero_hidesLingeringWindow() throws Exception {
         // Regression: the overview had no running sessions but did not reset
         // hasActive, so a session that ended while the WS was down left the
@@ -975,6 +1010,112 @@ public class FloatingStatusControllerTest {
                 getPrivateField(controller, "fadeHideRunnable"));
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
         assertFalse("the window must hide after the terminal delay",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_withUnread_keepsWindow() throws Exception {
+        // Bug: ending the last running session while unread sessions remain
+        // must NOT auto-hide the capsule — it should keep reminding the user
+        // to read the unread session, showing the unread count.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        // Overview with an unread session (not running, unreadCount > 0).
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
+                        + "]}]}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(collectAllTexts(capsuleOf(controller)).contains("未读 1"));
+
+        // Last running session ends: the capsule must stay up and keep the
+        // unread count visible — no terminal hide may be scheduled.
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("unread sessions must keep the capsule visible",
+                controller.isWindowShowing());
+        assertNull("no terminal hide may be scheduled while unread sessions remain",
+                getPrivateField(controller, "fadeHideRunnable"));
+        List<String> texts = collectAllTexts(capsuleOf(controller));
+        assertTrue("capsule must keep showing the unread count, got: " + texts,
+                texts.contains("未读 1"));
+
+        // Still up well past the terminal delay.
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertTrue("the capsule must never auto-hide while unread sessions remain",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_withUnread_afterRead_hidesWindow() throws Exception {
+        // The unread guard is not sticky: once the user reads the sessions
+        // (overview reports zero unread), a later terminal event for the last
+        // session must auto-hide as before.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        org.json.JSONObject unreadOverview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
+                        + "]}]}");
+        controller.onOverviewLoaded(unreadOverview);
+        ShadowLooper.runUiThreadTasks();
+
+        // All unread cleared.
+        org.json.JSONObject readOverview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":0}"
+                        + "]}]}");
+        controller.onOverviewLoaded(readOverview);
+        ShadowLooper.runUiThreadTasks();
+
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertNotNull("with unread cleared, the terminal hide must be scheduled",
+                getPrivateField(controller, "fadeHideRunnable"));
+
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertFalse("window must hide after the terminal delay once unread is cleared",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_hideWithFade_doesNotCrashUnderRobolectric() throws Exception {
+        // The two-stage hide (collapse-to-circle then fade) runs real
+        // View.animate() / ValueAnimator; Robolectric cannot verify frame
+        // timing, so this guards that the path completes to hideWindow()
+        // without crashing.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        controller.handleEvent("session_update", sessionEvent("completed", "s2"));
+        ShadowLooper.runUiThreadTasks();
+        assertNotNull(getPrivateField(controller, "fadeHideRunnable"));
+
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertFalse("the two-stage hide must still remove the window",
                 controller.isWindowShowing());
         controller.destroy();
     }
