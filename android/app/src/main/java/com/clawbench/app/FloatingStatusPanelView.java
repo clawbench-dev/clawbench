@@ -220,7 +220,9 @@ public class FloatingStatusPanelView extends FrameLayout {
         // theme change pick up the new colors).
         int[] palette = FloatingThemeColors.get(context);
         int bgColor = (palette[0] & 0x00FFFFFF) | 0xF0000000; // keep ~94% opacity
-        int borderColor = (palette[0] & 0x00FFFFFF) | 0xFF000000; // border = bg, opaque
+        // Border uses the theme's secondary text color so the panel edge is
+        // visible against the background (the bg-tinted border was invisible).
+        int borderColor = palette[2];
         colorTextPrimary = palette[1];
         colorTextSecondary = palette[2];
 

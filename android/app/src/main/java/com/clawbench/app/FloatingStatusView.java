@@ -76,13 +76,13 @@ public class FloatingStatusView extends FrameLayout {
         int textColor = palette[1];
 
         // Background: capsule with full-semicircle ends, translucent theme
-        // background, and a thin border in the same color made opaque (matches
-        // FloatingStatusPanelView's border so the collapsed capsule reads as
-        // the panel's companion).
+        // background, and a thin border in the theme's secondary text color
+        // (matches FloatingStatusPanelView's border so the collapsed capsule
+        // reads as the panel's companion; the bg-tinted border was invisible).
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(bgColor);
         bg.setCornerRadius(dp(CORNER_RADIUS_DP));
-        bg.setStroke(dp(1), (palette[0] & 0x00FFFFFF) | 0xFF000000);
+        bg.setStroke(dp(1), palette[2]);
         setBackground(bg);
         // Asymmetric padding: tighter leading edge so the logo sits embedded
         // near the capsule's left end; trailing edge keeps the wider 14dp.
