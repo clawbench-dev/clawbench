@@ -1799,6 +1799,83 @@ describe('duplicate message root causes (regression)', () => {
     expect((reply.blocks || []).some((b: any) => b.text === 'older db content')).toBe(false)
   })
 
+  it('rebuildFromDb prepends DB flushed history onto a non-empty re-created placeholder (switch-back race)', () => {
+    // Reported: session streams → user switches away → switches back. The
+    // stream_start WS event (subscribe) creates an EMPTY placeholder and the
+    // first WS increments append content BEFORE the REST loadHistory db_load
+    // arrives. At that point the placeholder holds ONLY the post-switch
+    // increment; the DB row holds the earlier flushed history (tool_use +
+    // text) that must be prepended — otherwise all pre-switch output is lost.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      // Placeholder re-created by stream_start, already got the post-switch increment.
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: ' continuing' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      // DB streaming row: flushed before the switch — tool_use + earlier text.
+      { role: 'assistant', id: 42, content: '', blocks: [
+        { type: 'tool_use', name: 'Read', id: 'tool-1', done: true, status: 'success' },
+        { type: 'text', text: 'partial response' },
+      ], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    expect(reply).toBeDefined()
+    expect(reply.streaming).toBe(true)
+    const texts = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text)
+    expect(texts.join('')).toBe('partial response continuing')
+    const tools = (reply.blocks || []).filter((b: any) => b.type === 'tool_use')
+    expect(tools).toHaveLength(1)
+    expect(tools[0].id).toBe('tool-1')
+  })
+
+  it('rebuildFromDb dedupes a text seam re-emitted by both the DB flush and the live stream', () => {
+    // The DB flush happened mid-word; the re-subscribed stream re-emits the
+    // partial token boundary, so the DB text tail equals the live text head.
+    // The seam must be cut once, not duplicated.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'od work' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'good work' }], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    expect(reply).toBeDefined()
+    const texts = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text)
+    expect(texts.join('')).toBe('good work')
+  })
+
+  it('rebuildFromDb does not duplicate tool_use blocks when live already has them (continuous stream)', () => {
+    // Continuous streaming: the live placeholder already holds the full DB
+    // text (the DB flush is a stale subset). DB tool_use already present in
+    // live must not be duplicated; the existing blocks are kept as-is.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [
+        { type: 'tool_use', name: 'Read', id: 'tool-1', done: true, status: 'success' },
+        { type: 'text', text: 'full response' },
+      ], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      // DB flush only reached the first part of the text.
+      { role: 'assistant', id: 42, content: '', blocks: [
+        { type: 'tool_use', name: 'Read', id: 'tool-1', done: true, status: 'success' },
+        { type: 'text', text: 'full res' },
+      ], streaming: true },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    expect(reply).toBeDefined()
+    const texts = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text)
+    expect(texts.join('')).toBe('full response')
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use')).toHaveLength(1)
+  })
+
   it('A/B dual client: A sends → B gets _remote bubble → queue_drain upgrades it to the DB row', () => {
     // Client B's reducer receives the authoritative push event from client A's
     // send. The full sequence:
