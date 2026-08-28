@@ -2348,6 +2348,12 @@ public class BackgroundService extends Service {
                     .getString(KEY_SERVER_URL, "");
             if (!serverUrl.isEmpty()) {
                 networkExecutor.execute(() -> fetchPendingEvents(serverUrl));
+                // The floating window's "hasActive" state is event-driven, but the
+                // "running" session_update is broadcast once at session start — which
+                // may have happened while the native WS was down (app foreground).
+                // Poll /api/sessions on connect so a running session shows the
+                // capsule even though the start event was missed.
+                networkExecutor.execute(() -> fetchRunningSessions(serverUrl));
             }
         }
 
@@ -2732,6 +2738,100 @@ public class BackgroundService extends Service {
 
         } catch (Exception e) {
             AppLog.w(TAG, "PendingEvents: fetch failed", e);
+        }
+    }
+
+    /**
+     * Poll /api/ai/sessions for a currently-running session and notify the
+     * floating window controller so the capsule appears even when the
+     * "running" session_update event was broadcast while the native WS was
+     * down (e.g. session started while the app was in the foreground).
+     * MUST be called from a background thread (network I/O).
+     */
+    private void fetchRunningSessions(String serverUrl) {
+        if (floatingController == null) {
+            return;
+        }
+        try {
+            // Read session cookie (same pattern as connectNativeWs)
+            String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
+            String sessionCookie = null;
+            if (cookies != null) {
+                for (String cookie : cookies.split(";")) {
+                    String trimmed = cookie.trim();
+                    int eqIdx = trimmed.indexOf('=');
+                    if (eqIdx > 0) {
+                        String name = trimmed.substring(0, eqIdx);
+                        if (name.equals("clawbench_session") ||
+                                (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                            sessionCookie = trimmed;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (sessionCookie == null) {
+                AppLog.d(TAG, "FloatingWindow: no session cookie, skipping sessions poll");
+                return;
+            }
+
+            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS);
+            if (trustAllSSLContext != null && serverUrl.startsWith("https://")) {
+                clientBuilder.sslSocketFactory(trustAllSSLContext.getSocketFactory(), new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                });
+                clientBuilder.hostnameVerifier((hostname, session) -> true);
+            }
+
+            Request request = new Request.Builder()
+                    .url(serverUrl + "/api/ai/sessions")
+                    .header("Cookie", sessionCookie)
+                    .get()
+                    .build();
+
+            try (Response response = clientBuilder.build().newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    AppLog.d(TAG, "FloatingWindow: /api/ai/sessions returned HTTP " + response.code());
+                    return;
+                }
+                String body = response.body() != null ? response.body().string() : "";
+                if (body.isEmpty()) {
+                    return;
+                }
+                JSONObject data = new JSONObject(body);
+                if (FloatingStatusController.hasRunningSession(data)) {
+                    // Pick the first running session for the capsule title.
+                    String sessionId = "";
+                    String sessionTitle = "";
+                    JSONArray sessions = data.optJSONArray("sessions");
+                    if (sessions != null) {
+                        for (int i = 0; i < sessions.length(); i++) {
+                            JSONObject s = sessions.optJSONObject(i);
+                            if (s != null && s.optBoolean("running", false)) {
+                                sessionId = s.optString("id", "");
+                                sessionTitle = s.optString("title", "");
+                                break;
+                            }
+                        }
+                    }
+                    final String fId = sessionId;
+                    final String fTitle = sessionTitle;
+                    if (fId.isEmpty()) {
+                        AppLog.i(TAG, "FloatingWindow: running session found but missing id");
+                        return;
+                    }
+                    AppLog.i(TAG, "FloatingWindow: running session detected via poll: " + fId);
+                    floatingController.notifyRunningSession(fId, fTitle);
+                } else {
+                    AppLog.d(TAG, "FloatingWindow: no running session in poll");
+                }
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "FloatingWindow: sessions poll failed", e);
         }
     }
 

@@ -199,6 +199,71 @@ public class FloatingStatusControllerTest {
                 controller.isWindowShowing());
     }
 
+    // =====================================================
+    // hasRunningSession: parse /api/sessions response for running sessions
+    // =====================================================
+
+    @Test
+    public void hasRunningSession_withRunningSession_true() throws Exception {
+        String json = "{\"sessions\":[{\"id\":\"s1\",\"running\":true},{\"id\":\"s2\",\"running\":false}]}";
+        assertTrue(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
+    }
+
+    @Test
+    public void hasRunningSession_noRunning_false() throws Exception {
+        String json = "{\"sessions\":[{\"id\":\"s1\",\"running\":false},{\"id\":\"s2\",\"running\":false}]}";
+        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
+    }
+
+    @Test
+    public void hasRunningSession_emptySessions_false() throws Exception {
+        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject("{\"sessions\":[]}")));
+    }
+
+    @Test
+    public void hasRunningSession_missingSessionsKey_false() throws Exception {
+        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject("{}")));
+    }
+
+    @Test
+    public void hasRunningSession_runningOmitted_false() throws Exception {
+        // "running" is omitempty server-side; an entry without the field is not running
+        String json = "{\"sessions\":[{\"id\":\"s1\"}]}";
+        assertFalse(FloatingStatusController.hasRunningSession(new org.json.JSONObject(json)));
+    }
+
+    // =====================================================
+    // notifyRunningSession: sets hasActive and shows the window when backgrounded
+    // =====================================================
+
+    @Test
+    public void notifyRunningSession_background_showsWindow() {
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false); // backgrounded
+        controller.notifyRunningSession("s1", "会话标题");
+
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("window should show for a running session while backgrounded",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void notifyRunningSession_foreground_doesNotShow() {
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(true); // foreground
+        controller.notifyRunningSession("s1", "会话标题");
+
+        ShadowLooper.runUiThreadTasks();
+        assertFalse("window must not show while app is foreground",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
     /** Robolectric helper to set Settings.canDrawOverlays(true) for SDK 28. */
     private static final class ShadowSettings {
         static void setCanDrawOverlays(boolean value) {

@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -200,6 +201,47 @@ public class FloatingStatusController {
 
     public boolean isWindowShowing() {
         return windowShowing;
+    }
+
+    /**
+     * True when a /api/sessions response contains at least one running session.
+     * Pure function (no Android framework deps) so it is unit-testable.
+     */
+    public static boolean hasRunningSession(JSONObject sessionsResponse) {
+        if (sessionsResponse == null) {
+            return false;
+        }
+        JSONArray sessions = sessionsResponse.optJSONArray("sessions");
+        if (sessions == null) {
+            return false;
+        }
+        for (int i = 0; i < sessions.length(); i++) {
+            JSONObject s = sessions.optJSONObject(i);
+            if (s != null && s.optBoolean("running", false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Notify the controller that a session is running (discovered via the
+     * /api/sessions poll on native WS connect). Marks the session active so the
+     * capsule appears when the app is backgrounded. Any thread.
+     */
+    public void notifyRunningSession(String sessionId, String sessionTitle) {
+        hasActive = true;
+        final String fSessionId = sessionId;
+        final String fSessionTitle = sessionTitle;
+        postToUi(() -> {
+            cancelPendingHide();
+            if (shouldShow(appForeground, true, userDismissed)) {
+                ensureWindow();
+                render("session_update", "running", fSessionTitle, "", "");
+            } else if (appForeground) {
+                // Backgrounded later; setAppForeground(false) will re-evaluate.
+            }
+        });
     }
 
     /** Remove the window and cancel all pending callbacks. Any thread. */
