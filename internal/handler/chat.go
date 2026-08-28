@@ -686,7 +686,16 @@ func executeStreamRun(
 	// own question (anchorRepliesToQuestions) instead of falling back to raw DB
 	// id order (user2,user3,reply2,reply3).
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, _ := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
+	streamingMsgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
+	if err != nil {
+		slog.Error("failed to create streaming assistant placeholder",
+			slog.String("session", sessionID),
+			slog.String("queueID", queueID),
+			slog.String("err", err.Error()))
+		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
+		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
+		return streamRunResult{err: errMsg}
+	}
 	slog.Info("chat: created streaming assistant placeholder",
 		slog.String("session", sessionID),
 		slog.Int64("streamingMsgID", streamingMsgID),

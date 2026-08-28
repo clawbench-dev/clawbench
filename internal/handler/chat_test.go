@@ -3545,11 +3545,17 @@ func TestDrainReplyQueueID_HTTPPath(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2.Code)
 	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
 
-	// The LATEST assistant row (the reply to message 2) must carry queue_id pending-q2.
+	// The reply to message 2 must carry queue_id pending-q2. Poll instead of a
+	// single read: a prior run's deferred finalization may briefly race the new
+	// run's reply row, and the DB write that anchors the reply to its question
+	// can land a moment after the session-running flag clears.
 	var qid string
-	err = service.ReadDB().QueryRow(
-		"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sessionID,
-	).Scan(&qid)
-	assert.NoError(t, err, "assistant reply row should exist")
+	assert.Eventually(t, func() bool {
+		err = service.ReadDB().QueryRow(
+			"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? AND queue_id=? ORDER BY id DESC LIMIT 1",
+			sessionID, "pending-q2",
+		).Scan(&qid)
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond, "assistant reply anchored to pending-q2 should exist")
 	assert.Equal(t, "pending-q2", qid, "drain reply must record the consumed message's queue_id so the frontend can anchor it")
 }
