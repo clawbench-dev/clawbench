@@ -127,6 +127,41 @@ public class MainActivityThemeTest {
         assertEquals(0xFF123456, FloatingThemeColors.parseColor("#12", 0xFF123456));
     }
 
+    @Test
+    public void borderColorFromBackground_darkBg_lightsUp() {
+        // github-dark background: border must be lighter than the bg so it is
+        // visible against a dark backdrop.
+        int bg = 0xFF161B22;
+        int border = FloatingThemeColors.borderColorFromBackground(bg);
+        assertTrue("dark bg border must be lighter than bg", brightness(border) > brightness(bg));
+        assertEquals("border must keep the bg's hue family", 0xFF000000,
+                border & 0xFF000000);
+    }
+
+    @Test
+    public void borderColorFromBackground_lightBg_darkens() {
+        // github-light background: border must be darker than the bg.
+        int bg = 0xFFF8F9FA;
+        int border = FloatingThemeColors.borderColorFromBackground(bg);
+        assertTrue("light bg border must be darker than bg", brightness(border) < brightness(bg));
+    }
+
+    @Test
+    public void borderColorFromBackground_veryDarkBg_staysOpaque() {
+        int bg = 0xFF000000;
+        int border = FloatingThemeColors.borderColorFromBackground(bg);
+        assertTrue("even a black bg must yield a visible (lighter) border",
+                brightness(border) > brightness(bg));
+        assertEquals("alpha must remain opaque", 0xFF000000, border & 0xFF000000);
+    }
+
+    private static int brightness(int argb) {
+        int r = (argb >> 16) & 0xFF;
+        int g = (argb >> 8) & 0xFF;
+        int b = argb & 0xFF;
+        return (r + g + b) / 3;
+    }
+
     // --- Helpers (same pattern as MainActivityNotificationTest) ---
 
     @SuppressWarnings("unchecked")

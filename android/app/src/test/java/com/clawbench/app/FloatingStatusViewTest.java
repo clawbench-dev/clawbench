@@ -320,19 +320,21 @@ public class FloatingStatusViewTest {
     }
 
     @Test
-    public void background_secondaryTextBorderStroke() throws Exception {
-        // The capsule gets a 1dp border in the theme's secondary text color
-        // (visible against the background; the earlier bg-tinted border was
-        // invisible). The stroke getters are API 29+ on the real class, so
-        // read them through Robolectric's shadow.
+    public void background_borderFromBackgroundLuminance() throws Exception {
+        // The capsule gets a 1dp border derived from the background color via a
+        // luminance nudge (lighter on dark themes, darker on light themes) so it
+        // is visible while staying in the background's hue family. The stroke
+        // getters are API 29+ on the real class, so read them through
+        // Robolectric's shadow.
         FloatingStatusView capsule = newCapsule();
         GradientDrawable bg = (GradientDrawable) capsule.getBackground();
         org.robolectric.shadows.ShadowGradientDrawable shadow =
                 Shadows.shadowOf(bg);
         assertEquals("border must be 1dp at density 1.0", 1,
                 shadow.getStrokeWidth());
-        assertEquals("border must be the theme's secondary text color",
-                FloatingThemeColors.get(RuntimeEnvironment.getApplication())[2],
+        int bgColor = FloatingThemeColors.get(RuntimeEnvironment.getApplication())[0];
+        assertEquals("border must be the background-luminance-derived color",
+                FloatingThemeColors.borderColorFromBackground(bgColor),
                 shadow.getStrokeColor());
         capsule.stopBreathing();
     }

@@ -62,4 +62,32 @@ public final class FloatingThemeColors {
             return defaultValue;
         }
     }
+
+    /**
+     * Derive a visible border color from a background color by nudging each
+     * RGB channel away from the background's own luminance: dark backgrounds
+     * get a lighter border, light backgrounds get a darker one. The border
+     * stays in the same hue family as the background (a "theme-tinted" edge)
+     * while remaining distinguishable from it. Pure: no framework deps.
+     */
+    public static int borderColorFromBackground(int bg) {
+        int r = (bg >> 16) & 0xFF;
+        int g = (bg >> 8) & 0xFF;
+        int b = bg & 0xFF;
+        int luma = (r + g + b) / 3;
+        boolean dark = luma < 128;
+        // Mix 40% toward white (dark bg) or 40% toward black (light bg).
+        float mix = dark ? 0.40f : -0.40f;
+        int nr = channel(r, mix);
+        int ng = channel(g, mix);
+        int nb = channel(b, mix);
+        return 0xFF000000 | (nr << 16) | (ng << 8) | nb;
+    }
+
+    private static int channel(int v, float mix) {
+        if (mix >= 0) {
+            return Math.min(255, Math.round(v + (255 - v) * mix));
+        }
+        return Math.max(0, Math.round(v * (1 + mix)));
+    }
 }
