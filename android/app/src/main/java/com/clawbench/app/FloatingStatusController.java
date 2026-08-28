@@ -284,13 +284,12 @@ public class FloatingStatusController {
                 // must bring up the capsule even though no event triggered it.
                 cancelPendingHide();
                 ensureWindow();
-                // The capsule starts in its initial empty state ("—" label,
-                // transparent dot); render the first running session so it has
-                // real content, not just the theme background.
-                String[] first = firstRunningSession(overview);
-                if (first != null && view != null) {
-                    render("session_update", "running", first[0], "", "");
-                }
+            }
+            // The stats capsule always reflects the latest overview so its
+            // counts stay current on collapse and right after a fallback build.
+            if (view != null) {
+                int[] stats = computeStats(overview);
+                view.renderStats(stats[0], stats[1], stats[2]);
             }
         });
     }
@@ -344,32 +343,19 @@ public class FloatingStatusController {
     }
 
     /**
-     * Title of the first running session in the overview, or null when none.
-     * Used by the WS-connect fallback to render real content into the capsule.
-     * Any thread.
+     * Compute the capsule's three stats from an overview JSON object:
+     * {running, pending, unread}. The groups are mutually exclusive —
+     * pendingApproval wins over running for a session that has both flags
+     * (matching the panel's yellow > green status-dot priority), and unread
+     * only counts sessions that are neither running nor pending. Pure: only
+     * org.json, so unit-testable with plain JUnit.
      */
-    private String[] firstRunningSession(JSONObject overview) {
-        JSONArray projects = overview.optJSONArray("projects");
-        if (projects == null) {
-            return null;
-        }
-        for (int i = 0; i < projects.length(); i++) {
-            JSONObject project = projects.optJSONObject(i);
-            if (project == null) {
-                continue;
-            }
-            JSONArray sessions = project.optJSONArray("sessions");
-            if (sessions == null) {
-                continue;
-            }
-            for (int j = 0; j < sessions.length(); j++) {
-                JSONObject s = sessions.optJSONObject(j);
-                if (s != null && s.optBoolean("running", false)) {
-                    return new String[]{s.optString("title", "")};
-                }
-            }
-        }
-        return null;
+    public static int[] computeStats(JSONObject overview) {
+        return new int[]{
+                FloatingStatusView.countRunning(overview),
+                FloatingStatusView.countPending(overview),
+                FloatingStatusView.countUnread(overview)
+        };
     }
 
     /**
@@ -415,9 +401,6 @@ public class FloatingStatusController {
         }
         String status = data.optString("status", "");
         String sessionId = data.optString("session_id", "");
-        String sessionTitle = data.optString("session_title", "");
-        String toolName = data.optString("tool_name", "");
-        String preview = data.optString("response_preview_plain", "");
 
         boolean active = isActiveStatus(eventType, status);
         // trackSessionState must run before deriving hasActive: a terminal
@@ -437,17 +420,14 @@ public class FloatingStatusController {
         AppLog.d(TAG, "handleEvent event=" + eventType + " status=" + status
                 + " sessionId=" + sessionId + " active=" + active);
 
-        final String fEventType = eventType;
-        final String fStatus = status;
-        final String fSessionTitle = sessionTitle;
-        final String fToolName = toolName;
-        final String fPreview = preview;
         postToUi(() -> {
             cancelPendingHide();
             if (active) {
                 if (shouldShow(appForeground, true, userDismissed)) {
                     ensureWindow();
-                    render(fEventType, fStatus, fSessionTitle, fToolName, fPreview);
+                    // The stats capsule is overview-driven: pull a fresh
+                    // overview so the counts stay in sync with the event.
+                    requestOverviewRefresh();
                 }
             } else {
                 // Terminal state: show the "done" capsule briefly, then fade out.
@@ -455,14 +435,12 @@ public class FloatingStatusController {
                 // so never auto-hide it; the overview refresh keeps it current.
                 if (windowShowing && !expanded) {
                     if (!runningSessions.isEmpty()) {
-                        // Other sessions are still running: keep the capsule in
-                        // a generic running state instead of showing "done" and
-                        // hiding. The overview refresh re-seeds the running set
-                        // and lets a later event render the real session title.
-                        render("session_update", "running", "", "", "");
+                        // Other sessions are still running: keep the capsule up.
+                        // The overview refresh re-seeds the running set and the
+                        // fresh overview drives the capsule's stats.
                         requestOverviewRefresh();
                     } else {
-                        render(fEventType, fStatus, fSessionTitle, fToolName, fPreview);
+                        requestOverviewRefresh();
                         scheduleTerminalHide();
                     }
                 }
@@ -722,12 +700,6 @@ public class FloatingStatusController {
                     fadeView.setAlpha(1f);
                 })
                 .start();
-    }
-
-    private void render(String eventType, String status, String sessionTitle, String toolName, String preview) {
-        if (view != null) {
-            view.render(eventType, status, sessionTitle, toolName, preview);
-        }
     }
 
     private void cancelPendingHide() {

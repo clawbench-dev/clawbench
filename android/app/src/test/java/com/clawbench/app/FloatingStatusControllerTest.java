@@ -753,11 +753,130 @@ public class FloatingStatusControllerTest {
         controller.destroy();
     }
 
+    // =====================================================
+    // computeStats: overview -> {running, pending, unread}
+    // =====================================================
+
     @Test
-    public void overviewFallback_rendersRunningSessionTitle() throws Exception {
+    public void computeStats_mixedOverview_groupsAreMutuallyExclusive() throws Exception {
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"r\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
+                        + "{\"id\":\"p\",\"running\":false,\"pendingApproval\":true,\"unreadCount\":0},"
+                        + "{\"id\":\"b\",\"running\":true,\"pendingApproval\":true,\"unreadCount\":0},"
+                        + "{\"id\":\"u\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
+                        + "]}]}");
+        int[] stats = FloatingStatusController.computeStats(overview);
+        assertEquals("pure running only (pending wins for both-flag sessions)",
+                1, stats[0]);
+        assertEquals("pending counts pending + both-flag sessions",
+                2, stats[1]);
+        assertEquals("unread only counts idle sessions with unread",
+                1, stats[2]);
+    }
+
+    @Test
+    public void computeStats_emptyOverview_returnsZeros() throws Exception {
+        org.json.JSONObject overview = new org.json.JSONObject("{\"projects\":[],\"total\":0}");
+        int[] stats = FloatingStatusController.computeStats(overview);
+        assertEquals(0, stats[0]);
+        assertEquals(0, stats[1]);
+        assertEquals(0, stats[2]);
+    }
+
+    // =====================================================
+    // onOverviewLoaded: capsule stats render (Task 1+2)
+    // =====================================================
+
+    @Test
+    public void onOverviewLoaded_updatesCapsuleStats() throws Exception {
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"r\",\"title\":\"t\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
+                        + "{\"id\":\"p\",\"title\":\"t\",\"running\":false,\"pendingApproval\":true,\"unreadCount\":0},"
+                        + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":5}"
+                        + "]}]}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
+        assertNotNull("capsule must exist to show stats", capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule must show the running count, got: " + texts,
+                texts.contains("执行中 1"));
+        assertTrue("capsule must show the pending count, got: " + texts,
+                texts.contains("待审批 1"));
+        assertTrue("capsule must show the unread count, got: " + texts,
+                texts.contains("未读 1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_zeroCounts_hideStatItems() throws Exception {
+        // Zero-count groups (dot + label) must be hidden: only the logo shows.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
+        assertNotNull(capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("zero-count stats must be hidden, got: " + texts, texts.isEmpty());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_whenPanelExpanded_stillUpdatesCapsuleStats() throws Exception {
+        // The capsule is swapped out while the panel is expanded, but a later
+        // onOverviewLoaded must still keep the (unattached) capsule stats fresh
+        // so collapsing back shows correct counts immediately.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.setExpanded(true);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isExpanded());
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"r\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}"
+                        + "]}]}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
+        assertNotNull("capsule view must be kept alive while expanded", capsule);
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule stats must update even while the panel is expanded, got: " + texts,
+                texts.contains("执行中 1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void overviewFallback_showsCapsuleWithRunningStats() throws Exception {
         // Bug 1: the WS-connect fallback in onOverviewLoaded showed the capsule
         // (ensureWindow) but never rendered overview data into it, so the
         // capsule displayed the initial empty state ("—" label, transparent dot).
+        // The stats capsule must render the running count from the overview.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication(), () -> {});
         ShadowSettings.setCanDrawOverlays(true);
@@ -772,9 +891,11 @@ public class FloatingStatusControllerTest {
                 controller.isWindowShowing());
         FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
         assertNotNull("capsule view must be built for the fallback", capsule);
-        String label = findTextByClass(capsule, TextView.class, 0);
-        assertTrue("capsule must render the running session title, got: " + label,
-                label != null && label.contains("T1"));
+        List<String> texts = collectAllTexts(capsule);
+        assertTrue("capsule must render the running count, got: " + texts,
+                texts.contains("执行中 1"));
+        assertTrue("capsule must not render the session title, got: " + texts,
+                !texts.contains("T1"));
         controller.destroy();
     }
 
@@ -1012,6 +1133,52 @@ public class FloatingStatusControllerTest {
                 collectTextViews((ViewGroup) child, out, depth + 1);
             }
         }
+    }
+
+    /** All rendered (visible in the view hierarchy) TextView texts, in order. */
+    private List<String> collectAllTexts(ViewGroup root) {
+        List<String> out = new ArrayList<>();
+        for (TextView tv : collectVisibleTextViews(root, 0)) {
+            String text = tv.getText().toString();
+            if (!text.isEmpty()) {
+                out.add(text);
+            }
+        }
+        return out;
+    }
+
+    private List<TextView> collectVisibleTextViews(ViewGroup root, int depth) {
+        List<TextView> out = new ArrayList<>();
+        if (depth > 6) {
+            return out;
+        }
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (child instanceof TextView
+                    && child.getVisibility() == View.VISIBLE
+                    && isVisibleInHierarchy(child)) {
+                out.add((TextView) child);
+            }
+            if (child instanceof ViewGroup) {
+                out.addAll(collectVisibleTextViews((ViewGroup) child, depth + 1));
+            }
+        }
+        return out;
+    }
+
+    /** A GONE parent hides its children even when their own flag is VISIBLE. */
+    private static boolean isVisibleInHierarchy(View v) {
+        View current = v;
+        while (current != null) {
+            if (current.getVisibility() != View.VISIBLE) {
+                return false;
+            }
+            if (!(current.getParent() instanceof View)) {
+                break;
+            }
+            current = (View) current.getParent();
+        }
+        return true;
     }
 
     /** Robolectric helper to set Settings.canDrawOverlays(true) for SDK 28. */
