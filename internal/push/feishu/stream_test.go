@@ -238,7 +238,6 @@ func strPtr(s string) *string { return &s }
 type mockSessionMessenger struct {
 	sessions []common.SessionInfo
 	running  map[string]bool
-	enqueued []string
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(_ string, _ bool) ([]common.SessionInfo, error) {
@@ -255,8 +254,6 @@ func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]common.SessionIn
 func (m *mockSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return m.running[sessionID]
 }
-
-
 
 func (m *mockSessionMessenger) SendMessageToSession(_, _ string) error {
 	return nil

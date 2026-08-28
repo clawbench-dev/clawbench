@@ -95,7 +95,7 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
 		// Include the last user message so clients can show it alongside the reply
-		data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+		data.LastUserMessage = GetLastUserMessagePlain(context.Background(), sessionID)
 		// Include the agent so clients can render the backend icon
 		data.AgentID = GetSessionAgentID(sessionID)
 	}
@@ -271,12 +271,12 @@ func truncatePreview(text string) string {
 // non-streaming, non-queued user message in a session. Used to include a
 // "last user message" line in completion popovers/notifications alongside the
 // AI's response preview. Returns "" when no such message exists.
-func GetLastUserMessagePlain(sessionID string) string {
+func GetLastUserMessagePlain(ctx context.Context, sessionID string) string {
 	if dbRead == nil || sessionID == "" {
 		return ""
 	}
 	var content string
-	err := dbRead.QueryRow(
+	err := dbRead.QueryRowContext(ctx,
 		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&content)
@@ -561,7 +561,10 @@ func ForceCancelSession(sessionID string) {
 		return
 	}
 	sessionCancelReasons.Store(sessionID, "disconnect")
-	ClearQueuedMessages(sessionID)
+	if err := ClearQueuedMessages(sessionID); err != nil {
+		slog.Warn("forceCancel: failed to clear queued messages",
+			slog.String("session", sessionID), slog.String("error", err.Error()))
+	}
 	if cancel, ok := val.(context.CancelFunc); ok {
 		cancel()
 	}
@@ -629,7 +632,7 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	// silently stops firing once a reply's summary exists — every subsequent
 	// lastAssistant.Content would parse to zero blocks and the len(blocks) > 0
 	// guard below would skip the recommendation every time.
-	if blocks, err := rawAssistantBlocks(lastAssistant.ID, lastAssistant.Content); err == nil && len(blocks) > 0 {
+	if blocks, err := rawAssistantBlocks(ctx, lastAssistant.ID, lastAssistant.Content); err == nil && len(blocks) > 0 {
 		// Run the recommendation in a background goroutine: RecommendNextStep makes
 		// a blocking LLM call (up to the 60s internal timeout) that would otherwise
 		// stall Finalize() and delay the terminal 'done' WS event by seconds. The
@@ -660,7 +663,7 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 // blocks to extract the assistant's latest conclusion, so when the provided
 // view content parses to zero blocks it falls back to the DB content. Returns
 // an empty slice when the message is missing, still streaming, or unparsable.
-func rawAssistantBlocks(messageID int64, viewContent string) ([]model.ContentBlock, error) {
+func rawAssistantBlocks(ctx context.Context, messageID int64, viewContent string) ([]model.ContentBlock, error) {
 	if blocks, err := parseMessageBlocks(viewContent); err == nil && len(blocks) > 0 {
 		return blocks, nil
 	}
@@ -670,7 +673,7 @@ func rawAssistantBlocks(messageID int64, viewContent string) ([]model.ContentBlo
 	// Filter streaming = 0 in SQL (matching backfillMissingSummaries) so a
 	// half-persisted placeholder row can never be read as the final answer.
 	var content string
-	if err := dbRead.QueryRow(
+	if err := dbRead.QueryRowContext(ctx,
 		"SELECT content FROM chat_history WHERE id = ? AND streaming = 0",
 		messageID,
 	).Scan(&content); err != nil {
@@ -731,7 +734,7 @@ func triggerChatRecommendation(ctx context.Context, sessionID, projectPath strin
 	// Gather the most recent conversation turns (user messages in full,
 	// assistant messages as their conclusion) so the recommendation can account
 	// for the user's recent intent.
-	conversation := recentConversation(sessionID, model.ConfigInstance.Chat.RecommendContextMessages)
+	conversation := recentConversation(ctx, sessionID, model.ConfigInstance.Chat.RecommendContextMessages)
 	commands := quickCommandList(projectPath)
 	projContext := projectContext(projectPath)
 
@@ -804,7 +807,7 @@ func LatestChatRecommendation(ctx context.Context, sessionID string, messageID i
 // session. User messages are included in full; assistant messages are reduced
 // to their conclusion (text after the last tool_use). Limited to n messages
 // (0 or negative = no context).
-func recentConversation(sessionID string, n int) []string {
+func recentConversation(ctx context.Context, sessionID string, n int) []string {
 	if n <= 0 {
 		return nil
 	}
@@ -824,7 +827,7 @@ func recentConversation(sessionID string, n int) []string {
 			// that already has a reading summary (summarizeContentForView yields
 			// an empty {"blocks":[]}). Re-read the raw content so the conclusion
 			// the recommendation LLM sees is the real answer, not nothing.
-			blocks, _ := rawAssistantBlocks(messages[i].ID, messages[i].Content)
+			blocks, _ := rawAssistantBlocks(ctx, messages[i].ID, messages[i].Content)
 			text = assistantConclusionFromBlocks(blocks)
 			// Legacy assistant content that is not blocks JSON (bare content
 			// array, ACP notification wrapper, plain text) parses to zero blocks;

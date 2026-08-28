@@ -3347,7 +3347,7 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	payload, ok := data.Payload.(map[string]any)
 	require.True(t, ok)
 	// messageId is stored as the original int64 (the buffer holds the Go value,
-	// not JSON), so it may appear as int64 or float64 depending on marshalling.
+	// not JSON), so it may appear as int64 or float64 depending on marshaling.
 	msgID, _ := payload["messageId"].(int64)
 	if msgID == 0 {
 		if f, ok := payload["messageId"].(float64); ok {

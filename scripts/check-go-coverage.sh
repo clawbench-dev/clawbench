@@ -144,6 +144,7 @@ exempt_files = {
     "internal/ai/accumulate.go",            # Block accumulator: complex goroutine sync + cancel paths
     "internal/handler/chat_stream.go",      # SSE stream handler: goroutine + ctx cancellation paths
     "internal/ai/backends/codex/discovery.go",  # Codex binary scanning: requires real codex binary + npm package structure
+    "internal/ai/backends/codex/list_sessions.go",  # Codex on-disk session scan: rollout file-system error paths (UserHomeDir/entry.Info/readErr) require integration setup
     "internal/ai/backends/claude/discovery.go",  # Claude binary strings scanning: requires real claude binary
     "internal/ai/backends/deepseek/discovery.go",  # DeepSeek/CodeWhale CLI models: requires codewhale/deepseek binary
     "internal/ai/backends/codebuddy/discovery.go",  # Codebuddy product JSON: requires installed codebuddy with product.cloudhosted.json

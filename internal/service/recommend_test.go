@@ -120,11 +120,11 @@ func TestRecentConversation_LimitsAndOrders(t *testing.T) {
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (302, '/test', 'user', 'second', ?, 0)", sessionID)
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (303, '/test', 'user', 'third', ?, 0)", sessionID)
 
-	got := recentConversation(sessionID, 3)
+	got := recentConversation(context.Background(), sessionID, 3)
 	// Most recent 3 messages: user "third", user "second", assistant conclusion "reply1"
 	assert.Equal(t, []string{"reply1", "second", "third"}, got, "should return the most recent n messages in chronological order")
 
-	gotAll := recentConversation(sessionID, 0)
+	gotAll := recentConversation(context.Background(), sessionID, 0)
 	assert.Len(t, gotAll, 0, "n<=0 should return no context")
 }
 
@@ -144,7 +144,7 @@ func TestRecentConversation_ReadsRawConclusionFromStrippedMessage(t *testing.T) 
 	// The summary exists → enrichMessagesWithSummaries strips the blocks view.
 	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 401, 'Fixed. Run the tests to confirm.')", sessionID)
 
-	got := recentConversation(sessionID, 2)
+	got := recentConversation(context.Background(), sessionID, 2)
 	// The assistant conclusion (text after the last tool_use → no trailing text,
 	// falls back to the longest text block) must be present, not skipped as empty.
 	assert.Equal(t, []string{"please fix", "Fixed. Run the tests to confirm."}, got,
@@ -325,5 +325,3 @@ func TestTriggerChatSummarization_RecommendSurvivesCancelledCtx(t *testing.T) {
 	}
 	assert.True(t, eventSeen, "expected a chat_recommendation event despite the cancelled session ctx")
 }
-
-

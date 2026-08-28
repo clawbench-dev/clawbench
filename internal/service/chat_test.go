@@ -456,7 +456,7 @@ func TestExtractPlainText_DeepNestingCapped(t *testing.T) {
 	// Pathological deep nesting must not hang or panic; it degrades gracefully
 	// to empty (recognized wrapper whose text exceeds the unwrap depth).
 	nested := `"leaf"`
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		nested = `{"text":` + nested + `}`
 	}
 	assert.Equal(t, "", service.ExtractPlainText(nested))
@@ -2639,12 +2639,12 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 	insertSessionWithTime(t, "/projectB", "shared-session", "B shared", "2025-01-01 10:00:01", false)
 
 	// projectA: 2 unread assistant messages (last_read_at is NULL → all unread)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", "/projectA", "shared-session")
 		require.NoError(t, err)
 	}
 	// projectB: 3 unread assistant messages
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", "/projectB", "shared-session")
 		require.NoError(t, err)
 	}
@@ -3672,12 +3672,12 @@ func TestGetChatHistoryPaged_HasMoreWithQueued(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Paged HasMore")
 
 	// 50 normal history messages.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		_, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("hist-%d", i), nil, false, "")
 		assert.NoError(t, err)
 	}
 	// 15 queued messages appended last (newest).
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		_, err := service.AddQueuedMessage("/project", "claude", sid, fmt.Sprintf("queued-%d", i), nil, fmt.Sprintf("q-%d", i), "")
 		assert.NoError(t, err)
 	}
@@ -3713,7 +3713,7 @@ func TestDequeueQueuedMessage_Atomic_NoDoubleConsume(t *testing.T) {
 
 	results := make([]bool, 2)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -4634,7 +4634,7 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 
 	var wg sync.WaitGroup
 	startedFlags := make([]bool, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

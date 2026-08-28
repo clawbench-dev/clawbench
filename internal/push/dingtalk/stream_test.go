@@ -277,8 +277,6 @@ func (m *mockDBWithCallback) DeleteSubscriber(userID string) error {
 
 var errTestFailure = fmt.Errorf("test failure")
 
-
-
 func TestOnChatBotMessage_SessionCommand_NotFound(t *testing.T) {
 	origDB := db
 	defer func() { db = origDB }()
@@ -483,12 +481,6 @@ func TestOnChatBotMessage_SessionList(t *testing.T) {
 		t.Error("expected running session to be marked with running indicator")
 	}
 }
-
-
-
-
-
-
 
 func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Fails(t *testing.T) {
 	origDB := db

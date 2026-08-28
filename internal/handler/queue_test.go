@@ -69,6 +69,97 @@ func TestQueueHandler_Enqueue_Success(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+func TestQueueHandler_Enqueue_FilePathsMissing(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-file-missing"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"message":   "with file",
+		"filePaths": []string{filepath.Join(env.ProjectDir, "does-not-exist.txt")},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestQueueHandler_Enqueue_FilesEntryMissing(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-files-missing"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"message": "with structured file",
+		"files": []map[string]any{
+			{"path": filepath.Join(env.ProjectDir, "no-such-file.txt")},
+		},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestQueueHandler_Get_DBError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-get-db-error"
+	createQueueSession(t, env, sessionID)
+
+	db := service.UnsafeDBForTest()
+	require.NoError(t, db.Close())
+
+	req := newRequest(t, http.MethodGet, "/api/ai/queue?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+func TestQueueHandler_Delete_QueueID_DBError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-delete-db-error"
+	createQueueSession(t, env, sessionID)
+
+	db := service.UnsafeDBForTest()
+	require.NoError(t, db.Close())
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID+"&queueId=q-1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+func TestQueueHandler_Delete_ClearAll_DBError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-clear-db-error"
+	createQueueSession(t, env, sessionID)
+
+	db := service.UnsafeDBForTest()
+	require.NoError(t, db.Close())
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
 func TestQueueHandler_Enqueue_WithFilePaths(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -485,7 +576,7 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 	payload, ok := data.Payload.(map[string]any)
 	require.True(t, ok)
 	// messageId is stored as the original int64 (the buffer holds the Go value,
-	// not JSON), so it may appear as int64 or float64 depending on marshalling.
+	// not JSON), so it may appear as int64 or float64 depending on marshaling.
 	msgID, _ := payload["messageId"].(int64)
 	if msgID == 0 {
 		if f, ok := payload["messageId"].(float64); ok {

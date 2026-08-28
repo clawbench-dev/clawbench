@@ -489,3 +489,43 @@ func TestServeAISessionUpdate_AutoApproveWithACPConn(t *testing.T) {
 	w := callHandler(ServeAISessionUpdate, req)
 	assertOK(t, w)
 }
+
+func TestServeSessionsOverview_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions/overview", nil)
+	w := callHandler(ServeSessionsOverview, req)
+
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+}
+
+func TestServeSessionsOverview_DBError(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	db := service.UnsafeDBForTest()
+	require.NoError(t, db.Close())
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
+	w := callHandler(ServeSessionsOverview, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+func TestServeSessionsOverview_EmptyResult(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
+	w := callHandler(ServeSessionsOverview, req)
+
+	assertOK(t, w)
+	var result struct {
+		Projects []any `json:"projects"`
+		Total    int   `json:"total"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, 0, result.Total)
+	assert.Empty(t, result.Projects)
+}
