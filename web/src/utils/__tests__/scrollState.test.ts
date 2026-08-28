@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isUserScrolling, shouldFollowStream, SCROLL_STOP_MS, NEAR_BOTTOM_PX, type ScrollStateInput } from '../scrollState'
+import { isUserScrolling, shouldFollowStream, SCROLL_STOP_MS, NEAR_BOTTOM_PX, STREAM_FOLLOW_GRACE_PX, type ScrollStateInput } from '../scrollState'
 
 function baseInput(overrides: Partial<ScrollStateInput> = {}): ScrollStateInput {
   return {
@@ -21,7 +21,7 @@ describe('isUserScrolling', () => {
     const now = 10000
     expect(isUserScrolling(baseInput({ owner: 'user', lastScrollAt: now - 100, now }))).toBe(true)
     // Fling keeps firing scroll events — window auto-extends
-    expect(isUserScrolling(baseInput({ owner: 'user', lastScrollAt: now - 149, now }))).toBe(true)
+    expect(isUserScrolling(baseInput({ owner: 'user', lastScrollAt: now - SCROLL_STOP_MS + 1, now }))).toBe(true)
   })
 
   it('returns false when the last scroll event is older than the stop window', () => {
@@ -88,5 +88,32 @@ describe('shouldFollowStream', () => {
 
   it('force + userTouching never follows even when near the bottom', () => {
     expect(shouldFollowStream(baseInput({ userTouching: true, nearBottomDist: 0 }), true)).toBe(false)
+  })
+})
+
+describe('shouldFollowStream — streaming grace band', () => {
+  it('follows when streaming and the viewport gap is within the grace band (DOM lags tokens)', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, nearBottomDist: 200 }), false)).toBe(true)
+    expect(shouldFollowStream(baseInput({ streaming: true, nearBottomDist: STREAM_FOLLOW_GRACE_PX }), false)).toBe(true)
+  })
+
+  it('does not follow when streaming but the user scrolled far beyond the grace band', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, nearBottomDist: STREAM_FOLLOW_GRACE_PX + 1 }), false)).toBe(false)
+    expect(shouldFollowStream(baseInput({ streaming: true, nearBottomDist: 2000 }), false)).toBe(false)
+  })
+
+  it('still follows when streaming near the bottom (unchanged base behavior)', () => {
+    expect(shouldFollowStream(baseInput({ streaming: true, nearBottomDist: 50 }), false)).toBe(true)
+  })
+
+  it('does not follow a streamed-away viewport when NOT streaming', () => {
+    expect(shouldFollowStream(baseInput({ streaming: false, nearBottomDist: 200 }), false)).toBe(false)
+  })
+
+  it('never overrides an active user scroll, even within the grace band', () => {
+    const now = 10000
+    const input = baseInput({ streaming: true, owner: 'user', lastScrollAt: now - 50, now, nearBottomDist: 200 })
+    expect(shouldFollowStream(input, true)).toBe(false)
+    expect(shouldFollowStream(baseInput({ streaming: true, userTouching: true, nearBottomDist: 200 }), true)).toBe(false)
   })
 })

@@ -786,7 +786,11 @@ func mergeACPSessions(primary, fallback []acp.SessionInfo) []acp.SessionInfo {
 	for _, group := range [][]acp.SessionInfo{primary, fallback} {
 		for _, session := range group {
 			id := string(session.SessionId)
+			// Sessions without a real id are not dedupable; keep them all so
+			// distinct entries with missing ids are never collapsed together
+			// (consistent with filterAndRetitleACPSessions).
 			if id == "" {
+				merged = append(merged, session)
 				continue
 			}
 			if _, ok := seen[id]; ok {

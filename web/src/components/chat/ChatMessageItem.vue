@@ -186,8 +186,12 @@ function handleToggleSummary() {
     emit('toggle-summary', props.msg?.id)
     return
   }
-  // Recompute scroll so the button stays at its original viewport top.
+  // Guard: if the user has manually scrolled since toggling, stop re-anchoring
+  // so we don't fight the user's scroll gesture.
+  const toggleStartScroll = scroller.scrollTop
+  const SCROLL_DRIFT_GUARD = 20
   const adjust = () => {
+    if (Math.abs(scroller.scrollTop - toggleStartScroll) > SCROLL_DRIFT_GUARD) return
     const newTop = wrap.getBoundingClientRect().top
     scroller.scrollTop = baseScroll + (newTop - anchor)
   }

@@ -913,6 +913,91 @@ func TestACPDiskDiscoveryToLoadSessionIntegration(t *testing.T) {
 	assert.Contains(t, loadRecorder.Body.String(), "sessionId")
 }
 
+func TestMergeACPSessions_PreservesEmptyIDsAndDedupsByID(t *testing.T) {
+	updatedA := "2026-08-27T10:00:00Z"
+	updatedB := "2026-08-27T11:00:00Z"
+
+	merged := mergeACPSessions(
+		[]acp.SessionInfo{
+			{SessionId: "dup", UpdatedAt: &updatedA},
+			{SessionId: "", UpdatedAt: &updatedA},
+		},
+		[]acp.SessionInfo{
+			{SessionId: "dup", UpdatedAt: &updatedB},
+			{SessionId: "", UpdatedAt: &updatedB},
+			{SessionId: "disk-only", UpdatedAt: &updatedB},
+		},
+	)
+
+	// Empty-id sessions must all survive (not dedupable); the shared "dup"
+	// id keeps the first (primary) occurrence; "disk-only" is appended.
+	require.Len(t, merged, 4)
+	// Sort must be by UpdatedAt desc: the 11:00 group precedes the 10:00 group.
+	ids := make([]string, len(merged))
+	times := make([]time.Time, len(merged))
+	for i, s := range merged {
+		ids[i] = string(s.SessionId)
+		times[i] = acpSessionUpdatedAt(s)
+	}
+	assert.Equal(t, "2026-08-27T11:00:00Z", times[0].Format(time.RFC3339))
+	assert.Equal(t, "2026-08-27T10:00:00Z", times[len(times)-1].Format(time.RFC3339))
+	// Descending order.
+	for i := 1; i < len(times); i++ {
+		assert.False(t, times[i].After(times[i-1]))
+	}
+	// The duplicate "dup" id appears exactly once.
+	var dupCount, emptyIDCount int
+	for _, id := range ids {
+		if id == "dup" {
+			dupCount++
+		}
+		if id == "" {
+			emptyIDCount++
+		}
+	}
+	assert.Equal(t, 1, dupCount)
+	assert.Equal(t, 2, emptyIDCount)
+}
+
+func TestMergeACPSessions_SortsByUpdatedAtDesc(t *testing.T) {
+	old := "2026-08-27T10:00:00Z"
+	mid := "2026-08-27T11:00:00Z"
+	newer := "2026-08-27T12:00:00Z"
+
+	merged := mergeACPSessions(
+		[]acp.SessionInfo{{SessionId: "a", UpdatedAt: &old}},
+		[]acp.SessionInfo{{SessionId: "b", UpdatedAt: &mid}, {SessionId: "c", UpdatedAt: &newer}},
+	)
+
+	require.Len(t, merged, 3)
+	assert.Equal(t, "c", string(merged[0].SessionId))
+	assert.Equal(t, "b", string(merged[1].SessionId))
+	assert.Equal(t, "a", string(merged[2].SessionId))
+}
+
+func TestAcpSessionUpdatedAt_ParsesRFC3339Variants(t *testing.T) {
+	// Plain RFC3339 (UTC, no fractional seconds).
+	noFractional := "2026-08-27T10:00:00Z"
+	parsed := acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &noFractional})
+	assert.Equal(t, time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC), parsed)
+
+	// RFC3339Nano with fractional seconds.
+	fractional := "2026-08-27T10:00:00.123456Z"
+	parsed = acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &fractional})
+	assert.Equal(t, 123456000, parsed.Nanosecond())
+
+	// Zone offset variant — time.Parse preserves the offset zone, so compare
+	// instants with Equal (not the literal wall-clock in UTC).
+	offset := "2026-08-27T10:00:00+08:00"
+	parsed = acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &offset})
+	assert.True(t, parsed.Equal(time.Date(2026, 8, 27, 2, 0, 0, 0, time.UTC)))
+
+	// Unparseable falls back to zero (sorts last).
+	assert.True(t, acpSessionUpdatedAt(acp.SessionInfo{}).IsZero())
+	garbage := "not-a-time"
+	assert.True(t, acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &garbage}).IsZero())
+}
+
 func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
