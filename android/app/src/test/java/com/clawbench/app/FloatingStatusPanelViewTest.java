@@ -218,7 +218,14 @@ public class FloatingStatusPanelViewTest {
 
         panel.constrainListHeight(100);
         int measured = panel.measureContentHeight(WIDTH_PX);
-        assertEquals("a constrained panel must measure to the target height", 100, measured);
+        // measureContentHeight measures CONTENT, temporarily restoring the
+        // scroll area to WRAP_CONTENT, so the report stays at the true content
+        // height even after the scroll area was capped. constrainListHeight
+        // separately caps the scroll area for the final window size.
+        assertTrue("content measure must exceed the 100px cap (it reports real content, "
+                + "one=" + measured + ")", measured > 100);
+        assertTrue("content must stay under the unconstrained content height",
+                measured <= panel.measureContentHeight(WIDTH_PX));
     }
 
     @Test
@@ -232,6 +239,23 @@ public class FloatingStatusPanelViewTest {
         LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) sv.getLayoutParams();
         assertTrue("scroll area must fit within the constrained panel, got " + lp.height,
                 lp.height > 0 && lp.height <= 100);
+    }
+
+    @Test
+    public void measureContentHeight_afterConstrain_stillReportsContent() throws Exception {
+        // Regression: a previous constrainListHeight set a fixed scroll-area
+        // height; measureContentHeight must still see the session rows, not a
+        // height clamped by the old (possibly 0) scroll area.
+        FloatingStatusPanelView panel = newPanel();
+        panel.render(new JSONObject(overviewWith(1)), null);
+        int unconstrained = panel.measureContentHeight(WIDTH_PX);
+
+        panel.constrainListHeight(40); // very small cap
+        int afterConstrain = panel.measureContentHeight(WIDTH_PX);
+
+        assertTrue("content height must survive a prior constraint, unconstrained="
+                        + unconstrained + " after=" + afterConstrain,
+                afterConstrain == unconstrained);
     }
 
     // --- helpers ---

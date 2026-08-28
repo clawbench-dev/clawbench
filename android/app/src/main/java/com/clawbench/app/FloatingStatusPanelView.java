@@ -336,12 +336,32 @@ public class FloatingStatusPanelView extends FrameLayout {
      * width. The panel is laid out at width x 0 so the header and list compute
      * their intrinsic heights; the result is the content height including
      * padding. UI thread only.
+     *
+     * The scroll area's height is temporarily reset to WRAP_CONTENT: a previous
+     * constrainListHeight() set a fixed height, and a fixed LayoutParams height
+     * would make the parent generate an EXACTLY measure spec that clamps the
+     * scroll area to that old (possibly 0) value — hiding the session rows from
+     * the measurement. Restoring WRAP_CONTENT lets the list report its true
+     * content height, then constrainListHeight() re-caps it for the final size.
      */
     public int measureContentHeight(int widthPx) {
-        measure(
-                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        return getMeasuredHeight();
+        ViewGroup.LayoutParams svLp = scrollView.getLayoutParams();
+        int savedScrollHeight = svLp.height;
+        if (savedScrollHeight != ViewGroup.LayoutParams.WRAP_CONTENT) {
+            svLp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+            scrollView.setLayoutParams(svLp);
+        }
+        try {
+            measure(
+                    View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            return getMeasuredHeight();
+        } finally {
+            if (savedScrollHeight != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                svLp.height = savedScrollHeight;
+                scrollView.setLayoutParams(svLp);
+            }
+        }
     }
 
     /**
