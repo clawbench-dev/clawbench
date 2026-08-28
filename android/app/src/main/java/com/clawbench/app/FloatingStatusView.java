@@ -43,13 +43,13 @@ public class FloatingStatusView extends FrameLayout {
 
     // Layout / animation constants.
     private static final int CORNER_RADIUS_DP = 18;
-    private static final int PADDING_H_DP = 12;
-    private static final int PADDING_V_DP = 6;
-    private static final int DOT_SIZE_DP = 8;
-    private static final int DOT_MARGIN_END_DP = 5;
-    private static final int TEXT_SIZE_SP = 12;
-    private static final int LOGO_SIZE_DP = 16;
-    private static final int LOGO_MARGIN_END_DP = 8;
+    private static final int PADDING_H_DP = 14;
+    private static final int PADDING_V_DP = 10;
+    private static final int DOT_SIZE_DP = 12;
+    private static final int DOT_MARGIN_END_DP = 6;
+    private static final int TEXT_SIZE_SP = 14;
+    private static final int LOGO_SIZE_DP = 24;
+    private static final int LOGO_MARGIN_END_DP = 10;
     // Breathing animation: the running dot pulses between 30% and full opacity.
     private static final float BREATH_ALPHA_MIN = 0.3f;
     private static final float BREATH_ALPHA_MAX = 1.0f;

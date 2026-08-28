@@ -270,4 +270,51 @@ public class FloatingStatusViewTest {
         assertEquals("stopBreathing must restore full opacity", 1.0f,
                 runningDot(capsule).getAlpha(), 0.001f);
     }
+
+    // =====================================================
+    // Capsule sizing: enlarged to match the panel header height
+    // =====================================================
+
+    private static int constantInt(String name) throws Exception {
+        java.lang.reflect.Field f = FloatingStatusView.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.getInt(null);
+    }
+
+    @Test
+    public void sizeConstants_areEnlargedToMatchPanelHeader() throws Exception {
+        // The user complained the collapsed capsule was "too stingy". These
+        // values mirror the expanded panel's title bar (PADDING_V 10dp,
+        // title text 14sp) so the capsule is at least as tall as the header.
+        assertEquals(10, constantInt("PADDING_V_DP"));
+        assertEquals(14, constantInt("PADDING_H_DP"));
+        assertEquals(12, constantInt("DOT_SIZE_DP"));
+        assertEquals(6, constantInt("DOT_MARGIN_END_DP"));
+        assertEquals(14, constantInt("TEXT_SIZE_SP"));
+        assertEquals(24, constantInt("LOGO_SIZE_DP"));
+        assertEquals(10, constantInt("LOGO_MARGIN_END_DP"));
+    }
+
+    @Test
+    public void capsuleMeasuredHeight_meetsTarget() throws Exception {
+        // Target ≈ 40dp (same as the panel header). Robolectric's default font
+        // metrics inflate the 14sp text line height well above on-device values
+        // (~19dp), so it measures ~55px here while a real device renders ~44dp
+        // (20dp vertical padding + 24dp logo). The lower bound is the real
+        // guard against a "stingy" capsule; the upper bound catches gross
+        // regressions. Robolectric runs at density=1, so dp == px here.
+        FloatingStatusView capsule = newCapsule();
+        capsule.renderStats(1, 1, 1);
+
+        int widthSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        int heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        capsule.measure(widthSpec, heightSpec);
+
+        int height = capsule.getMeasuredHeight();
+        assertTrue("capsule height " + height + "px must be >= 36dp (target ~40dp)",
+                height >= 36);
+        assertTrue("capsule height " + height + "px must be <= 64dp (Robolectric inflates text)",
+                height <= 64);
+        capsule.stopBreathing();
+    }
 }
