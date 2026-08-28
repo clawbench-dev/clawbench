@@ -3,14 +3,7 @@ import { initStore } from './store'
 import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { checkForUpdate } from './updater'
-
-/** Clear the session cache/storage and hard-reload the window (Ctrl+F5). */
-async function clearCacheAndReload(): Promise<void> {
-  const ses = session.defaultSession
-  await ses.clearCache()
-  await ses.clearStorageData({ storages: ['localstorage', 'indexdb', 'cookies', 'cachestorage', 'serviceworkers'] })
-  getMainWindow()?.webContents.reload()
-}
+import { clearCacheAndReload } from './session'
 
 app.whenReady().then(() => {
   // No OS menu bar — the app is fully UI-driven.

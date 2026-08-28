@@ -24,57 +24,40 @@ describe('ChatMessageList — handleTableBlockClick integration', () => {
  * (isAtBottom = false). A prior rAF callback would override the user's
  * scroll position, creating a fight between auto-scroll and manual scroll.
  *
- * Fix: rAF and setTimeout(300) corrections now check isAtBottom before
- * scrolling, and scrollToBottom respects a userTouching flag during
- * active touch drag gestures.
+ * Fix (evolved): all scroll decisions now go through the pure scroll-state
+ * guards (isUserScrolling / shouldFollowStream). Force pins never override an
+ * active user scroll — they are deferred until the scroll stops.
  */
 describe('ChatMessageList — scroll sticky抖动 fix', () => {
-  let mockEl
-  let rafCallbacks
-  let timers
-
-  beforeEach(() => {
-    rafCallbacks = []
-    timers = []
-    vi.stubGlobal('requestAnimationFrame', (cb) => {
-      rafCallbacks.push(cb)
-      return rafCallbacks.length
-    })
-    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  it('rAF correction is guarded against an active user scroll', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The rAF correction must not scroll while the user is scrolling.
+    expect(source).toContain('if (isUserScrolling(state2)) return')
+    // …and must not follow once the user has scrolled away (non-force).
+    expect(source).toContain('shouldFollowStream(state2, force)')
   })
 
-  afterEach(() => {
-    timers.forEach(t => clearTimeout(t))
-    vi.restoreAllMocks()
+  it('scrollToBottom returns early when the user is scrolling (touch drag)', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The guard is the unified isUserScrolling check, not a raw userTouching flag.
+    expect(source).toContain('if (isUserScrolling(state()))')
+    expect(source).not.toContain('if (userTouching && !force) return')
   })
 
-  it('rAF correction should NOT scroll when isAtBottom is false', () => {
-    // Simulate: user scrolled up → isAtBottom = false
-    // A rAF from a prior scrollToBottom should NOT snap back
-    const isAtBottom = { value: false }
-    const messagesRef = { value: { scrollHeight: 1000, scrollTop: 800, clientHeight: 100 } }
-    const gap = messagesRef.value.scrollHeight - messagesRef.value.scrollTop - messagesRef.value.clientHeight
-    // gap = 100, but isAtBottom is false → should NOT scroll
-    expect(gap).toBeGreaterThan(0)
-    // The fix: rAF checks isAtBottom before scrolling
-    // If isAtBottom.value is false, the rAF should return early
-    expect(isAtBottom.value).toBe(false)
-  })
-
-  it('scrollToBottom should skip when userTouching is true', () => {
-    // Simulate: user is actively touch-dragging
-    const userTouching = true
-    const force = false
-    // The fix: scrollToBottom returns early when userTouching && !force
-    expect(userTouching && !force).toBe(true)
-  })
-
-  it('scrollToBottom with force=true should still work when userTouching', () => {
-    // force=true means programmatic scroll (e.g., sending a message)
-    // This should override userTouching
-    const userTouching = true
-    const force = true
-    expect(userTouching && !force).toBe(false)
+  it('scrollToBottom with force=true defers the pin while the user is scrolling', async () => {
+    // New semantic: force=true no longer overrides an active user scroll.
+    // The pin is deferred (pendingFollow) and flushed only after the scroll
+    // stops — never while the user's finger is on the screen.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // scrollToBottom must consult isUserScrolling before pinning
+    expect(source).toContain('isUserScrolling(state())')
+    // A force pin during a user scroll is deferred, not applied
+    expect(source).toMatch(/if \(isUserScrolling\(state\(\)\)\) \{\s*if \(force\) pendingFollow = true/)
+    // The old "force overrides userTouching" check must be gone
+    expect(source).not.toContain('if (userTouching && !force) return')
   })
 })
 
@@ -88,46 +71,157 @@ describe('ChatMessageList — ensure-content event pass-through', () => {
 })
 
 /**
- * Tests for the force-scroll correction guard fix.
+ * Tests for the unified scroll-state refactor.
  *
- * Root cause: scrollToBottom's rAF and setTimeout(300) corrections both
- * bailed when isAtBottom was false, even for force=true scrolls. During a
- * session switch in original mode, content is lazy-loaded AFTER the initial
- * scroll — when the async blocks arrive, the container grows and the browser
- * keeps the old scrollTop, leaving the view pinned mid-list. The correction
- * was skipped because a scroll event had flipped isAtBottom to false.
+ * Old behavior: force=true pins unconditionally (rAF + setTimeout(300)
+ * corrections had no user-scrolling guard) — on touch devices a force pin
+ * during a fling yanked the view back to the bottom ("弹回" snap-back).
  *
- * Fix: force=true scrolls are unconditional (pin to bottom no matter what);
- * only non-force corrections keep the isAtBottom guard (protecting manual
- * scroll-up during streaming).
+ * New behavior:
+ * - force=true means "content grew, pin to bottom", but NEVER overrides an
+ *   active user scroll — the pin is deferred (pendingFollow) and flushed by
+ *   onScrollStopped only if the user is still near the bottom.
+ * - All decisions read live container geometry instead of the cached
+ *   isAtBottom ref.
+ * - The unconditional setTimeout(300) force pin is removed.
+ * - Array replacement (loadHistory) anchors the viewport to the first visible
+ *   message when the user is not at the bottom.
  */
-describe('ChatMessageList — force scroll corrections are unconditional', () => {
-  it('rAF correction source no longer guards force=true with isAtBottom', async () => {
+describe('ChatMessageList — force pin is guarded by user scrolling', () => {
+  it('scrollToBottom computes distance live and consults the scroll-state guards', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The rAF callback must scroll on force=true even when isAtBottom is false.
-    // The source must gate on `!force && !isAtBottom.value`, not `!isAtBottom.value`.
-    expect(source).toMatch(/if \(!force && !isAtBottom\.value\) return/)
-    // Force branch must NOT contain the old unconditional guard.
-    expect(source).not.toContain('if (!messagesRef.value || !isAtBottom.value) return')
+    // Live geometry, not the cached isAtBottom ref
+    expect(source).toContain('const dist = el.scrollHeight - el.scrollTop - el.clientHeight')
+    // Guards imported from the pure module
+    expect(source).toContain('isUserScrolling(state())')
+    expect(source).toContain('shouldFollowStream(state(), force)')
+  })
+  it('force pin is deferred (pendingFollow) while the user is scrolling, not applied', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/if \(isUserScrolling\(state\(\)\)\) \{\s*if \(force\) pendingFollow = true\s*return\s*\}/)
   })
 
-  it('delayed setTimeout(300) correction for force=true drops the isAtBottom guard', async () => {
+  it('onScrollStopped clears pendingFollow unconditionally and flushes only near the bottom', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The force-branch setTimeout body scrolls directly — no isAtBottom check.
-    // Extract the region between the setTimeout opener and the `}, 300)` closer.
-    const timerStart = source.indexOf('if (force) {')
-    const timerEnd = source.indexOf('}, 300)', timerStart)
-    const forceTimerRegion = source.slice(timerStart, timerEnd)
-    expect(forceTimerRegion).toContain('if (!messagesRef.value) return')
-    expect(forceTimerRegion).not.toContain('isAtBottom')
+    // onScrollStopped resets ownership and clears the deferred flag no matter what
+    expect(source).toContain('function onScrollStopped()')
+    // pendingFollow is always cleared here — stale pins never fire later
+    expect(source).toMatch(/if \(pendingFollow\) \{\s*pendingFollow = false\s*if \(dist <= NEAR_EDGE_THRESHOLD\) \{\s*scrollToBottom\(true\)/)
+    expect(source).toContain('setProgrammatic(false)')
   })
 
-  it('non-force rAF correction still respects isAtBottom', async () => {
+  it('the unconditional force setTimeout(300) pin is removed', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // Non-force (streaming follow, render-flush) must still protect manual scroll-up.
-    expect(source).toMatch(/if \(!force && !isAtBottom\.value\) return/)
+    // No 300ms force pin timer anywhere (the old `}, 300)` was too loose)
+    expect(source).not.toMatch(/setTimeout\([^)]*300\)/)
+  })
+
+  it('scroll-stop detection replaces the fixed 150ms touchend window', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('setTimeout(onScrollStopped, SCROLL_STOP_MS)')
+    expect(source).not.toContain('setTimeout(() => { userTouching = false }, 150)')
+  })
+
+  it('message array replacement anchors the viewport when not at the bottom', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('captureAnchor(el)')
+    expect(source).toContain('restoreAnchor(messagesRef.value, scrollAnchor)')
+  })
+
+  it('programmatic scrolling maps to the programmatic owner', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("scrollOwner.value = val ? 'programmatic' : 'idle'")
+  })
+})
+
+/**
+ * Tests for the DOM reconciliation key fix (listKey).
+ *
+ * Root cause: when a transient message's id changes from string (pending-xxx)
+ * to numeric (DB id) — e.g. after loadHistory or queue_drain — the v-for key
+ * changes but Vue's patch may leave a stale DOM node behind in certain WebView
+ * /GPU compositor states. This produces the "duplicate message" visual artifact
+ * that survives refresh (because the data layer is clean) and only clears on
+ * app restart (because restart recreates the DOM from scratch).
+ *
+ * Fix: the .chat-messages-list container now uses a structural key
+ * (listKey) that changes whenever the message array is replaced or reshuffled
+ * by rebuildFromDb, forcing Vue to unmount and remount the entire list.
+ */
+describe('ChatMessageList — DOM reconciliation key (listKey)', () => {
+  it('uses a structural listKey instead of bare session id', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The container key must reference listKey, not the raw session id
+    expect(source).toContain(':key="listKey"')
+    expect(source).not.toContain(":key=\"currentSessionId || 'no-session'\"")
+  })
+
+  it('listKey includes session id, message count, and first/last message id', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // listKey must be a computed that concatenates these segments
+    expect(source).toContain('const listKey = computed')
+    expect(source).toContain('props.currentSessionId')
+    expect(source).toContain('msgs.length')
+    expect(source).toContain('msgs[0]?.id')
+    expect(source).toContain('msgs[msgs.length - 1]?.id')
+  })
+})
+
+/**
+ * Tests for the stream-follow persistence fix.
+ *
+ * Root cause: a single throttled render flush (ContentBlocks.vue, 300ms) can
+ * grow scrollHeight far beyond STREAM_FOLLOW_GRACE_PX in one frame when a burst
+ * of tokens arrives at once. scrollToBottom's static distance check then rejects
+ * the follow (gap > grace band) and the viewport is never pulled down again —
+ * every later flush re-reads an even larger gap, so follow is lost permanently.
+ *
+ * Fix:
+ * - A stream-follow window (streamingFollowRef + streamStartAt) opens when a
+ *   streaming scroll request arrives and stays open until the stream ends or
+ *   the session switches. Within the window, a STATIONARY user follows
+ *   regardless of the gap (the time-window branch in shouldFollowStream).
+ * - Scrolling back to the bottom during streaming re-opens the window.
+ * - When the user's scroll stops (onScrollStopped) mid-stream, follow is
+ *   restored by pinning to the bottom once the gesture is over.
+ */
+describe('ChatMessageList — stream-follow persistence', () => {
+  it('streaming scroll requests open a follow window that persists across calls', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // A streaming scroll request opens the follow window
+    expect(source).toContain('if (streaming) openStreamFollowWindow()')
+    // The window state is tracked component-locally, not passed per-call
+    expect(source).toContain('const streamingFollowRef = ref(false)')
+    expect(source).toContain('let streamStartAt = 0')
+  })
+
+  it('scrolling back to the bottom during streaming re-opens the follow window', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('if (streamingFollowRef.value && nearBottom)')
+    expect(source).toContain('streamStartAt = Date.now()')
+  })
+
+  it('onScrollStopped restores follow when the user stops scrolling mid-stream', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("if (streamingFollowRef.value && dist > NEAR_EDGE_THRESHOLD) {")
+    expect(source).toContain('scrollToBottom(false, true)')
+  })
+
+  it('session switch closes the follow window', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('endStreamFollowWindow()')
   })
 })

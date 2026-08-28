@@ -71,6 +71,11 @@ vi.mock('@/utils/download', () => ({
   downloadFileByPath: mockDownloadFileByPath,
 }))
 
+const mockCopyText = vi.hoisted(() => vi.fn((_text: string, onSuccess?: () => void) => onSuccess?.()))
+vi.mock('@/utils/clipboard', () => ({
+  copyText: mockCopyText,
+}))
+
 vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
@@ -235,7 +240,7 @@ const i18n = createI18n({
   messages: {
     zh: {
       file: {
-        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切' },
+        context: { newFile: '新建文件', newFolder: '新建文件夹', paste: '粘贴', rename: '重命名', delete: '删除', archiveDir: '归档', openAsProject: '打开为项目', copy: '复制', cut: '剪切', copyPath: '拷贝路径', pathCopied: '路径已拷贝' },
         uploadHere: '上传到此处',
         dropToUpload: '松开上传到当前目录',
         pasteToUpload: '粘贴上传文件...',
@@ -253,7 +258,7 @@ const i18n = createI18n({
         truncateHint: '截断提示',
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
-        toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败' },
+        toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
         search: { title: '搜索文件' },
       },
       chat: {
@@ -332,6 +337,8 @@ beforeEach(() => {
   mockDialogPrompt.mockResolvedValue('newfile.txt')
   mockDialogAlert.mockReset()
   mockDownloadFileByPath.mockReset()
+  mockCopyText.mockReset()
+  mockCopyText.mockImplementation((_text: string, onSuccess?: () => void) => onSuccess?.())
   mockNavigateToDir.mockReset()
 })
 
@@ -744,6 +751,108 @@ describe('FileManagerContent — context menu', () => {
       await overlay.trigger('click')
       expect(wrapper.vm.ctxMenu.visible).toBe(false)
     }
+  })
+
+  it('re-opens context menu when right-clicking the overlay over a file', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    // The overlay covers the viewport; elementFromPoint resolves the element
+    // beneath the cursor. Mock a DIFFERENT file than the one the old menu was
+    // open on, so the assertion proves the menu re-opens for the new file.
+    const readmeItem = wrapper.findAll('.file-item:not(.dir-item)')[1]
+    const elementFromPoint = vi.fn(() => readmeItem.element)
+    const orig = document.elementFromPoint
+    document.elementFromPoint = elementFromPoint as typeof document.elementFromPoint
+    try {
+      const overlay = wrapper.find('.ctx-overlay')
+      expect(overlay.exists()).toBe(true)
+      await overlay.trigger('contextmenu', { clientX: 50, clientY: 60 })
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.visible).toBe(true)
+      expect(wrapper.vm.ctxMenu.entry).not.toBeNull()
+      expect(wrapper.vm.ctxMenu.entry.path).toBe('readme.md')
+      expect(elementFromPoint).toHaveBeenCalledWith(50, 60)
+    } finally {
+      document.elementFromPoint = orig
+    }
+  })
+
+  it('re-opens context menu for empty area when right-clicking overlay on empty space', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    const elementFromPoint = vi.fn(() => document.body)
+    const orig = document.elementFromPoint
+    document.elementFromPoint = elementFromPoint as typeof document.elementFromPoint
+    try {
+      const overlay = wrapper.find('.ctx-overlay')
+      expect(overlay.exists()).toBe(true)
+      await overlay.trigger('contextmenu', { clientX: 10, clientY: 10 })
+      await nextTick()
+      expect(wrapper.vm.ctxMenu.visible).toBe(true)
+      expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    } finally {
+      document.elementFromPoint = orig
+    }
+  })
+
+  it('copies the absolute path of the entry via doCopyPath', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'src/test.ts' }
+    await nextTick()
+
+    await wrapper.vm.doCopyPath()
+
+    expect(mockCopyText).toHaveBeenCalledWith('/project/src/test.ts', expect.any(Function), expect.any(Function))
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+    // Success callback shows a toast
+    expect(mockToastShow).toHaveBeenCalled()
+  })
+
+  it('falls back to the relative path when projectRoot is empty', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'src/test.ts' }
+    await nextTick()
+
+    const { store } = await import('@/stores/app')
+    const prevRoot = store.state.projectRoot
+    store.state.projectRoot = ''
+    try {
+      await wrapper.vm.doCopyPath()
+      expect(mockCopyText).toHaveBeenCalledWith('src/test.ts', expect.any(Function), expect.any(Function))
+    } finally {
+      store.state.projectRoot = prevRoot
+    }
+  })
+
+  it('shows an error toast when copyText fails', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    mockCopyText.mockImplementationOnce((_text: string, _onSuccess?: () => void, onError?: () => void) => onError?.())
+    await wrapper.vm.doCopyPath()
+
+    expect(mockToastShow).toHaveBeenCalledWith('操作失败', expect.objectContaining({ type: 'error' }))
+  })
+
+  it('renders copy path menu item for an entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    const items = wrapper.findAll('.context-menu-item')
+    const copyPathItem = items.find(el => el.text().includes('拷贝路径'))
+    expect(copyPathItem).toBeTruthy()
   })
 })
 
@@ -1767,6 +1876,10 @@ describe('FileManagerContent — create file/folder', () => {
 // ── Context menu file/dir actions ──
 
 describe('FileManagerContent — context menu actions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('doDelete emits delete for the entry', async () => {
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
@@ -1833,6 +1946,60 @@ describe('FileManagerContent — context menu actions', () => {
     await wrapper.vm.doOpenAsProject()
 
     expect(wrapper.vm.ctxMenu.visible).toBe(true)
+  })
+
+  it('doOpenAsProject posts the absolute path of the directory', async () => {
+    const fetchMock = vi.fn(async (url: any) => {
+      if (url === '/api/project') return { ok: true }
+      return { ok: true, status: 200 }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const reload = vi.fn()
+    vi.stubGlobal('location', { reload })
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    await wrapper.vm.doOpenAsProject()
+    await nextTick()
+
+    const projectCall = fetchMock.mock.calls.find(([url]) => url === '/api/project')
+    expect(projectCall).toBeTruthy()
+    expect(projectCall![1]).toEqual(expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: '/project/src' }),
+    }))
+    expect(reload).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('doOpenAsProject normalizes mixed separators when resolving the absolute path', async () => {
+    const fetchMock = vi.fn(async (url: any) => {
+      if (url === '/api/project') return { ok: true }
+      return { ok: true, status: 200 }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const reload = vi.fn()
+    vi.stubGlobal('location', { reload })
+    const { store } = await import('@/stores/app')
+    const prevRoot = store.state.projectRoot
+    store.state.projectRoot = 'E:\\proj'
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+    try {
+      await wrapper.vm.doOpenAsProject()
+      await nextTick()
+      const projectCall = fetchMock.mock.calls.find(([url]) => url === '/api/project')
+      expect(projectCall).toBeTruthy()
+      expect(projectCall![1]).toEqual(expect.objectContaining({
+        body: JSON.stringify({ path: 'E:/proj/src' }),
+      }))
+    } finally {
+      store.state.projectRoot = prevRoot
+      vi.unstubAllGlobals()
+    }
   })
 
   it('doDownload calls downloadFileByPath for the entry', async () => {

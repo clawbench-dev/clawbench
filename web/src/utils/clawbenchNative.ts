@@ -15,6 +15,10 @@ export interface ClawBenchNative {
   showServerDialog(): void
   openSession(sessionId: string): void
   setNativePushEnabled(enabled: boolean): void
+  /** Enable/disable the floating session status window (Android; no-op on desktop). */
+  setFloatingWindowEnabled(enabled: boolean): void
+  /** Read the persisted floating status window state (Android; no-op on desktop). */
+  getFloatingWindowEnabled(): boolean
   updateLastSeenEventId(id: string): void
   setKeepScreenOn(on: boolean): void
   log(level: string, tag: string, msg: string): void
@@ -67,10 +71,12 @@ export interface ClawBenchNative {
   shareFile(path: string, mime: string): Promise<void>
   shareFiles(paths: string, mimes: string): Promise<void>
 
+  /** Optional (Electron/Android): clear the HTTP cache and hard-reload the page. Used after upgrades. */
+  reloadApp?(): void | Promise<void>
   /** Optional (Electron): show a native OS notification. Click dispatches session/task navigation. */
   nativeNotify?(title: string, body: string, nav?: NotificationNav): Promise<void>
-  /** Optional (Electron/Android): sync native UI (status bar, splash) with the app theme. */
-  setTheme?(themeId: string): void
+  /** Optional (Electron/Android): sync native UI (status bar, splash, floating window) with the app theme. */
+  setTheme?(themeId: string, bg?: string, text?: string, textSecondary?: string, accent?: string): void
   /** Optional (Android): get the persisted app theme ID. */
   getTheme?(): string
 }

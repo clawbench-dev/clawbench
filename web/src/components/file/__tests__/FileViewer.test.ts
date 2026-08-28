@@ -158,6 +158,7 @@ afterEach(() => {
   fileNavState.overlayOpen.value = false
   fileNavState.canGoBack.value = false
   fileNavState.canGoForward.value = false
+  mockOpenSearch.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
@@ -167,11 +168,13 @@ afterEach(() => {
 // CodeMirrorViewer stub exposes handleExit so the FileViewer preview-while-
 // editing flow (which calls it to exit edit mode first) can be exercised.
 const mockHandleExit = vi.fn()
+const mockOpenSearch = vi.fn()
 const codeMirrorViewerStub = {
   name: 'CodeMirrorViewer',
   template: '<div class="cm-stub" />',
   methods: {
     handleExit: (...args: unknown[]) => mockHandleExit(...args),
+    openSearch: (...args: unknown[]) => mockOpenSearch(...args),
   },
 }
 
@@ -582,6 +585,135 @@ describe('FileViewer', () => {
       await ss.handleNavBack()
       expect(wrapper.emitted('navigateBack')).toBeFalsy()
       expect(ss.editing).toBe(true)
+    })
+  })
+
+  describe('search routing', () => {
+    const mdFile = {
+      name: 'readme.md',
+      path: '/tmp/readme.md',
+      content: '# Title\n\nsome text',
+      isMarkdown: true,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+    const codeFile = {
+      name: 'main.ts',
+      path: '/tmp/main.ts',
+      content: 'const x = 1',
+      isMarkdown: false,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+
+    it('opens CodeMirror search for a code file (CodeMirror view)', async () => {
+      const wrapper = mountViewer({ file: codeFile })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(true)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+      expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('opens CodeMirror search for markdown in source view', async () => {
+      const wrapper = mountViewer({ file: mdFile, markdownViewMode: 'source' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(true)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+      expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('emits toggleSearch for rendered markdown preview', async () => {
+      const wrapper = mountViewer({ file: mdFile, markdownViewMode: 'rendered' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(false)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).not.toHaveBeenCalled()
+      expect(wrapper.emitted('toggleSearch')).toBeTruthy()
+    })
+
+    it('opens CodeMirror search when editing from rendered markdown preview', async () => {
+      const wrapper = mountViewer({ file: mdFile, markdownViewMode: 'rendered' })
+      const ss = (wrapper.vm as any).$.setupState
+      ss.handleToggleEdit()
+      await nextTick()
+      expect(ss.isCodeMirrorView).toBe(true)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+    })
+
+    it('focusSearchInput opens CodeMirror search for a code file', async () => {
+      const wrapper = mountViewer({ file: codeFile })
+      const ss = (wrapper.vm as any).$.setupState
+      ss.focusSearchInput()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+    })
+
+    it('focusSearchInput does nothing for rendered markdown (drawer is focused by FileOverlay)', async () => {
+      const wrapper = mountViewer({ file: mdFile, markdownViewMode: 'rendered' })
+      const ss = (wrapper.vm as any).$.setupState
+      ss.focusSearchInput()
+      expect(mockOpenSearch).not.toHaveBeenCalled()
+      expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('opens CodeMirror search for HTML raw view', async () => {
+      const htmlFile = {
+        name: 'page.html', path: '/tmp/page.html', content: '<h1>hi</h1>',
+        isMarkdown: false, isHtml: true, isOpenapi: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: htmlFile, markdownViewMode: 'source' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(true)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+      expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('opens CodeMirror search for OpenAPI raw view', async () => {
+      const oapiFile = {
+        name: 'api.yaml', path: '/tmp/api.yaml', content: 'openapi: 3.0.0',
+        subtype: 'openapi',
+        isMarkdown: false, isHtml: false,
+        isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: oapiFile, markdownViewMode: 'source' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(true)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).toHaveBeenCalledTimes(1)
+      expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+    })
+
+    it('does not treat media files as CodeMirror views (no search routing to CM)', async () => {
+      const imgFile = {
+        name: 'photo.svg', path: '/tmp/photo.svg', content: '<svg/>',
+        isImage: true,
+        isMarkdown: false, isHtml: false,
+        isAudio: false, isVideo: false, isPdf: false, isOffice: false,
+        isBinary: false, tooLarge: false,
+      }
+      const wrapper = mountViewer({ file: imgFile, markdownViewMode: 'source' })
+      const ss = (wrapper.vm as any).$.setupState
+      expect(ss.isCodeMirrorView).toBe(false)
+      ss.handleToggleSearch()
+      expect(mockOpenSearch).not.toHaveBeenCalled()
     })
   })
 })

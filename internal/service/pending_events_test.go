@@ -423,6 +423,175 @@ func TestPendingEventExpiresAtNonPermPend(t *testing.T) {
 	assert.True(t, diff > 23*time.Hour && diff < 25*time.Hour, "session_update+cancelled expiry should be ~24h, got %v", diff)
 }
 
+func TestIsNotifiableEvent_UserMessage(t *testing.T) {
+	// chat_stream + user_message (value type — what StreamHub.Emit constructs)
+	assert.True(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "user_message", SessionID: "s1"}))
+	// pointer variant for compatibility
+	assert.True(t, IsNotifiableEvent("chat_stream", &ws.ChatStreamData{EventType: "user_message", SessionID: "s1"}))
+}
+
+func TestIsNotifiableEvent_NonUserMessage(t *testing.T) {
+	assert.False(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "content"}))
+	assert.False(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "thinking"}))
+	assert.False(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "tool_use"}))
+	assert.False(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "stream_start"}))
+	assert.False(t, IsNotifiableEvent("chat_stream", ws.ChatStreamData{EventType: "queue_drain"}))
+	assert.False(t, IsNotifiableEvent("chat_stream", &ws.ChatStreamData{EventType: "content"}))
+}
+
+func TestStoreNotifiableEvent_UserMessage_Disconnected(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// No WS subscriptions → HasDisconnectedClients returns true → should store
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	msg := ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_um_1",
+		Event: "chat_stream",
+		Data: ws.ChatStreamData{
+			SessionID: "sess_1",
+			EventType: "user_message",
+			Payload: map[string]any{
+				"messageId": int64(42),
+				"content":   "hello",
+				"queueId":   "q-1",
+			},
+		},
+	}
+
+	StoreNotifiableEvent(msg)
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM pending_events").Scan(&count)
+	assert.Equal(t, 1, count)
+
+	// Payload must be complete JSON containing messageId/queueId for offline recovery
+	var eventType, payload string
+	db.QueryRow("SELECT event_type, payload FROM pending_events").Scan(&eventType, &payload)
+	assert.Equal(t, "chat_stream", eventType)
+	var parsed ws.ServerMessage
+	require.NoError(t, json.Unmarshal([]byte(payload), &parsed))
+	data, ok := parsed.Data.(map[string]any)
+	require.True(t, ok, "expected ChatStreamData serialized as JSON object")
+	assert.Equal(t, "user_message", data["event_type"])
+	inner, _ := data["payload"].(map[string]any)
+	require.NotNil(t, inner)
+	assert.Equal(t, float64(42), inner["messageId"])
+	assert.Equal(t, "hello", inner["content"])
+	assert.Equal(t, "q-1", inner["queueId"])
+}
+
+func TestStoreNotifiableEvent_UserMessage_AllConnected(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	// Subscribe a real connected client so HasDisconnectedClients returns false
+	connected := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		mgr.Subscribe(conn, &wmu, "connected-client", "")
+		close(connected)
+		time.Sleep(2 * time.Second)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _, err := websocket.Dial(ctx, wsURL, nil)
+	require.NoError(t, err)
+
+	select {
+	case <-connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for connected client")
+	}
+
+	msg := ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_um_2",
+		Event: "chat_stream",
+		Data:  ws.ChatStreamData{SessionID: "sess_1", EventType: "user_message", Payload: map[string]any{"messageId": int64(1)}},
+	}
+
+	StoreNotifiableEvent(msg)
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM pending_events").Scan(&count)
+	assert.Equal(t, 0, count, "should not store user_message when all clients are connected")
+}
+
+func TestPendingEventExpiresAt_UserMessage(t *testing.T) {
+	// chat_stream + empty status → 24h default TTL (no special branch)
+	expiry := pendingEventExpiresAt("chat_stream", "")
+	tm, err := time.Parse(time.RFC3339, expiry)
+	require.NoError(t, err)
+	diff := time.Until(tm)
+	assert.True(t, diff > 23*time.Hour && diff < 25*time.Hour, "user_message expiry should be ~24h, got %v", diff)
+}
+
+func TestStoreNotifiableEventUserMessageExpiresAt(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	msg := ws.ServerMessage{
+		Type:  "event",
+		ID:    "evt_um_ttl",
+		Event: "chat_stream",
+		Data:  ws.ChatStreamData{SessionID: "s1", EventType: "user_message", Payload: map[string]any{"messageId": int64(1)}},
+	}
+
+	StoreNotifiableEvent(msg)
+
+	var expiresAt string
+	db.QueryRow("SELECT expires_at FROM pending_events").Scan(&expiresAt)
+	tm, err := time.Parse(time.RFC3339, expiresAt)
+	require.NoError(t, err)
+	diff := time.Until(tm)
+	assert.True(t, diff > 23*time.Hour && diff < 25*time.Hour, "stored user_message expiry should be ~24h, got %v", diff)
+}
+
+func TestGetPendingEvents_ReturnsUserMessage(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	require.NoError(t, StorePendingEvent("evt_10", "session_update", `{"status":"completed"}`, expiresAt))
+	require.NoError(t, StorePendingEvent("evt_um", "chat_stream", `{"event":"chat_stream","data":{"event_type":"user_message"}}`, expiresAt))
+
+	events, err := GetPendingEvents("evt_10")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "evt_um", events[0].EventID)
+	assert.Equal(t, "chat_stream", events[0].EventType)
+}
+
 func TestStoreNotifiableEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()

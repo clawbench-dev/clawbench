@@ -61,6 +61,12 @@ vi.mock('@/utils/appLog', () => ({
   },
 }))
 
+const mockReloadApp = vi.fn()
+const mockGetNative = vi.fn()
+vi.mock('@/utils/clawbenchNative', () => ({
+  getNative: (...args: any[]) => mockGetNative(...args),
+}))
+
 vi.mock('@/utils/version', () => ({
   compareVersions: (a: string, b: string) => {
     // Simple mock: strip v prefix and compare
@@ -87,12 +93,14 @@ describe('useUpgrade', () => {
     mockApiGet.mockReset()
     mockApiPost.mockReset()
     mockOnEvent.mockReset()
+    mockGetNative.mockReset()
     mockConnected.value = true
     mockServerConfig.value = { version: 'v1.0.0' }
     mockLoadConfig.mockResolvedValue(undefined)
 
-    // Reset localStorage
+    // Reset localStorage and sessionStorage
     localStorage.clear()
+    sessionStorage.clear()
   })
 
   // ── checkUpgrade ──
@@ -174,6 +182,16 @@ describe('useUpgrade', () => {
       await upgrade.startUpgrade()
 
       expect(upgrade.showProgressDialog.value).toBe(true)
+    })
+
+    it('clears the auto-reload session flag so a second upgrade can refresh again', async () => {
+      sessionStorage.setItem('clawbench-upgrade-reloaded', '1')
+      mockApiPost.mockResolvedValue({})
+
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(sessionStorage.getItem('clawbench-upgrade-reloaded')).toBeNull()
     })
   })
 
@@ -589,6 +607,225 @@ describe('useUpgrade', () => {
       // Should not have registered additional listeners
       // (first call in this test is from the import/module init)
       expect(mockOnEvent.mock.calls.length).toBeLessThanOrEqual(callCountBefore + 1)
+    })
+  })
+
+  // ── hardReloadAfterUpgrade ──
+
+  describe('hardReloadAfterUpgrade', () => {
+    let reloadSpy: ReturnType<typeof vi.fn>
+    let origReload: (() => void) | undefined
+
+    const stubLocationReload = () => {
+      reloadSpy = vi.fn()
+      origReload = window.location.reload
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, reload: reloadSpy },
+      })
+      // jsdom's Cache Storage API is a stub whose promises never settle —
+      // hide it so the web fallback path takes the direct reload branch.
+      Object.defineProperty(window, 'caches', { configurable: true, value: undefined })
+    }
+
+    const restoreLocationReload = () => {
+      if (origReload) {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          value: { ...window.location, reload: origReload },
+        })
+        origReload = undefined
+      }
+    }
+
+    beforeEach(() => {
+      stubLocationReload()
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      restoreLocationReload()
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    it('uses the native reloadApp bridge when available', async () => {
+      mockGetNative.mockReturnValue({ reloadApp: mockReloadApp })
+      mockReloadApp.mockReturnValue(undefined)
+
+      const upgrade = useUpgrade()
+      upgrade.hardReloadAfterUpgrade()
+
+      expect(mockReloadApp).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(mockReloadApp).toHaveBeenCalledTimes(1)
+      expect(reloadSpy).not.toHaveBeenCalled()
+    })
+
+    it('falls back to location.reload in plain web', async () => {
+      mockGetNative.mockReturnValue(undefined)
+
+      const upgrade = useUpgrade()
+      upgrade.hardReloadAfterUpgrade()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('only schedules the reload once even with repeated calls', async () => {
+      mockGetNative.mockReturnValue(undefined)
+
+      const upgrade = useUpgrade()
+      upgrade.hardReloadAfterUpgrade()
+      upgrade.hardReloadAfterUpgrade()
+      upgrade.hardReloadAfterUpgrade()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ── automatic reload on completed ──
+
+  describe('automatic reload on completed', () => {
+    let reloadSpy: ReturnType<typeof vi.fn>
+    let origReload: (() => void) | undefined
+
+    const stubLocationReload = () => {
+      reloadSpy = vi.fn()
+      origReload = window.location.reload
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, reload: reloadSpy },
+      })
+      Object.defineProperty(window, 'caches', { configurable: true, value: undefined })
+    }
+
+    const restoreLocationReload = () => {
+      if (origReload) {
+        Object.defineProperty(window, 'location', {
+          configurable: true,
+          value: { ...window.location, reload: origReload },
+        })
+        origReload = undefined
+      }
+    }
+
+    beforeEach(() => {
+      stubLocationReload()
+      mockGetNative.mockReturnValue(undefined)
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      restoreLocationReload()
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    it('reloads when fetchStatus transitions to completed', async () => {
+      // First status fetch returns an in-progress phase so the transition is detected.
+      mockApiGet.mockResolvedValueOnce({
+        phase: 'downloading',
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        progress: 50,
+        message: 'Downloading...',
+        backup_path: '',
+        error: '',
+      })
+      mockApiGet.mockResolvedValueOnce({
+        phase: 'completed',
+        current_version: 'v1.1.0',
+        latest_version: 'v1.1.0',
+        progress: 100,
+        message: '',
+        backup_path: '/tmp/backup',
+        error: '',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.fetchStatus()
+      expect(upgrade.state.phase).toBe('downloading')
+
+      await upgrade.fetchStatus()
+      expect(upgrade.state.phase).toBe('completed')
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not reload when fetchStatus returns failed', async () => {
+      mockApiGet.mockResolvedValueOnce({
+        phase: 'downloading',
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        progress: 50,
+        message: 'Downloading...',
+        backup_path: '',
+        error: '',
+      })
+      mockApiGet.mockResolvedValueOnce({
+        phase: 'failed',
+        current_version: '',
+        latest_version: '',
+        progress: 0,
+        message: '',
+        backup_path: '',
+        error: 'boom',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.fetchStatus()
+      await upgrade.fetchStatus()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).not.toHaveBeenCalled()
+    })
+
+    it('infers completed from an empty phase after the server restarts (production path)', async () => {
+      // The server never sends "completed": the old process dies while
+      // "restarting" and the new process answers /api/upgrade/status with an
+      // empty phase. The frontend must infer completion from that.
+      mockApiGet.mockResolvedValueOnce({
+        phase: 'downloading',
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        progress: 50,
+        message: 'Downloading...',
+        backup_path: '',
+        error: '',
+      })
+      mockApiGet.mockResolvedValueOnce({
+        phase: '',
+        current_version: '',
+        latest_version: '',
+        progress: 0,
+        message: '',
+        backup_path: '',
+        error: '',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.fetchStatus()
+      expect(upgrade.state.phase).toBe('downloading')
+
+      await upgrade.fetchStatus()
+      expect(upgrade.state.phase).toBe('completed')
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).toHaveBeenCalledTimes(1)
+    })
+
+    it('reloads when a WS upgrade_update arrives with completed', async () => {
+      const upgrade = useUpgrade()
+      // Simulate the module-level WS listener applying a phase transition.
+      upgrade.state.phase = 'downloading'
+      await vi.advanceTimersByTimeAsync(0)
+
+      upgrade.state.phase = 'completed'
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(reloadSpy).toHaveBeenCalledTimes(1)
     })
   })
 })

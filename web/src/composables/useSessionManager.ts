@@ -5,6 +5,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'SessionManager'
 
@@ -20,6 +21,8 @@ const TAG = 'SessionManager'
 export interface UseSessionManagerOptions {
   // Core state refs (owned by ChatPanel)
   messages: Ref<Record<string, unknown>[]>
+  /** Single write channel for the messages array (chatMessageReducer). */
+  dispatch: (action: ChatMessageAction) => void
   loading: Ref<boolean>
 
   // Session operations (from useChatSession)
@@ -47,6 +50,7 @@ export interface UseSessionManagerOptions {
 export function useSessionManager(options: UseSessionManagerOptions) {
   const {
     messages,
+    dispatch,
     loading,
     switchSessionCore,
     createSessionCore,
@@ -68,19 +72,17 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   /** Remove all pending messages from messages.value */
   function clearPendingMessages() {
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      if (messages.value[i].pending) messages.value.splice(i, 1)
-    }
+    dispatch({ type: 'clear_pending' })
   }
 
   /** Enqueue a message for later delivery while AI is generating.
-   *  Returns the enqueue result which may contain `needs_start` if the
-   *  session is no longer running (race condition: user enqueues right
-   *  as AI finishes). The caller should resubmit via sendMessageNow.
+   *  The backend persists the message (queued=1) and either starts an execution
+   *  or lets the running drain loop pick it up (B2 self-heal handles the
+   *  session-ended race), so no needs_start resubmit is needed.
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<{ needsStart: boolean; queueId?: string; message?: string; filePaths?: string[]; files?: FileEntry[] }> {
+  async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<boolean> {
     const inputText = text !== undefined ? text : ''
     const filePaths = attachedFiles.map(f => f.path)
     const allFileEntries: FileEntry[] = [
@@ -101,50 +103,34 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             queueId,
             filePaths,
             files: allFileEntries,
+            // Required so the backend's user_message broadcast carries
+            // senderClientId and this device can skip its own echo — without
+            // it the queued message is rendered twice (pending bubble + remote
+            // duplicate).
+            clientId: localStorage.getItem('clawbench_client_id') || undefined,
           }),
         }
       )
-      const data = await resp.json()
-
-      // Race condition fix: backend detected session is not running and
-      // dequeued the message. The frontend must resubmit as a new chat.
-      if (data.needs_start) {
-        // Remove the pending message from messages.value by queueId
-        if (queueId) {
-          const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-          if (idx !== -1) messages.value.splice(idx, 1)
-        } else {
-          // Fallback for callers without queueId
-          const idx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
-          )
-          if (idx !== -1) messages.value.splice(idx, 1)
-        }
-        scrollBottom(true)
-        return {
-          needsStart: true,
-          queueId,
-          message: data.message || inputText,
-          filePaths: data.filePaths || filePaths,
-          files: data.files || allFileEntries,
-        }
+      if (!resp.ok) {
+        throw new Error(`enqueue failed: ${resp.status}`)
       }
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
-      // On enqueue failure, remove the pending message we just added
+      // On enqueue failure, remove the pending message we just added.
       if (queueId) {
-        const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-        if (idx !== -1) messages.value.splice(idx, 1)
+        dispatch({ type: 'remove_pending', queueId })
       } else {
-        const idx = messages.value.findLastIndex(
-          (m) => m.role === 'user' && m.pending && m.content === inputText
-        )
-        if (idx !== -1) messages.value.splice(idx, 1)
+        // Rare path (no queueId) — content-match rollback via the reducer
+        // (single write channel: never splice messages directly).
+        dispatch({ type: 'optimistic_remove_content', content: inputText })
       }
+      // Report failure so callers can restore the input box (a failed enqueue
+      // must not leave the user's typed text cleared).
+      return false
     }
 
     scrollBottom(true)
-    return { needsStart: false }
+    return true
   }
 
   /** Remove a pending message by its queueId.
@@ -158,9 +144,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
         { method: 'DELETE' }
       )
-      // Remove from local messages
-      const idx = messages.value.findIndex((m) => m.id === queueId && m.pending)
-      if (idx !== -1) messages.value.splice(idx, 1)
+      // Remove from local messages via the reducer.
+      dispatch({ type: 'remove_pending', queueId })
     } catch {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
     }

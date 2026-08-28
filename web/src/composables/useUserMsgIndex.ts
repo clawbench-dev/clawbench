@@ -80,7 +80,10 @@ export function useUserMsgIndex(options: {
     options.setProgrammaticScrolling(true)
     item.scrollIntoView({ behavior: 'smooth', block: 'center' })
     highlightMessage(item)
-    setTimeout(() => { options.setProgrammaticScrolling(false) }, 600)
+    // Programmatic ownership is released by ChatMessageList's scroll-stop
+    // detection (onScrollStopped) when the smooth scroll settles — no fixed
+    // timeout here, which would cut a long scrollIntoView short and let its
+    // scroll events be misread as user scrolls.
   }
 
   async function jumpToUserMessage(msg: { id: number | string }) {
@@ -150,7 +153,7 @@ export function useUserMsgIndex(options: {
       options.setProgrammaticScrolling(true)
       items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
       highlightMessage(items[msgIndex])
-      setTimeout(() => { options.setProgrammaticScrolling(false) }, 600)
+      // Ownership released via scroll-stop detection (onScrollStopped).
     }
   }
 

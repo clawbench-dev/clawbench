@@ -108,7 +108,8 @@
                       @show-details="detailsDrawer.open()"
                       @open-git-history="openFileHistory"
                       @toggle-toc="tocDrawer.toggle()"
-                      @toggle-search="currentFile?.content && searchDrawer.toggle()"
+                      @toggle-search="currentFile?.content && openFileSearch()"
+                      @close-search="searchDrawer.close()"
                       @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                       @refresh="handleRefresh"
                       @jump="scrollToLine"
@@ -393,6 +394,7 @@
     </Teleport>
 
     <ToastNotification :toast="toast" />
+    <CompletionPopover />
     <DialogOverlay />
   </div>
 </template>
@@ -401,7 +403,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
+import { resolveThemeId, applyThemeAttributes, buildThemePalette } from '@/utils/themeMeta'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
@@ -429,6 +431,7 @@ import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
 import SessionSidebar from './components/session/SessionSidebar.vue'
@@ -466,6 +469,7 @@ import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
+import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
@@ -509,7 +513,7 @@ const TAG = 'ClawBench'
 const projectKey = ref('initial')
 const switchingProject = ref(false)
 
-async function hotSwitchProject(newProjectPath, pendingSessionId) {
+async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav) {
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -546,6 +550,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetTaskTabState()
   resetTabDrawerState()
   resetAllCrudLists()
+  completionPopover.reset()
   fileNav.closeOverlay()
   activeTab.value = 'chat'
 
@@ -575,7 +580,20 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   if (isAppMode.value) syncToNative().catch(() => {})
 
   // ── Phase 7: Handle cross-project pending navigation ──
-  if (pendingSessionId) {
+  if (pendingTaskNav) {
+    // Task navigation: ensure tasks loaded, then open the task settings + exec detail
+    try {
+      await loadTasks()
+    } catch {
+      // Proceed anyway — the task list may already be populated
+    }
+    switchTab('tasks')
+    navigateToTaskSettings(Number(pendingTaskNav.taskId))
+    if (pendingTaskNav.executionId) {
+      // openExecDetail without execData will auto-fetch from API via refreshExecDetail
+      openExecDetail(pendingTaskNav.executionId)
+    }
+  } else if (pendingSessionId) {
     // Watch for session identity to be ready instead of polling
     const stopWatch = watch(
       () => sessionIdentity.currentSessionId.value,
@@ -736,16 +754,10 @@ function handleOpenTask(e) {
   }
 
   if (projectPath && projectPath !== store.state.projectRoot) {
-    // Cross-project: switch project, store pending task navigation, then reload
+    // Cross-project: hot switch without page reload (same as session navigation)
     appLog.d(TAG, 'cross-project navigation, switching to', projectPath)
-    localStorage.setItem('clawbenchPendingNav', JSON.stringify({ taskId, executionId }))
-    fetch('/api/project', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: projectPath }),
-    }).then(() => {
-      window.location.reload()
-    }).catch(() => {
+    hotSwitchProject(projectPath, null, { taskId, executionId }).catch(() => {
+      // If project switch fails, try same-project switch as fallback
       appLog.w(TAG, 'project switch failed, falling back to same-project switch')
       navigateToTask()
     })
@@ -854,6 +866,66 @@ const { onEvent, init: initGlobalEvents, destroy: destroyGlobalEvents } = useGlo
 const removeTaskHandler = onEvent((event, data) => {
     if (event === 'task_update') {
         onTaskEvent(data)
+    }
+})
+
+// 取路径 basename 作为项目显示名（跨项目弹窗用）
+function projectBaseName(path) {
+    const trimmed = (path || '').replace(/[\\/]+$/, '')
+    const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
+}
+
+// 取路径父目录（去掉末尾项目名，用于弹窗路径展示）
+function projectParentDir(path) {
+    const trimmed = (path || '').replace(/[\\/]+$/, '')
+    const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+    return idx > 0 ? trimmed.slice(0, idx) : ''
+}
+
+// AI 完成弹窗：任何会话/定时任务完成时，若用户当前未在查看该会话，入队弹出。
+// 后端 session_update/task_update 的 completed 事件已携带 session_title 与
+// response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
+const completionPopover = useCompletionPopover()
+const removeCompletionHandler = onEvent((event, data) => {
+    if (!data || data.status !== 'completed') return
+    if (event !== 'session_update' && event !== 'task_update') return
+    const sessionId = data.session_id
+    if (!sessionId) return
+    // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
+    // 否则（看别的 Tab、或完成的是其他会话）都弹。
+    // 注意：PC 宽屏下聊天面板常驻右侧（ChatPanelContent :active 恒为 true），
+    // 此时 activeTab 可能是 browse/terminal 但聊天仍在前台——必须用同一判断。
+    const chatPanelActive = isWideScreen || activeTab.value === 'chat'
+    if (chatPanelActive && sessionId === sessionIdentity.currentSessionId.value) return
+    // 跨项目才展示项目名/路径（本项目不加）——判断弹窗会话项目与当前项目是否相同
+    const isSameProject = !data.project_path || data.project_path === store.state.projectRoot
+    const projectName = isSameProject ? '' : projectBaseName(data.project_path || '')
+    const projectParent = isSameProject ? '' : projectParentDir(data.project_path || '')
+    if (event === 'task_update') {
+        completionPopover.push({
+            sessionId,
+            kind: 'task',
+            title: data.session_title || '未命名任务',
+            summary: data.response_preview || '',
+            userMessage: data.last_user_message || '',
+            agentId: data.agent_id || '',
+            projectPath: projectParent,
+            projectName,
+            taskId: data.task_id,
+            executionId: data.execution_id,
+        })
+    } else {
+        completionPopover.push({
+            sessionId,
+            kind: 'session',
+            title: data.session_title || '未命名会话',
+            summary: data.response_preview || '',
+            userMessage: data.last_user_message || '',
+            agentId: data.agent_id || '',
+            projectPath: projectParent,
+            projectName,
+        })
     }
 })
 
@@ -1120,8 +1192,9 @@ function registerAppEventListeners() {
       const resolved = e.detail
       applyThemeAttributes(resolved)
       theme.value = resolved
-      // Notify native app to update status bar/nav bar colors
-      getNative()?.setTheme?.(resolved)
+      // Notify native app to update status bar/nav bar/floating window colors
+      const palette = buildThemePalette(resolved)
+      getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
       const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
       await initMermaid()
       await reRenderMermaid()
@@ -1246,6 +1319,26 @@ const theme = ref(resolveThemeId(_rawTheme))
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
+// The view pane is a CodeMirror-rendered file (code, markdown raw/editing)
+// when it's not the rendered markdown/HTML/OpenAPI preview. Such views use
+// CodeMirror's built-in search; only rendered previews need the SearchDrawer.
+const isCodeMirrorFileView = computed(() => {
+    const f = currentFile.value
+    // content === '' (new empty file) still renders CodeMirror; only
+    // null/undefined (media/binary/not-loaded) excludes it.
+    if (!f || typeof f.content !== 'string' || f.isExcalidraw) return false
+    if (f.isImage || f.isAudio || f.isVideo || f.isPdf || f.isOffice) return false
+    if (f.isBinary || f.tooLarge || f.error) return false
+    const ft = getFileType(f.name || '')
+    if (ft.isMarkdown) {
+        const editing = fileEditor.isEditing()
+        return editing || markdownViewMode.value !== 'rendered'
+    }
+    if (ft.isHtml || f.subtype === 'openapi') {
+        return markdownViewMode.value !== 'rendered'
+    }
+    return true
+})
 const { entries: recentFileEntries } = useRecentFiles()
 const recentFilesCount = computed(() => recentFileEntries.value.length)
 const projectRoot = computed(() => store.state.projectRoot)
@@ -1274,6 +1367,7 @@ function handleJumpPdfPage(pageNum) {
 watch(() => currentFile.value, (file, prevFile) => {
     tocDrawer.close()
     detailsDrawer.close()
+    searchDrawer.close()
     markdownViewMode.value = 'rendered'
     // When the open file is closed while the user is on the file-view tab,
     // fall back to the file manager tab automatically.
@@ -1925,7 +2019,8 @@ async function applyTheme(t) {
     const resolved = resolveThemeId(t)
     applyThemeAttributes(resolved)
     setSetting('theme', t)
-    getNative()?.setTheme?.(resolved)
+    const palette = buildThemePalette(resolved)
+    getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
     const { initMermaid, reRenderMermaid } = await import('./utils/mermaid.ts')
     await initMermaid()
     await reRenderMermaid()
@@ -2173,6 +2268,17 @@ function openFileViewSearchDrawer() {
     searchDrawer.open()
   }
 }
+
+// Route the view-pane search request. CodeMirror-rendered files (code,
+// markdown raw/editing) use CodeMirror's built-in search panel; only the
+// rendered markdown preview opens the SearchDrawer bottom sheet.
+function openFileSearch() {
+  if (isCodeMirrorFileView.value) {
+    fileOverlayRef.value?.focusSearchInput()
+  } else {
+    openFileViewSearchDrawer()
+  }
+}
 function handleCtrlF(e) {
     if (!(e.ctrlKey || e.metaKey) || e.key !== 'f') return
     // Skip when focus is in input/textarea/contenteditable/terminal
@@ -2193,7 +2299,7 @@ function handleCtrlF(e) {
             openBrowseSearchDrawer()
         } else if (panelIsActive('view')) {
             e.preventDefault()
-            openFileViewSearchDrawer()
+            openFileSearch()
         }
         // Left pane focused on a non-searchable tab → native Ctrl+F
     } else if (activeTab.value === 'chat') {
@@ -2204,7 +2310,7 @@ function handleCtrlF(e) {
         openBrowseSearchDrawer()
     } else if (activeTab.value === 'view') {
         e.preventDefault()
-        openFileViewSearchDrawer()
+        openFileSearch()
     }
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
@@ -2227,6 +2333,8 @@ onUnmounted(() => {
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
+    removeCompletionHandler()
+    completionPopover.reset()
     window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)

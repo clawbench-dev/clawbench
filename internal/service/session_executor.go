@@ -6,12 +6,21 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 )
+
+// activeStreams tracks all in-flight SessionExecutor instances. It lets the
+// graceful-shutdown path (FlushStreamingNow) force a final persistence of
+// accumulated blocks (including thinking) for every actively streaming session,
+// so a server restart mid-stream loses at most the last few hundred ms instead
+// of the whole tail. Entries are registered in NewSessionExecutor and removed
+// when the executor finishes (after Finalize has persisted the final content).
+var activeStreams sync.Map // key: sessionID (string), value: *SessionExecutor
 
 // ExecutionMode distinguishes between interactive chat and scheduled task execution.
 type ExecutionMode int
@@ -137,6 +146,12 @@ type SessionExecutor struct {
 	cfg RunConfig
 	ctx context.Context
 
+	// mu guards the accumulated state below. It is normally owned by the single
+	// event-loop goroutine (handleNonTerminalEvent/buildResult/Finalize all run
+	// there), but FlushStreamingNow on the graceful-shutdown path reads the same
+	// state concurrently from another goroutine — the mutex makes that read safe.
+	mu sync.Mutex
+
 	// Internal state accumulated during execution
 	blocks           []model.ContentBlock
 	responseMetadata *ai.Metadata
@@ -151,6 +166,13 @@ type SessionExecutor struct {
 	// incremental events (e.g. ACP thinking deltas) does not saturate the
 	// consumer with full-block JSON marshal + SQLite writes.
 	lastFlush time.Time
+	// forceIncludeThinking is set by the graceful-shutdown flush
+	// (FlushStreamingNow → flushStreamingLocked(true)). Once set, subsequent
+	// rate-limited flushes keep thinking in the content instead of stripping it
+	// — otherwise a flush(false) racing the process exit would overwrite the
+	// just-persisted thinking with a thinking-less body while chat_thinking
+	// already holds records the frontend would never lazy-load.
+	forceIncludeThinking bool
 }
 
 // NewSessionExecutor creates a new executor for the given configuration.
@@ -159,11 +181,47 @@ type SessionExecutor struct {
 // hierarchies where the cancellation infrastructure can't reach the executor's
 // inner context.
 func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
-	return &SessionExecutor{
+	e := &SessionExecutor{
 		cfg:        cfg,
 		ctx:        ctx,
 		toolStarts: make(map[string]time.Time),
 	}
+	// Register so graceful shutdown can flush this stream's accumulated blocks.
+	// Removed by unregisterActiveStream once the executor has finished.
+	activeStreams.Store(cfg.SessionID, e)
+	return e
+}
+
+// unregisterActiveStream removes the executor from the active-streams registry.
+// Called after the executor has finished (RunWithChannel terminal or Finalize),
+// so a graceful shutdown does not flush an already-finalized stream.
+func (e *SessionExecutor) unregisterActiveStream() {
+	activeStreams.Delete(e.cfg.SessionID)
+}
+
+// FlushStreamingNow forces a final persistence of accumulated content for every
+// actively streaming session. It is called by the server's graceful-shutdown
+// path (SIGINT/SIGTERM) BEFORE the HTTP server is drained, so a restart loses
+// only the content that arrived within the last rate-limit window.
+//
+// Each active executor is flushed with includeThinking=true: thinking blocks are
+// written into the streaming row content (slimmed) and recorded into
+// chat_thinking, so a restarted server keeps the reasoning content that the
+// per-500ms flush skips. The flush is mutex-guarded against the event-loop
+// goroutine and sets a sticky flag so no racing rate-limited flush can strip
+// the thinking back out.
+//
+// This is a one-shot best-effort snapshot: executors that finish concurrently
+// after being iterated still finalize normally; executors that keep streaming
+// while the process is shutting down are left as streaming=1 rows, which the
+// startup orphan-cleanup marks as cancelled (preserving whatever was flushed).
+func FlushStreamingNow() {
+	activeStreams.Range(func(key, value any) bool {
+		if e, ok := value.(*SessionExecutor); ok {
+			e.flushStreamingLocked(true)
+		}
+		return true
+	})
 }
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
@@ -174,6 +232,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// this, AccumulateBlock would append the retry's content onto the stale
 	// partial content from the first attempt, producing duplicated text.
 	if event.Type == eventTypeContentReset {
+		e.mu.Lock()
 		slog.Warn("session executor: content_reset, clearing accumulated blocks",
 			slog.String("session", e.cfg.SessionID),
 			slog.Int("blocks_before", len(e.blocks)))
@@ -182,6 +241,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.responseMetadata = nil
 		e.lastFlush = time.Time{}
 		e.toolStarts = make(map[string]time.Time)
+		e.mu.Unlock()
 		// Reset the streaming message in DB to empty so stale partial content
 		// doesn't persist if the retry Prompt fails or the server crashes.
 		emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}}) // safe: known structure
@@ -230,15 +290,20 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// Forward event to WS clients via StreamHub
 	e.forwardEvent(event)
 
-	// Accumulate block
+	// Accumulate block. Guarded so FlushStreamingNow (shutdown goroutine) can
+	// read e.blocks concurrently without a data race.
+	e.mu.Lock()
 	ai.AccumulateBlock(&e.blocks, event)
+	e.mu.Unlock()
 
 	// Upsert tool call metadata to DB (best-effort)
 	e.upsertToolCallToDB(event)
 
 	// metadata capture
 	if event.Type == contentKeyMetadata && event.Meta != nil {
+		e.mu.Lock()
 		e.responseMetadata = event.Meta
+		e.mu.Unlock()
 		if event.Meta.SessionID != "" {
 			e.captureExternalSessionID(event.Meta.SessionID)
 		}
@@ -248,6 +313,8 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// aggressive for ACP backends that emit bursts of incremental deltas — the
 	// full-block JSON marshal + SQLite write stalls the consumer and the stream
 	// channel fills, dropping events. Persist at most once per flushInterval.
+	// Not under e.mu: flushStreamingLocked takes e.mu itself, and lastFlush is
+	// only touched by this single event-loop goroutine.
 	if time.Since(e.lastFlush) >= flushInterval {
 		e.flushStreamingMessage()
 		e.lastFlush = time.Now()
@@ -283,6 +350,10 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 	// no event trips the rate-limited flush in handleNonTerminalEvent.
 	flushTicker := time.NewTicker(flushInterval)
 	defer flushTicker.Stop()
+	// Unregister on exit so graceful shutdown does not flush this stream again
+	// after it has already stopped accumulating. Finalize also unregisters; the
+	// second call is a harmless no-op.
+	defer e.unregisterActiveStream()
 
 	for {
 		select {
@@ -364,6 +435,8 @@ func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
 
 // buildResult constructs the final RunResult from the executor's accumulated state.
 func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	wallMs := int(time.Since(wallStart).Milliseconds())
 
 	// Apply finalize post-processing on blocks
@@ -453,6 +526,8 @@ func (e *SessionExecutor) upsertToolCallToDB(event ai.StreamEvent) {
 		return
 	}
 	// Find the matching block in accumulated blocks
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for i := len(e.blocks) - 1; i >= 0; i-- {
 		if e.blocks[i].Type == eventTypeToolUse && e.blocks[i].ID == event.Tool.ID {
 			block := &e.blocks[i]
@@ -483,9 +558,42 @@ func (e *SessionExecutor) flushStreamingMessage() {
 	if db == nil {
 		return
 	}
+	e.flushStreamingLocked(false)
+}
+
+// flushStreamingLocked writes the accumulated blocks to the database.
+// includeThinking controls whether thinking blocks are persisted now:
+//   - false (rate-limited flushes): thinking stays in memory, only rendered
+//     live over WS; it is persisted once at finalization via persistThinkingToDB.
+//   - true (graceful-shutdown forced flush): thinking is written immediately
+//     so a restart mid-stream does not lose the reasoning content.
+//
+// The content is written as a non-slimmed JSON body; when includeThinking is
+// true the thinking blocks are also recorded into chat_thinking keyed by
+// message id + think_id (mirroring Finalize's persistThinkingToDB, which is a
+// no-op when there is nothing to slim). Full finalization (streaming=0, RAG
+// index, summarization) still happens in Finalize.
+func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
+	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
+	// is nothing to persist to. Guarding here keeps the forced flush safe on the
+	// graceful-shutdown path without assuming a DB exists.
+	if db == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Once the graceful-shutdown flush runs, keep thinking in every subsequent
+	// flush. Otherwise a flush(false) racing the process exit would overwrite
+	// the just-persisted thinking with a thinking-less body while chat_thinking
+	// already holds records the frontend would never lazy-load (missing
+	// think_id), losing the thinking permanently.
+	if includeThinking {
+		e.forceIncludeThinking = true
+	}
 	serializedBlocks := make([]model.ContentBlock, 0, len(e.blocks))
 	for _, b := range e.blocks {
-		if b.Type == "thinking" {
+		if b.Type == "thinking" && !e.forceIncludeThinking {
 			continue
 		}
 		serializedBlocks = append(serializedBlocks, b)
@@ -495,10 +603,21 @@ func (e *SessionExecutor) flushStreamingMessage() {
 		contentMap[contentKeyMetadata] = e.responseMetadata
 	}
 	blocksJSON, _ := json.Marshal(contentMap)
-	if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, string(blocksJSON)); err != nil {
+	content := string(blocksJSON)
+	if err := UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, content); err != nil {
 		slog.Error("failed to update streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
+		return
+	}
+	if e.forceIncludeThinking {
+		// Persist thinking blocks into chat_thinking and slim the persisted
+		// content (remove thinking text, keep think_id) — identical to what
+		// Finalize does, so the streaming row and chat_thinking stay consistent
+		// across a restart. Finalize is idempotent over this.
+		if slimContent := persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID); slimContent != content {
+			_ = UpdateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, slimContent)
+		}
 	}
 }
 
@@ -594,7 +713,11 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 			rawOutput += event.RawOutput
 		case eventTypeToolUse, eventTypeToolResult:
 			e.trackToolDuration(&event)
+			// e.blocks is only touched by this executor's goroutines; a
+			// concurrent FlushStreamingNow read is safe via e.mu.
+			e.mu.Lock()
 			ai.AccumulateBlock(&e.blocks, event)
+			e.mu.Unlock()
 			e.upsertToolCallToDB(event)
 		case "session_capture":
 			if event.Content != "" {
@@ -619,10 +742,20 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// Drain remaining events first (raw_output + tool calls flushed by debouncer
 	// after the main event loop exited on cancel). This updates e.blocks so that
 	// buildContentJSON includes the latest tool call data.
+	//
+	// NOTE: not holding e.mu here — drainRemainingEvents blocks until the
+	// producer closes the channel, and it takes e.mu itself around the
+	// AccumulateBlock calls. Holding e.mu across the blocking drain would
+	// deadlock against a producer goroutine that tries to take e.mu.
 	rawOutput := e.drainRemainingEvents(eventCh, result.RawOutput)
 
-	// Use e.blocks (may have been updated by drain) instead of result.Blocks snapshot
+	// Use e.blocks (may have been updated by drain) instead of result.Blocks
+	// snapshot. Snapshot under lock so FlushStreamingNow (shutdown goroutine)
+	// can read e.blocks concurrently without a data race. From here on this
+	// function owns the local `blocks` slice.
+	e.mu.Lock()
 	blocks := e.blocks
+	e.mu.Unlock()
 	responseMetadata := result.Metadata
 
 	// Apply the same post-processing as buildResult.
@@ -686,6 +819,10 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	result.Metadata = responseMetadata
 	result.RawOutput = rawOutput
 	result.MsgID = msgID
+
+	// Stream is fully persisted — stop tracking it for graceful shutdown flushes.
+	// RunWithChannel may already have unregistered on its own exit; no-op there.
+	e.unregisterActiveStream()
 
 	return result
 }

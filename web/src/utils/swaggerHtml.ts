@@ -43,8 +43,14 @@ export function buildSwaggerSrcdoc(specJson: string, isDark: boolean = false, sc
   * { scrollbar-color: ${scrollbarThumb} ${scrollbarTrack}; }
   /* Hide the top bar (Swagger UI logo + URL input) — we provide the spec inline */
   .swagger-ui .topbar { display: none; }
-  /* Adjust info section margin */
-  .swagger-ui .info { margin: 10px 0; }
+  /* Tighten page margins so content uses more of the preview area */
+  .swagger-ui .wrapper { padding: 0 8px; max-width: none; }
+  .swagger-ui .info { margin: 8px 0; }
+  .swagger-ui .scheme-container { padding: 8px 0; }
+  .swagger-ui .opblock-tag { padding: 8px 0 8px 12px; }
+  .swagger-ui .opblock { margin: 0 0 10px; }
+  .swagger-ui .opblock .opblock-summary { padding: 7px 8px; }
+  .swagger-ui .opblock .opblock-section { padding: 10px 12px; }
 </style>
 </head><body>
 <div id="swagger-ui"><div class="swagger-loading">Loading API docs...</div></div>

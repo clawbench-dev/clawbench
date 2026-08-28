@@ -13,6 +13,11 @@ import (
 	"clawbench/internal/model"
 )
 
+const (
+	acpStdoutInitialBuffer = 64 * 1024
+	acpStdoutMaxMessage    = 32 * 1024 * 1024
+)
+
 // acpStdoutFilter wraps an io.Reader (agent stdout) and produces a filtered
 // io.Reader that fixes common ACP protocol violations. Currently handles:
 //
@@ -62,7 +67,7 @@ func newACPStdoutFilter(r io.Reader) *acpStdoutFilter {
 // pump reads lines from src, filters them, and writes to the pipe writer.
 func (f *acpStdoutFilter) pump(src io.Reader) {
 	scanner := bufio.NewScanner(src)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 0, acpStdoutInitialBuffer), acpStdoutMaxMessage)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()

@@ -58,6 +58,10 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   shareFile: (path: string, mime: string) => invoke('native:share-file', path, mime),
   shareFiles: (paths: string, mimes: string) => invoke('native:share-files', paths, mimes),
   nativeNotify: (title: string, body: string, nav?: unknown) => invoke('native:notify', title, body, nav),
-  setTheme: (theme: string) => { ipcRenderer.send('native:set-theme', theme) },
+  reloadApp: () => invoke('native:reload-app'),
+  setTheme: (theme: string, bg?: string, text?: string, textSecondary?: string, accent?: string) => {
+    // Desktop has no floating window; only the theme id is meaningful here.
+    ipcRenderer.send('native:set-theme', theme, bg ?? null, text ?? null, textSecondary ?? null, accent ?? null)
+  },
   getTheme: () => { try { return ipcRenderer.sendSync('native:get-theme') } catch { return 'dark' } },
 })

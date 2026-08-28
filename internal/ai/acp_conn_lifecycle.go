@@ -574,13 +574,19 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 		reg := GetAgentCapabilityRegistry()
 		listSessions := initResp.AgentCapabilities.SessionCapabilities.List != nil
 		deleteSession := initResp.AgentCapabilities.SessionCapabilities.Delete != nil
+		// PromptCapabilities.Image: whether the agent accepts ContentBlock::Image
+		// in session/prompt requests (multimodal recognition). Defaults to false
+		// when omitted, per the protocol's "omitted means unsupported" rule.
+		promptImage := initResp.AgentCapabilities.PromptCapabilities.Image
 		reg.UpdateListSessions(c.agent.ID, listSessions)
 		reg.UpdateDeleteSession(c.agent.ID, deleteSession)
+		reg.UpdatePromptImage(c.agent.ID, promptImage)
 		slog.Info("acp conn: extracted capabilities from Initialize",
 			"agent_id", c.agent.ID,
 			"loadSession", "skipped (use BackendSpec)",
 			"listSessions", listSessions,
-			"deleteSession", deleteSession)
+			"deleteSession", deleteSession,
+			"promptImage", promptImage)
 	}
 
 	// Pre-scan CodeBuddy plugin commands to work around the AvailableCommandsUpdate

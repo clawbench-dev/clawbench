@@ -46,7 +46,7 @@ import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsCard from './SettingsCard.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -64,14 +64,18 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
-
 const activeKey = ref<string | null>(null)
 const commonPrompt = ref('')
 const commonPromptLoaded = ref(false)
 const copying = ref(false)
 
-onMounted(() => {
-  loadAgents(true)
+onMounted(async () => {
+  await loadAgents(true)
+  // Merge ACP-reported models into agent.models so the preferred-model selector
+  // shows the same stable list as the chat model drawer (Issue #404). Without
+  // this, /api/agents now returns the pure CLI list and ACP-only models would
+  // be missing when this agent isn't the current session's agent.
+  await populateACPStateFromCache(props.agentId)
 })
 
 // Lazy-load common prompt (only needed for system prompt editing)

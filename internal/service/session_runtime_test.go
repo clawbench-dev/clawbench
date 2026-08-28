@@ -223,15 +223,29 @@ func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	SetSessionRunning("session-stuck-queue", true)
-	// Enqueue a message to verify it gets cleared on force-cancel
-	EnqueueMessage("session-stuck-queue", model.QueuedMessage{Text: "hello"})
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	_, err = db.Exec(drainTestSchema)
+	require.NoError(t, err)
+	cleanup := SetDBForTest(db, db)
+	defer func() {
+		cleanup()
+		db.Close()
+	}()
 
-	result := CancelSession("session-stuck-queue")
+	sessionID := "session-stuck-queue"
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Stuck')", sessionID)
+	require.NoError(t, err)
+
+	SetSessionRunning(sessionID, true)
+	// Enqueue a message to verify it gets cleared on force-cancel
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "hello", nil, "q-1", "")
+
+	result := CancelSession(sessionID)
 	assert.True(t, result)
-	assert.False(t, IsSessionRunning("session-stuck-queue"))
+	assert.False(t, IsSessionRunning(sessionID))
 	// Queue should be cleared
-	assert.Nil(t, GetQueue("session-stuck-queue"))
+	assert.Equal(t, 0, GetQueuedCount(sessionID))
 }
 
 func TestCancelSession_StuckThenNewMessage(t *testing.T) {
@@ -461,6 +475,8 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 		backend TEXT NOT NULL DEFAULT 'claude',
 		streaming INTEGER NOT NULL DEFAULT 0,
 		indexed INTEGER NOT NULL DEFAULT 0,
+		queue_id TEXT DEFAULT '',
+		queued INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	if err != nil {
@@ -876,6 +892,97 @@ func TestGetSessionResponsePreview_OneOverMaxRunes(t *testing.T) {
 	assert.Equal(t, strings.Repeat("一二三四", responsePreviewMaxRunes/4)+"…", result)
 }
 
+// --- regression: push preview must not be emptied by summary enrichment ---
+
+func TestGetSessionResponsePreviewRaw_IgnoresSummaryStripping(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	// Assistant message with a real text block after the last tool_use
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "Bash", ID: "call_1", Status: "success", Done: true},
+		{Type: "text", Text: "修复完成，测试全部通过"},
+	}
+	contentJSON, _ := json.Marshal(map[string]any{"blocks": blocks})
+	insertTestMessage(t, db, "session-preview-summary", "user", "问题")
+	var asstID int64
+	require.NoError(t, db.QueryRow(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
+		string(contentJSON)).Scan(&asstID))
+
+	// Insert a reading summary for the assistant message — this causes
+	// GetMessagesBySessionID to strip content to empty blocks.
+	_, err := db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, '修复完成，测试全部通过')", asstID)
+	require.NoError(t, err)
+
+	// getSessionResponsePreviewRaw must still see the original blocks.
+	raw := getSessionResponsePreviewRaw("session-preview-summary")
+	assert.Equal(t, "修复完成，测试全部通过", raw)
+
+	// GetMessagesBySessionID keeps its bandwidth-optimized stripping behavior.
+	messages, err := GetMessagesBySessionID("session-preview-summary")
+	require.NoError(t, err)
+	var stripped string
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			stripped = m.Content
+		}
+	}
+	var parsed struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(stripped), &parsed))
+	assert.Empty(t, parsed.Blocks, "GetMessagesBySessionID should still strip content to empty blocks")
+}
+
+func TestGetAssistantRawContents_ReturnsUnmodifiedContent(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	contentJSON, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{
+		{Type: "text", Text: "原始内容"},
+	}})
+	insertTestMessage(t, db, "session-raw-1", "user", "问题")
+	insertTestMessage(t, db, "session-raw-1", "assistant", string(contentJSON))
+	// Streaming assistant message must be excluded
+	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"流式中"}]}`)
+	require.NoError(t, err)
+	// Queued assistant message must be excluded
+	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, queued) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
+	require.NoError(t, err)
+
+	contents, err := GetAssistantRawContents("session-raw-1")
+	require.NoError(t, err)
+	assert.Len(t, contents, 1, "only the finalized assistant message is returned")
+	assert.Equal(t, string(contentJSON), contents[0])
+
+	raw := getSessionResponsePreviewRaw("session-raw-1")
+	assert.Equal(t, "原始内容", raw)
+}
+
+// TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks verifies the
+// newest-first walk skips non-JSON content and empty blocks, falling back to an
+// older assistant message that has real text.
+func TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	// Oldest assistant message: real answer
+	goodContent, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{
+		{Type: "text", Text: "真实回答"},
+	}})
+	insertTestMessage(t, db, "session-skip-1", "user", "问题")
+	insertTestMessage(t, db, "session-skip-1", "assistant", string(goodContent))
+	// Newer assistant message: non-JSON content — must be skipped
+	insertTestMessage(t, db, "session-skip-1", "assistant", "纯文本不是JSON")
+	// Newest assistant message: valid JSON but empty blocks — must be skipped
+	emptyBlocks, _ := json.Marshal(map[string]any{"blocks": []model.ContentBlock{}})
+	insertTestMessage(t, db, "session-skip-1", "assistant", string(emptyBlocks))
+
+	raw := getSessionResponsePreviewRaw("session-skip-1")
+	assert.Equal(t, "真实回答", raw)
+}
+
 // --- emitSessionEvent with response preview ---
 
 func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
@@ -891,10 +998,10 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	insertTestMessage(t, db, "session-emit-1", "assistant", string(contentJSON))
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session", "agent-1")
 	require.NoError(t, err)
 
 	// Set up ws manager and a subscriber to capture the event
@@ -922,6 +1029,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	assert.Equal(t, "**加粗**和`代码`以及[链接](http://example.com)", data.ResponsePreview)
 	assert.Equal(t, "加粗和代码以及链接", data.ResponsePreviewPlain)
 	assert.Equal(t, "/home/user/test-project", data.ProjectPath)
+	assert.Equal(t, "agent-1", data.AgentID)
 }
 
 func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
@@ -960,6 +1068,36 @@ func TestEmitSessionEvent_NilManager(t *testing.T) {
 	assert.NotPanics(t, func() {
 		EmitSessionEvent("session-nil-mgr", "running", false)
 	})
+}
+
+// EmitSessionEventWSOnly broadcasts the session_update event to all WS clients
+// but must NOT produce a push notification (that's handled separately by the
+// completion path's EmitSessionPushNotification).
+func TestEmitSessionEventWSOnly_BroadcastNoPush(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-wsonly", "")
+	_ = sub
+
+	EmitSessionEventWSOnly("session-ws-only-1", "completed", false)
+
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) == 0 {
+		t.Fatal("expected at least one buffered event")
+	}
+	data, ok := buffered[0].Data.(*ws.SessionUpdateData)
+	if !ok {
+		t.Fatal("expected SessionUpdateData")
+	}
+	assert.Equal(t, "completed", data.Status)
+	assert.Equal(t, "session-ws-only-1", data.SessionID)
 }
 
 // --- CancelSession with bad cancel type ---
@@ -1030,6 +1168,13 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
+	// Insert a session row with an agent so the event carries agent_id
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-task-1", "/home/user/project", "codebuddy", "test task", "task-agent-1")
+	require.NoError(t, err)
+
 	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
@@ -1054,6 +1199,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	assert.Equal(t, "session-task-1", data.SessionID)
 	assert.Equal(t, "/home/user/project", data.ProjectPath)
 	assert.Equal(t, "test task", data.SessionTitle)
+	assert.Equal(t, "task-agent-1", data.AgentID)
 }
 
 func TestEmitTaskEvent_EmptyOptionalFields(t *testing.T) {
@@ -1103,6 +1249,8 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	backend TEXT NOT NULL DEFAULT 'claude',
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
+	queue_id TEXT DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -2294,117 +2442,6 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 
 // --- Drain loop tests ---
 
-func TestRunDrainLoop_UserCancel_EmitsCancelled(t *testing.T) {
-	cleanupActiveSessions()
-	defer cleanupActiveSessions()
-
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{CancelReason: cancelReasonUser}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	RunDrainLoop(cfg, DrainResult{CancelReason: cancelReasonUser})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
-
-func TestRunDrainLoop_ErrorResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-error-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	RunDrainLoop(cfg, DrainResult{Err: "something went wrong"})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "something went wrong", finalEvent.Error)
-}
-
-func TestRunDrainLoop_EmptyResult_EmitsError(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-empty-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	RunDrainLoop(cfg, DrainResult{Empty: true})
-	assert.Equal(t, "error", finalEvent.Type)
-	assert.Equal(t, "AI returned no content", finalEvent.Error)
-}
-
-func TestRunDrainLoop_OtherCancelReason_EmitsCancelled(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-other-cancel-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	RunDrainLoop(cfg, DrainResult{CancelReason: "disconnect"})
-	assert.Equal(t, statusCancelled, finalEvent.Type)
-}
-
-func TestRunDrainLoop_NormalCompletion_NoQueue_EmitsDone(t *testing.T) {
-	var finalEvent ai.StreamEvent
-	cfg := DrainConfig{
-		SessionID:   "drain-done-session",
-		ProjectPath: "/test",
-		BackendName: "codebuddy",
-		PersistUser: func(text string, files []model.FileEntry) (int64, error) {
-			return 1, nil
-		},
-		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
-			return DrainResult{}
-		},
-		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
-			finalEvent = event
-		},
-	}
-
-	// Normal completion with no cancel reason, no error, not empty
-	RunDrainLoop(cfg, DrainResult{})
-	assert.Equal(t, "done", finalEvent.Type)
-}
-
 // --- EmitSessionEvent: DingTalk push path (lines 82-84) ---
 
 func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
@@ -2722,6 +2759,8 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`)
 		require.NoError(t, err)

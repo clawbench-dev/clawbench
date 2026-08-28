@@ -238,7 +238,7 @@
             <component :is="autoThemeIsDark ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
           <button
-            v-for="id in THEME_IDS"
+            v-for="id in SORTED_THEME_IDS"
             :key="id"
             class="theme-item"
             :class="{ active: themeSelection === id }"
@@ -295,7 +295,7 @@ import type { KeyDef } from '@/utils/terminalKeyDefs'
 import {
   TERMINAL_THEME_AUTO,
   TERMINAL_THEME_STORAGE_KEY,
-  THEME_IDS,
+  SORTED_THEME_IDS,
   formatThemeName,
   loadThemesModule,
   resolveTheme,
@@ -1805,6 +1805,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; }
 .theme-picker-list { max-height: 300px; overflow-y: auto; }
+.theme-item + .theme-item { border-top: 1px solid var(--border-color); }
 .theme-item {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 5px 10px; border: none; border-radius: 0;

@@ -1351,3 +1351,28 @@ func TestSweepOnce_KillsExcessBeyondMinAliveConns(t *testing.T) {
 		conn.mu.Unlock()
 	}
 }
+
+func TestGetCurrentModelIDByAgentID(t *testing.T) {
+	mgr := GetACPConnManager()
+	agent := &model.Agent{ID: "test-model-id-agent", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "sid-model-id")
+	conn.SetCurrentModelID("anthropic/claude-sonnet-4-6")
+	mgr.SetConnForTest("sid-model-id", conn)
+	defer mgr.CloseConn("sid-model-id")
+
+	assert.Equal(t, "anthropic/claude-sonnet-4-6", mgr.GetCurrentModelIDByAgentID("test-model-id-agent"))
+}
+
+func TestGetCurrentModelIDByAgentID_EmptyWhenNoConnOrNoSelection(t *testing.T) {
+	mgr := GetACPConnManager()
+	// No connection for this agent at all
+	assert.Equal(t, "", mgr.GetCurrentModelIDByAgentID("agent-with-no-conn"))
+
+	// Connection exists but no model selected yet
+	agent := &model.Agent{ID: "agent-no-selection", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "sid-no-selection")
+	mgr.SetConnForTest("sid-no-selection", conn)
+	defer mgr.CloseConn("sid-no-selection")
+
+	assert.Equal(t, "", mgr.GetCurrentModelIDByAgentID("agent-no-selection"))
+}

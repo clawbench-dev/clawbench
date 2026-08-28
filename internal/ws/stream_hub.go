@@ -27,6 +27,7 @@ type StreamHub struct {
 	subscribers       map[string]map[string]struct{} // sessionID -> set of clientIDs
 	mgr               *Manager
 	getContextUsageFn GetContextStateUsageFunc // injected by service layer
+	storeEventFn      func(ServerMessage)      // injected by service layer (write-ahead)
 }
 
 // SetGetContextStateUsageFunc injects a function that retrieves persisted usage
@@ -34,6 +35,14 @@ type StreamHub struct {
 // circular imports.
 func (h *StreamHub) SetGetContextStateUsageFunc(fn GetContextStateUsageFunc) {
 	h.getContextUsageFn = fn
+}
+
+// SetEventStoreFunc injects a function that persists notifiable WS events
+// (write-ahead). Called by the service layer to avoid circular imports.
+func (h *StreamHub) SetEventStoreFunc(fn func(ServerMessage)) {
+	h.mu.Lock()
+	h.storeEventFn = fn
+	h.mu.Unlock()
 }
 
 // NewStreamHub creates a StreamHub associated with the given Manager.
@@ -100,20 +109,7 @@ func (h *StreamHub) HasSubscribers(sessionID string) bool {
 
 // Emit fans out a streaming event to all subscribed WS clients for a session.
 func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
-	h.mu.RLock()
-	subs, ok := h.subscribers[sessionID]
-	if !ok || len(subs) == 0 {
-		h.mu.RUnlock()
-		return
-	}
-	// Copy subscriber list to avoid holding lock during sends
-	clientIDs := make([]string, 0, len(subs))
-	for id := range subs {
-		clientIDs = append(clientIDs, id)
-	}
-	h.mu.RUnlock()
-
-	// Convert StreamEvent to WS message
+	// Convert StreamEvent to WS message (needed for both write-ahead and fan-out)
 	payload := StreamEventToPayload(event)
 	if payload == nil {
 		return
@@ -129,6 +125,31 @@ func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
 			Payload:   payload,
 		},
 	}
+
+	// Write-ahead: persist notifiable events (user_message) before broadcast so
+	// offline clients can recover them after reconnect. This runs even when there
+	// are no subscribers — StoreNotifiableEvent's HasDisconnectedClients returns
+	// true with zero subscriptions.
+	h.mu.RLock()
+	storeFn := h.storeEventFn
+	h.mu.RUnlock()
+	if storeFn != nil && event.Type == "user_message" {
+		storeFn(msg)
+	}
+
+	// Fan out to subscribers
+	h.mu.RLock()
+	subs, ok := h.subscribers[sessionID]
+	if !ok || len(subs) == 0 {
+		h.mu.RUnlock()
+		return
+	}
+	// Copy subscriber list to avoid holding lock during sends
+	clientIDs := make([]string, 0, len(subs))
+	for id := range subs {
+		clientIDs = append(clientIDs, id)
+	}
+	h.mu.RUnlock()
 
 	// Send to each subscriber
 	for _, clientID := range clientIDs {
@@ -181,6 +202,11 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return warningPayload(event)
 	case "user_message":
 		return userMessagePayload(event)
+	case "stream_start":
+		if event.StreamStart != nil {
+			return map[string]int64{"message_id": event.StreamStart.MessageID}
+		}
+		return nil
 	case "queue_drain":
 		return queueDrainPayload(event)
 	case "queue_cancel":

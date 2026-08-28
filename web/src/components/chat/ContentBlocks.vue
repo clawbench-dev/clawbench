@@ -889,32 +889,32 @@ onUnmounted(() => {
   gap: 6px;
   padding: 6px 10px;
   margin: 2px 0;
-  border-left: 3px solid #ef4444;
-  background: rgba(239, 68, 68, 0.08);
+  border-left: 3px solid var(--color-red, #ef4444);
+  background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
 }
 
 .chat-error-card .error-icon {
   flex-shrink: 0;
-  color: #ef4444;
+  color: var(--color-red, #ef4444);
 }
 
 .chat-error-card .error-text {
   font-size: 12px;
   font-weight: 500;
-  color: #dc2626;
+  color: var(--color-red, #dc2626);
 }
 
 :root[data-theme-base="dark"] .chat-error-card {
-  border-left-color: #f87171;
-  background: rgba(248, 113, 113, 0.1);
+  border-left-color: var(--color-red, #f87171);
+  background: color-mix(in srgb, var(--color-red, #f87171) 10%, transparent);
 }
 
 :root[data-theme-base="dark"] .chat-error-card .error-icon {
-  color: #f87171;
+  color: var(--color-red, #f87171);
 }
 
 :root[data-theme-base="dark"] .chat-error-card .error-text {
-  color: #fca5a5;
+  color: var(--color-red, #fca5a5);
 }
 
 .chat-warning-card {
@@ -923,34 +923,34 @@ onUnmounted(() => {
   gap: 6px;
   padding: 6px 10px;
   margin: 2px 0;
-  border-left: 3px solid #f59e0b;
-  background: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid var(--color-yellow, #f59e0b);
+  background: color-mix(in srgb, var(--color-yellow, #f59e0b) 8%, transparent);
 }
 
 .chat-warning-card .warning-icon {
   flex-shrink: 0;
-  color: #f59e0b;
+  color: var(--color-yellow, #f59e0b);
 }
 
 .chat-warning-card .warning-text {
   font-size: 12px;
   font-weight: 500;
-  color: #d97706;
+  color: var(--color-yellow, #d97706);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 :root[data-theme-base="dark"] .chat-warning-card {
-  border-left-color: #fbbf24;
-  background: rgba(251, 191, 36, 0.1);
+  border-left-color: var(--color-yellow, #fbbf24);
+  background: color-mix(in srgb, var(--color-yellow, #fbbf24) 10%, transparent);
 }
 
 :root[data-theme-base="dark"] .chat-warning-card .warning-icon {
-  color: #fbbf24;
+  color: var(--color-yellow, #fbbf24);
 }
 
 :root[data-theme-base="dark"] .chat-warning-card .warning-text {
-  color: #fcd34d;
+  color: var(--color-yellow, #fcd34d);
 }
 
 .chat-warning-card .warning-continue-btn {

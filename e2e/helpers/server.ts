@@ -107,8 +107,10 @@ system_prompt: |
 `)
 
   // 5. Copy the pre-built Go binary to temp dir
-  // The binary is built before E2E tests run (by CI or developer)
-  const binPath = join(projectRoot, 'clawbench')
+  // The binary is built before E2E tests run (by CI or developer).
+  // E2E_SERVER_BIN overrides the binary path (e.g. a `-tags integration` build
+  // that registers the acp-mock backend).
+  const binPath = process.env.E2E_SERVER_BIN || join(projectRoot, 'clawbench')
   const tempBinPath = join(tempDir, 'clawbench')
   writeFileSync(tempBinPath, readFileSync(binPath))
   chmodSync(tempBinPath, 0o755) // Make binary executable
@@ -132,8 +134,10 @@ system_prompt: |
     console.warn('[E2E] Warning: public/ directory not found, frontend may not be served')
   }
 
-  // 6. Start server from temp dir so it picks up our config
-  const serverProcess = spawn(tempBinPath, [`--port`, String(port)], {
+  // 6. Start server from temp dir so it picks up our config.
+  // The temp .clawbench dir is passed via --data-dir so the test server NEVER
+  // touches the developer's real database (~/.clawbench).
+  const serverProcess = spawn(tempBinPath, [`--port`, String(port), `--data-dir`, join(tempDir, '.clawbench')], {
     cwd: tempDir,
     env: {
       ...process.env,

@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, sortMessages, nextClientSeq, computeAfterSort, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, nextClientSeq, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -15,11 +15,13 @@ const TAG = 'ChatStream'
 
 export interface UseChatStreamOptions {
   messages: Ref<ChatMessage[]>
+  /** Single write channel for the messages array (chatMessageReducer). */
+  dispatch: (action: ChatMessageAction) => void
   currentSessionId: Ref<string>
   currentBackend: Ref<string>
   loading: Ref<boolean>
   onRenderNeeded: (forceFull?: boolean) => void
-  onScrollBottom: (force?: boolean) => void
+  onScrollBottom: (force?: boolean, streaming?: boolean) => void
   onLoadHistory: () => Promise<void>
   onMessage: () => void
   onOpen: () => void
@@ -38,6 +40,7 @@ export interface UseChatStreamOptions {
 export function useChatStream(options: UseChatStreamOptions) {
   const {
     messages,
+    dispatch,
     currentSessionId,
     currentBackend,
     loading,
@@ -47,7 +50,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     onMessage,
     onOpen,
     isOpen,
-    onToast,
     onNotification,
     onStreamEnd,
     onFileModified,
@@ -57,7 +59,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     onReplayDone,
   } = options
 
-  let streamTimeout: ReturnType<typeof setTimeout> | null = null
   const renderScheduler = new StreamFrameScheduler()
   // Watchdog for tool_use blocks: a tool that goes silent for TOOL_USE_TIMEOUT_MS
   // is considered stalled and marked done. Restarted on every tool_use progress
@@ -65,11 +66,11 @@ export function useChatStream(options: UseChatStreamOptions) {
   const toolUseWatchdog = new ToolUseWatchdog()
   // Counter for assigning stable _key to thinking blocks during streaming
   let thinkingBlockCounter = 0
-  // Whether we are currently streaming (subscribed to a session)
-  let isStreaming = false
+  // Whether the WS subscription to a session is live. Persistent: set on session
+  // open, cleared on session switch/unmount, re-established on WS reconnect.
+  let isSubscribed = false
+  let subscribedSessionId: string | null = null
 
-  const STREAM_TIMEOUT_MS = 30000 // 30 seconds without any WS event = try reconnect
-  const PERMISSION_STREAM_TIMEOUT_MS = 300000 // 5 min when permission approval is pending (user deciding)
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
   // Subagent (task/Agent) tool calls run for minutes inside a child session whose
@@ -92,51 +93,116 @@ export function useChatStream(options: UseChatStreamOptions) {
       return
     }
     renderScheduler.schedule('render', onRenderNeeded)
-    renderScheduler.schedule('scroll', () => onScrollBottom())
+    // Streaming context: content is still arriving, so the viewport should
+    // follow even if the container height hasn't grown to the bottom yet.
+    renderScheduler.schedule('scroll', () => onScrollBottom(false, true))
   }
 
-  function hasPendingPermissionApproval(): boolean {
-    const sm = findStreamingMsg(messages.value)
-    if (!sm?.blocks) return false
-    return sm.blocks.some(
-      (b) =>
-        b.type === 'tool_use' &&
-        b.name === 'PermissionApproval' &&
-        !b.done &&
-        !b.input?.autoApproved
-    )
+  // ── Subscription (decoupled from streaming state) ──
+  // The WS subscription is persistent for the open session: established on
+  // session open, torn down on session switch/unmount, re-established on WS
+  // reconnect (the backend clears all subscriptions on disconnect). It no
+  // longer tracks whether an AI stream is active.
+
+  /** Subscribe to a session's WS events (deduped: same session → no-op). */
+  function subscribe(sessionId: string | null) {
+    if (!sessionId) return
+    if (isSubscribed && subscribedSessionId === sessionId) return
+    if (isSubscribed && subscribedSessionId !== sessionId) {
+      if (subscribedSessionId) {
+        sendWsMessage({ type: 'unsubscribe', session_id: subscribedSessionId })
+      }
+    }
+    sendWsMessage({ type: 'subscribe', session_id: sessionId })
+    subscribedSessionId = sessionId
+    isSubscribed = true
   }
 
-  function resetStreamTimeout() {
-    if (streamTimeout) clearTimeout(streamTimeout)
-    // Extend timeout when a permission approval is pending — the user needs time to decide
-    const timeoutMs = hasPendingPermissionApproval() ? PERMISSION_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS
-    streamTimeout = setTimeout(() => {
-      appLog.w(TAG, 'Stream timeout - no events received, reloading from DB')
-      // No WS event received for too long — reload from DB
-      disconnectStream()
-      onLoadHistory().then(() => {
-        // loadHistory sets loading based on data.running — if the session
-        // is still active, it will reconnect the stream and keep loading=true.
-        // Only trigger onStreamEnd if the session is truly done (loading=false).
-        if (!loading.value) {
-          onStreamEnd?.('error')
-        }
-      }).catch(() => {
-        // loadHistory failed — reset loading state so user isn't stuck
-        loading.value = false
-        onStreamEnd?.('error')
-      })
-    }, timeoutMs)
+  /** Unsubscribe from the current session (idempotent). */
+  function unsubscribe() {
+    if (isSubscribed && subscribedSessionId) {
+      sendWsMessage({ type: 'unsubscribe', session_id: subscribedSessionId })
+    }
+    isSubscribed = false
+    subscribedSessionId = null
+  }
+
+  /**
+   * Find the index of the user message a new streaming placeholder should
+   * anchor to: the newest NON-pending user message (fallback: newest user
+   * message).
+   */
+  function findAnchorUserIdx(): number {
+    let idx = -1
+    let maxSeq = -1
+    messages.value.forEach((m, i) => {
+      if (m.role !== 'user' || m.pending || m.seq == null) return
+      if (m.seq > maxSeq) { maxSeq = m.seq; idx = i }
+    })
+    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user' && !m.pending)
+    if (idx === -1) idx = messages.value.findLastIndex((m) => m.role === 'user')
+    return idx
+  }
+
+  /** Ensure a streaming assistant placeholder exists for the current turn. */
+  function ensureStreamingPlaceholder(options?: { reuseExistingStreaming?: boolean }) {
+    const existingStreaming = findStreamingMsg(messages.value)
+
+    // A stale streaming message left over from a previous turn (e.g. its
+    // 'done' event was missed) must be finalized before we start a new one.
+    // Otherwise connectStream would reuse it and keep appending content,
+    // echoing all earlier replies into the current reply. Reuse is only
+    // legitimate when explicitly opted in (enqueue/reconnect to a live stream).
+    if (existingStreaming && !options?.reuseExistingStreaming) {
+      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+    }
+
+    // Ensure a streaming assistant message exists — create one if needed
+    const streaming = findStreamingMsg(messages.value)
+    if (!streaming) {
+      // Anchor the new placeholder right after its question so it can never
+      // sort above an earlier reply. The question is the newest NON-pending
+      // user message: queued messages (pending=true) are later turns waiting
+      // for the drain loop — anchoring to one of them would push this reply
+      // (and everything before it) below the queued bubbles, producing the
+      // wrong order (msg2, msg3 above msg1, reply1). Fall back to the last
+      // user message when every user message is pending.
+      // NOTE: prefer the user message with the largest seq (monotonic send
+      // order) — sorting moves an unadopted msg1 bubble to the front, so the
+      // newest user is not necessarily the last physical element. Messages
+      // without a seq (DB-loaded history) are excluded unless nothing else.
+      const parentUserIdx = findAnchorUserIdx()
+      const newStreaming: ChatMessage = {
+        role: 'assistant' as const,
+        id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: '',
+        blocks: [] as ContentBlock[],
+        streaming: true,
+        createdAt: new Date().toISOString(),
+        backend: currentBackend.value,
+        seq: nextClientSeq(),
+        parentQueueId: parentUserIdx !== -1 ? String(messages.value[parentUserIdx].id) : undefined,
+      }
+      appLog.d(TAG, `[ensureStreamingPlaceholder] create placeholder id=${newStreaming.id} parentQueueId=${newStreaming.parentQueueId} reuse=${!!options?.reuseExistingStreaming}`)
+      // Single write channel: the reducer pushes + re-sorts.
+      dispatch({ type: 'stream_placeholder', msg: newStreaming })
+      thinkingBlockCounter = 0
+      onRenderNeeded()
+    } else if ((streaming as ChatMessage).fromDB) {
+      delete (streaming as ChatMessage).fromDB
+    }
+    onScrollBottom(false, true)
+  }
+
+  /** Stop the active stream state (watchdog/counter) without touching the subscription. */
+  function stopStreaming() {
+    clearToolUseTimeouts()
+    thinkingBlockCounter = 0
   }
 
   function disconnectStream() {
-    if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-    clearToolUseTimeouts()
-    if (isStreaming && currentSessionId.value) {
-      sendWsMessage({ type: 'unsubscribe', session_id: currentSessionId.value })
-    }
-    isStreaming = false
+    stopStreaming()
+    unsubscribe()
   }
 
   function clearToolUseTimeouts() {
@@ -149,59 +215,13 @@ export function useChatStream(options: UseChatStreamOptions) {
    * cleanup (tool_use timeouts, loading state).
    */
 
-  function connectStream(sessionId: string, options?: { subscribeOnly?: boolean; reuseExistingStreaming?: boolean }) {
-    disconnectStream()
-    isStreaming = true
-
-    // Only create a streaming assistant message for actual AI generation,
-    // not for replay waiting (subscribeOnly) where we just need WS events.
-    if (!options?.subscribeOnly) {
-      const existingStreaming = findStreamingMsg(messages.value)
-
-      // A stale streaming message left over from a previous turn (e.g. its
-      // 'done' event was missed) must be finalized before we start a new one.
-      // Otherwise connectStream would reuse it and keep appending content,
-      // echoing all earlier replies into the current reply. Reuse is only
-      // legitimate when explicitly opted in (enqueue/reconnect to a live stream).
-      if (existingStreaming && !options?.reuseExistingStreaming) {
-        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-      }
-
-      // Ensure a streaming assistant message exists — create one if needed
-      const streaming = findStreamingMsg(messages.value)
-      if (!streaming) {
-        // Anchor the new placeholder right after its question (the newest user
-        // message) so it can never sort above an earlier reply.
-        const parentUserIdx = messages.value.findLastIndex((m) => m.role === 'user')
-        const newStreaming: ChatMessage = {
-          role: 'assistant' as const,
-          id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: '',
-          blocks: [] as ContentBlock[],
-          streaming: true,
-          createdAt: new Date().toISOString(),
-          backend: currentBackend.value,
-          seq: nextClientSeq(),
-          afterSort: computeAfterSort(parentUserIdx !== -1 ? messages.value[parentUserIdx] : undefined),
-        }
-        // Always push; order is restored by sortMessages() — physical array
-        // position never encodes ordering, so a newer reply can never be
-        // spliced above an older one.
-        messages.value.push(newStreaming)
-        sortMessages(messages.value)
-        thinkingBlockCounter = 0
-        onRenderNeeded()
-      } else if ((streaming as ChatMessage).fromDB) {
-        delete (streaming as ChatMessage).fromDB
-      }
-      onScrollBottom()
-    }
-
-    // Subscribe to session's streaming events via WS
-    sendWsMessage({ type: 'subscribe', session_id: sessionId })
-
-    // Start stream timeout
-    resetStreamTimeout()
+  function connectStream(sessionId: string, options?: { reuseExistingStreaming?: boolean }) {
+    // Stop any previous turn's stream state, then start a fresh one.
+    stopStreaming()
+    ensureStreamingPlaceholder(options)
+    // Subscribe (deduped) — connectStream now guarantees the subscription
+    // exists without tearing it down on stream end.
+    subscribe(sessionId)
   }
 
   // ── WS event handler for chat_stream events ──
@@ -218,210 +238,144 @@ export function useChatStream(options: UseChatStreamOptions) {
     switch (csData.event_type) {
       case 'stream_start': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (sm && payload.message_id) {
-          sm.id = payload.message_id as number
+        const messageId = payload.message_id as number | undefined
+        if (messageId) {
+          // Event-driven placeholder: if no streaming assistant message exists
+          // (e.g. client opened the session mid-stream, or the optimistic
+          // placeholder was dropped by a loadHistory), create one anchored to
+          // the current streaming id. The DB row id is used as the message id
+          // so subsequent content events (findStreamingMsg) match it.
+          if (!findStreamingMsg(messages.value)) {
+            // Anchor to the newest non-pending user message so rebuildFromDb's
+            // Channel 2 (r.queueId === live.parentQueueId) can match this
+            // placeholder even when the loadHistory DB snapshot raced the new
+            // streaming row (Channel 1 fails, Channel 3 fails — no empty row).
+            const anchorIdx = findAnchorUserIdx()
+            dispatch({ type: 'stream_placeholder', msg: {
+              role: 'assistant',
+              id: messageId,
+              content: '',
+              blocks: [] as ContentBlock[],
+              streaming: true,
+              createdAt: new Date().toISOString(),
+              backend: currentBackend.value,
+              seq: nextClientSeq(),
+              parentQueueId: anchorIdx !== -1 ? String(messages.value[anchorIdx].id) : undefined,
+            } as ChatMessage })
+            onRenderNeeded()
+            onScrollBottom(false, true)
+          }
+          // ws_stream_start is idempotent: it re-sets the id on the existing
+          // streaming message (a no-op when the placeholder above already
+          // carries the DB id).
+          dispatch({ type: 'ws_stream_start', messageId })
         }
         break
       }
 
       case 'content_reset': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        sm.blocks = []
-        sm.streamingText = ''
-        sm.metadata = undefined
+        if (!findStreamingMsg(messages.value)) return
+        dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break
       }
 
       case 'content': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
+        if (!findStreamingMsg(messages.value)) return
         const contentData = payload as unknown as ContentEventData
-        const blocks = sm.blocks!
-        const existingText = findLastBlockOfType(blocks, 'text')
-        if (existingText) {
-          existingText.text += contentData.content ?? ''
-        } else {
-          blocks.push({ type: 'text', text: contentData.content ?? '' })
-        }
+        dispatch({ type: 'ws_content', text: contentData.content ?? '' })
         debouncedRender()
         break
       }
 
       case 'thinking': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
+        if (!findStreamingMsg(messages.value)) return
         const thinkingData = payload as unknown as ThinkingEventData
-        const blocks = sm.blocks!
-        const existingThinking = findLastBlockOfType(blocks, 'thinking')
-        if (existingThinking) {
-          existingThinking.text += thinkingData.text ?? ''
-        } else {
-          blocks.push({ type: 'thinking', text: thinkingData.text ?? '', _key: `thinking-${thinkingBlockCounter++}` })
-        }
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}` })
         debouncedRender()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
 
       case 'thinking_done': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        const blocks = sm.blocks!
-        for (let i = blocks.length - 1; i >= 0; i--) {
-          if (blocks[i].type === 'thinking') {
-            blocks[i].done = true
-            break
-          }
-        }
+        if (!findStreamingMsg(messages.value)) return
+        dispatch({ type: 'ws_thinking_done' })
         onRenderNeeded()
         break
       }
 
       case 'tool_use': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
+        if (!findStreamingMsg(messages.value)) return
         const data = payload as unknown as ToolUseEventData
-        const blocks = sm.blocks!
-        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+        dispatch({ type: 'ws_tool_use', data })
+        // Side effects that depend on the block's updated state.
+        const smAfter = findStreamingMsg(messages.value)
+        const blocksAfter = smAfter?.blocks || []
+        const existing = blocksAfter.find((b) => b.type === 'tool_use' && b.id === data.id)
         if (data.done) {
-          if (existing) {
-            if (data.input && Object.keys(data.input).length > 0) {
-              existing.input = data.input
-            }
-            existing.done = true
-            if (data.status !== undefined) existing.status = data.status
-            if (data.summary !== undefined) existing.summary = data.summary
-            if (data.display_name !== undefined) existing.display_name = data.display_name
-            if (data.file_path !== undefined) existing.file_path = data.file_path
-            if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
-          } else {
-            const newBlock: ContentBlock = {
-              type: 'tool_use', name: data.name!, id: data.id!, done: true,
-              status: data.status || '',
-            }
-            if (data.input && Object.keys(data.input).length > 0) {
-              newBlock.input = data.input
-            }
-            if (data.summary) newBlock.summary = data.summary
-            if (data.display_name) newBlock.display_name = data.display_name
-            if (data.file_path) newBlock.file_path = data.file_path
-            if (data.duration_ms !== undefined) newBlock.duration_ms = data.duration_ms
-            blocks.push(newBlock)
-          }
           toolUseWatchdog.clear(data.id!)
-
           if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
             const filePath = data.file_path || existing?.file_path
             if (filePath) {
               onFileModified(filePath)
             }
           }
-        } else {
-          if (existing) {
-            if (data.input && Object.keys(data.input).length > 0) {
-              existing.input = data.input
-            }
-            if (data.name) existing.name = data.name
-            if (data.status !== undefined) existing.status = data.status
-            if (data.summary !== undefined) existing.summary = data.summary
-            if (data.display_name !== undefined) existing.display_name = data.display_name
-            if (data.file_path !== undefined) existing.file_path = data.file_path
-            // Progress event: reset the stall watchdog so long-running tools
-            // that keep emitting updates are never falsely marked done.
-            // Check the event's name (may be more up-to-date than the block's).
-            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
-                if (!existing.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  existing.done = true
-                  onRenderNeeded()
-                }
-              })
-            }
-          } else {
-            const newBlock: ContentBlock = {
-              type: 'tool_use', name: data.name!, id: data.id!, done: false,
-              status: data.status || '',
-            }
-            if (data.input && Object.keys(data.input).length > 0) {
-              newBlock.input = data.input
-            }
-            if (data.summary) newBlock.summary = data.summary
-            if (data.display_name) newBlock.display_name = data.display_name
-            if (data.file_path) newBlock.file_path = data.file_path
-            blocks.push(newBlock)
-            if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
-              toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
-                if (!newBlock.done) {
-                  appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
-                  newBlock.done = true
-                  onRenderNeeded()
-                }
-              })
-            }
+        } else if (!data.done) {
+          // Progress event: reset the stall watchdog so long-running tools
+          // that keep emitting updates are never falsely marked done.
+          if (data.name !== 'PermissionApproval' && !isSubagentToolName(data.name)) {
+            const block = existing || blocksAfter[blocksAfter.length - 1]
+            toolUseWatchdog.start(data.id!, TOOL_USE_TIMEOUT_MS, () => {
+              if (block && !block.done) {
+                appLog.w(TAG, `tool_use block ${data.id} stalled without 'done' for ${TOOL_USE_TIMEOUT_MS}ms, marking as done`)
+                block.done = true
+                onRenderNeeded()
+              }
+            })
           }
         }
         if (onToolUpdate && data.id) {
           onToolUpdate(data.id)
         }
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
 
       case 'tool_result': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
+        if (!findStreamingMsg(messages.value)) return
         const data = payload as unknown as ToolUseEventData
-        const blocks = sm.blocks!
-        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
-        if (existing) {
-          if (data.name) existing.name = data.name
-          if (data.status !== undefined) existing.status = data.status
-          existing.done = true
-          if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
-        }
+        dispatch({ type: 'ws_tool_result', data })
         toolUseWatchdog.clear(data.id!)
         onRenderNeeded()
         if (onToolResult && data.id) {
           onToolResult(data.id)
         }
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
 
       case 'metadata': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
-        sm.metadata = payload as Record<string, unknown>
+        if (!findStreamingMsg(messages.value)) return
+        dispatch({ type: 'ws_metadata', metadata: payload as Record<string, unknown> })
         break
       }
 
       case 'done': {
         if (sessionChanged()) return
-        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-        clearToolUseTimeouts()
-        thinkingBlockCounter = 0
+        stopStreaming()
 
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
 
@@ -430,8 +384,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         ).join(' | ')
         const pendingCount = messages.value.filter((m) => m.pending).length
         appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
-
-        disconnectStream()
 
         // Unlock input bar and fire stream-end callbacks immediately so the user
         // sees the final state (meta bar, file-changes banner, summary toggle)
@@ -443,13 +395,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         loading.value = false
         onMessage()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         onStreamEnd?.('done')
         if (!isOpen.value) {
           const lastMsg = messages.value[messages.value.length - 1]
           if (lastMsg?.role === 'assistant') {
-            onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+            // In-app toast bubble removed — the completion popover now covers
+            // this case (shown when the chat view is not in the foreground).
+            // Keep the system notification for when the app is backgrounded.
             onNotification(gt('chat.stream.aiReplied'), {
               body: gt('chat.stream.clickToViewReply'),
               onClick: () => onOpen()
@@ -480,15 +434,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'replay_done': {
         if (sessionChanged()) return
         appLog.i(TAG, '[replay_done] LoadSession replay completed, reloading history from DB')
-        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-        clearToolUseTimeouts()
-        thinkingBlockCounter = 0
-        disconnectStream()
+        stopStreaming()
         onReplayDone?.()
         // Unlock input immediately — don't wait for loadHistory REST round-trip.
         loading.value = false
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         // Sync from DB in the background.
         onLoadHistory().then(() => {
@@ -501,11 +452,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
 
       case 'cancelled': {
-        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
         if (sessionChanged()) return
         const sm = findStreamingMsg(messages.value)
         if (!sm) return
-        disconnectStream()
+        stopStreaming()
         sm.cancelled = true
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
@@ -514,18 +464,15 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
 
       case 'error': {
-        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
         if (sessionChanged()) return
-        disconnectStream()
+        stopStreaming()
         const errorData = payload as unknown as ErrorEventData
-        // Set error block on streaming message immediately so user sees the
-        // error without waiting for loadHistory REST round-trip.
-        const sm = findStreamingMsg(messages.value)
-        if (sm) {
-          const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
-          if (errorData?.reason) errorBlock.reason = errorData.reason
-          sm.blocks = [errorBlock]
-        }
+        // Set the error block via the reducer's single write channel so the UI
+        // updates immediately. The reducer attaches it to the live streaming
+        // assistant, or to the last assistant when the stream already ended
+        // (backend crash after done) — so the user never needs a reload to see
+        // it.
+        dispatch({ type: 'ws_error', text: errorData?.error || 'Unknown error', reason: errorData?.reason })
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
         onStreamEnd?.('error')
@@ -540,17 +487,9 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'warning': {
         if (sessionChanged()) return
-        const sm = findStreamingMsg(messages.value)
-        if (!sm) return
-        resetStreamTimeout()
+        if (!findStreamingMsg(messages.value)) return
         const warningData = payload as { text?: string; reason?: string }
-        if (sm.streamingText) {
-          sm.blocks!.push({ type: 'text', text: sm.streamingText as string })
-          sm.streamingText = ''
-        }
-        const warningBlock: ContentBlock = { type: 'warning', text: warningData.text }
-        if (warningData.reason) warningBlock.reason = warningData.reason
-        sm.blocks!.push(warningBlock)
+        dispatch({ type: 'ws_warning', text: warningData.text || '', reason: warningData.reason })
         if (isOpen.value) {
           onRenderNeeded()
         }
@@ -610,11 +549,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'model_list_update': {
         if (sessionChanged()) return
-        const mlData = payload as { models?: unknown[] }
+        const mlData = payload as { models?: unknown[]; currentModelId?: string }
         if (Array.isArray(mlData.models) && mlData.models.length > 0) {
           const aid = currentAgentId.value
           if (aid) {
-            updateACPModelList(aid, mlData.models as { id: string; name: string }[])
+            updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
           }
         }
         break
@@ -642,59 +581,32 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
 
-        // Skip self-echo: if the sender is this device, we already have the optimistic message
+        // Skip self-echo: if the sender is this device, we already have the
+        // optimistic message. Still adopt its DB id from messageId — this is
+        // the ONLY reliable way to learn a directly-sent message's DB id
+        // without a backend that echoes msgId in the POST response. Without
+        // it the unadopted bubble sorts as a transient (after later queued
+        // messages that already adopted DB ids) — the ordering mess.
         const myClientId = localStorage.getItem('clawbench_client_id')
-        if (userData.senderClientId && userData.senderClientId === myClientId) break
-
-        resetStreamTimeout()
-        const userContent = userData.content || ''
-        const userFiles: FileEntry[] = [
-          ...(userData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        ]
-        const msgId = userData.messageId || 0
-        const remoteQueueId = userData.queueId || ''
-
-        // Deduplicate: skip if a message with same DB ID or same content already exists
-        // (e.g. loadHistory already loaded it from DB)
-        const alreadyExists = messages.value.some((m) => {
-          if (m.role !== 'user') return false
-          if (msgId > 0 && m.id === msgId) return true
-          if (m.content === userContent && !m.pending && !m._remote) return true
-          return false
-        })
-        if (alreadyExists) break
-
-        const newMsg: ChatMessage = {
-          role: 'user',
-          id: msgId > 0 ? msgId : `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: userContent,
-          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-          files: userFiles,
-          createdAt: new Date().toISOString(),
-          _remote: true,
-          backend: currentBackend.value,
-          ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
-          seq: nextClientSeq(),
+        if (userData.senderClientId && userData.senderClientId === myClientId) {
+          if (userData.messageId && userData.queueId) {
+            dispatch({ type: 'optimistic_adopt_id', id: userData.queueId, dbId: userData.messageId })
+          }
+          break
         }
 
-        // Always push; sortMessages() restores authoritative order.
-        messages.value.push(newMsg)
-        sortMessages(messages.value)
+        dispatch({ type: 'ws_user_message', data: { ...userData, backend: currentBackend.value } })
 
         debouncedRender()
         if (isOpen.value) {
-          onScrollBottom()
+          onScrollBottom(false, true)
         }
         break
       }
 
       case 'queue_drain': {
-        resetStreamTimeout()
         const drainData = payload as unknown as QueueEventData
         const eventSessionId = drainData.sessionId || sessionId
-
-        const beforeLen = messages.value.length
-        const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
 
         if (eventSessionId === currentSessionId.value) {
           const drainText = drainData.text || ''
@@ -702,12 +614,17 @@ export function useChatStream(options: UseChatStreamOptions) {
             ...(drainData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
             ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
           ]
-          drainQueueMessage(
-            messages.value, drainData.queueId || '', drainText, drainFiles, currentBackend.value,
-            { onRenderNeeded, onExtractScheduledTasks },
-            undefined,
-            drainData.messageId || undefined
-          )
+          const beforeLen = messages.value.length
+          const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
+          // Diagnostic: what pending/string-id bubbles exist before this drain.
+          const bubbleSummary = messages.value
+            .filter((m) => m.pending || typeof m.id === 'string')
+            .map((m) => `[${String(m.id)}${m.queueId ? '/q=' + m.queueId : ''}${m.pending ? '/P' : ''}]`)
+            .join(' ')
+          appLog.d(TAG, `[queue_drain] before: ${bubbleSummary}`)
+          dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
+          // Extract scheduled tasks from the newly added message(s).
+          onExtractScheduledTasks?.(messages.value)
 
           const afterLen = messages.value.length
           const afterStreamingCount = messages.value.filter((m) => m.streaming).length
@@ -715,7 +632,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
           if (isOpen.value) {
             onRenderNeeded()
-            onScrollBottom()
+            onScrollBottom(false, true)
           }
         }
         break
@@ -725,8 +642,11 @@ export function useChatStream(options: UseChatStreamOptions) {
         const cancelData = payload as { sessionId?: string; queueIds?: string[] }
         const eventSessionId = cancelData.sessionId || sessionId
         if (eventSessionId !== currentSessionId.value) break
-        const removed = cancelPendingMessages(messages.value, cancelData.queueIds || [])
-        appLog.d(TAG, `[queue_cancel] sid=${eventSessionId.slice(0,8)} removed ${removed} pending msgs with queueIds: ${cancelData.queueIds?.join(',') || 'none'}`)
+        const ids = cancelData.queueIds || []
+        const before = messages.value.length
+        dispatch({ type: 'ws_queue_cancel', queueIds: ids })
+        const removed = before - messages.value.length
+        appLog.d(TAG, `[queue_cancel] sid=${eventSessionId.slice(0,8)} removed ${removed} pending msgs with queueIds: ${ids.join(',') || 'none'}`)
         onRenderNeeded()
         break
       }
@@ -739,27 +659,33 @@ export function useChatStream(options: UseChatStreamOptions) {
     sendWsMessage({ type: 'cancel', session_id: currentSessionId.value })
   }
 
+  // Subscribe whenever the current session changes (session open / switch).
+  // This makes the persistent subscription follow the currentSessionId data
+  // fact rather than any connectStream call site — a client that opens (or is
+  // switched to) a session is subscribed immediately, so stream_start /
+  // user_message / queue_drain events for a live session are never missed.
+  // subscribe() dedups: re-observing the same session is a no-op.
+  const stopSessionWatch = watch(currentSessionId, (sid) => {
+    if (sid) subscribe(sid)
+  }, { immediate: true })
+
   // Re-subscribe on WS reconnect
   // NOTE: After this watch fires, App.vue's handleReconnect runs
   // loadSessionsOnce() which refreshes runningSessions. If the session
   // finished during disconnection, handleReconnect (via useChatSession)
   // will detect the stale loading state and clean it up. The re-subscribe
   // here is a fallback for the case where the session IS still running.
+  // The backend clears all subscriptions on disconnect, so a subscribed
+  // session must be re-subscribed exactly once on reconnect. The watch
+  // fires once per false→true transition, so exactly one subscribe is sent.
+  // It intentionally bypasses subscribe()'s dedup — isSubscribed is still
+  // true, but the backend already dropped the subscription.
   const stopConnectedWatch = watch(connected, (isConnected) => {
-    if (isConnected && isStreaming && currentSessionId.value) {
+    if (isConnected && isSubscribed && subscribedSessionId) {
       appLog.i(TAG, 'WS reconnected, re-subscribing to session stream')
-      sendWsMessage({ type: 'subscribe', session_id: currentSessionId.value })
-      resetStreamTimeout()
+      sendWsMessage({ type: 'subscribe', session_id: subscribedSessionId })
     }
   })
-
-  function handleOnline() {
-    if (!loading.value || !currentSessionId.value) return
-    if (isStreaming) {
-      appLog.i(TAG, 'Network recovered, stream will re-subscribe via WS')
-    }
-  }
-  window.addEventListener('online', handleOnline)
 
   onUnmounted(() => {
     disconnectStream()
@@ -767,12 +693,15 @@ export function useChatStream(options: UseChatStreamOptions) {
     renderScheduler.cancelAll()
     unsubscribeFromWs()
     stopConnectedWatch()
-    window.removeEventListener('online', handleOnline)
+    stopSessionWatch()
   })
 
   return {
     connectStream,
     disconnectStream,
+    subscribe,
+    unsubscribe,
+    ensureStreamingPlaceholder,
     cancelStream,
   }
 }

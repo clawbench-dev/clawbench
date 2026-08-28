@@ -1,14 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-// Mock mermaid - must use hoisted factory without referencing outer variables
-const mockMermaid = {
-  initialize: vi.fn(),
-  render: vi.fn(),
-}
-vi.mock('@/utils/lazyMermaid.ts', () => ({
-  getMermaid: () => Promise.resolve(mockMermaid),
-}))
-
 // Mock fetch for inlineImages
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
@@ -18,15 +9,14 @@ import { exportRenderedHtml, imageIssueReasonCode } from '@/utils/exportHtml.ts'
 describe('exportRenderedHtml', () => {
   beforeEach(() => {
     mockFetch.mockReset()
-    mockMermaid.initialize.mockReset()
-    mockMermaid.render.mockReset()
     // Default: batch-base64 returns empty results
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ results: {} }),
     })
     // Set a default theme
-    document.documentElement.setAttribute('data-theme', 'light')
+    document.documentElement.setAttribute('data-theme', 'github-light')
+    document.documentElement.setAttribute('data-theme-base', 'light')
   })
 
   function createElement(html: string): HTMLElement {
@@ -77,8 +67,9 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('<title>a&amp;b</title>')
   })
 
-  it('defaults exported HTML to light data-theme-base', async () => {
-    document.documentElement.setAttribute('data-theme', 'dark')
+  it('exports the current app theme (dark) with data-theme + data-theme-base', async () => {
+    document.documentElement.setAttribute('data-theme', 'github-dark')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
     const el = createElement('<p>dark mode</p>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
@@ -87,7 +78,39 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
+    expect(result.html).toContain('data-theme="github-dark"')
+    expect(result.html).toContain('data-theme-base="dark"')
+  })
+
+  it('exports the current app theme (light) with data-theme + data-theme-base', async () => {
+    document.documentElement.setAttribute('data-theme', 'github-light')
+    document.documentElement.setAttribute('data-theme-base', 'light')
+    const el = createElement('<p>light mode</p>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    expect(result.html).toContain('data-theme="github-light"')
     expect(result.html).toContain('data-theme-base="light"')
+  })
+
+  it('infers data-theme-base from the theme id when the attribute is missing', async () => {
+    document.documentElement.setAttribute('data-theme', 'nord')
+    document.documentElement.removeAttribute('data-theme-base')
+    const el = createElement('<p>nord mode</p>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+
+    // "nord" does not contain "dark", but is a dark theme — must export dark base.
+    expect(result.html).toContain('data-theme="nord"')
+    expect(result.html).toContain('data-theme-base="dark"')
   })
 
   it('includes the cloned body content', async () => {
@@ -100,6 +123,89 @@ describe('exportRenderedHtml', () => {
     el.remove()
 
     expect(result.html).toContain('Test content')
+  })
+
+  it('inlines only the current theme CSS variable block', async () => {
+    document.documentElement.setAttribute('data-theme', 'github-dark')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+
+    // Inject a stylesheet mimicking variables.css theme blocks. In jsdom these
+    // become accessible via document.styleSheets[].cssRules, which serializeCss
+    // reads.
+    const style = document.createElement('style')
+    style.textContent = `
+      [data-theme="github-light"] { --bg-primary: #ffffff; --accent: #111; }
+      [data-theme="github-dark"] { --bg-primary: #0d1117; --accent: #222; }
+      .markdown-body table { border-color: var(--table-border); }
+      .markdown-body th { background: var(--bg-tertiary); }
+    `
+    document.head.appendChild(style)
+
+    const el = createElement('<p>content</p>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+    style.remove()
+
+    // Current theme variables exported, other theme blocks excluded.
+    expect(result.html).toContain('--bg-primary: #0d1117')
+    expect(result.html).not.toContain('--bg-primary: #ffffff')
+    // Markdown table rules still included (fixes table styling loss).
+    expect(result.html).toContain('.markdown-body table')
+    expect(result.html).toContain('.markdown-body th')
+  })
+
+  it('does not include a prefix-sibling theme variable block (nord vs nord-light)', async () => {
+    document.documentElement.setAttribute('data-theme', 'nord')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
+
+    const style = document.createElement('style')
+    style.textContent = `
+      [data-theme="nord"] { --bg-primary: #202833; }
+      [data-theme="nord-light"] { --bg-primary: #eceff4; }
+    `
+    document.head.appendChild(style)
+
+    const el = createElement('<p>content</p>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+    style.remove()
+
+    expect(result.html).toContain('--bg-primary: #202833')
+    expect(result.html).not.toContain('--bg-primary: #eceff4')
+  })
+
+  it('rewrites hljs theme selectors (quoted and unquoted) to data-theme-base', async () => {
+    document.documentElement.setAttribute('data-theme', 'github-light')
+    document.documentElement.setAttribute('data-theme-base', 'light')
+
+    const style = document.createElement('style')
+    style.textContent = `
+      [data-hljs-theme="light"] .hljs { color: #111; }
+      [data-hljs-theme=dark] .hljs { color: #eee; }
+    `
+    document.head.appendChild(style)
+
+    const el = createElement('<p>content</p>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+    })
+    el.remove()
+    style.remove()
+
+    // Both quoted and unquoted forms normalized to the exported base attribute.
+    expect(result.html).toContain('[data-theme-base="light"] .hljs')
+    expect(result.html).toContain('[data-theme-base="dark"] .hljs')
+    expect(result.html).not.toContain('data-hljs-theme')
   })
 
   it('removes script tags from cloned DOM', async () => {
@@ -139,7 +245,7 @@ describe('exportRenderedHtml', () => {
     expect(result.html).not.toContain('katex-mathml')
   })
 
-  it('includes theme toggle button', async () => {
+  it('does not include a theme toggle button or theme-switch JS', async () => {
     const el = createElement('<p>content</p>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
@@ -148,21 +254,10 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('id="theme-toggle"')
-    expect(result.html).toContain('theme-icon-moon')
-    expect(result.html).toContain('theme-icon-sun')
-  })
-
-  it('includes theme toggle JavaScript', async () => {
-    const el = createElement('<p>content</p>')
-    const result = await exportRenderedHtml({
-      markdownBodyEl: el,
-      filePath: 'test.md',
-      fileName: 'test.md',
-    })
-    el.remove()
-
-    expect(result.html).toContain('exported-html-theme')
+    expect(result.html).not.toContain('id="theme-toggle"')
+    expect(result.html).not.toContain('theme-icon-moon')
+    expect(result.html).not.toContain('theme-icon-sun')
+    expect(result.html).not.toContain('exported-html-theme')
   })
 
   it('includes code block interaction JavaScript', async () => {
@@ -585,6 +680,44 @@ describe('exportRenderedHtml', () => {
     expect(result.html).not.toContain('toc-drawer')
   })
 
+  it('localizes TOC title, copy feedback and word-wrap labels for zh locale', async () => {
+    const el = createElement('<h1 id="intro">Introduction</h1><pre><code>const a = 1</code></pre>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+      locale: 'zh',
+    })
+    el.remove()
+
+    expect(result.html).toContain('<html lang="zh-CN"')
+    expect(result.html).toContain('目录')
+    expect(result.html).toContain('已复制')
+    expect(result.html).toContain('自动换行已开启')
+    expect(result.html).toContain('自动换行已关闭')
+    // English labels must NOT leak into zh exports
+    expect(result.html).not.toContain('Table of Contents')
+    expect(result.html).not.toContain('Copied!')
+    expect(result.html).not.toContain('Word wrap on')
+  })
+
+  it('keeps English labels by default and when locale is en', async () => {
+    const el = createElement('<h1 id="intro">Introduction</h1><pre><code>const a = 1</code></pre>')
+    const result = await exportRenderedHtml({
+      markdownBodyEl: el,
+      filePath: 'test.md',
+      fileName: 'test.md',
+      locale: 'en',
+    })
+    el.remove()
+
+    expect(result.html).toContain('<html lang="en"')
+    expect(result.html).toContain('Table of Contents')
+    expect(result.html).toContain('Copied')
+    expect(result.html).toContain('Word wrap on')
+    expect(result.html).not.toContain('目录')
+  })
+
   it('does not include headings without IDs in TOC', async () => {
     const el = createElement('<h1>No ID heading</h1><h2 id="has-id">Has ID</h2>')
     const result = await exportRenderedHtml({
@@ -662,7 +795,7 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('.mermaid-error')
   })
 
-  it('includes dual-theme mermaid CSS', async () => {
+  it('does not include dual-theme mermaid CSS', async () => {
     const el = createElement('<p>content</p>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
@@ -671,12 +804,12 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('.mermaid-dual')
-    expect(result.html).toContain('.mermaid-light')
-    expect(result.html).toContain('.mermaid-dark')
+    expect(result.html).not.toContain('.mermaid-dual')
+    expect(result.html).not.toContain('.mermaid-light')
+    expect(result.html).not.toContain('.mermaid-dark')
   })
 
-  it('includes localStorage theme restore script in head', async () => {
+  it('does not include a localStorage theme restore script in head', async () => {
     const el = createElement('<p>content</p>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
@@ -685,8 +818,8 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('localStorage.getItem')
-    expect(result.html).toContain('exported-html-theme')
+    expect(result.html).not.toContain('localStorage.getItem')
+    expect(result.html).not.toContain('exported-html-theme')
   })
 
   it('includes charset and viewport meta tags', async () => {
@@ -716,10 +849,8 @@ describe('exportRenderedHtml', () => {
     expect(result.externalImages).toBe(0)
   })
 
-  it('handles Mermaid dual-theme rendering', async () => {
-    mockMermaid.render.mockResolvedValue({ svg: '<svg>opposite</svg>' })
-
-    const el = createElement('<div class="mermaid" data-mermaid="graph TD; A-->B"><svg>current</svg></div>')
+  it('keeps the already-rendered single-theme Mermaid SVG', async () => {
+    const el = createElement('<div class="mermaid" data-mermaid="graph TD; A-->B"><svg>current-theme-diagram</svg></div>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
       filePath: 'test.md',
@@ -727,15 +858,14 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(mockMermaid.initialize).toHaveBeenCalled()
-    expect(mockMermaid.render).toHaveBeenCalled()
-    expect(result.html).toContain('mermaid-dual')
+    expect(result.html).toContain('current-theme-diagram')
+    expect(result.html).not.toContain('mermaid-dual')
+    expect(result.html).not.toContain('mermaid-light')
+    expect(result.html).not.toContain('mermaid-dark')
   })
 
-  it('handles Mermaid render failure gracefully', async () => {
-    mockMermaid.render.mockRejectedValue(new Error('Render failed'))
-
-    const el = createElement('<div class="mermaid" data-mermaid="graph TD; A-->B"><svg>current</svg></div>')
+  it('replaces unrendered div.mermaid (no SVG) with an error indicator', async () => {
+    const el = createElement('<div class="mermaid" data-mermaid="graph TD; A-->B">graph TD; A-->B</div>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
       filePath: 'test.md',
@@ -743,7 +873,8 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('<!DOCTYPE html>')
+    expect(result.html).toContain('mermaid-error')
+    expect(result.html).toContain('Diagram failed to render')
   })
 
   it('handles Mermaid block without data-mermaid attribute', async () => {
@@ -758,11 +889,11 @@ describe('exportRenderedHtml', () => {
     expect(result.html).toContain('<!DOCTYPE html>')
   })
 
-  it('exports light theme-base with dual-theme mermaid even when app is dark', async () => {
-    document.documentElement.setAttribute('data-theme', 'dark')
-    mockMermaid.render.mockResolvedValue({ svg: '<svg>light</svg>' })
+  it('exports dark theme with the dark-theme Mermaid SVG', async () => {
+    document.documentElement.setAttribute('data-theme', 'github-dark')
+    document.documentElement.setAttribute('data-theme-base', 'dark')
 
-    const el = createElement('<div class="mermaid" data-mermaid="graph TD"><svg>dark</svg></div>')
+    const el = createElement('<div class="mermaid" data-mermaid="graph TD"><svg>dark-diagram</svg></div>')
     const result = await exportRenderedHtml({
       markdownBodyEl: el,
       filePath: 'test.md',
@@ -770,8 +901,9 @@ describe('exportRenderedHtml', () => {
     })
     el.remove()
 
-    expect(result.html).toContain('data-theme-base="light"')
-    expect(result.html).toContain('mermaid-dual')
+    expect(result.html).toContain('data-theme="github-dark"')
+    expect(result.html).toContain('dark-diagram')
+    expect(result.html).not.toContain('mermaid-dual')
   })
 
   it('handles table block interaction JS', async () => {
@@ -825,22 +957,5 @@ describe('exportRenderedHtml', () => {
 
     expect(result.skippedImages).toBe(0)
     expect(result.externalImages).toBe(0)
-  })
-
-  it('strips scripts and iframes from opposite-theme Mermaid SVG', async () => {
-    mockMermaid.render.mockResolvedValue({
-      svg: '<svg><script>alert(1)</script><iframe src="x"></iframe>diagram</svg>',
-    })
-
-    const el = createElement('<div class="mermaid" data-mermaid="graph TD"><svg>current</svg></div>')
-    const result = await exportRenderedHtml({
-      markdownBodyEl: el,
-      filePath: 'test.md',
-      fileName: 'test.md',
-    })
-    el.remove()
-
-    // The opposite theme div should not contain script or iframe
-    expect(result.html).toContain('mermaid-dual')
   })
 })

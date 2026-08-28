@@ -136,16 +136,8 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.SessionPageSize <= 0 {
 		cfg.Chat.SessionPageSize = 10
 	}
-	// SystemPromptInterval: 0 = never re-inject is the intentional DEFAULT.
-	// The old `<= 0 → 10` rewrite made 0 unexpressable — a user who
-	// explicitly disabled periodic re-injection was silently switched back
-	// to every-10-turns. Negative values (hand-edited yaml only; PATCH
-	// rejects them earlier) clamp to 0.
-	// 0 = 从不重注即为默认值。旧的 `<= 0 → 10` 改写使 0 无法表达——显式
-	// 关闭周期性重注的用户会被静默改回每 10 轮。负值(仅手改 yaml 可产生;
-	// PATCH 已在更早处拦截)收敛为 0。
-	if cfg.Chat.SystemPromptInterval < 0 {
-		cfg.Chat.SystemPromptInterval = 0
+	if cfg.Chat.SystemPromptInterval <= 0 {
+		cfg.Chat.SystemPromptInterval = 10
 	}
 	// RecommendEnabled: bool zero-value (false) is the intentional default.
 	// Use presence map to distinguish "user wrote false" from "user omitted the field".
@@ -167,14 +159,8 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	} else {
 		cfg.Session.ArchiveRetentionEnabled = false
 	}
-	// ArchiveRetentionDays: 0 = keep forever is the intentional DEFAULT —
-	// archived sessions should not vanish by surprise. The old `<= 0 → 30`
-	// rewrite made 0 unexpressable, so a user who wanted retention disabled
-	// was silently enrolled in a 30-day purge. Negative values clamp to 0.
-	// 0 = 永久保留即为默认值——归档会话不应莫名消失。旧的 `<= 0 → 30` 改写
-	// 使 0 无法表达,想关闭留存的用户被静默纳入 30 天清理。负值收敛为 0。
-	if cfg.Session.ArchiveRetentionDays < 0 {
-		cfg.Session.ArchiveRetentionDays = 0
+	if cfg.Session.ArchiveRetentionDays <= 0 {
+		cfg.Session.ArchiveRetentionDays = 30
 	}
 
 	// --- Recent Projects ---

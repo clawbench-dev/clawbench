@@ -120,6 +120,33 @@ describe('useAcpSession', () => {
       expect(acpSessions.value).toHaveLength(2)
     })
 
+    it('deduplicates sessions repeated on later ACP pages', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 's1', title: 'First' }],
+            nextCursor: 'cursor-1',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [
+              { sessionId: 's1', title: 'Repeated' },
+              { sessionId: 's2', title: 'Second' },
+            ],
+            nextCursor: null,
+          }),
+        })
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions()
+      await loadAcpSessions(undefined, true)
+
+      expect(acpSessions.value.map((session) => session.sessionId)).toEqual(['s1', 's2'])
+    })
+
     it('handles fetch exception gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('network error'))
 
@@ -127,6 +154,153 @@ describe('useAcpSession', () => {
       await loadAcpSessions()
 
       expect(acpSessionsLoading.value).toBe(false)
+    })
+
+    it('dedupes overlapping sessions when appending paginated pages', async () => {
+      // Agent pagination is unstable: the second page repeats a sessionId
+      // already present in the first page (timestamp-collision cursor).
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [
+              { sessionId: 's1', title: 'First page' },
+              { sessionId: 's2', title: 'Second page' },
+            ],
+            nextCursor: 'cursor-1',
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [
+              { sessionId: 's2', title: 'Second page' },
+              { sessionId: 's3', title: 'Third page' },
+            ],
+            nextCursor: null,
+          }),
+        })
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions()
+      await loadAcpSessions(undefined, true)
+
+      expect(acpSessions.value).toHaveLength(3)
+      expect(acpSessions.value.map((s) => s.sessionId)).toEqual(['s1', 's2', 's3'])
+    })
+
+    it('drops stale append responses that resolve after a list reset', async () => {
+      // A slow append=true request (load more) is in flight when the list is
+      // reset for a new agent via loadAcpSessions(append=false). The stale
+      // response must NOT be merged into the fresh list.
+      let resolveSlowFetch: (value: unknown) => void = () => {}
+      const slowFetch = new Promise((resolve) => { resolveSlowFetch = resolve })
+      mockFetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'old-agent-s1', title: 'Old page 1' }],
+            nextCursor: 'cursor-1',
+          }),
+        }))
+        .mockImplementationOnce(() => slowFetch)
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'new-agent-s1', title: 'New agent' }],
+            nextCursor: null,
+          }),
+        }))
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions('agent-old')
+      const appendPromise = loadAcpSessions('agent-old', true)
+      // Reset to a different agent while the append is still in flight
+      await loadAcpSessions('agent-new')
+      // The slow append finally resolves with stale page-2 data
+      resolveSlowFetch({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ sessionId: 'old-page-2', title: 'Stale page 2' }],
+          nextCursor: null,
+        }),
+      })
+      await appendPromise
+
+      // Only the new agent's sessions survive; the stale append is discarded.
+      expect(acpSessions.value.map((s) => s.sessionId)).toEqual(['new-agent-s1'])
+    })
+
+    it('drops stale responses that resolve after json() body read', async () => {
+      // The reset lands after the HTTP response but before json() resolves.
+      // The post-json generation re-check must still drop the stale data.
+      let resolveJson: (value: unknown) => void = () => {}
+      const jsonPromise = new Promise((resolve) => { resolveJson = resolve })
+      mockFetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => jsonPromise,
+        }))
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'new-agent-s1', title: 'New agent' }],
+            nextCursor: null,
+          }),
+        }))
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      const stalePromise = loadAcpSessions('agent-old')
+      // Reset to a different agent while the stale request is reading its body
+      await loadAcpSessions('agent-new')
+      // The stale body finally parses with old-agent data
+      resolveJson({
+        sessions: [{ sessionId: 'old-agent-s1', title: 'Stale body' }],
+        nextCursor: null,
+      })
+      await stalePromise
+
+      expect(acpSessions.value.map((s) => s.sessionId)).toEqual(['new-agent-s1'])
+    })
+
+    it('resets and drops in-flight appends when append targets a different agent', async () => {
+      // An append for agent A is in flight; a reset/append for agent B starts.
+      // The append must reset the list (different agent) and the stale A
+      // response must not land on B's list.
+      let resolveSlowFetch: (value: unknown) => void = () => {}
+      const slowFetch = new Promise((resolve) => { resolveSlowFetch = resolve })
+      mockFetch
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'agent-a-s1', title: 'A page 1' }],
+            nextCursor: 'cursor-1',
+          }),
+        }))
+        .mockImplementationOnce(() => slowFetch)
+        .mockImplementationOnce(() => Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ sessionId: 'agent-b-s1', title: 'B page 1' }],
+            nextCursor: null,
+          }),
+        }))
+
+      const { acpSessions, loadAcpSessions } = useAcpSession({ currentAgentId })
+      await loadAcpSessions('agent-a')
+      const appendPromise = loadAcpSessions('agent-a', true)
+      // Append for a different agent — must reset, not merge onto A's list
+      await loadAcpSessions('agent-b', true)
+      resolveSlowFetch({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ sessionId: 'agent-a-s2', title: 'A stale page 2' }],
+          nextCursor: null,
+        }),
+      })
+      await appendPromise
+
+      expect(acpSessions.value.map((s) => s.sessionId)).toEqual(['agent-b-s1'])
     })
   })
 

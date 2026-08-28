@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -127,6 +128,29 @@ func TestRecentConversation_LimitsAndOrders(t *testing.T) {
 	assert.Len(t, gotAll, 0, "n<=0 should return no context")
 }
 
+// TestRecentConversation_ReadsRawConclusionFromStrippedMessage is a regression
+// test: once an assistant message has a reading summary, GetMessagesBySessionID
+// returns its content as an empty {"blocks":[]} view. recentConversation must
+// fall back to the DB raw content so the recommendation LLM still sees the
+// assistant's real conclusion instead of nothing.
+func TestRecentConversation_ReadsRawConclusionFromStrippedMessage(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-rec-stripped-ctx"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (400, '/test', 'user', 'please fix', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (401, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Fixed. Run the tests to confirm.\"},{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"go test\"}}]}', ?, 0)", sessionID)
+	// The summary exists → enrichMessagesWithSummaries strips the blocks view.
+	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 401, 'Fixed. Run the tests to confirm.')", sessionID)
+
+	got := recentConversation(sessionID, 2)
+	// The assistant conclusion (text after the last tool_use → no trailing text,
+	// falls back to the longest text block) must be present, not skipped as empty.
+	assert.Equal(t, []string{"please fix", "Fixed. Run the tests to confirm."}, got,
+		"recentConversation must read the raw conclusion of a summary-stripped assistant message")
+}
+
 func TestSaveAndLatestChatRecommendation(t *testing.T) {
 	db, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
@@ -156,3 +180,150 @@ func TestLatestChatRecommendation_RejectsStaleMessage(t *testing.T) {
 	// ...and a message with no recommendation yet returns empty (no stale leak).
 	assert.Equal(t, "", LatestChatRecommendation(context.Background(), "sess-rec-stale", 303))
 }
+
+// TestTriggerChatRecommendation_SurvivesSummaryStrippedContent is a regression
+// test for the bug where recommendations silently stopped firing: GetMessagesBySessionID
+// strips the blocks of any assistant message that already has a reading summary
+// (summarizeContentForView replaces them with {"blocks":[]}). triggerChatSummarization
+// used that stripped content to parse the last assistant message's blocks, so once a
+// reply had a summary, every later recommendation parse yielded zero blocks and the
+// len(blocks) > 0 guard skipped the recommendation forever.
+func TestTriggerChatRecommendation_SurvivesSummaryStrippedContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Run the full test suite."}}]}`))
+	}))
+	defer srv.Close()
+
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+	_ = db
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "recommend-stripped", "")
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecommendEnabled = true
+	model.ConfigInstance.AISummary.API.BaseURL = srv.URL
+	model.ConfigInstance.AISummary.Format = "openai"
+	defer func() { model.ConfigInstance = model.Config{} }()
+
+	sessionID := "sess-rec-stripped"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	// Assistant message whose reading summary ALREADY exists — exactly the state
+	// where GetMessagesBySessionID returns stripped (empty-blocks) content.
+	_, _ = db.Exec(
+		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (401, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The build passed.\"},{\"type\":\"text\",\"text\":\"Now verify the fix.\"}]}', ?, 0)",
+		sessionID,
+	)
+	_, _ = db.Exec(
+		"INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 401, 'The build passed. Now verify the fix.')",
+	)
+
+	triggerChatSummarization(context.Background(), sessionID)
+
+	// The recommendation runs in an async goroutine. Wait until it persists its
+	// result (SaveChatRecommendation) before inspecting buffered WS events.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for {
+		if rec := LatestChatRecommendation(ctx, sessionID, 401); rec != "" {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("expected the async recommendation goroutine to persist its result")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	evts := sub.GetBufferedEvents()
+	var recommendSeen bool
+	for _, evt := range evts {
+		if evt.Event != "chat_recommendation" {
+			continue
+		}
+		recommendSeen = true
+		data, ok := evt.Data.(ws.ChatRecommendationData)
+		if !ok {
+			t.Fatalf("unexpected data type: %T", evt.Data)
+		}
+		assert.Equal(t, sessionID, data.SessionID)
+		assert.Equal(t, int64(401), data.MessageID)
+		assert.Equal(t, "Run the full test suite.", data.Recommendation)
+	}
+	if !recommendSeen {
+		t.Fatal("expected a chat_recommendation event even though the last assistant message already has a reading summary")
+	}
+}
+
+// TestTriggerChatSummarization_RecommendSurvivesCancelledCtx is a regression
+// test for the second half of the recommendation outage: triggerChatSummarization
+// hands the session execution ctx to the recommendation goroutine, but the handler
+// cancels that ctx as soon as the reply goroutine returns — killing the
+// recommendation's LLM call (up to 60s) almost immediately. The goroutine must
+// run on a detached context (context.WithoutCancel) so the recommendation still
+// lands after the session stream has finished.
+func TestTriggerChatSummarization_RecommendSurvivesCancelledCtx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Ship it."}}]}`))
+	}))
+	defer srv.Close()
+
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+	_ = db
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "recommend-cancelled-ctx", "")
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Chat.RecommendEnabled = true
+	model.ConfigInstance.AISummary.API.BaseURL = srv.URL
+	model.ConfigInstance.AISummary.Format = "openai"
+	defer func() { model.ConfigInstance = model.Config{} }()
+
+	sessionID := "sess-rec-cancelctx"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (411, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Done.\"}]}', ?, 0)", sessionID)
+
+	// Simulate the handler having already cancelled the session ctx (its goroutine
+	// returns and runs defer cancel() right after the reply stream finishes).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	triggerChatSummarization(ctx, sessionID)
+
+	// Wait for the detached goroutine to persist its recommendation.
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer waitCancel()
+	for {
+		if rec := LatestChatRecommendation(waitCtx, sessionID, 411); rec != "" {
+			break
+		}
+		if waitCtx.Err() != nil {
+			t.Fatal("expected the recommendation goroutine to survive a cancelled session ctx")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	var eventSeen bool
+	for _, evt := range sub.GetBufferedEvents() {
+		if evt.Event != "chat_recommendation" {
+			continue
+		}
+		eventSeen = true
+		if data, ok := evt.Data.(ws.ChatRecommendationData); ok {
+			assert.Equal(t, "Ship it.", data.Recommendation)
+		}
+	}
+	assert.True(t, eventSeen, "expected a chat_recommendation event despite the cancelled session ctx")
+}
+
+

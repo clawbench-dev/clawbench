@@ -10,6 +10,7 @@ import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } fro
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
+import { clearCacheAndReload } from './session'
 
 let logFileStream: fs.WriteStream | null = null
 let logListener: ((event: Electron.Event, level: number, message: string) => void) | null = null
@@ -112,6 +113,7 @@ export function registerBridge(): void {
     if (logFileStream) { logFileStream.end(); logFileStream = null }
     return Promise.resolve()
   })
+  ipcMain.handle('native:reload-app', () => clearCacheAndReload())
   ipcMain.handle('native:notify', (_e, title: string, body: string, nav?: unknown) => {
     showTerminalNotification(title, body, nav as { sessionId?: string; taskId?: string; executionId?: string; projectPath?: string } | undefined)
     return Promise.resolve()

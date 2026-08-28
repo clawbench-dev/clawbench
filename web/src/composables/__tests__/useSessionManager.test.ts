@@ -38,6 +38,7 @@ vi.mock('vue', async () => {
 })
 
 import { useSessionManager } from '@/composables/useSessionManager'
+import { chatMessageReducer } from '@/utils/chatStreamUtils'
 
 function createMockOptions() {
     const messages = ref<any[]>([])
@@ -52,6 +53,7 @@ function createMockOptions() {
     const scrollBottom = vi.fn()
     return {
         messages, loading,
+        dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
         switchSessionCore, createSessionCore, archiveSessionCore, destroySessionCore,
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
         forkSessionCore: vi.fn().mockResolvedValue(true),
@@ -382,6 +384,27 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('sends clientId so the backend user_message broadcast can skip self-echo', async () => {
+            // Regression: without clientId the backend broadcasts user_message
+            // with an empty senderClientId, the frontend cannot skip its own
+            // echo, and the queued message is rendered twice — once as the
+            // pending bubble and once as a remote duplicate above it.
+            localStorage.setItem('clawbench_client_id', 'device-test-1')
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-123')
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.clientId).toBe('device-test-1')
+
+            fetchSpy.mockRestore()
+        })
+
         it('removes stale pending message on fetch error', async () => {
             // When enqueueMessage fails, the locally-pushed pending message
             // should be removed from messages.value so the user doesn't see a ghost entry.
@@ -436,6 +459,52 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('returns false when the enqueue request fails', async () => {
+            // ChatPanelContent relies on the boolean to know whether the message
+            // actually got enqueued — when it fails it must restore the input
+            // text instead of leaving it cleared.
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(false)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns false when the backend responds with an error status', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: false,
+                status: 500,
+                json: () => Promise.resolve({}),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(false)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns true when the enqueue request succeeds', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, queue: [] }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('session-1', 'hello')
+
+            expect(result).toBe(true)
+
+            fetchSpy.mockRestore()
+        })
+
         it('calls scrollBottom after enqueue', async () => {
             const opts = createMockOptions()
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -447,76 +516,6 @@ describe('useSessionManager', () => {
             await mgr.enqueueMessage('session-1', 'hello')
 
             expect(opts.scrollBottom).toHaveBeenCalledWith(true)
-
-            fetchSpy.mockRestore()
-        })
-
-        it('returns needsStart=true when backend detects session not running', async () => {
-            const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true, id: 'pending-456',
-            })
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    ok: true,
-                    needs_start: true,
-                    message: 'hello',
-                    filePaths: ['/main.go'],
-                    files: ['/main.go'],
-                    queueId: 'pending-456',
-                    queue: [],
-                }),
-            } as Response)
-            const mgr = useSessionManager(opts)
-
-            const result = await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-456')
-
-            expect(result.needsStart).toBe(true)
-            expect(result.message).toBe('hello')
-            expect(result.filePaths).toEqual(['/main.go'])
-
-            fetchSpy.mockRestore()
-        })
-
-        it('removes pending message from messages.value when needsStart is true', async () => {
-            const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true, id: 'pending-456',
-            })
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    ok: true,
-                    needs_start: true,
-                    message: 'hello',
-                    filePaths: [],
-                    files: [],
-                    queue: [],
-                }),
-            } as Response)
-            const mgr = useSessionManager(opts)
-
-            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-456')
-
-            // The pending message should have been removed from messages.value
-            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
-            expect(pendingMsgs).toHaveLength(0)
-
-            fetchSpy.mockRestore()
-        })
-
-        it('returns needsStart=false on normal enqueue', async () => {
-            const opts = createMockOptions()
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ ok: true, queue: [{ text: 'hello' }] }),
-            } as Response)
-            const mgr = useSessionManager(opts)
-
-            const result = await mgr.enqueueMessage('session-1', 'hello')
-
-            expect(result.needsStart).toBe(false)
 
             fetchSpy.mockRestore()
         })

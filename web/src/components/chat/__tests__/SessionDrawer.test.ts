@@ -7,6 +7,12 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 
+// Shared mock for the named setCLIModels export — used by both the vi.mock
+// factory and the assertions below (the component imports it directly).
+const { mockSetCLIModels } = vi.hoisted(() => ({
+  mockSetCLIModels: vi.fn(),
+}))
+
 // Mock BottomSheet to render slot content inline (skip Teleport).
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: defineComponent({
@@ -40,6 +46,7 @@ vi.mock('@/composables/useAgents', () => ({
   populateACPStateCache: vi.fn().mockResolvedValue(undefined),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   invalidateACPStateCache: vi.fn(),
+  setCLIModels: mockSetCLIModels,
 }))
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: vi.fn(),
@@ -369,7 +376,7 @@ describe('SessionDrawer', () => {
     await wrapper.vm.handleRefresh()
 
     expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
-    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'models', newModels)
+    expect(mockSetCLIModels).toHaveBeenCalledWith('claude', newModels)
   })
 
   it('handleRefresh shows error toast on CLINotFound', async () => {

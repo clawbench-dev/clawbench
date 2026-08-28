@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
-import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
+import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
 
 // ── Timer leak prevention ──
 
@@ -125,6 +125,7 @@ function createOptions(overrides: Record<string, any> = {}) {
   const messages = ref<any[]>([])
   return {
     messages,
+    dispatch: (action: any) => { messages.value = chatMessageReducer(messages.value, action) },
     currentSessionId: ref('test-session-1'),
     currentBackend: ref('test-backend'),
     loading: ref(false),
@@ -205,24 +206,23 @@ describe('useChatStream', () => {
       expect(assistantMsg.backend).toBe('claude-code')
     })
 
-    it('should disconnect previous stream before connecting new one', () => {
+    it('should unsubscribe previous session before connecting new one', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
       connectStream('session-1')
       mockSendWsMessage.mockClear()
 
-      // disconnectStream sends unsubscribe for currentSessionId ('test-session-1')
-      // because isStreaming is set, then connectStream sends subscribe for session-2
+      // connectStream('session-2') now only unsubscribes the session it was
+      // actually subscribed to ('session-1') — not currentSessionId — then
+      // subscribes to session-2.
       connectStream('session-2')
 
-      // Should unsubscribe from test-session-1 (currentSessionId at disconnect time)
-      // and subscribe to session-2
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'session-1' })
       expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'session-2' })
     })
 
-    it('should insert streaming assistant AFTER the newest user message (including pending)', () => {
+    it('should insert streaming assistant AFTER the newest non-pending user message', () => {
       const options = createOptions()
       options.messages.value.push(
         { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
@@ -232,15 +232,46 @@ describe('useChatStream', () => {
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
 
-      // DB-backed messages sort first (numeric id); transient messages follow in
-      // seq order. The streaming placeholder is anchored right after its question
-      // (the newest user message), so it can never sort above an earlier reply.
+      // The streaming reply answers A (the last non-pending user message).
+      // Queued message B (pending) is a later turn for the drain loop — the
+      // reply must NOT be pushed below it, otherwise the order becomes
+      // A, B, streaming (the queued-message reply swap).
       expect(options.messages.value[0].role).toBe('user')
       expect(options.messages.value[0].content).toBe('A')
-      expect(options.messages.value[1].role).toBe('user')
-      expect(options.messages.value[1].pending).toBe(true)
-      expect(options.messages.value[2].role).toBe('assistant')
-      expect(options.messages.value[2].streaming).toBe(true)
+      expect(options.messages.value[1].role).toBe('assistant')
+      expect(options.messages.value[1].streaming).toBe(true)
+      expect(options.messages.value[2].role).toBe('user')
+      expect(options.messages.value[2].pending).toBe(true)
+    })
+
+    it('anchors the reply to the newest SENT user (max seq), not a physical-last history message', () => {
+      // Regression: msg1 (freshly sent, has a client seq) must be the anchor —
+      // NOT the physical-last history message. History messages lack seq, so
+      // the max-seq scan finds msg1 even though it may not be the last element.
+      const options = createOptions()
+      options.messages.value.push(
+        // history loaded from DB (no seq)
+        { role: 'user', id: 38348, content: 'old', blocks: [{ type: 'text', text: 'old' }] },
+        { role: 'assistant', id: 38349, content: 'old reply', blocks: [{ type: 'text', text: 'old reply' }] },
+      )
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-msg1', content: '1', blocks: [{ type: 'text', text: '1' }],
+        pending: false, seq: 99,
+      } })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      const placeholder = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(placeholder).toBeDefined()
+      // Anchor must be msg1 (the just-sent message), not the history question.
+      expect(String(placeholder.parentQueueId)).toBe('pending-msg1')
+      // Order: history, msg1, reply (msg1 is the newest message → after history).
+      const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.content}` : `a:${m.content}`)
+      expect(order[0]).toBe('u:old')
+      expect(order[1]).toBe('a:old reply')
+      expect(order[2]).toBe('u:1')
+      expect(order[3]).toBe('a:')
     })
 
     it('should reuse existing streaming message only when reuseExistingStreaming is set', () => {
@@ -391,13 +422,126 @@ describe('useChatStream', () => {
     })
 
     it('should not send unsubscribe when not streaming', () => {
-      const options = createOptions()
+      const options = createOptions({ currentSessionId: ref('') })
       const { disconnectStream } = useChatStream(options)
 
-      // Never called connectStream, so isStreaming is false
+      // Never called connectStream and no session is open, so nothing is
+      // subscribed — disconnectStream must not send any WS message.
       disconnectStream()
 
       expect(mockSendWsMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── Subscription lifecycle (decoupled from streaming) ──
+
+  describe('subscription lifecycle', () => {
+    it('subscribe 去重：重复 subscribe 同一会话只发一次', () => {
+      const options = createOptions()
+      const { subscribe } = useChatStream(options)
+
+      // The currentSessionId watch subscribes to 'test-session-1' at setup;
+      // re-subscribing the SAME session must be deduped (still one subscribe).
+      subscribe('test-session-1')
+      subscribe('test-session-1')
+
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+      expect(subscribeCalls[0][0]).toEqual({ type: 'subscribe', session_id: 'test-session-1' })
+    })
+
+    it('打开会话即订阅：currentSessionId 变化时自动 subscribe', async () => {
+      const options = createOptions({ currentSessionId: ref('') })
+      useChatStream(options)
+
+      mockSendWsMessage.mockClear()
+      // Simulate a session being opened/switched to — the watch subscribes.
+      options.currentSessionId.value = 'new-session-1'
+      await new Promise(r => setTimeout(r, 0))
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'new-session-1' })
+    })
+
+    it('subscribe 切换会话：先退订旧会话再订阅新会话', () => {
+      const options = createOptions()
+      const { subscribe } = useChatStream(options)
+
+      subscribe('s1')
+      mockSendWsMessage.mockClear()
+      subscribe('s2')
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 's1' })
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 's2' })
+    })
+
+    it('done 事件不退订（订阅常驻）', async () => {
+      const options = createOptions()
+      const { connectStream, disconnectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      simulateWsEvent('done', {})
+
+      await vi.waitFor(() => {
+        expect(options.onLoadHistory).toHaveBeenCalled()
+      })
+      // done stops streaming but keeps the subscription — no unsubscribe sent
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'unsubscribe' })
+      )
+      // Subscription is still live: a later explicit disconnect DOES unsubscribe.
+      disconnectStream()
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+    })
+
+    it('WS 重连后重订阅（恰好一次）', async () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      mockConnected.value = false
+      await new Promise(r => setTimeout(r, 0))
+      mockSendWsMessage.mockClear()
+      mockConnected.value = true
+      await new Promise(r => setTimeout(r, 0))
+
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe' && c[0]?.session_id === 'test-session-1'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+    })
+
+    it('WS 重连但不活跃（未订阅）时不重订阅', async () => {
+      const options = createOptions({ currentSessionId: ref('') })
+      useChatStream(options)
+
+      mockSendWsMessage.mockClear()
+      mockConnected.value = false
+      await new Promise(r => setTimeout(r, 0))
+      mockConnected.value = true
+      await new Promise(r => setTimeout(r, 50))
+
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'subscribe' })
+      )
+    })
+
+    it('disconnectStream 发送 unsubscribe', () => {
+      const options = createOptions()
+      const { connectStream, disconnectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      disconnectStream()
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
     })
   })
 
@@ -805,7 +949,7 @@ describe('useChatStream', () => {
   // ── Done / Cancelled / Error ──
 
   describe('WS event handling — done', () => {
-    it('should disconnect and load history on done', async () => {
+    it('should stop streaming and load history on done (subscription kept)', async () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -815,8 +959,9 @@ describe('useChatStream', () => {
 
       simulateWsEvent('done', {})
 
-      // Should send unsubscribe
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // done stops streaming but keeps the persistent subscription — no
+      // unsubscribe is sent (the session stays subscribed while open).
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(options.onLoadHistory).toHaveBeenCalled()
     })
 
@@ -890,7 +1035,7 @@ describe('useChatStream', () => {
       expect(options.onStreamEnd).not.toHaveBeenCalled()
     })
 
-    it('should call onToast and onNotification when isOpen=false on done', async () => {
+    it('should NOT call onToast but still call onNotification when isOpen=false on done', async () => {
       const options = createOptions({ isOpen: ref(false) })
       const { connectStream } = useChatStream(options)
 
@@ -901,9 +1046,10 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       await vi.waitFor(() => {
-        expect(options.onToast).toHaveBeenCalled()
+        expect(options.onNotification).toHaveBeenCalled()
       })
-      expect(options.onNotification).toHaveBeenCalled()
+      // Completion popover replaced the in-app toast bubble — no onToast
+      expect(options.onToast).not.toHaveBeenCalled()
     })
 
     it('should call onRenderNeeded(true) after loadHistory resolves to re-render Mermaid on final DOM', async () => {
@@ -952,7 +1098,7 @@ describe('useChatStream', () => {
   })
 
   describe('WS event handling — cancelled', () => {
-    it('should disconnect and mark message as cancelled', () => {
+    it('should stop streaming and mark message as cancelled (subscription kept)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -962,7 +1108,8 @@ describe('useChatStream', () => {
 
       simulateWsEvent('cancelled', {})
 
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // cancelled stops streaming but keeps the persistent subscription.
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       const assistantMsg = options.messages.value.find(
         (m: any) => m.role === 'assistant'
       )
@@ -1007,7 +1154,7 @@ describe('useChatStream', () => {
   })
 
   describe('WS event handling — error', () => {
-    it('should disconnect stream and call onStreamEnd with error', () => {
+    it('should stop streaming and call onStreamEnd with error (subscription kept)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1017,7 +1164,8 @@ describe('useChatStream', () => {
 
       simulateWsEvent('error', { error: 'session not running' })
 
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-1' })
+      // error stops streaming but keeps the persistent subscription.
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(options.onStreamEnd).toHaveBeenCalledWith('error')
     })
 
@@ -1328,6 +1476,80 @@ describe('useChatStream', () => {
       // Pending message is from this device, remote message still added
       const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
       expect(userMsgs).toHaveLength(2)
+    })
+
+    it('should deduplicate by queueId when the pending bubble matches (self-echo)', () => {
+      // Regression: when this device enqueues a message, the backend broadcasts
+      // user_message carrying the same queueId. If the echo is not skipped, the
+      // queued message is rendered twice — once as the pending bubble and once
+      // as a remote duplicate.
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 'pending-abc', content: 'hello', pending: true,
+        blocks: [{ type: 'text', text: 'hello' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'hello', queueId: 'pending-abc' })
+
+      // Same queueId → the remote echo is the pending bubble itself; no duplicate.
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      expect(userMsgs[0].id).toBe('pending-abc')
+    })
+
+    it('self-echo with MessageID>0 adopts the directly-sent bubble DB id (msg1)', () => {
+      // Regression: msg1 is sent while idle (sendMessageNow → optimistic bubble,
+      // NOT pending). The backend's user_message echo carries MessageID + the
+      // frontend queueId. The self-echo handler must adopt the DB id into the
+      // bubble (keeps old id as queueId so the reply anchor still resolves),
+      // and must NOT flip a queued (pending) bubble.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+      // msg1 bubble (directly sent, not pending); connectStream anchors reply1
+      // to it.
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-1', content: '1', blocks: [{ type: 'text', text: '1' }],
+        pending: false, seq: 10,
+      } })
+      connectStream('test-session-1')
+      const placeholder = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(String(placeholder?.parentQueueId)).toBe('pending-1')
+
+      simulateWsEvent('user_message', { messageId: 42, content: '1', queueId: 'pending-1', senderClientId: 'my-device-123' })
+
+      const msg1 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg1.id).toBe(42)          // adopted DB id
+      expect(msg1.queueId).toBe('pending-1') // old id preserved for anchor
+      expect(msg1.pending).toBeUndefined()
+      // Reply anchor still resolves (no duplicate, order msg1 → reply1).
+      const order = options.messages.value.map((m: any) => m.role === 'user' ? `u:${m.id}` : `a:${String(m.id)}`)
+      expect(order[0]).toBe('u:42')
+      expect(order[1]).toContain('a:drain-')
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('self-echo with MessageID>0 does NOT adopt a queued (pending) bubble', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      localStorage.setItem('clawbench_client_id', 'my-device-456')
+      // queued bubble (pending) — must stay pending until drain
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-2', content: '2', blocks: [{ type: 'text', text: '2' }],
+        pending: true, seq: 12,
+      } })
+
+      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456' })
+
+      const msg2 = options.messages.value.find((m: any) => m.role === 'user')
+      expect(msg2.id).toBe('pending-2')
+      expect(msg2.pending).toBe(true)
+      localStorage.removeItem('clawbench_client_id')
     })
 
     it('should push to end when no streaming assistant message exists', () => {
@@ -1732,7 +1954,7 @@ describe('useChatStream', () => {
         expect(updateACPModelList).toHaveBeenCalledWith('test-agent-1', [
           { id: 'gpt-4', name: 'GPT-4' },
           { id: 'gpt-3.5', name: 'GPT-3.5' },
-        ])
+        ], 'gpt-4')
       })
 
       it('should not call when models is empty', async () => {
@@ -1873,6 +2095,80 @@ describe('useChatStream', () => {
       expect(assistantMsg.id).toBe(42)
     })
 
+    it('creates a placeholder when no streaming message exists (event-driven)', () => {
+      // No connectStream call — the placeholder must be created purely from the
+      // stream_start event (e.g. client opened the session mid-stream).
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 77 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(77)
+      expect(assistantMsg.content).toBe('')
+      expect(assistantMsg.blocks).toEqual([])
+    })
+
+    it('stream_start creates placeholder anchored to newest non-pending user message', () => {
+      // Path B: a stream_start placeholder created mid-session must carry
+      // parentQueueId so rebuildFromDb's Channel 2 (r.queueId ===
+      // live.parentQueueId) can match it — even when the DB snapshot raced the
+      // new streaming row.
+      const options = createOptions()
+      useChatStream(options)
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'sent-1', content: '1', blocks: [{ type: 'text', text: '1' }],
+        pending: false, seq: 10,
+      } })
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-1', content: '2', blocks: [{ type: 'text', text: '2' }],
+        pending: true, seq: 12,
+      } })
+
+      simulateWsEvent('stream_start', { message_id: 77 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(77)
+      // Anchor is the newest NON-pending user message (sent-1), never the queued one.
+      expect(String(assistantMsg.parentQueueId)).toBe('sent-1')
+    })
+
+    it('stream_start creates placeholder without anchor when no user messages', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 88 })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeDefined()
+      expect(assistantMsg.id).toBe(88)
+      expect(assistantMsg.parentQueueId).toBeUndefined()
+    })
+
+    it('does not create a duplicate placeholder when one already exists', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      // The optimistic placeholder exists with a string id; the stream_start
+      // event must adopt the DB id without creating a second bubble.
+      simulateWsEvent('stream_start', { message_id: 42 })
+
+      const streamingMsgs = options.messages.value.filter(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(streamingMsgs).toHaveLength(1)
+      expect(streamingMsgs[0].id).toBe(42)
+    })
+
     it('should skip when guard fails', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -1887,82 +2183,28 @@ describe('useChatStream', () => {
       )
       expect(assistantMsg.id).not.toBe(99)
     })
+
+    it('ignores stream_start without a message_id (no placeholder created)', () => {
+      const options = createOptions()
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', {})
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(assistantMsg).toBeUndefined()
+    })
   })
 
 
 
-  // ── Stream timeout ──
+  // ── streamTimeout removed ──
+  // The 30s no-event stream timeout was removed: an idle session with no WS
+  // events is normal (the user may be reading), so no forced reload fires.
 
-  describe('stream timeout', () => {
-    it('should disconnect and reload from DB on stream timeout (session done)', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      // Simulate loadHistory finding the session is no longer running
-      options.onLoadHistory = vi.fn().mockImplementation(() => {
-        options.loading.value = false
-        return Promise.resolve()
-      })
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-      mockSendWsMessage.mockClear()
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.onLoadHistory).toHaveBeenCalled()
-      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should keep loading=true on stream timeout when session is still running', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      // Simulate loadHistory finding the session is still running
-      options.onLoadHistory = vi.fn().mockImplementation(() => {
-        // loadHistory internally sets loading=true when data.running=true
-        options.loading.value = true
-        return Promise.resolve()
-      })
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-      mockSendWsMessage.mockClear()
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.onLoadHistory).toHaveBeenCalled()
-      // Session is still running — loading must stay true
-      expect(options.loading.value).toBe(true)
-      // onStreamEnd should NOT be called because the session is still active
-      expect(options.onStreamEnd).not.toHaveBeenCalled()
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should set loading=false and call onStreamEnd when loadHistory fails on timeout', async () => {
-      vi.useFakeTimers()
-      const options = createOptions()
-      options.onLoadHistory = vi.fn().mockRejectedValue(new Error('network error'))
-      const { connectStream } = useChatStream(options)
-
-      options.loading.value = true
-      connectStream('test-session-1')
-
-      // Advance past STREAM_TIMEOUT_MS (30000)
-      await vi.advanceTimersByTimeAsync(31000)
-
-      expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('should reset timeout on content event', async () => {
+  describe('streamTimeout removed — idle session no forced reload', () => {
+    it('does not reload from DB after 30s+ of silence on a connected stream', async () => {
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -1970,16 +2212,17 @@ describe('useChatStream', () => {
       options.loading.value = true
       connectStream('test-session-1')
       options.onLoadHistory.mockClear()
+      options.onStreamEnd.mockClear()
 
-      // Advance 20s — still within timeout
-      await vi.advanceTimersByTimeAsync(20000)
+      // Advance well past the old STREAM_TIMEOUT_MS (30000) — no events arrive.
+      await vi.advanceTimersByTimeAsync(70000)
 
-      // Receive a content event — resets timeout
-      simulateWsEvent('content', { content: 'still alive' })
-
-      // Advance another 20s — should NOT have timed out yet
-      await vi.advanceTimersByTimeAsync(20000)
+      // No forced reload, no error, no unsubscribe — the subscription stays.
       expect(options.onLoadHistory).not.toHaveBeenCalled()
+      expect(options.onStreamEnd).not.toHaveBeenCalled()
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'unsubscribe' })
+      )
 
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
@@ -2089,7 +2332,7 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       await vi.waitFor(() => {
-        expect(options.onScrollBottom).toHaveBeenCalledWith()
+        expect(options.onScrollBottom).toHaveBeenCalledWith(false, true)
       })
     })
   })
@@ -2118,12 +2361,13 @@ describe('useChatStream', () => {
     })
 
     it('should not re-subscribe when not streaming', async () => {
-      const options = createOptions()
+      const options = createOptions({ currentSessionId: ref('') })
       useChatStream(options)
 
       mockSendWsMessage.mockClear()
 
-      // Never called connectStream, so isStreaming is false
+      // No session is open (empty currentSessionId), so nothing is subscribed —
+      // a reconnect must NOT re-subscribe.
       mockConnected.value = false
       await new Promise(r => setTimeout(r, 0))
       mockConnected.value = true
@@ -2132,7 +2376,7 @@ describe('useChatStream', () => {
       expect(mockSendWsMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'subscribe' }))
     })
 
-    it('should reset stream timeout on re-subscription', async () => {
+    it('reconnects a still-subscribed session exactly once (fake timers)', async () => {
       vi.useFakeTimers()
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -2141,21 +2385,20 @@ describe('useChatStream', () => {
       connectStream('test-session-1')
       options.onLoadHistory.mockClear()
 
-      // Advance 20s
-      await vi.advanceTimersByTimeAsync(20000)
-
-      // WS reconnects — resets timeout
+      // WS drops and reconnects while the session is still open/subscribed.
       mockConnected.value = false
       await vi.advanceTimersByTimeAsync(0)
       mockSendWsMessage.mockClear()
       mockConnected.value = true
       await vi.advanceTimersByTimeAsync(0)
 
-      // Verify re-subscribe was sent (timeout was reset)
-      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'test-session-1' })
-
-      // Advance another 20s — should NOT have timed out (timeout was reset)
-      await vi.advanceTimersByTimeAsync(20000)
+      // Re-subscribe was sent exactly once (backend cleared it on disconnect).
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe' && c[0]?.session_id === 'test-session-1'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+      // Idle afterwards: no forced reload (streamTimeout removed).
+      await vi.advanceTimersByTimeAsync(70000)
       expect(options.onLoadHistory).not.toHaveBeenCalled()
 
       vi.advanceTimersByTime(10000)
@@ -2299,12 +2542,13 @@ describe('useChatStream', () => {
 
       simulateWsEvent('queue_drain', { sessionId: 'test-session-1', queueId: 'queue-B', text: 'B', messageId: 3 })
 
-      // Previous assistant finalized, queued message keeps its transient string id.
+      // Previous assistant finalized, queued message adopts its DB id (parent
+      // message A is DB-backed → parentIsDB=true).
       const aReply = options.messages.value.find((m: any) => m.content === 'A reply')
       expect(aReply.streaming).toBeUndefined()
       const b = options.messages.value.find((m: any) => m.content === 'B')
       expect(b.pending).toBeUndefined()
-      expect(b.id).toBe('queue-B')
+      expect(b.id).toBe(3)
       // A new streaming placeholder exists for B's reply.
       const streaming = options.messages.value.filter((m: any) => m.role === 'assistant' && m.streaming)
       expect(streaming.length).toBe(1)

@@ -662,15 +662,16 @@ function deriveMermaidName(mermaidNode) {
     return 'diagram.svg'
 }
 
-function collectMdImages(container, clickedImg, clickedMermaid) {
+function collectMdImages(container, clickedImg, clickedMermaid, clickedSvg) {
     const list = []
     let startIdx = 0
 
-    // TreeWalker visits IMG and .mermaid elements in document order
+    // TreeWalker visits IMG, .mermaid and .lightbox-svg in document order
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, {
         acceptNode(node) {
             if (node.tagName === 'IMG') return NodeFilter.FILTER_ACCEPT
             if (node.classList?.contains('mermaid')) return NodeFilter.FILTER_ACCEPT
+            if (node.classList?.contains('lightbox-svg')) return NodeFilter.FILTER_ACCEPT
             return NodeFilter.FILTER_SKIP
         }
     })
@@ -690,6 +691,11 @@ function collectMdImages(container, clickedImg, clickedMermaid) {
             const name = deriveMermaidName(node)
             list.push({ src: '', name, svg: svg.outerHTML })
             if (node === clickedMermaid) startIdx = list.length - 1
+        } else if (node.classList.contains('lightbox-svg')) {
+            // Inline SVG (non-mermaid) returned directly by the AI
+            const name = node.getAttribute('data-name') || 'diagram.svg'
+            list.push({ src: '', name, svg: node.outerHTML })
+            if (node === clickedSvg) startIdx = list.length - 1
         }
         node = walker.nextNode()
     }
@@ -723,10 +729,10 @@ watch(lightboxVisible, (visible) => {
 })
 
 function handleLightboxClick(e) {
-    // Touch mode: direct click on .lightbox-img or .mermaid opens lightbox
+    // Touch mode: direct click on .lightbox-img, .mermaid or .lightbox-svg opens lightbox
     // PC mode: only click on .lightbox-expand-icon opens lightbox
     const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
-    // PC mode: only expand icon opens lightbox (not the image/mermaid itself)
+    // PC mode: only expand icon opens lightbox (not the image/mermaid/svg itself)
     if (!isExpandIcon && e.pointerType !== 'touch') return
 
     // When clicking the expand icon, find the image from the wrapper
@@ -743,7 +749,7 @@ function handleLightboxClick(e) {
         // Check if the image is inside a markdown body — collect sibling images for navigation
         const mdContainer = img.closest('.markdown-body, .chat-message')
         if (mdContainer) {
-            const { list, startIdx } = collectMdImages(mdContainer, img, null)
+            const { list, startIdx } = collectMdImages(mdContainer, img, null, null)
             if (list.length > 1) {
                 openMdImages(list, startIdx)
                 return
@@ -759,7 +765,25 @@ function handleLightboxClick(e) {
         if (svg) {
             const mdContainer = mermaidDiv.closest('.markdown-body, .chat-message')
             if (mdContainer) {
-                const { list, startIdx } = collectMdImages(mdContainer, null, mermaidDiv)
+                const { list, startIdx } = collectMdImages(mdContainer, null, mermaidDiv, null)
+                if (list.length > 1) {
+                    openMdImages(list, startIdx)
+                    return
+                }
+            }
+            openSvg(svg.outerHTML)
+        }
+        return
+    }
+    // Inline SVG (non-mermaid) returned directly by the AI
+    const svgWrap = e.target.closest('.lightbox-svg-wrap')
+    if (svgWrap) {
+        e.preventDefault()
+        const svg = svgWrap.querySelector('svg.lightbox-svg') || svgWrap.querySelector('svg')
+        if (svg) {
+            const mdContainer = svgWrap.closest('.markdown-body, .chat-message')
+            if (mdContainer) {
+                const { list, startIdx } = collectMdImages(mdContainer, null, null, svg)
                 if (list.length > 1) {
                     openMdImages(list, startIdx)
                     return

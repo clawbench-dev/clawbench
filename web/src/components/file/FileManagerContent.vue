@@ -315,7 +315,7 @@
 
     <!-- Context menu -->
     <Teleport to="body">
-      <div v-if="ctxMenu.visible" class="context-menu visible" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop>
+      <div v-if="ctxMenu.visible" class="context-menu visible" :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
         <!-- Group 1: Clipboard operations -->
         <template v-if="ctxMenu.entry">
           <div class="context-menu-item" @click.stop="doCopy">
@@ -325,6 +325,10 @@
           <div class="context-menu-item" @click.stop="doCut">
             <Scissors :size="14" />
             {{ t('file.context.cut') }}
+          </div>
+          <div class="context-menu-item" @click.stop="doCopyPath">
+            <Link2 :size="14" />
+            {{ t('file.context.copyPath') }}
           </div>
         </template>
         <div class="context-menu-item" :class="{ disabled: !clipboard.entries.length }" @click.stop="clipboard.entries.length && doPaste()">
@@ -388,7 +392,7 @@
           </div>
         </template>
       </div>
-      <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" />
+      <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @contextmenu.prevent="handleCtxMenu" />
     </Teleport>
     <FileSearchDrawer
       ref="fileSearchDrawerRef"
@@ -417,8 +421,9 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { isRefreshing } from '@/composables/useFileRefresh'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
+import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
-import { joinPath } from '@/utils/path'
+import { joinPath, normalizeSlashes } from '@/utils/path'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search, FolderDown, FolderSearch, Link2 } from 'lucide-vue-next'
 import {
   buildThumbUrl,
@@ -911,7 +916,23 @@ function onContainerLongPress(e) {
 }
 
 function handleCtxMenu(e) {
-    const item = e.target?.closest('.file-item, .grid-item')
+    // When re-triggered from the ctx-overlay (second right-click while the menu
+    // is open), e.target is the overlay itself. The overlay covers the whole
+    // viewport, so elementFromPoint would return it — temporarily disable its
+    // pointer events to reveal the element beneath the cursor.
+    let item = e.target?.closest?.('.file-item, .grid-item') || null
+    const fromOverlay = !!e.target?.classList?.contains('ctx-overlay')
+    if (!item && fromOverlay) {
+        const overlay = e.target
+        const prev = overlay.style.pointerEvents
+        overlay.style.pointerEvents = 'none'
+        try {
+            const hit = document.elementFromPoint(e.clientX, e.clientY)
+            item = hit?.closest?.('.file-item, .grid-item') || null
+        } finally {
+            overlay.style.pointerEvents = prev
+        }
+    }
     ctxMenu.x = toFixedCSS(e.clientX)
     ctxMenu.y = toFixedCSS(e.clientY)
     if (!item) {
@@ -953,6 +974,30 @@ async function doCopy() {
     appLog.d(TAG, '[doCopy] entry:', ctxMenu.entry?.path)
     closeCtxMenu()
     if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+}
+
+function doCopyPath() {
+    const entry = ctxMenu.entry
+    if (!entry?.path) return
+    closeCtxMenu()
+    const absPath = absPathForEntry(entry)
+    appLog.d(TAG, '[doCopyPath] absPath:', absPath)
+    copyText(absPath, () => {
+        if (toast) toast.show(t('file.context.pathCopied'), { icon: '📋', type: 'success', duration: 1500 })
+    }, () => {
+        if (toast) toast.show(t('common.operationFailed'), { icon: '❌', type: 'error', duration: 2000 })
+    })
+}
+
+/**
+ * Resolve the absolute filesystem path for a context-menu entry.
+ * projectRoot is platform-native (E:\… on Windows), entry.path is always
+ * "/"-separated — normalize both, then join without double/leading slashes.
+ */
+function absPathForEntry(entry) {
+    const root = normalizeSlashes(store.state.projectRoot || '')
+    const rel = normalizeSlashes(entry?.path || '').replace(/^\/+/, '')
+    return root ? root.replace(/\/+$/, '') + '/' + rel : rel
 }
 
 async function doCut() {
@@ -1279,10 +1324,10 @@ function clampCtxMenu() {
 }
 
 function doOpenAsProject() {
-    if (!ctxMenu.entry || ctxMenu.entry.type !== 'dir') return
-    const entryPath = ctxMenu.entry.path
+    const entry = ctxMenu.entry
+    if (!entry || entry.type !== 'dir') return
     closeCtxMenu()
-    const absPath = store.state.projectRoot + '/' + entryPath
+    const absPath = absPathForEntry(entry)
     fetch('/api/project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

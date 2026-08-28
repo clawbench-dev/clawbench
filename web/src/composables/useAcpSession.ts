@@ -24,6 +24,13 @@ const acpResuming = ref(false)
 const acpSessionsNotSupported = ref(false)
 const nextCursor = ref<string | null>(null)
 const lastAgentId = ref('')
+// Generation counter guards against stale responses racing a list reset
+// (agent switch / drawer reopen / clearAcpSessions). Each reset bumps the
+// generation; a load response whose captured generation is stale is dropped.
+let loadGen = 0
+// In-flight request count so a dropped stale response can't clear the loading
+// flag while a newer request for the reset list is still pending.
+let pendingLoads = 0
 
 export function useAcpSession(options: UseAcpSessionOptions) {
   const { currentAgentId } = options
@@ -33,14 +40,23 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     const aid = agentId || currentAgentId.value
     if (!aid) return
 
-    // Reset if different agent
-    if (!append && aid !== lastAgentId.value) {
+    // Any request for a different agent invalidates the previous list,
+    // including appends that slip through after a switch (the old in-flight
+    // responses must not land on a new agent's list).
+    if (aid !== lastAgentId.value) {
       acpSessions.value = []
       nextCursor.value = null
       acpSessionsNotSupported.value = false
       lastAgentId.value = aid
+      loadGen++
     }
 
+    // Capture the generation at request start; if a reset happens while this
+    // request is in flight, the response must be dropped instead of being
+    // merged onto the fresh list (prevents duplicate / cross-agent entries).
+    const gen = loadGen
+
+    pendingLoads++
     acpSessionsLoading.value = true
     try {
       let url = `/api/agents/${encodeURIComponent(aid)}/acp-sessions`
@@ -48,6 +64,9 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         url += `?cursor=${encodeURIComponent(nextCursor.value)}`
       }
       const resp = await fetch(url)
+      // A reset (agent switch / clear) started after this request — discard
+      // the response so it can't corrupt the fresh list.
+      if (gen !== loadGen) return
       if (!resp.ok) {
         // 501 = ListSessions not supported by this agent
         if (resp.status === 501) {
@@ -58,6 +77,8 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         return
       }
       const data = await resp.json()
+      // Re-check after parsing: a reset may have landed during body read.
+      if (gen !== loadGen) return
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sessions: AcpSessionInfo[] = (data.sessions || []).map((s: any) => ({
         sessionId: s.sessionId || s.session_id || '',
@@ -67,7 +88,11 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         updatedAt: s.updatedAt || s.updated_at || '',
       }))
       if (append) {
-        acpSessions.value.push(...sessions)
+        // Idempotent merge: agents may overlap pages (unstable cursor), so a
+        // sessionId already present must not be appended again.
+        const seen = new Set(acpSessions.value.map((s) => s.sessionId))
+        const fresh = sessions.filter((s) => !s.sessionId || !seen.has(s.sessionId))
+        acpSessions.value.push(...fresh)
       } else {
         acpSessions.value = sessions
       }
@@ -75,7 +100,10 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     } catch (err: unknown) {
       appLog.e(TAG, 'loadAcpSessions failed:', err)
     } finally {
-      acpSessionsLoading.value = false
+      pendingLoads = Math.max(0, pendingLoads - 1)
+      // Only clear the flag when no request is in flight anymore. A stale
+      // response dropped above must not clear the flag of a newer pending load.
+      acpSessionsLoading.value = pendingLoads > 0
     }
   }
 
@@ -168,6 +196,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
     nextCursor.value = null
     acpSessionsNotSupported.value = false
     lastAgentId.value = ''
+    loadGen++
   }
 
   return {

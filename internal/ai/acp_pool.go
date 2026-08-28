@@ -587,6 +587,28 @@ func (m *ACPConnManager) GetClientByAgentID(agentID string) *ClawBenchACPClient 
 	return nil
 }
 
+// GetCurrentModelIDByAgentID returns the current model ID from any live ACP
+// connection of the given agent. Returns "" if the agent has no active
+// connection or none has selected a model yet. This lets /api/agents report
+// the agent's currently-selected model as part of its cached ACP state, so the
+// frontend can mark the correct default model on the merged model list.
+func (m *ACPConnManager) GetCurrentModelIDByAgentID(agentID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for key, conn := range m.conns {
+		conn.mu.Lock()
+		matched := (conn.agent != nil && conn.agent.ID == agentID) || key == agentID
+		if matched && conn.currentModelID != "" {
+			modelID := conn.currentModelID
+			conn.mu.Unlock()
+			return modelID
+		}
+		conn.mu.Unlock()
+	}
+	return ""
+}
+
 // SetConnForTest injects a connection for testing. Production code must not use this.
 func (m *ACPConnManager) SetConnForTest(clawbenchSID string, conn *ACPConn) {
 	m.mu.Lock()

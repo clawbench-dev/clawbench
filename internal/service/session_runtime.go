@@ -41,10 +41,26 @@ var (
 // responsePreviewMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
 const responsePreviewMaxRunes = model.ResponsePreviewMaxRunes
 
+// previewAssistantContentLimit caps how many most-recent assistant messages are
+// loaded when extracting a response preview. A preview only needs the latest few
+// replies; 20 is far beyond any realistic "last text block" lookback while
+// bounding memory on very long sessions with large tool outputs.
+const previewAssistantContentLimit = 20
+
 // EmitSessionEvent broadcasts a session_update event to connected clients.
 // toolName and toolInput are optional and only used for "permission_pending" status.
 func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolNameAndInput ...string) {
 	emitSessionEvent(sessionID, status, hasNewMessages, true, toolNameAndInput...)
+}
+
+// EmitSessionEventWSOnly broadcasts a session_update event to connected clients
+// WITHOUT producing a push notification or storing a pending push event. Used by
+// the terminal-completion path: normal completion already sends its own push via
+// EmitSessionPushNotification, but still needs the global WS broadcast so every
+// client (including ones that missed the stream-level "done" event) can clear the
+// session's running flag.
+func EmitSessionEventWSOnly(sessionID, status string, hasNewMessages bool) {
+	emitSessionEvent(sessionID, status, hasNewMessages, false)
 }
 
 // emitSessionEvent is EmitSessionEvent with an explicit push control. Callers
@@ -70,12 +86,18 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 
 	var responsePreviewRaw string
 	if status == "completed" {
-		// Include response preview for DingTalk (Markdown) and Android/browser (plain text)
+		// Include response preview for the completion popover (full, untruncated —
+		// the frontend scrolls it). The plain-text variant stays truncated for
+		// push notifications.
 		responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-		data.ResponsePreview = truncatePreview(responsePreviewRaw)
+		data.ResponsePreview = responsePreviewRaw
 		if responsePreviewRaw != "" {
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
+		// Include the last user message so clients can show it alongside the reply
+		data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+		// Include the agent so clients can render the backend icon
+		data.AgentID = GetSessionAgentID(sessionID)
 	}
 
 	// Include toolName and toolInput for permission_pending events
@@ -193,24 +215,26 @@ func getSessionResponsePreview(sessionID string) string {
 	return truncatePreview(getSessionResponsePreviewRaw(sessionID))
 }
 
-// getSessionResponsePreviewRaw returns the un-truncated preview text.
-// Used when both Markdown and plain-text previews are needed, so that
+// getSessionResponsePreviewRaw returns the un-truncated preview text.// Used when both Markdown and plain-text previews are needed, so that
 // StripMarkdown operates on the full text before each variant is truncated.
 func getSessionResponsePreviewRaw(sessionID string) string {
-	messages, err := GetMessagesBySessionID(sessionID)
+	// Read raw assistant contents directly from chat_history. GetMessagesBySessionID
+	// cannot be used here: enrichMessagesWithSummaries strips heavy content from
+	// summarized non-streaming assistant messages (summarizeContentForView replaces
+	// blocks with an empty array), which would make every push preview empty once
+	// a reading summary exists for the last message.
+	// Contents are newest-first; walk forward to find the most recent message
+	// that yields a preview.
+	contents, err := GetAssistantRawContents(sessionID)
 	if err != nil {
 		slog.Debug("session_event: failed to get messages for preview", "session_id", sessionID, "error", err)
 		return ""
 	}
-	// Walk backwards to find the last assistant message
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != "assistant" {
-			continue
-		}
+	for _, raw := range contents {
 		var content struct {
 			Blocks []model.ContentBlock `json:"blocks"`
 		}
-		if err := json.Unmarshal([]byte(messages[i].Content), &content); err != nil {
+		if err := json.Unmarshal([]byte(raw), &content); err != nil {
 			continue
 		}
 		if preview := extractPreviewFromBlocksRaw(content.Blocks); preview != "" {
@@ -241,6 +265,30 @@ func truncatePreview(text string) string {
 		return string([]rune(text)[:responsePreviewMaxRunes]) + "…"
 	}
 	return text
+}
+
+// GetLastUserMessagePlain returns the plain-text content of the most recent
+// non-streaming, non-queued user message in a session. Used to include a
+// "last user message" line in completion popovers/notifications alongside the
+// AI's response preview. Returns "" when no such message exists.
+func GetLastUserMessagePlain(sessionID string) string {
+	if dbRead == nil || sessionID == "" {
+		return ""
+	}
+	var content string
+	err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&content)
+	if err != nil {
+		// sql.ErrNoRows → no user message yet; other errors → treat as unavailable
+		return ""
+	}
+	plain := ExtractPlainText(content)
+	if plain == "" {
+		return ""
+	}
+	return truncatePreview(plain)
 }
 
 // IsSessionRunning checks if a session is currently running.
@@ -457,7 +505,19 @@ func CancelSession(sessionID string) bool {
 		// Force-clear the running state to unstick the session.
 		slog.Warn("CancelSession: session running but no cancel func, force-clearing",
 			slog.String("session_id", sessionID))
-		ClearQueue(sessionID)
+		// The goroutine is dead, so its RunDrainLoop cancel branch will never
+		// emit queue_cancel. Collect + clear + emit here instead.
+		queueIDs, _ := GetQueuedQueueIDs(sessionID)
+		_ = ClearQueuedMessages(sessionID)
+		if len(queueIDs) > 0 {
+			ws.EmitToSession(sessionID, ai.StreamEvent{
+				Type: "queue_cancel",
+				QueueEvent: &ai.QueueEventData{
+					SessionID: sessionID,
+					QueueIDs:  queueIDs,
+				},
+			})
+		}
 		SetSessionRunning(sessionID, false, true)
 		// Stuck session: nothing will finalize its streaming messages.
 		FinalizeOrphanedMessages(sessionID, "user")
@@ -472,7 +532,9 @@ func CancelSession(sessionID string) bool {
 	// freeing its stdin pipe. Then send ACP Cancel (with 3s timeout) so the
 	// agent can stop its turn gracefully on next stdin read.
 	sessionCancelReasons.Store(sessionID, "user")
-	ClearQueue(sessionID)
+	// NOTE: do NOT clear queued messages here — the goroutine's RunDrainLoop
+	// cancel branch collects the queueIDs, clears them and emits queue_cancel
+	// itself. Clearing first would lose the queue_cancel event.
 	cancel()
 
 	ai.GetACPConnManager().CancelTurn(sessionID)
@@ -499,7 +561,7 @@ func ForceCancelSession(sessionID string) {
 		return
 	}
 	sessionCancelReasons.Store(sessionID, "disconnect")
-	ClearQueue(sessionID)
+	ClearQueuedMessages(sessionID)
 	if cancel, ok := val.(context.CancelFunc); ok {
 		cancel()
 	}
@@ -560,7 +622,14 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 	if lastAssistant == nil {
 		return
 	}
-	if blocks, err := parseMessageBlocks(lastAssistant.Content); err == nil && len(blocks) > 0 {
+	// Re-read the last assistant message's raw content from DB. GetMessagesBySessionID
+	// goes through enrichMessagesWithSummaries, which strips the blocks of any
+	// assistant message that already has a reading summary (summarizeContentForView
+	// replaces them with an empty {"blocks":[]}). Without this, the recommendation
+	// silently stops firing once a reply's summary exists — every subsequent
+	// lastAssistant.Content would parse to zero blocks and the len(blocks) > 0
+	// guard below would skip the recommendation every time.
+	if blocks, err := rawAssistantBlocks(lastAssistant.ID, lastAssistant.Content); err == nil && len(blocks) > 0 {
 		// Run the recommendation in a background goroutine: RecommendNextStep makes
 		// a blocking LLM call (up to the 60s internal timeout) that would otherwise
 		// stall Finalize() and delay the terminal 'done' WS event by seconds. The
@@ -571,8 +640,43 @@ func triggerChatSummarization(ctx context.Context, sessionID string) {
 		// "loading" placeholder when the user switches to the session meanwhile. The
 		// recommendation chip is a nice-to-have and can arrive whenever the LLM
 		// responds. blocks is a fresh slice parsed above — safe to hand to the goroutine.
-		go triggerChatRecommendation(ctx, sessionID, projectPath, lastAssistant.ID, blocks)
+		//
+		// The session's ctx is cancelled as soon as the handler goroutine returns
+		// (defer cancel() in the AI goroutine). Without stripping the cancellation
+		// signal, the recommendation's LLM call — which legitimately outlives the
+		// reply stream — would be aborted almost immediately, so recommendations
+		// would silently never appear. The detached ctx still carries no deadline
+		// of its own; triggerChatRecommendation applies its own 60s timeout.
+		go triggerChatRecommendation(context.WithoutCancel(ctx), sessionID, projectPath, lastAssistant.ID, blocks)
 	}
+}
+
+// rawAssistantBlocks returns the parsed ContentBlock array of an assistant
+// message, preferring the raw (unmodified) content from DB over the possibly
+// summary-stripped view. GetMessagesBySessionID goes through
+// enrichMessagesWithSummaries, which strips the blocks of any assistant message
+// that already has a reading summary (summarizeContentForView replaces them
+// with an empty {"blocks":[]}). The recommendation feature needs the real
+// blocks to extract the assistant's latest conclusion, so when the provided
+// view content parses to zero blocks it falls back to the DB content. Returns
+// an empty slice when the message is missing, still streaming, or unparsable.
+func rawAssistantBlocks(messageID int64, viewContent string) ([]model.ContentBlock, error) {
+	if blocks, err := parseMessageBlocks(viewContent); err == nil && len(blocks) > 0 {
+		return blocks, nil
+	}
+	if dbRead == nil {
+		return nil, nil
+	}
+	// Filter streaming = 0 in SQL (matching backfillMissingSummaries) so a
+	// half-persisted placeholder row can never be read as the final answer.
+	var content string
+	if err := dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE id = ? AND streaming = 0",
+		messageID,
+	).Scan(&content); err != nil {
+		return nil, err
+	}
+	return parseMessageBlocks(content)
 }
 
 // parseMessageBlocks unmarshals message content into its ContentBlock array.
@@ -590,10 +694,12 @@ func parseMessageBlocks(content string) ([]model.ContentBlock, error) {
 // an assistant reply completes, using the shared ai_summary LLM config. Emits a
 // chat_recommendation WS event when a recommendation is produced.
 //
-// ctx is the session execution context: when the session is cancelled/closed its
-// cancel func fires and this goroutine (whose LLM call can otherwise run up to
-// 60s) is aborted. A recover() wraps the body so a panic here can never crash the
-// process — it runs detached from the main session goroutine.
+// ctx comes from the caller: triggerChatSummarization hands over a context
+// derived with context.WithoutCancel, so the session's cancel() does not abort
+// this goroutine's LLM call (which legitimately outlives the reply stream).
+// The call is bounded by the 60s timeout established inside this function; a
+// recover() wraps the body so a panic here can never crash the process — it
+// runs detached from the main session goroutine.
 func triggerChatRecommendation(ctx context.Context, sessionID, projectPath string, messageID int64, blocks []model.ContentBlock) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -714,7 +820,19 @@ func recentConversation(sessionID string, n int) []string {
 		case "user":
 			text = ExtractPlainText(messages[i].Content)
 		case "assistant":
-			text = assistantConclusion(messages[i].Content)
+			// GetMessagesBySessionID strips the blocks of any assistant message
+			// that already has a reading summary (summarizeContentForView yields
+			// an empty {"blocks":[]}). Re-read the raw content so the conclusion
+			// the recommendation LLM sees is the real answer, not nothing.
+			blocks, _ := rawAssistantBlocks(messages[i].ID, messages[i].Content)
+			text = assistantConclusionFromBlocks(blocks)
+			// Legacy assistant content that is not blocks JSON (bare content
+			// array, ACP notification wrapper, plain text) parses to zero blocks;
+			// fall back to plain-text extraction so such messages still contribute
+			// context instead of being silently skipped.
+			if text == "" {
+				text = ExtractPlainText(messages[i].Content)
+			}
 		default:
 			continue
 		}
@@ -726,21 +844,16 @@ func recentConversation(sessionID string, n int) []string {
 	return texts
 }
 
-// assistantConclusion extracts the conclusion text from an assistant message's
-// blocks content (text after the last tool_use), appending any AskUserQuestion
-// cards so the recommendation prompt can reference the options.
-func assistantConclusion(content string) string {
-	if !strings.HasPrefix(content, `{"blocks":`) {
-		return content
+// assistantConclusionFromBlocks extracts the conclusion text from an already
+// parsed ContentBlock array: the last answer (text after the last tool_use),
+// plus any AskUserQuestion cards so the recommendation prompt can reference
+// the options. Returns an empty string when there are no blocks.
+func assistantConclusionFromBlocks(blocks []model.ContentBlock) string {
+	if len(blocks) == 0 {
+		return ""
 	}
-	var wrapper struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if json.Unmarshal([]byte(content), &wrapper) != nil {
-		return content
-	}
-	conclusion := summarize.ExtractLastAnswerFromBlocks(wrapper.Blocks)
-	if q := askQuestionText(wrapper.Blocks); q != "" {
+	conclusion := summarize.ExtractLastAnswerFromBlocks(blocks)
+	if q := askQuestionText(blocks); q != "" {
 		conclusion += q
 	}
 	return conclusion

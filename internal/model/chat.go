@@ -61,6 +61,8 @@ type ChatMessage struct {
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`
+	QueueID      string        `json:"queueId,omitempty"` // frontend-generated queueId for optimistic bubble matching
+	Queued       bool          `json:"queued,omitempty"`  // true while the message waits for the drain loop
 	CreatedAt    time.Time     `json:"createdAt"`
 	Summary      *string       `json:"summary,omitempty"`      // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 	SummaryCards *SummaryCards `json:"summaryCards,omitempty"` // structured card metadata for summary view
@@ -197,6 +199,7 @@ type ChatSession struct {
 	UnreadCount     int        `json:"unreadCount,omitempty"`
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
+	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)
 }
 
 // QueuedMessage represents a message waiting in the pending queue for a session.
@@ -207,6 +210,17 @@ type QueuedMessage struct {
 	FilePaths []string    `json:"filePaths"`
 	Files     []FileEntry `json:"files"`
 	CreatedAt string      `json:"createdAt"`
+}
+
+// ImageAttachment carries an inline image for a multimodal ACP prompt.
+// Either Path (local file path, read at prompt-build time) or Data
+// (base64-encoded image bytes) may be set. MimeType is required and
+// describes the image type (e.g. "image/png").
+type ImageAttachment struct {
+	Path     string `json:"path,omitempty"` // local file path; backend reads it into Data
+	Data     string `json:"data,omitempty"` // base64-encoded image bytes
+	MimeType string `json:"mimeType"`
+	URI      string `json:"uri,omitempty"` // optional source reference
 }
 
 // ContentBlock represents a typed block within an assistant message's content.

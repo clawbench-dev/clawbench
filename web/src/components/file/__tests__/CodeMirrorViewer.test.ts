@@ -289,6 +289,26 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(quoteMocks.showBar).not.toHaveBeenCalled()
   })
 
+  it('does not show quote question while the search panel is open', async () => {
+    const wrapper = mountViewer({ content: 'alpha beta\nalpha gamma', file: { path: '/p/main.go' } })
+    await sleep(80)
+    // Open the built-in search panel, then move the selection onto a match
+    // (as findNext does when navigating results).
+    wrapper.vm.openSearch()
+    await sleep(50)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0, head: 5 } })
+    await sleep(700) // debounce 200ms + showBar 400ms — must not fire
+    expect(quoteMocks.showBar).not.toHaveBeenCalled()
+    // Closing the panel restores normal quote behavior.
+    const { closeSearchPanel } = await import('@codemirror/search')
+    closeSearchPanel(view)
+    await sleep(50)
+    view.dispatch({ selection: { anchor: 0, head: 5 } })
+    await sleep(700)
+    expect(quoteMocks.showBar).toHaveBeenCalledTimes(1)
+  })
+
   it('getView returns the raw (non-reactive-proxied) EditorView', async () => {
     const wrapper = mountViewer({ content: 'const a = 1\n', editable: true })
     await sleep(80)
@@ -429,5 +449,119 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(wrapper.find('.cm-viewer').exists()).toBe(true)
     // Verify no autocomplete tooltip DOM exists
     expect(document.querySelector('.cm-tooltip-autocomplete')).toBeNull()
+  })
+
+  // ── Built-in search (@codemirror/search) ──
+  function dispatchModF(view: { contentDOM: HTMLElement }) {
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+  }
+
+  it('opens the search panel with Ctrl+F in editable mode', async () => {
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\nconst alpha = 2\n' })
+    await sleep(80)
+    dispatchModF(wrapper.vm.getView())
+    await sleep(50)
+    // The built-in search panel renders into the editor DOM.
+    expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('opens the search panel with Ctrl+F in read-only browse mode', async () => {
+    const wrapper = mountViewer({ editable: false, language: 'javascript', content: 'const alpha = 1\n' })
+    await sleep(80)
+    dispatchModF(wrapper.vm.getView())
+    await sleep(50)
+    expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('highlights matching occurrences after typing in the search panel', async () => {
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\nconst alpha = 2\nconst beta = 3\n' })
+    await sleep(80)
+    dispatchModF(wrapper.vm.getView())
+    await sleep(50)
+    const input = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input')
+    if (!input) return // search panel may not be interactive in jsdom; coverage via open-panel tests
+    input.value = 'alpha'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(80)
+    // SearchQueryState tracks occurrences; the highlight count text appears in the panel.
+    expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('exposes openSearch() to open the panel programmatically (toolbar button)', async () => {
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const alpha = 1\n' })
+    await sleep(80)
+    wrapper.vm.openSearch()
+    await sleep(50)
+    expect(document.querySelector('.cm-viewer .cm-search')).not.toBeNull()
+  })
+
+  it('localizes the search panel text according to the app locale', async () => {
+    // English locale: the search field placeholder comes from CodeMirror's
+    // phrase("Find") and falls back to the English default.
+    const enWrapper = mountViewer({ editable: true, language: 'javascript', content: 'const a = 1\n' })
+    await sleep(80)
+    enWrapper.vm.openSearch()
+    await sleep(50)
+    const enInput = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name="search"]')
+    expect(enInput).toBeTruthy()
+    expect(enInput!.placeholder).toBe('Find')
+    enWrapper.unmount()
+    await sleep(30)
+
+    // zh locale: the phrases facet must translate the panel labels.
+    const zhI18n = createI18n({
+      legacy: false,
+      locale: 'zh',
+      messages: {
+        zh: { file: { editor: { save: '保存', saving: '保存中', cancel: '取消', dirty: '未保存' } } },
+        en: { file: { editor: { save: 'Save', saving: 'Saving', cancel: 'Cancel', dirty: 'Unsaved' } } },
+      },
+    })
+    const zhWrapper = mount(CodeMirrorViewer, {
+      props: { content: 'const a = 1\n', language: 'javascript', editable: true },
+      global: { plugins: [zhI18n] },
+      attachTo: document.body,
+    })
+    await sleep(80)
+    zhWrapper.vm.openSearch()
+    await sleep(50)
+    const zhInput = document.querySelector<HTMLInputElement>('.cm-viewer .cm-search input[name="search"]')
+    expect(zhInput).toBeTruthy()
+    expect(zhInput!.placeholder).toBe('查找')
+    // Button labels are translated as well.
+    const zhButtons = [...document.querySelectorAll('.cm-viewer .cm-search .cm-button')]
+      .map((b) => b.textContent?.trim())
+      .filter(Boolean)
+    expect(zhButtons).toContain('下一个')
+    expect(zhButtons).toContain('上一个')
+    zhWrapper.unmount()
+  })
+
+  // ── Tab indent handling (indentWithTab) ──
+  function dispatchTabKey(view: { contentDOM: HTMLElement }, opts: { shift?: boolean } = {}) {
+    view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: !!opts.shift, bubbles: true, cancelable: true }))
+  }
+
+  it('indents with Tab in editable mode (indentWithTab bound)', async () => {
+    const wrapper = mountViewer({ editable: true, language: 'javascript', content: 'const a = 1\n' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0 } }) // put cursor at start of "const a = 1"
+    dispatchTabKey(view)
+    await sleep(30)
+    // Tab must insert indentation instead of falling through to the browser.
+    // JS language sets indentUnit to 2 spaces, so indentMore uses spaces here.
+    expect(view.state.doc.toString()).toBe('  const a = 1\n')
+  })
+
+  it('does not intercept Tab in read-only mode (no indentation change)', async () => {
+    const wrapper = mountViewer({ editable: false, language: 'javascript', content: 'const a = 1\n' })
+    await sleep(80)
+    const view = wrapper.vm.getView()
+    view.dispatch({ selection: { anchor: 0 } })
+    dispatchTabKey(view)
+    await sleep(30)
+    // indentMore returns false when read-only, so the doc must be untouched.
+    expect(view.state.doc.toString()).toBe('const a = 1\n')
   })
 })

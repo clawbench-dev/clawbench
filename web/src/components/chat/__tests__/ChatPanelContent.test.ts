@@ -292,12 +292,13 @@ describe('parseMessages', () => {
 
   it('parses user message with block-format content', () => {
     // parseMessages calls onParseAssistantContent for {"blocks":...} content,
-    // which returns the parsed blocks. The mock parser wraps the raw string
-    // as a text block, so the result reflects the mock's behavior.
+    // then recursively unwraps nested JSON serializations inside text blocks
+    // so a block-format string never renders as a literal JSON string.
     const raw = [{ id: '1', role: 'user', content: '{"blocks":[{"type":"text","text":"Hi"}]}' }]
     const result = parseMessages(raw, mockParser)
-    // mockParser treats the whole JSON string as content text
-    expect(result[0].blocks).toEqual([{ type: 'text', text: '{"blocks":[{"type":"text","text":"Hi"}]}' }])
+    // mockParser wraps the raw string as a text block; unwrapTextBlocks then
+    // extracts the real text "Hi" instead of showing the JSON string.
+    expect(result[0].blocks).toEqual([{ type: 'text', text: 'Hi' }])
   })
 
   it('creates text block for plain user message', () => {
@@ -469,5 +470,35 @@ describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
     // user at bottom (switch-back) → pinned; user reading earlier → position kept.
     expect(region).toMatch(/scrollBottom\(\)/)
     expect(region).not.toMatch(/scrollBottom\(true\)/)
+  })
+})
+
+// ── Failed-send input restore ──
+// When a message send fails (network disconnected / HTTP 5xx), the input box
+// must NOT stay cleared — the text is restored so the user can retry.
+
+describe('ChatPanelContent — failed send keeps input text', () => {
+  async function sourceRegion(start: string, end: string) {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    return source.slice(source.indexOf(start), source.indexOf(end))
+  }
+
+  it('captures inputText before clearing and restores it in the send catch block', async () => {
+    const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
+    // The current input text must be remembered so the catch path can restore it.
+    expect(region).toMatch(/(?:let|const)\s+inputText\s*=/)
+    // The direct-send failure path must restore the captured text instead of
+    // leaving the box empty.
+    expect(region).toMatch(/catch\s*(?:\([^)]*\))?\s*\{[\s\S]*?restoreInput\(inputText\)/)
+  })
+
+  it('restores input text when the enqueue request fails', async () => {
+    const region = await sourceRegion('async function sendMessage(text)', 'async function sendMessageNow(text, filePaths, files)')
+    // In the queue path, enqueueMessage returns false on failure — the input
+    // must then be restored with the captured text.
+    expect(region).toMatch(/enqueueAndMaybeStart\(/)
+    expect(region).toMatch(/restoreInput\(inputText\)/)
+    expect(region).toMatch(/enqueueMessage/)
   })
 })

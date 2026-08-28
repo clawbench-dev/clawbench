@@ -55,14 +55,14 @@ type Config struct {
 		InitialMessages          int  `yaml:"initial_messages"`           // Number of messages to load initially (default: 20)
 		PageSize                 int  `yaml:"page_size"`                  // Number of messages per lazy-load batch (default: 20)
 		SessionPageSize          int  `yaml:"session_page_size"`          // Number of sessions per page in session list (default: 10)
-		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 0)
+		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 10)
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)
 		ArchiveRetentionEnabled bool `yaml:"archive_retention_enabled"` // Enable auto-purge of archived sessions after retention period (default: false)
-		ArchiveRetentionDays    int  `yaml:"archive_retention_days"`    // Days to keep archived sessions before auto-purge (0=keep forever, default: 0)
+		ArchiveRetentionDays    int  `yaml:"archive_retention_days"`    // Days to keep archived sessions before auto-purge (0=keep forever, default: 30)
 	} `yaml:"session"`
 	RecentProjects struct {
 		MaxCount int `yaml:"max_count"` // Maximum number of recent projects to keep (default: 10)

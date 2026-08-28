@@ -47,7 +47,7 @@
         :open="searchOpen"
         :file="currentFile"
         :view-mode="markdownViewMode"
-        @close="emit('toggleSearch')"
+        @close="emit('closeSearch')"
         @jump="emit('jump', $event)"
       />
 
@@ -86,7 +86,7 @@ const emit = defineEmits([
   'delete', 'showDetails', 'openGitHistory',
   'toggleToc', 'toggleSearch', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
-  'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal',
+  'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'closeSearch',
 ])
 
 const contentRef = ref(null)
@@ -101,7 +101,10 @@ function pdfScrollToPage(pageNum) {
 }
 
 function focusSearchInput() {
-  searchDrawerRef.value?.focusSearchInput()
+  // FileViewer routes internally: CodeMirror views open the editor's own
+  // search panel, rendered markdown focuses the SearchDrawer bottom sheet.
+  fileViewerRef.value?.focusSearchInput?.()
+  searchDrawerRef.value?.focusSearchInput?.()
 }
 
 defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput })

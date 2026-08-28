@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -147,14 +149,16 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 			s.Mode = reg.GetModeState(a.ID, "")
 			s.Effort = reg.GetThinkingEffortState(a.ID, "")
 			s.Commands = reg.GetCommands(a.ID)
-			s.ModelList = reg.GetModelListState(a.ID, "")
+			// Include the agent's currently-selected model from any live ACP
+			// connection so the frontend can mark the correct default on the
+			// merged model list. Falls back to "" when no active connection.
+			s.ModelList = reg.GetModelListState(a.ID, ai.GetACPConnManager().GetCurrentModelIDByAgentID(a.ID))
 
-			if s.ModelList != nil && len(s.ModelList.Models) > 0 {
-				// Copy the slice to avoid mutating the shared Agent object under RLock.
-				models := make([]model.AgentModel, len(s.ModelList.Models))
-				copy(models, s.ModelList.Models)
-				a.Models = models
-			}
+			// NOTE: Do NOT overwrite a.Models with s.ModelList.Models here.
+			// a.Models must always stay the pure CLI-discovered list so the
+			// frontend can merge ACP models by ID on top of it (stable display
+			// names/order). ACP models are delivered separately via
+			// acpStates[].modelListState.
 		}
 		states[a.ID] = s
 	}
@@ -731,22 +735,39 @@ func acpSessionsCapCheck(w http.ResponseWriter, r *http.Request, loadSession, li
 // false an error response was written.
 func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent, agentID string, conn *ai.ACPConn, listSessions bool, cursor string) ([]acp.SessionInfo, *string, bool) {
 	if listSessions {
-		if conn == nil {
-			slog.Warn("handler: failed to spawn ACP connection for ListSessions", "agent", agentID)
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+		if conn != nil {
+			var cursorPtr *string
+			if cursor != "" {
+				cursorPtr = &cursor
+			}
+			sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
+			if err == nil {
+				if cursor == "" && ai.HasListSessionsFromDisk(agent.Backend) {
+					cwd := middleware.GetProjectFromCookie(r)
+					diskSessions, diskErr := ai.ListSessionsFromDisk(agent, cwd)
+					if diskErr != nil {
+						slog.Warn("handler: on-disk ListSessions augmentation failed",
+							"agent", agentID, "error", diskErr)
+					} else {
+						sessions = mergeACPSessions(sessions, diskSessions)
+					}
+				}
+				return sessions, nextCursor, true
+			}
+			slog.Warn("handler: ACP ListSessions failed; trying on-disk fallback",
+				"agent", agentID, "error", err)
+		} else {
+			slog.Warn("handler: failed to spawn ACP connection for ListSessions; trying on-disk fallback",
+				"agent", agentID)
+		}
+		if !ai.HasListSessionsFromDisk(agent.Backend) || cursor != "" {
+			if conn == nil {
+				writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "ServiceUnavailable")
+			} else {
+				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			}
 			return nil, nil, false
 		}
-		var cursorPtr *string
-		if cursor != "" {
-			cursorPtr = &cursor
-		}
-		sessions, nextCursor, err := conn.ListSessions(r.Context(), cursorPtr)
-		if err != nil {
-			slog.Error("handler: ListSessions failed", "agent", agentID, "error", err)
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return nil, nil, false
-		}
-		return sessions, nextCursor, true
 	}
 
 	cwd := middleware.GetProjectFromCookie(r)
@@ -759,10 +780,70 @@ func fetchACPSessions(w http.ResponseWriter, r *http.Request, agent *model.Agent
 	return sessions, nil, true
 }
 
+func mergeACPSessions(primary, fallback []acp.SessionInfo) []acp.SessionInfo {
+	seen := make(map[string]struct{}, len(primary)+len(fallback))
+	merged := make([]acp.SessionInfo, 0, len(primary)+len(fallback))
+	for _, group := range [][]acp.SessionInfo{primary, fallback} {
+		for _, session := range group {
+			id := string(session.SessionId)
+			// Sessions without a real id are not dedupable; keep them all so
+			// distinct entries with missing ids are never collapsed together
+			// (consistent with filterAndRetitleACPSessions).
+			if id == "" {
+				merged = append(merged, session)
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			merged = append(merged, session)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return acpSessionUpdatedAt(merged[i]).After(acpSessionUpdatedAt(merged[j]))
+	})
+	return merged
+}
+
+func acpSessionUpdatedAt(session acp.SessionInfo) time.Time {
+	if session.UpdatedAt == nil {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, *session.UpdatedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
 // filterAndRetitleACPSessions removes sessions already loaded into ClawBench
 // and re-derives display titles from transcript data when available.
 func filterAndRetitleACPSessions(sessions []acp.SessionInfo, agent *model.Agent, r *http.Request) []acp.SessionInfo {
 	if len(sessions) > 0 {
+		// Dedup by sessionId first. Agents may report the same session more
+		// than once within a single response (e.g. OpenCode's updatedAt-based
+		// cursor collides on equal timestamps, or the list changed between
+		// page fetches). Without this, duplicates leak through to the resume
+		// drawer and accumulate across infinite-scroll pages. Order of first
+		// occurrence is preserved.
+		seen := make(map[acp.SessionId]struct{}, len(sessions))
+		deduped := make([]acp.SessionInfo, 0, len(sessions))
+		for _, s := range sessions {
+			// Sessions without a real id are not dedupable; keep them all so
+			// distinct entries with missing ids are never collapsed together.
+			if s.SessionId == "" {
+				deduped = append(deduped, s)
+				continue
+			}
+			if _, ok := seen[s.SessionId]; ok {
+				continue
+			}
+			seen[s.SessionId] = struct{}{}
+			deduped = append(deduped, s)
+		}
+		sessions = deduped
+
 		acpSessionIDs := make([]string, len(sessions))
 		for i, s := range sessions {
 			acpSessionIDs[i] = string(s.SessionId)

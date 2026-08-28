@@ -4,6 +4,7 @@
  */
 import { baseName } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
+import { extractPlainText } from '@/utils/userMsgIndexUtils'
 import i18n from '@/i18n'
 
 /**
@@ -28,6 +29,11 @@ export function parseAssistantContent(content: string) {
             b.output = b.input.output
             delete b.input.output
           }
+        } else if (b.type === 'text' && typeof b.text === 'string') {
+          // Unwrap nested JSON serializations that historical data (or some
+          // ACP agents) embedded into the text field, so the message never
+          // renders as a literal JSON string.
+          b.text = extractPlainText(b.text)
         }
         return b
       })

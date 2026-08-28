@@ -259,20 +259,18 @@ func (m *mockSessionMessengerWithErr) IsSessionRunning(sessionID string) bool {
 	return false
 }
 
-func (m *mockSessionMessengerWithErr) EnqueueMessage(sessionID, message string) error { return nil }
-func (m *mockSessionMessengerWithErr) ClearQueue(sessionID string)                    {}
 func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message string) error {
 	return nil
 }
 
+
 // mockSessionMessenger implements SessionMessenger for testing.
 type mockSessionMessenger struct {
-	runningSessions  []common.SessionInfo
-	allSessions      []common.SessionInfo
-	sendErr          error
-	listErr          error
-	EnqueueMessageFn func(sid, msg string) error
-	SendMessageFn    func(sid, msg string) error
+	runningSessions []common.SessionInfo
+	allSessions     []common.SessionInfo
+	sendErr         error
+	listErr         error
+	SendMessageFn   func(sid, msg string) error
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]common.SessionInfo, error) {
@@ -305,15 +303,6 @@ func (m *mockSessionMessenger) IsSessionRunning(sessionID string) bool {
 	}
 	return false
 }
-
-func (m *mockSessionMessenger) EnqueueMessage(sessionID, message string) error {
-	if m.EnqueueMessageFn != nil {
-		return m.EnqueueMessageFn(sessionID, message)
-	}
-	return m.sendErr
-}
-
-func (m *mockSessionMessenger) ClearQueue(sessionID string) {}
 
 func (m *mockSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	if m.SendMessageFn != nil {

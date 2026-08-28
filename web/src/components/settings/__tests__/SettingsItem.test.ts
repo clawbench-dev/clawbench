@@ -511,8 +511,7 @@ describe('SettingsItem', () => {
   // ── Select type ──
 
   describe('select type', () => {
-    it('opens select picker on click and emits value on option select', async () => {
-      const wrapper = mountItem({
+    it('opens select picker on click and emits value on option select', async () => {      const wrapper = mountItem({
         type: 'select',
         modelValue: 'light',
         options: [
@@ -610,6 +609,43 @@ describe('SettingsItem', () => {
         options: [{ label: 'Light', value: 'light' }],
       })
       expect(wrapper.findComponent({ name: 'ProviderIcon' }).exists()).toBe(false)
+    })
+
+    it('theme select (with optionPreviews) opens themePicker grid instead of selectPicker', async () => {
+      const wrapper = mountItem({
+        type: 'select',
+        modelValue: 'github-light',
+        options: [
+          { label: 'GitHub Light', value: 'github-light' },
+          { label: 'GitHub Dark', value: 'github-dark' },
+        ],
+        optionPreviews: {
+          'github-light': { bg: '#ffffff', text: '#212529', accent: '#4a90d9' },
+          'github-dark': { bg: '#0d1117', text: '#c9d1d9', accent: '#58a6ff' },
+        },
+      })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.themePicker.isOpen.value).toBe(false)
+      await wrapper.find('.settings-item').trigger('click')
+      expect(vm.$.setupState.themePicker.isOpen.value).toBe(true)
+      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(false)
+      // Select emits the value and closes the grid
+      vm.$.setupState.selectOption('github-dark')
+      await nextTick()
+      expect(wrapper.emitted('update:modelValue')![0]).toEqual(['github-dark'])
+      expect(vm.$.setupState.themePicker.isOpen.value).toBe(false)
+    })
+
+    it('plain select (no optionPreviews) opens selectPicker, not themePicker', async () => {
+      const wrapper = mountItem({
+        type: 'select',
+        modelValue: 'light',
+        options: [{ label: 'Light', value: 'light' }],
+      })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
+      expect(vm.$.setupState.themePicker.isOpen.value).toBe(false)
     })
   })
 

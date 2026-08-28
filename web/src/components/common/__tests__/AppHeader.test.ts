@@ -181,6 +181,40 @@ describe('AppHeader logic', () => {
     expect(displayPath).toBe('/opt/other/project')
   })
 
+  // ── stacked two-line rows (name / path) ──
+
+  it('recent-file row splits the path into name + dir for two-line layout', () => {
+    // Mirrors AppHeader: line 1 = baseName(entry.path), line 2 = dirName(entry.path)
+    const path = 'src/components/common/AppHeader.vue'
+    const baseName = (p: string) => {
+      const parts = p.replace(/\\/g, '/').split('/')
+      return parts[parts.length - 1] || p
+    }
+    const dirName = (p: string) => {
+      const idx = p.lastIndexOf('/')
+      return idx > 0 ? p.substring(0, idx) : ''
+    }
+    expect(baseName(path)).toBe('AppHeader.vue')
+    expect(dirName(path)).toBe('src/components/common')
+  })
+
+  it('recent-file row keeps an empty dir line for root-level files', () => {
+    const dirName = (p: string) => {
+      const idx = p.lastIndexOf('/')
+      return idx > 0 ? p.substring(0, idx) : ''
+    }
+    expect(dirName('main.go')).toBe('')
+    expect(dirName('/main.go')).toBe('')
+  })
+
+  it('recent-project row splits into name + relative display path', () => {
+    const name = (p: string) => {
+      const parts = p.replace(/\\/g, '/').split('/')
+      return parts[parts.length - 1] || p
+    }
+    expect(name('/home/user/projects/myapp')).toBe('myapp')
+  })
+
   // ── branch animation ──
 
   it('branchAnimating triggers on branch change', async () => {

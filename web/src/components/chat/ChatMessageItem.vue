@@ -46,7 +46,7 @@
     <div v-if="msg.pending" class="pending-hint">
       <span class="pending-spinner"></span>
       {{ t('chat.pending.queuing') }}
-      <button class="pending-remove" @click="$emit('remove-pending', msg.id)" :title="t('common.remove')">×</button>
+      <button class="pending-remove" @click="$emit('remove-pending', msg.queueId || msg.id)" :title="t('common.remove')">×</button>
     </div>
 
     <!-- File changes banner — standalone button above toolbar -->
@@ -67,12 +67,11 @@
       <div class="chat-meta-actions">
         <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
           <SummaryToggle v-if="!msg._summarizing" mode="button" :showing-summary="showSummary" i18n-prefix="chat.message" @toggle="handleToggleSummary" />
-          <button v-else class="chat-action-btn chat-action-btn--wide" disabled>
-            <Clock :size="14" class="speak-spinner" />
-            <span>{{ t('chat.message.summarizing') }}</span>
-          </button>
+          <LoadingIndicator v-else size="sm" inline />
         </span>
-        <span v-if="msg._loadingOriginal" class="chat-loading-original">{{ t('chat.message.loadingOriginal') }}</span>
+        <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
+          <LoadingIndicator size="sm" inline />
+        </span>
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
@@ -148,7 +147,7 @@ import FileChangesDrawer from './FileChangesDrawer.vue'
 import FileDiffsDrawer from './FileDiffsDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
-
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
 
@@ -186,8 +185,12 @@ function handleToggleSummary() {
     emit('toggle-summary', props.msg?.id)
     return
   }
-  // Recompute scroll so the button stays at its original viewport top.
+  // Guard: if the user has manually scrolled since toggling, stop re-anchoring
+  // so we don't fight the user's scroll gesture.
+  const toggleStartScroll = scroller.scrollTop
+  const SCROLL_DRIFT_GUARD = 20
   const adjust = () => {
+    if (Math.abs(scroller.scrollTop - toggleStartScroll) > SCROLL_DRIFT_GUARD) return
     const newTop = wrap.getBoundingClientRect().top
     scroller.scrollTop = baseScroll + (newTop - anchor)
   }
@@ -348,47 +351,6 @@ function handleCopyMessage() {
   vertical-align: middle;
 }
 
-/* Lightbox image wrapper — positions the expand icon overlay */
-.chat-message .lightbox-img-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.chat-message .lightbox-img-wrap .lightbox-img {
-  cursor: default;
-}
-
-/* Expand icon — top-right corner, visible on hover (PC mode) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-@media (hover: hover) {
-  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-/* Use a simple "+" character as the expand icon (no SVG dependency in HTML strings) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 1;
-}
-
 /* ── Message content wrapper ── */
 .msg-content-wrapper {
   position: relative;
@@ -509,13 +471,6 @@ function handleCopyMessage() {
 .chat-summary-anchor {
     display: inline-flex;
     align-items: center;
-}
-
-/* Loading hint shown while lazily fetching the original message content */
-.chat-loading-original {
-    font-size: 12px;
-    color: var(--text-secondary, #888);
-    padding: 0 6px;
 }
 
 /* Speak button loading spinner animation */
@@ -1115,6 +1070,61 @@ function handleCopyMessage() {
   max-width: 100%;
   max-height: 184px;
   height: auto;
+}
+
+/* ── Lightbox: raster image wrapper — positions the expand icon overlay ──
+   These must be NON-scoped: the image/svg markup arrives via v-html, so the
+   injected elements carry no data-v-* attribute and scoped styles never match. */
+.chat-message .lightbox-img-wrap,
+.chat-message .lightbox-svg-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.chat-message .lightbox-img-wrap .lightbox-img {
+  cursor: default;
+}
+
+/* Expand icon — top-right corner, visible on hover (PC mode) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon,
+.chat-message .lightbox-svg-wrap .lightbox-expand-icon {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon,
+  .chat-message .lightbox-svg-wrap:hover .lightbox-expand-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* Use a simple "expand" character as the icon (no SVG dependency in HTML strings) */
+.chat-message .lightbox-img-wrap .lightbox-expand-icon::after,
+.chat-message .lightbox-svg-wrap .lightbox-expand-icon::after {
+  content: '⤢';
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Inline SVG thumbnail (non-mermaid) — constrained like the mermaid preview */
+.chat-message .lightbox-svg-wrap svg.lightbox-svg {
+  max-width: 200px;
+  max-height: 200px;
+  height: auto;
+  border-radius: 6px;
 }
 
 /* ── Audio player in chat (non-scoped for v-html penetration) ── */

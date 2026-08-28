@@ -31,7 +31,9 @@
 import { computed, inject, ref } from 'vue'
 import { Home, Copy } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { splitPath } from '@/utils/path.ts'
+import { splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
+import { copyText } from '@/utils/clipboard.ts'
+import { store } from '@/stores/app.ts'
 import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
@@ -55,27 +57,20 @@ function onCrumbDragStart(path, name, e) {
 function copyFullPath() {
   const value = props.path
   if (!value) return
+  // props.path is either project-relative (FileManager) or already absolute
+  // (ProjectDialog browsing arbitrary dirs). Only combine with the project
+  // root for relative paths; copy absolute paths as-is (separators normalized).
+  const normValue = normalizeSlashes(value)
+  const root = normalizeSlashes(store.state.projectRoot || '')
+  const absPath = isAbsolutePath(value)
+    ? normValue
+    : root ? root.replace(/\/+$/, '') + '/' + normValue.replace(/^\/+/, '') : normValue.replace(/^\/+/, '')
   const doCopy = () => {
     copied.value = true
     setTimeout(() => { copied.value = false }, 800)
     if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
   }
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(value).then(doCopy).catch(() => fallbackCopy(value, doCopy))
-  } else {
-    fallbackCopy(value, doCopy)
-  }
-}
-
-function fallbackCopy(value, cb) {
-  const ta = document.createElement('textarea')
-  ta.value = value
-  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0'
-  document.body.appendChild(ta)
-  ta.select()
-  document.execCommand('copy')
-  document.body.removeChild(ta)
-  cb()
+  copyText(absPath, doCopy, doCopy)
 }
 
 // Reconstruct a path from breadcrumb segments,

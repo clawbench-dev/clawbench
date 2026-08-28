@@ -492,6 +492,63 @@ describe('useSettingsConfig', () => {
     })
   })
 
+  describe('floatingStatusWindow sync', () => {
+    function installNativeMock() {
+      const mockSetFloatingWindowEnabled = vi.fn()
+      const original = (window as any).ClawBenchNative
+      ;(window as any).ClawBenchNative = { setFloatingWindowEnabled: mockSetFloatingWindowEnabled }
+      return { mockSetFloatingWindowEnabled, original }
+    }
+    function restoreNativeMock(original: unknown) {
+      if (original) {
+        ;(window as any).ClawBenchNative = original
+      } else {
+        delete (window as any).ClawBenchNative
+      }
+    }
+
+    it('calls ClawBenchNative.setFloatingWindowEnabled(true) when setLocalConfig enables it', () => {
+      const { mockSetFloatingWindowEnabled, original } = installNativeMock()
+      const { setLocalConfig } = useSettingsConfig()
+
+      setLocalConfig('floatingStatusWindow', true)
+
+      expect(mockSetFloatingWindowEnabled).toHaveBeenCalledWith(true)
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+      restoreNativeMock(original)
+    })
+
+    it('calls ClawBenchNative.setFloatingWindowEnabled(false) when setLocalConfig disables it', () => {
+      const { mockSetFloatingWindowEnabled, original } = installNativeMock()
+      const { setLocalConfig } = useSettingsConfig()
+
+      setLocalConfig('floatingStatusWindow', false)
+
+      expect(mockSetFloatingWindowEnabled).toHaveBeenCalledWith(false)
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+      restoreNativeMock(original)
+    })
+
+    it('syncs the local value to ClawBenchNative on loadConfig', async () => {
+      const { mockSetFloatingWindowEnabled, original } = installNativeMock()
+      // Seed localStorage before module load so localConfig picks it up
+      localStorage.setItem('clawbench-settings-floatingStatusWindow', 'true')
+      vi.resetModules()
+      // Re-import a fresh module instance (fresh mocks after resetModules)
+      const { apiGet: freshApiGet } = await import('@/utils/api')
+      vi.mocked(freshApiGet).mockResolvedValueOnce({})
+      const { useSettingsConfig: freshUseSettingsConfig } = await import('@/composables/useSettingsConfig')
+
+      const { loadConfig } = freshUseSettingsConfig()
+      await loadConfig()
+
+      expect(mockSetFloatingWindowEnabled).toHaveBeenCalledWith(true)
+
+      localStorage.removeItem('clawbench-settings-floatingStatusWindow')
+      restoreNativeMock(original)
+    })
+  })
+
   // ── applyUIScale / getUIScale ──
 
   describe('applyUIScale', () => {

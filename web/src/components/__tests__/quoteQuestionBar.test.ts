@@ -5,11 +5,23 @@ import { createI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 import QuoteQuestionBar from '@/components/common/QuoteQuestionBar.vue'
 
+// Mock navigator.clipboard for the copy button tests.
+const mockWriteText = vi.fn()
+Object.defineProperty(globalThis, 'navigator', {
+  value: { clipboard: { writeText: mockWriteText } },
+  writable: true,
+})
+mockWriteText.mockResolvedValue(undefined)
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
   messages: {
     en: {
+      common: {
+        copy: 'Copy',
+        copied: 'Copied',
+      },
       quoteBar: {
         chat: 'Chat',
         clear: 'Clear',
@@ -132,6 +144,7 @@ describe('QuoteQuestionBar component', () => {
           XCircle: true,
           Plus: true,
           Send: true,
+          Copy: true,
         },
       },
     })
@@ -143,6 +156,8 @@ describe('QuoteQuestionBar component', () => {
     // Unmount everything so document-level listeners (pointerdown/keydown)
     // registered by earlier components can't leak into later tests.
     while (mounted.length) mounted.pop()?.unmount()
+    mockWriteText.mockReset()
+    mockWriteText.mockResolvedValue(undefined)
   })
 
   it('renders collapsed bar when visible with quoteData', () => {
@@ -335,6 +350,60 @@ describe('QuoteQuestionBar component', () => {
     vm.expand()
     const expandedSnippet = expanded.find('.qq-quoted-snippet')
     expect(expandedSnippet.find('.lucide-message-square').exists()).toBe(false)
+  })
+
+  it('renders a copy button in both collapsed and expanded states', async () => {
+    const collapsed = mountBar()
+    expect(collapsed.find('.quote-bar-row .qq-copy-btn').exists()).toBe(true)
+
+    const expanded = mountBar()
+    const vm = expanded.vm as any
+    await vm.expand()
+    expect(expanded.find('.qq-quoted-snippet .qq-copy-btn').exists()).toBe(true)
+  })
+
+  it('copies the quoted text when the copy button is clicked', async () => {
+    const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
+    const copyBtn = wrapper.find('.quote-bar-row .qq-copy-btn')
+    await copyBtn.trigger('click')
+    expect(mockWriteText).toHaveBeenCalledWith('Hello world')
+    await vi.waitFor(() => {
+      expect(wrapper.vm.copied).toBe(true)
+    })
+    // Clicking copy must not expand the collapsed bar
+    expect(wrapper.vm.expanded).toBe(false)
+  })
+
+  it('shows copied text on the button after copying', async () => {
+    const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
+    await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+    await vi.waitFor(() => {
+      expect(wrapper.vm.copied).toBe(true)
+    })
+    await nextTick()
+    const copyBtn = wrapper.find('.quote-bar-row .qq-copy-btn')
+    expect(copyBtn.text()).toBe('Copied')
+    expect(copyBtn.classes()).toContain('is-copied')
+  })
+
+  it('does not emit add when the copy button is clicked', async () => {
+    const wrapper = mountBar()
+    await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+    expect(wrapper.emitted('add')).toBeFalsy()
+  })
+
+  it('resets copied feedback after the timer', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
+      await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+      expect(wrapper.vm.copied).toBe(true)
+      vi.advanceTimersByTime(1500)
+      await nextTick()
+      expect(wrapper.vm.copied).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stays collapsed (no auto-expand / no pin) when the bar becomes visible', async () => {

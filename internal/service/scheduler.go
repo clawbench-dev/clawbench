@@ -530,10 +530,12 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		}
 		if sessionID != "" {
 			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(responsePreviewRaw)
+			data.ResponsePreview = responsePreviewRaw
 			if responsePreviewRaw != "" {
 				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
+			data.LastUserMessage = GetLastUserMessagePlain(sessionID)
+			data.AgentID = GetSessionAgentID(sessionID)
 		}
 	}
 	// For running tasks, include task name as session title
@@ -751,6 +753,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// can update it via FinalizeStreamingMessage, just like interactive sessions).
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
 	streamingMsgID, _ := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+
+	// Broadcast stream_start (same as interactive paths) so clients that open the
+	// task's session mid-stream can create the streaming placeholder from the
+	// event, not just from the DB streaming row.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+	})
 
 	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
 	// conversion, no cancel-reason tracking)

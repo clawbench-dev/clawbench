@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -355,7 +356,7 @@ func TestServeACPLoadSession_ExistingACPSessionHardDeleted(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability in the registry
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Insert an existing session for the ACP session ID
 	_, err := service.UnsafeDBForTest().Exec(
@@ -408,7 +409,7 @@ func TestServeACPLoadSession_LoadSessionFails_GenericError(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability so the handler proceeds past the check
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// "echo" is not a real ACP agent — GetOrCreateConnForLoad will fail
 	// with a generic spawn error (not "Resource not found")
@@ -481,7 +482,7 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/acp-load", map[string]string{
 		"agentId":      agentID,
@@ -548,7 +549,7 @@ func TestServeACPSessions_LoadSessionOnlyNotListSessions(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession=true but ListSessions=false
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -570,7 +571,7 @@ func TestServeACPSessions_ListSessionsSuccess(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register both capabilities
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// Inject a mock alive connection that the handler will find via GetConnByAgentID
 	mgr := ai.GetACPConnManager()
@@ -614,7 +615,7 @@ func TestServeACPSessions_ListSessionsWithCursor(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	mgr := ai.GetACPConnManager()
 	connKey := "__list_sessions__:" + agentID
@@ -650,7 +651,7 @@ func TestServeACPSessions_ListSessionsError(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	mgr := ai.GetACPConnManager()
 	connKey := "__list_sessions__:" + agentID
@@ -682,7 +683,7 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// Pre-create a CB session for one of the ACP sessions
 	_, err := service.UnsafeDBForTest().Exec(
@@ -736,7 +737,7 @@ func TestServeACPSessions_DiskScanFallback(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession=true but ListSessions=false (the codebuddy situation).
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Register a stub disk scanner for the test backend.
 	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
@@ -767,6 +768,236 @@ func TestServeACPSessions_DiskScanFallback(t *testing.T) {
 	assert.Equal(t, "磁盘会话", first["title"])
 }
 
+func TestServeACPSessions_MergesDiskSessionsIntoACPFirstPage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const testBackend = "disk-augment-backend"
+	agentID := "acp-disk-augment"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: testBackend, Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
+
+	updatedRPC := "2026-08-27T10:00:00Z"
+	updatedDisk := "2026-08-27T11:00:00Z"
+	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		assert.Equal(t, env.ProjectDir, cwd)
+		return []acp.SessionInfo{
+			{SessionId: "shared-session", Cwd: cwd, UpdatedAt: &updatedRPC},
+			{SessionId: "disk-only-session", Cwd: cwd, UpdatedAt: &updatedDisk},
+		}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister(testBackend, nil)
+
+	connKey := agentID + ":"
+	conn := ai.NewACPConnForTest(model.Agents[agentID], connKey)
+	conn.SetAliveForTest()
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		return []acp.SessionInfo{
+			{SessionId: "rpc-only-session", Cwd: env.ProjectDir, UpdatedAt: &updatedRPC},
+			{SessionId: "shared-session", Cwd: env.ProjectDir, UpdatedAt: &updatedRPC},
+		}, nil, nil
+	})
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Sessions []struct {
+			SessionID string `json:"sessionId"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Sessions, 3)
+	assert.Equal(t, "disk-only-session", resp.Sessions[0].SessionID)
+	assert.Equal(t, "rpc-only-session", resp.Sessions[1].SessionID)
+	assert.Equal(t, "shared-session", resp.Sessions[2].SessionID)
+}
+
+func TestServeACPSessions_FallsBackToDiskWhenACPListFails(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const testBackend = "disk-error-fallback-backend"
+	agentID := "acp-disk-error-fallback"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: testBackend, Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
+
+	ai.ListSessionsFromDiskRegister(testBackend, func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		return []acp.SessionInfo{{SessionId: "disk-recovered-session", Cwd: cwd}}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister(testBackend, nil)
+
+	connKey := agentID + ":"
+	conn := ai.NewACPConnForTest(model.Agents[agentID], connKey)
+	conn.SetAliveForTest()
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		return nil, nil, errors.New("session/list unavailable")
+	})
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), "disk-recovered-session")
+}
+
+func TestACPDiskDiscoveryToLoadSessionIntegration(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "disk-discovery-load"
+	discoveredID := "00000000-0000-4000-8000-000000000099"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: "Disk Discovery Load", Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
+
+	ai.ListSessionsFromDiskRegister("claude", func(a *model.Agent, cwd string) ([]acp.SessionInfo, error) {
+		return []acp.SessionInfo{{SessionId: acp.SessionId(discoveredID), Cwd: cwd}}, nil
+	})
+	defer ai.ListSessionsFromDiskRegister("claude", nil)
+
+	listReq := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	listReq = withProjectCookie(listReq, env.ProjectDir)
+	listRecorder := httptest.NewRecorder()
+	ServeACPSessions(listRecorder, listReq)
+	require.Equal(t, http.StatusOK, listRecorder.Code)
+
+	var listResp struct {
+		Sessions []struct {
+			SessionID string `json:"sessionId"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(listRecorder.Body.Bytes(), &listResp))
+	require.Len(t, listResp.Sessions, 1)
+
+	mockConn := ai.NewACPConnForTest(model.Agents[agentID], "disk-discovery-load-mock")
+	mockConn.SetAliveForTest()
+	mockConn.SetClientForTest(ai.NewClawBenchACPClient())
+	var loadedID string
+	origFn := getOrCreateConnForLoad
+	getOrCreateConnForLoad = func(ctx context.Context, agent *model.Agent, clawbenchSID, acpSID, cwd string) (*ai.ACPConn, error) {
+		loadedID = acpSID
+		ai.GetACPConnManager().SetConnForTest(clawbenchSID, mockConn)
+		return mockConn, nil
+	}
+	defer func() { getOrCreateConnForLoad = origFn }()
+
+	body := fmt.Sprintf(`{"agentId":%q,"acpSessionId":%q}`, agentID, listResp.Sessions[0].SessionID)
+	loadReq := httptest.NewRequest(http.MethodPost, "/api/ai/session/acp-load", strings.NewReader(body))
+	loadReq.Header.Set("Content-Type", "application/json")
+	withProjectCookie(loadReq, env.ProjectDir)
+	loadRecorder := httptest.NewRecorder()
+	ServeACPLoadSession(loadRecorder, loadReq)
+
+	require.Equal(t, http.StatusOK, loadRecorder.Code)
+	assert.Equal(t, discoveredID, loadedID)
+	assert.Contains(t, loadRecorder.Body.String(), "sessionId")
+}
+
+func TestMergeACPSessions_PreservesEmptyIDsAndDedupsByID(t *testing.T) {
+	updatedA := "2026-08-27T10:00:00Z"
+	updatedB := "2026-08-27T11:00:00Z"
+
+	merged := mergeACPSessions(
+		[]acp.SessionInfo{
+			{SessionId: "dup", UpdatedAt: &updatedA},
+			{SessionId: "", UpdatedAt: &updatedA},
+		},
+		[]acp.SessionInfo{
+			{SessionId: "dup", UpdatedAt: &updatedB},
+			{SessionId: "", UpdatedAt: &updatedB},
+			{SessionId: "disk-only", UpdatedAt: &updatedB},
+		},
+	)
+
+	// Empty-id sessions must all survive (not dedupable); the shared "dup"
+	// id keeps the first (primary) occurrence; "disk-only" is appended.
+	require.Len(t, merged, 4)
+	// Sort must be by UpdatedAt desc: the 11:00 group precedes the 10:00 group.
+	ids := make([]string, len(merged))
+	times := make([]time.Time, len(merged))
+	for i, s := range merged {
+		ids[i] = string(s.SessionId)
+		times[i] = acpSessionUpdatedAt(s)
+	}
+	assert.Equal(t, "2026-08-27T11:00:00Z", times[0].Format(time.RFC3339))
+	assert.Equal(t, "2026-08-27T10:00:00Z", times[len(times)-1].Format(time.RFC3339))
+	// Descending order.
+	for i := 1; i < len(times); i++ {
+		assert.False(t, times[i].After(times[i-1]))
+	}
+	// The duplicate "dup" id appears exactly once.
+	var dupCount, emptyIDCount int
+	for _, id := range ids {
+		if id == "dup" {
+			dupCount++
+		}
+		if id == "" {
+			emptyIDCount++
+		}
+	}
+	assert.Equal(t, 1, dupCount)
+	assert.Equal(t, 2, emptyIDCount)
+}
+
+func TestMergeACPSessions_SortsByUpdatedAtDesc(t *testing.T) {
+	old := "2026-08-27T10:00:00Z"
+	mid := "2026-08-27T11:00:00Z"
+	newer := "2026-08-27T12:00:00Z"
+
+	merged := mergeACPSessions(
+		[]acp.SessionInfo{{SessionId: "a", UpdatedAt: &old}},
+		[]acp.SessionInfo{{SessionId: "b", UpdatedAt: &mid}, {SessionId: "c", UpdatedAt: &newer}},
+	)
+
+	require.Len(t, merged, 3)
+	assert.Equal(t, "c", string(merged[0].SessionId))
+	assert.Equal(t, "b", string(merged[1].SessionId))
+	assert.Equal(t, "a", string(merged[2].SessionId))
+}
+
+func TestAcpSessionUpdatedAt_ParsesRFC3339Variants(t *testing.T) {
+	// Plain RFC3339 (UTC, no fractional seconds).
+	noFractional := "2026-08-27T10:00:00Z"
+	parsed := acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &noFractional})
+	assert.Equal(t, time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC), parsed)
+
+	// RFC3339Nano with fractional seconds.
+	fractional := "2026-08-27T10:00:00.123456Z"
+	parsed = acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &fractional})
+	assert.Equal(t, 123456000, parsed.Nanosecond())
+
+	// Zone offset variant — time.Parse preserves the offset zone, so compare
+	// instants with Equal (not the literal wall-clock in UTC).
+	offset := "2026-08-27T10:00:00+08:00"
+	parsed = acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &offset})
+	assert.True(t, parsed.Equal(time.Date(2026, 8, 27, 2, 0, 0, 0, time.UTC)))
+
+	// Unparseable falls back to zero (sorts last).
+	assert.True(t, acpSessionUpdatedAt(acp.SessionInfo{}).IsZero())
+	garbage := "not-a-time"
+	assert.True(t, acpSessionUpdatedAt(acp.SessionInfo{UpdatedAt: &garbage}).IsZero())
+}
+
 func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -777,7 +1008,7 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// A session whose raw backend id (e.g. opencode ses_...) is stored only in
 	// external_session_id — source_session_id stays NULL (the common case).
@@ -820,6 +1051,71 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	assert.Equal(t, "ses_00otherNativeId1234567890", first["sessionId"])
 }
 
+func TestServeACPSessions_DedupDuplicateSessionIds(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	agentID := "acp-list-dedup"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Backend: "claude", Transport: "acp-stdio", AcpCommand: "echo"},
+	}
+	model.AgentList = []*model.Agent{model.Agents[agentID]}
+
+	// Register capabilities via the stable Update API (independent of the
+	// ForceUpdateIfNeeded signature changes in the working tree).
+	reg := ai.GetAgentCapabilityRegistry()
+	ls := true
+	lss := true
+	reg.Update(agentID, &ai.AgentCapability{LoadSession: &ls, ListSessions: &lss})
+
+	mgr := ai.GetACPConnManager()
+	connKey := "__list_sessions__:" + agentID
+	agent := model.Agents[agentID]
+	conn := newACPConnForHandlerTest(agent, connKey)
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest(connKey, "acp-sid-dedup")
+	// Agent returns the same sessionId multiple times within one response
+	// (e.g. unstable pagination, timestamp collisions in OpenCode's
+	// updatedAt-based cursor). The server must not leak duplicates to the UI.
+	conn.SetListSessionsFnForTest(func(ctx context.Context, cursor *string) ([]acp.SessionInfo, *string, error) {
+		titleA := "Dup A"
+		titleB := "Dup B"
+		titleEmpty := "No id"
+		return []acp.SessionInfo{
+			{SessionId: "dup-session-1", Title: &titleA},
+			{SessionId: "dup-session-1", Title: &titleA},
+			{SessionId: "dup-session-2", Title: &titleB},
+			{SessionId: "dup-session-1", Title: &titleA},
+			// Sessions with an empty id are not dedupable; each one must survive.
+			{SessionId: "", Title: &titleEmpty},
+			{SessionId: "", Title: &titleEmpty},
+		}, nil, nil
+	})
+	mgr.SetConnForTest(connKey, conn)
+	defer mgr.CloseConn(connKey)
+
+	req := newRequest(t, http.MethodGet, "/api/agents/"+agentID+"/acp-sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	ServeACPSessions(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	sessions, ok := resp["sessions"].([]any)
+	require.True(t, ok, "sessions should be an array")
+	require.Len(t, sessions, 4, "duplicate sessionIds within one response must be deduplicated (empty-id entries kept)")
+	first := sessions[0].(map[string]any)
+	assert.Equal(t, "dup-session-1", first["sessionId"])
+	second := sessions[1].(map[string]any)
+	assert.Equal(t, "dup-session-2", second["sessionId"])
+	third := sessions[2].(map[string]any)
+	assert.Equal(t, "", third["sessionId"])
+	fourth := sessions[3].(map[string]any)
+	assert.Equal(t, "", fourth["sessionId"])
+}
+
 // --- ServeACPLoadSession: replay path tests ---
 
 func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
@@ -834,7 +1130,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
 	// Register LoadSession capability
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Set up mock connection that will be returned by getOrCreateConnForLoad
 	mgr := ai.GetACPConnManager()
@@ -930,7 +1226,7 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1018,7 +1314,7 @@ func TestServeACPLoadSession_SuccessWithEmptyReplay(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1072,7 +1368,7 @@ func TestServeACPLoadSession_SuccessNilClient(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1116,7 +1412,7 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]
@@ -1191,7 +1487,7 @@ func TestServeACPLoadSession_ReplayTitleSkipsInjectedSystemBlock(t *testing.T) {
 	}
 	model.AgentList = []*model.Agent{model.Agents[agentID]}
 
-	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false)
+	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	mgr := ai.GetACPConnManager()
 	agent := model.Agents[agentID]

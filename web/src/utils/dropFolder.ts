@@ -10,8 +10,6 @@
  *     never report).
  */
 
-import { folderRelPath } from '@/utils/fileAttachmentUtils'
-
 export interface DropFile {
   file: File
   /** Directory portion relative to the drop target, e.g. "新建文件夹/src" ('' for loose files). */
@@ -63,10 +61,11 @@ async function walkEntry(
   entry: FileSystemEntry,
   files: DropFile[],
   emptyDirs: string[],
+  addFile: (file: File, relPath: string) => void,
 ): Promise<void> {
   if (entry.isFile) {
     const file = await fileFromEntry(entry as FileSystemFileEntry)
-    files.push({ file, relPath: dirOf(entry.fullPath || '') })
+    addFile(file, dirOf(entry.fullPath || ''))
     return
   }
   if (entry.isDirectory) {
@@ -77,39 +76,68 @@ async function walkEntry(
       return
     }
     for (const e of entries) {
-      await walkEntry(e, files, emptyDirs)
+      await walkEntry(e, files, emptyDirs, addFile)
     }
   }
 }
 
 /**
  * Expand a drop into files + empty directories.
- * Prefers `webkitGetAsEntry` traversal when available; otherwise falls back to
- * `dataTransfer.files` (the previous flat behavior).
+ *
+ * `webkitGetAsEntry` traversal handles folders (their nested files and empty
+ * subdirectories are invisible to `dataTransfer.files`). However, in real
+ * browser/WebView drops of *multiple loose files* the `items` list may only
+ * expose part of the selection while `dataTransfer.files` carries the complete
+ * list. Using one source exclusively drops the other, so both are merged:
+ *   - items entries are distinct dragged things → collected as-is, never deduped;
+ *   - `dataTransfer.files` entries that were already gathered from the items
+ *     traversal are skipped (same physical file appears in both sources).
+ *
+ * IMPORTANT: all entries/files must be snapshot synchronously. The DataTransfer
+ * collections are live and the browser clears them as soon as the drop handler
+ * yields to the event loop (e.g. across `await`), so nothing may be read from
+ * `dataTransfer` after the first `await`.
  */
 export async function expandDataTransfer(dataTransfer: DataTransfer): Promise<ExpandResult> {
   const files: DropFile[] = []
   const emptyDirs: string[] = []
-  const items = dataTransfer?.items
-  let handled = false
+  const seen = new Set<string>()
+  const topDirs = new Set<string>()
 
-  if (items && items.length) {
+  // Sync snapshot: `webkitGetAsEntry()` is sync, so collect every entry up
+  // front. File objects are snapshots too — safe to read after the handler
+  // yields even though the DataTransfer list itself is cleared.
+  const entries: FileSystemEntry[] = []
+  const items = dataTransfer?.items
+  if (items) {
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
       if (typeof item.webkitGetAsEntry === 'function') {
         const entry = item.webkitGetAsEntry()
-        if (entry) {
-          handled = true
-          await walkEntry(entry, files, emptyDirs)
-        }
+        if (entry) entries.push(entry)
       }
     }
   }
+  const fileList = Array.from(dataTransfer?.files || [])
 
-  if (!handled) {
-    for (const file of Array.from(dataTransfer?.files || [])) {
-      files.push({ file, relPath: dirOf(file.webkitRelativePath || '') || folderRelPath(file) })
-    }
+  const keyOf = (file: File, relPath: string) => `${relPath}/${file.name}`
+
+  for (const entry of entries) {
+    if (entry.isDirectory) topDirs.add(entry.name)
+    await walkEntry(entry, files, emptyDirs, (file, relPath) => {
+      files.push({ file, relPath })
+      seen.add(keyOf(file, relPath))
+    })
+  }
+
+  // dataTransfer.files always lists the full selection. Skip folder placeholders
+  // (a 0-byte File named after a dropped directory that Chrome/Electron include)
+  // and entries already gathered from the items traversal.
+  for (const file of fileList) {
+    if (file.size === 0 && topDirs.has(file.name)) continue
+    const rel = dirOf(file.webkitRelativePath || '')
+    if (seen.has(keyOf(file, rel))) continue
+    files.push({ file, relPath: rel })
   }
 
   return { files, emptyDirs }

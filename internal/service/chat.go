@@ -16,14 +16,13 @@ import (
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"clawbench/internal/summarize"
 )
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
 // Returns full content (no stripping). Used by non-chat-panel callers (fork, RAG, etc.).
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
 		projectPath, sessionID,
 	)
 	if err != nil {
@@ -36,11 +35,15 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		var queueID string
+		var queued int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.QueueID = queueID
+		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -55,52 +58,55 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // beforeID: if > 0, only return messages with id < beforeID (cursor-based for lazy load).
 // When beforeID == 0 and limit > 0, returns the most recent (limit) messages.
 // Returns messages in chronological (ASC) order.
-// Also returns the total message count for the session to avoid a separate COUNT query.
-func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
+// Also returns the total message count for the session and the count of queued
+// messages (plan C) — the frontend subtracts queuedCount from total to compute
+// hasMore without counting pending bubbles as loaded history.
+func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, int, error) {
 	messages := []model.ChatMessage{}
 	totalCount := GetChatMessageCount(sessionID)
+	queuedCount := GetQueuedCount(sessionID)
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
 			WHERE project_path = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
 		rows, err := dbRead.Query(query, projectPath, sessionID, beforeID, limit)
 		if err != nil {
-			return messages, totalCount, err
+			return messages, totalCount, queuedCount, err
 		}
 		defer rows.Close()
 		msgs, err := scanMessages(rows, sessionID)
-		return msgs, totalCount, err
+		return msgs, totalCount, queuedCount, err
 	}
 
 	if limit > 0 {
 		// Initial load: get the most recent (limit) messages
-		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
-			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
+		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM (
+			SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history
 			WHERE project_path = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
 		rows, err := dbRead.Query(query, projectPath, sessionID, limit)
 		if err != nil {
-			return messages, totalCount, err
+			return messages, totalCount, queuedCount, err
 		}
 		defer rows.Close()
 		msgs, err := scanMessages(rows, sessionID)
-		return msgs, totalCount, err
+		return msgs, totalCount, queuedCount, err
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := dbRead.Query(query, projectPath, sessionID)
 	if err != nil {
-		return messages, totalCount, err
+		return messages, totalCount, queuedCount, err
 	}
 	defer rows.Close()
 	msgs, err := scanMessages(rows, sessionID)
-	return msgs, totalCount, err
+	return msgs, totalCount, queuedCount, err
 }
 
 // scanMessages scans rows into ChatMessage slice, enriches with summaries,
@@ -112,11 +118,15 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		var filesJSON sql.NullString
 		var streaming int
 		var indexed int
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed); err != nil {
+		var queueID string
+		var queued int
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &queueID, &queued); err != nil {
 			return nil, err
 		}
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
+		msg.QueueID = queueID
+		msg.Queued = queued != 0
 		if filesJSON.Valid && filesJSON.String != "" {
 			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
@@ -147,9 +157,10 @@ func GetFinalizedMessageCount(sessionID string) int {
 
 // GetUserMessageIndex returns lightweight {id, content, files, createdAt} for all user messages
 // in a session, ordered by id ASC. Used for the user message index navigation feature.
+// Excludes queued messages — a pending bubble is not a navigable history turn yet.
 func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, content, files, created_at FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, content, files, created_at FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -246,10 +257,16 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 
 // GetMessagesBySessionID fetches all messages for a session by session_id alone.
 // Unlike GetChatHistory, this does not require projectPath or backend — session_id is globally unique.
-// Returns messages in chronological order with all content blocks (text, thinking, tool_use).
+// Returns messages in chronological order. NOTE: assistant messages that have a
+// reading summary are returned with content stripped to an empty blocks array
+// (see enrichMessagesWithSummaries) to save bandwidth. Callers that need the
+// real content blocks — e.g. push previews, fork context — must use
+// GetAssistantRawContents instead.
+// Excludes queued messages — callers (fork context, summarization, recent preview)
+// want completed history, not messages still waiting for the drain loop (M4).
 func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id ASC",
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND streaming = 0 AND queued = 0 ORDER BY id ASC",
 		sessionID,
 	)
 	if err != nil {
@@ -257,6 +274,37 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	}
 	defer rows.Close()
 	return scanMessages(rows, sessionID)
+}
+
+// GetAssistantRawContents returns the raw (unmodified) content JSON of the
+// most recent finalized assistant messages in a session, newest first
+// (ORDER BY id DESC LIMIT previewAssistantContentLimit). Unlike
+// GetMessagesBySessionID it does NOT go through scanMessages, whose
+// enrichMessagesWithSummaries replaces the content of summarized non-streaming
+// assistant messages with a stripped view (summarizeContentForView) to save
+// bandwidth. Callers that need the real content blocks — e.g. push notification
+// previews — must use this function.
+func GetAssistantRawContents(sessionID string) ([]string, error) {
+	rows, err := dbRead.Query(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT ?",
+		sessionID, previewAssistantContentLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var contents []string
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return nil, err
+		}
+		contents = append(contents, content)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return contents, nil
 }
 
 // unmarshalFilesJSON deserializes a files JSON column value, supporting both
@@ -274,28 +322,192 @@ func unmarshalFilesJSON(raw string) []model.FileEntry {
 	return nil
 }
 
-// ExtractPlainText extracts plain text from content that may be block-format JSON
-// (e.g. {"blocks":[{"type":"text","text":"hello"}]}) or plain text.
-// Returns the original content unchanged if it's not block-format JSON.
+// ExtractPlainText extracts plain text from message content, handling every
+// storage format the system has produced. Content is stored in several shapes
+// depending on the source (normal chat vs ACP session sync/replay) and on
+// historical bugs that embedded raw JSON into text fields, so this function
+// must not assume a single format.
+//
+// Recognized shapes:
+//   - Plain text (e.g. "hello world") → returned unchanged.
+//   - Block-format JSON ({"blocks":[{"type":"text","text":"..."}]}) → text of
+//     all text blocks joined with "\n\n". The frontend extractPlainText joins
+//     with a space for single-line previews — both valid for their contexts.
+//   - Nested dirty data: a text block whose text field is itself a JSON string
+//     (e.g. an ACP notification JSON or a content array serialized into text).
+//     Recursively unwraps until real text is found.
+//   - Bare content-array JSON ([{"type":"text","text":"..."}]).
+//   - ACP notification wrapper ({"content":{"text":"hi","type":"text"},...,
+//     "sessionUpdate":"user_message_chunk"}).
+//
+// Returns the original content unchanged for plain text or unrecognized JSON;
+// returns "" for recognized wrappers (blocks/array/ACP notification) that
+// carry no extractable text, so callers can distinguish "no content" from
+// "not a wrapper" — matching the frontend extractPlainText semantics.
 func ExtractPlainText(content string) string {
-	if !strings.HasPrefix(content, `{"blocks":`) {
+	if content == "" {
 		return content
 	}
-	var wrapper struct {
-		Blocks []model.ContentBlock `json:"blocks"`
-	}
-	if json.Unmarshal([]byte(content), &wrapper) != nil {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
 		return content
 	}
-	text := summarize.ExtractTextFromBlocks(wrapper.Blocks)
-	if text == "" {
+	// Fast path: not JSON at all → plain text.
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
 		return content
 	}
-	return text
+
+	var raw any
+	if json.Unmarshal([]byte(trimmed), &raw) != nil {
+		return content
+	}
+	text := extractTextFromValue(raw, 0)
+	if strings.TrimSpace(text) != "" {
+		return text
+	}
+	if isKnownContentWrapper(raw) {
+		return ""
+	}
+	return content
+}
+
+// isKnownContentWrapper reports whether the decoded JSON is a content wrapper
+// owned by this system: a blocks array, a bare content array, an ACP
+// notification, or a standalone content block.
+func isKnownContentWrapper(v any) bool {
+	switch val := v.(type) {
+	case []any:
+		return true
+	case map[string]any:
+		_, hasBlocks := val["blocks"]
+		_, hasSessionUpdate := val["sessionUpdate"]
+		_, hasText := val["text"]
+		return hasBlocks || hasSessionUpdate || hasText
+	default:
+		return false
+	}
+}
+
+// maxUnwrapDepth caps recursive unwrapping of nested JSON serializations.
+// Real dirty data is ≤2–3 levels deep; the cap degrades pathologically nested
+// JSON gracefully instead of recursing unboundedly.
+const maxUnwrapDepth = 8
+
+// extractTextFromValue recursively walks decoded JSON and pulls out the first
+// meaningful text it can find, unwrapping known wrapper shapes:
+//
+//   - a JSON object with a "blocks" array (block-format content);
+//   - a JSON object with "content" + "sessionUpdate" (an ACP notification that
+//     was accidentally stored as text — historical dirty data);
+//   - a JSON object with a "text" key (content-block text, possibly itself a
+//     nested JSON string);
+//   - a JSON array whose elements are text blocks / strings.
+//
+// This mirrors the block semantics of the rest of the system: only "text"
+// content is meaningful for user-facing plain text; thinking/tool_use blocks
+// are skipped.
+func extractTextFromValue(v any, depth int) string {
+	if depth > maxUnwrapDepth {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		// A string may itself be an embedded JSON serialization (historical
+		// dirty data). Unwrap it (propagating depth so the cap actually caps);
+		// otherwise return as-is.
+		trimmed := strings.TrimSpace(val)
+		if trimmed != "" && (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
+			var inner any
+			if json.Unmarshal([]byte(trimmed), &inner) == nil {
+				if nested := extractTextFromValue(inner, depth+1); strings.TrimSpace(nested) != "" {
+					return nested
+				}
+			}
+		}
+		return val
+	case map[string]any:
+		// 1. {"blocks":[...]} — standard block content.
+		if blocks, ok := val["blocks"]; ok {
+			if arr, isArr := blocks.([]any); isArr {
+				return joinExtractedTexts(extractTextsFromArray(arr, depth))
+			}
+		}
+		// 2. ACP notification wrapper: {"content":{"text":"hi","type":"text"},...}.
+		//    Historical bug stored the whole ACP notification JSON as text.
+		if _, isAcp := val["sessionUpdate"]; isAcp {
+			if contentVal, ok := val["content"]; ok {
+				if s := extractTextFromValue(contentVal, depth+1); s != "" {
+					return s
+				}
+			}
+		}
+		// 3. {"text":"..."} — a content block serialized by itself, or a text
+		//    field inside a wrapper that wasn't matched above.
+		if textVal, ok := val["text"]; ok {
+			if s := extractTextFromValue(textVal, depth+1); s != "" {
+				return s
+			}
+		}
+		// 4. {"type":"text","text":"..."} maps already handled by #3; other
+		//    object shapes (e.g. metadata) yield nothing.
+		return ""
+	case []any:
+		return joinExtractedTexts(extractTextsFromArray(val, depth))
+	default:
+		return ""
+	}
+}
+
+// extractTextsFromArray extracts text from each element of a JSON array,
+// honoring the same "text only" semantics as block rendering. Each element may
+// be a content block ({"type":"text","text":"..."}), a plain string, or a
+// nested wrapper.
+func extractTextsFromArray(arr []any, depth int) []string {
+	var texts []string
+	for _, el := range arr {
+		switch elem := el.(type) {
+		case map[string]any:
+			typ, _ := elem["type"].(string)
+			if typ != "" && typ != "text" {
+				// thinking/tool_use/warning blocks don't carry user text.
+				continue
+			}
+			if s := extractTextFromValue(elem, depth+1); s != "" {
+				texts = append(texts, s)
+			}
+		case string:
+			if s := extractTextFromValue(elem, depth+1); s != "" {
+				texts = append(texts, s)
+			}
+		default:
+			if s := extractTextFromValue(el, depth+1); s != "" {
+				texts = append(texts, s)
+			}
+		}
+	}
+	return texts
+}
+
+// joinExtractedTexts joins multiple extracted texts with the same separator the
+// rest of the system uses for multi-block content.
+func joinExtractedTexts(texts []string) string {
+	return strings.Join(texts, "\n\n")
 }
 
 // AddChatMessage adds a message to the chat history for a given project path, backend, and session.
-func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
+// AddChatMessage persists a chat message. The optional queueID argument (when
+// non-empty) records the queue_id of the queued user message that this reply
+// answers. The frontend uses it to anchor the reply directly after its own
+// question, because a queued user message is persisted (and gets its DB id)
+// BEFORE later queued messages, so pure id ordering cannot reconstruct the
+// conversational order (msg2, reply2, msg3, reply3) once multiple messages are
+// queued at once.
+func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string, queueID ...string) (int64, error) {
+	replyQueueID := ""
+	if len(queueID) > 0 {
+		replyQueueID = queueID[0]
+	}
+
 	// Guard: reject messages to archived sessions
 	var isArchived int
 	if err := dbRead.QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
@@ -323,8 +535,8 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer tx.Rollback()
 
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed, queue_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+		projectPath, backend, sessionID, role, content, filesJSON, streamingInt, replyQueueID,
 	)
 	if txErr != nil {
 		return 0, txErr
@@ -361,7 +573,212 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	}
 
 	msgID, _ = result.LastInsertId()
+	slog.Info("chat: persisted message",
+		slog.String("session", sessionID),
+		slog.String("role", role),
+		slog.Int64("msgID", msgID),
+		slog.String("queueID", replyQueueID),
+		slog.Bool("streaming", streaming))
 	return msgID, nil
+}
+
+// AddQueuedMessage persists a user message to chat_history with queued=1 so it
+// waits for the drain loop. It reuses AddChatMessage for the archived-session
+// guard, session title generation on first message, and updated_at refresh
+// (B3). The message is marked indexed=1 to skip RAG indexing until it is
+// drained and finalized (M4).
+func AddQueuedMessage(projectPath, backend, sessionID, content string, files []model.FileEntry, queueID string, fallbackTitle string) (int64, error) {
+	if queueID == "" {
+		queueID = "q-" + time.Now().Format("20060102150405") + "-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	msgID, err := AddChatMessage(projectPath, backend, sessionID, "user", content, files, false, fallbackTitle)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := WriteExec(
+		"UPDATE chat_history SET queue_id = ?, queued = 1, indexed = 1 WHERE id = ?",
+		queueID, msgID,
+	); err != nil {
+		return 0, err
+	}
+	return msgID, nil
+}
+
+// DequeueQueuedMessage atomically claims the next queued message for a session
+// (oldest first). Uses a transaction under the global write mutex so two
+// concurrent drain loops can never consume the same row. The row stays in
+// chat_history with queued=0 (it becomes a normal conversation record).
+//
+// Returns (msg, true, nil) on success, (zeroMsg, false, nil) when the queue is
+// empty, and (zeroMsg, false, err) on a real DB error — the drain loop must
+// treat the latter as a retryable failure, NOT as "queue empty", or the
+// message is silently lost (B4).
+func DequeueQueuedMessage(sessionID string) (model.ChatMessage, bool, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	var msg model.ChatMessage
+	var filesJSON sql.NullString
+	var queueID string
+	var queued int
+	err = tx.QueryRow(`
+		SELECT id, role, content, files, backend, created_at, queue_id, queued
+		FROM chat_history WHERE session_id = ? AND queued = 1
+		ORDER BY id ASC LIMIT 1
+	`, sessionID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
+	if err == sql.ErrNoRows {
+		return model.ChatMessage{}, false, nil // genuinely empty
+	}
+	if err != nil {
+		return model.ChatMessage{}, false, err // real DB error — retry, don't exit
+	}
+
+	// Claim the row: flip queued=0 and reset indexed=0 so the drained user
+	// message becomes a normal conversation record eligible for RAG indexing
+	// (it was set indexed=1 at enqueue to skip indexing while still queued — M4).
+	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Already claimed by another drain loop — treat as empty for this call.
+		return model.ChatMessage{}, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	msg.SessionID = sessionID
+	msg.QueueID = queueID
+	msg.Queued = queued != 0
+	if filesJSON.Valid && filesJSON.String != "" {
+		msg.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+	return msg, true, nil
+}
+
+// DequeueQueuedMessageByID atomically claims the queued message with the given
+// id (the row just inserted by AddQueuedMessage). Same transaction semantics as
+// DequeueQueuedMessage, but targets a specific row instead of "oldest first".
+// Used to consume exactly the message an execution goroutine is about to run
+// directly, so a concurrent enqueue's earlier row is left to the drain loop
+// (R1).
+func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage, bool, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	var msg model.ChatMessage
+	var filesJSON sql.NullString
+	var queueID string
+	var queued int
+	err = tx.QueryRow(`
+		SELECT id, role, content, files, backend, created_at, queue_id, queued
+		FROM chat_history WHERE session_id = ? AND id = ? AND queued = 1
+	`, sessionID, msgID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &queueID, &queued)
+	if err == sql.ErrNoRows {
+		return model.ChatMessage{}, false, nil // row not queued (already claimed/cleared)
+	}
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return model.ChatMessage{}, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	msg.SessionID = sessionID
+	msg.QueueID = queueID
+	msg.Queued = queued != 0
+	if filesJSON.Valid && filesJSON.String != "" {
+		msg.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+	return msg, true, nil
+}
+
+// ClearQueuedMessages deletes every queued message of a session. Used by
+// session cancel/force-cancel — cancel semantics are "drop the queued
+// messages", so the rows are truly removed and never resurface as normal
+// conversation records after the current turn completes (they would otherwise
+// be indistinguishable from sent messages and reappear as "formal" messages on
+// the next loadHistory).
+//
+// NOTE: this function only deletes rows — it does NOT emit queue_cancel.
+// Callers are responsible for emitting the WS event so other devices remove
+// their pending/_remote bubbles (the session-cancel path emits it, while
+// ForceCancelSession does not because the WS client has already disconnected).
+func ClearQueuedMessages(sessionID string) error {
+	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queued = 1", sessionID)
+	return err
+}
+
+// GetQueuedQueueIDs returns the non-empty queue_ids of a session's queued
+// messages, oldest first. Used to emit queue_cancel with the exact ids.
+func GetQueuedQueueIDs(sessionID string) ([]string, error) {
+	rows, err := dbRead.Query(
+		"SELECT queue_id FROM chat_history WHERE session_id = ? AND queued = 1 AND queue_id != '' ORDER BY id ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetQueuedCount returns the number of queued messages for a session.
+func GetQueuedCount(sessionID string) int {
+	var count int
+	dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queued = 1", sessionID).Scan(&count)
+	return count
+}
+
+// GetQueuedMessages returns the queued messages of a session, oldest first.
+func GetQueuedMessages(sessionID string) ([]model.ChatMessage, error) {
+	rows, err := dbRead.Query(
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed, queue_id, queued FROM chat_history WHERE session_id = ? AND queued = 1 ORDER BY id ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows, sessionID)
+}
+
+// CancelQueuedMessage deletes a single queued message by queue_id. The row is
+// truly removed so the canceled message can never resurface as a normal
+// conversation record (e.g. after the current turn completes and the frontend
+// reloads history from the authoritative DB). The queued=1 guard means a row
+// already claimed by the drain loop (queued=0) is left untouched — the
+// execution in flight must not be deleted.
+func CancelQueuedMessage(sessionID, queueID string) error {
+	_, err := WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queue_id = ? AND queued = 1", sessionID, queueID)
+	return err
 }
 
 // titleFromFileEntries builds a session title from file entries by extracting
@@ -567,6 +984,48 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	return sessions, rows.Err()
 }
 
+// GetOverviewSessions returns all non-archived chat sessions across every
+// project (for the floating window overview panel), including per-session
+// unread counts. Unread is computed per-project (joined by project_path) so
+// sessions in different projects don't interfere.
+func GetOverviewSessions() ([]model.ChatSession, error) {
+	sessions := []model.ChatSession{}
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, s.project_path,
+		COALESCE(unread.cnt, 0) AS unread_count
+		FROM chat_sessions s
+		LEFT JOIN (
+			SELECT h.session_id, h.project_path, COUNT(*) AS cnt
+			FROM chat_history h
+			JOIN chat_sessions s2 ON s2.id = h.session_id AND s2.project_path = h.project_path
+			WHERE h.role = 'assistant' AND h.streaming = 0
+			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			GROUP BY h.session_id, h.project_path
+		) unread ON unread.session_id = s.id AND unread.project_path = s.project_path
+		WHERE s.archived = 0 AND s.session_type = 'chat'
+		ORDER BY s.updated_at DESC, s.id DESC`
+	rows, err := dbRead.Query(query)
+	if err != nil {
+		return sessions, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s model.ChatSession
+		var lastRead sql.NullTime
+		var sourceSessionID sql.NullString
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.ProjectPath, &s.UnreadCount); err != nil {
+			return nil, err
+		}
+		if lastRead.Valid {
+			s.LastReadAt = &lastRead.Time
+		}
+		if sourceSessionID.Valid {
+			s.SourceSessionID = sourceSessionID.String
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
 // ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
 // limit=0 means no limit (returns all sessions).
@@ -652,6 +1111,10 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 // list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
 	WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
+	// Broadcast a status change so connected clients (e.g. the Android floating
+	// window) can refresh their unread counts. WS-only: no push notification and
+	// no pending event — reading a session must not create a notification.
+	EmitSessionEventWSOnly(sessionID, "read", false)
 }
 
 // GetSessionBackend returns the backend of a session, or empty string if not found or archived.

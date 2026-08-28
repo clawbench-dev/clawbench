@@ -20,6 +20,7 @@ import (
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // feedEvents processes a sequence of StreamEvents through AccumulateBlock
@@ -1266,7 +1267,7 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	// Simulate frontend sending both filePaths and files (where files already includes filePaths)
@@ -1285,35 +1286,27 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 
-	// Verify DB has no message — enqueue path no longer persists to DB
-	// (persistence happens at drain time when the message is actually processed)
+	// Verify the message is persisted (queued=1) with deduplicated files.
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
 	assert.NoError(t, err)
-	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
-
-	// Verify the message is in the in-memory queue instead
-	queue := service.GetQueue(sessionID)
-	assert.Len(t, queue, 1, "should have 1 queued message in memory")
-	assert.Equal(t, "check this", queue[0].Text)
-	// Verify no duplicate files in the queued message
-	assert.Len(t, queue[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", queue[0].Files)
+	assert.Len(t, messages, 1, "enqueue path should persist user message to DB")
+	assert.Len(t, messages[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", messages[0].Files)
 }
 
-// TestAIChat_EnqueuePath_NoDBPersist verifies that when a session is already
+// TestAIChat_EnqueuePath_PersistsToDB verifies that when a session is already
 // running and a message is enqueued via POST /api/ai/chat, the user message
-// is NOT persisted to the database. This prevents orphan "queued" messages
-// from appearing after page refresh (regression: messages persisted at enqueue
-// time appeared as unanswered user messages with no assistant response).
-func TestAIChat_EnqueuePath_NoDBPersist(t *testing.T) {
+// IS persisted to the database (queued-message-persistence plan). The row is
+// queued=1 and discovered via the queued-message query.
+func TestAIChat_EnqueuePath_PersistsToDB(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "enqueue-no-persist", "", "", "default", "chat")
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "enqueue-persists", "", "", "default", "chat")
 	assert.NoError(t, err)
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	body := map[string]any{
@@ -1330,15 +1323,17 @@ func TestAIChat_EnqueuePath_NoDBPersist(t *testing.T) {
 	assert.Equal(t, true, result["queued"])
 	assert.Equal(t, true, result["running"])
 
-	// DB must have ZERO messages — enqueue path must not persist
+	// DB must have exactly ONE message — enqueue path now persists (queued=1).
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
 	assert.NoError(t, err)
-	assert.Len(t, messages, 0, "enqueue path must not persist user message to DB")
+	assert.Len(t, messages, 1, "enqueue path must persist user message to DB")
+	assert.True(t, messages[0].Queued, "persisted message should be queued=1")
 
-	// Message should be in the in-memory queue
-	queue := service.GetQueue(sessionID)
+	// Message should be in the queued-message query.
+	queue, err := service.GetQueuedMessages(sessionID)
+	assert.NoError(t, err)
 	assert.Len(t, queue, 1)
-	assert.Equal(t, "queued msg", queue[0].Text)
+	assert.Equal(t, "queued msg", queue[0].Content)
 }
 
 // TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination verifies that
@@ -1360,7 +1355,7 @@ func TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination(t *testing.T) {
 	service.TrySetSessionRunning(sessionA)
 	defer func() {
 		service.SetSessionRunning(sessionA, false)
-		service.ClearQueue(sessionA)
+		service.ClearQueuedMessages(sessionA)
 	}()
 
 	body := map[string]any{
@@ -1376,37 +1371,40 @@ func TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 
-	// Session B's DB history must be empty — no cross-contamination
+	// Session B's DB history must be empty — no cross-contamination.
 	messagesB, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionB)
 	assert.NoError(t, err)
 	assert.Len(t, messagesB, 0, "session B must have no messages from session A's enqueue")
 
-	// Session A's DB history must also be empty (enqueue does not persist)
+	// Session A's DB history has exactly one queued message.
 	messagesA, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionA)
 	assert.NoError(t, err)
-	assert.Len(t, messagesA, 0, "session A enqueue must not persist to DB")
+	assert.Len(t, messagesA, 1, "session A enqueue must persist to DB")
 }
 
 // TestAIChat_EnqueueThenDrain_SinglePersist verifies that when a queued
 // message is eventually drained and processed, it is persisted exactly once
 // (no double-persist from both enqueue and drain paths).
 func TestAIChat_EnqueueThenDrain_SinglePersist(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
 	sessionID := "drain-single-persist"
-	defer service.ClearQueue(sessionID)
+	defer service.ClearQueuedMessages(sessionID)
 
-	// Simulate: enqueue a message, then dequeue it
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      "will be drained",
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
+	// Simulate: enqueue a message to DB (queued=1), then dequeue it once.
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "will be drained", nil, "q-1", "")
+	assert.NoError(t, err)
 
-	// Dequeue should return the message exactly once
-	msg, ok := service.DequeueMessage(sessionID)
+	// Dequeue should return the message exactly once (row becomes queued=0).
+	msg, ok, err := service.DequeueQueuedMessage(sessionID)
+	assert.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, "will be drained", msg.Text)
+	assert.Equal(t, "will be drained", msg.Content)
 
-	// Second dequeue should return nothing (no double)
-	_, ok = service.DequeueMessage(sessionID)
+	// Second dequeue should return nothing (no double).
+	_, ok, err = service.DequeueQueuedMessage(sessionID)
+	assert.NoError(t, err)
 	assert.False(t, ok, "message should not be dequeued twice")
 }
 
@@ -2620,7 +2618,7 @@ func TestExecuteStreamRun_CtxCancelled(t *testing.T) {
 	// executeStreamRun should hit the ctx.Done() branch because the
 	// backend.ExecuteStream call will fail (no claude CLI), and during
 	// the event loop iteration, the cancelled context will be selected.
-	result := executeStreamRun(ctx, req, env.ProjectDir, sessionID, "claude", "default", chatReq, "")
+	result := executeStreamRun(ctx, req, env.ProjectDir, sessionID, "claude", "default", chatReq, "", "")
 	// The result should indicate an error (no backend available) but
 	// the ctx.Done() path should still be covered in the select statement.
 	_ = result
@@ -3286,8 +3284,10 @@ func TestAIChat_UserMessageEmit_NewSession(t *testing.T) {
 }
 
 // TestAIChat_UserMessageEmit_EnqueuePath verifies that the POST /api/ai/chat handler
-// emits a user_message event with MessageID=0 when the session is already running
-// and the message is enqueued (the queue path).
+// emits a user_message event when the session is already running and the message
+// is enqueued (the queue path). The event must carry the real persisted DB id
+// (msgID > 0) — not a placeholder 0 — so cross-device bubbles can adopt the
+// authoritative backend id.
 func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -3302,14 +3302,15 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	var writeMu sync.Mutex
-	mgr.Subscribe(nil, &writeMu, "test-client-2", "")
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-2", "")
 	mgr.StreamHub().Subscribe("test-client-2", sessionID)
+	require.NotNil(t, sub)
 
 	// Mark session as running so the message gets enqueued
 	service.TrySetSessionRunning(sessionID)
 	defer func() {
 		service.SetSessionRunning(sessionID, false)
-		service.ClearQueue(sessionID)
+		service.ClearQueuedMessages(sessionID)
 	}()
 
 	body := map[string]string{"message": "queued message", "clientId": "sender-1"}
@@ -3322,6 +3323,116 @@ func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
 	var result map[string]any
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
+
+	// The enqueue path must broadcast user_message with the real DB id so the
+	// receiving client can anchor its bubble to the authoritative backend id.
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "user_message" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond)
+	require.NotNil(t, found, "expected a user_message chat_stream event in the subscriber buffer")
+
+	data := found.Data.(ws.ChatStreamData)
+	payload, ok := data.Payload.(map[string]any)
+	require.True(t, ok)
+	// messageId is stored as the original int64 (the buffer holds the Go value,
+	// not JSON), so it may appear as int64 or float64 depending on marshalling.
+	msgID, _ := payload["messageId"].(int64)
+	if msgID == 0 {
+		if f, ok := payload["messageId"].(float64); ok {
+			msgID = int64(f)
+		}
+	}
+	assert.Greater(t, msgID, int64(0), "enqueue-path user_message must carry the real persisted DB id (msgID > 0)")
+	assert.Equal(t, "sender-1", payload["senderClientId"])
+	assert.Equal(t, "queued message", payload["content"])
+
+	// The broadcast id must match the DB row id (queued=1) for this session.
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	assert.Equal(t, msgID, messages[0].ID, "broadcast messageId must equal the persisted queued message id")
+	assert.True(t, messages[0].Queued)
+}
+
+// TestAIChat_StreamStartEvent verifies the web POST path broadcasts a
+// stream_start event (carrying the streaming message DB id) for every prompt,
+// so clients can create a data-driven streaming placeholder.
+func TestAIChat_StreamStartEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-stream-start-emit", "codebuddy", "", "default", "chat")
+	assert.NoError(t, err)
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-stream-start-client", "")
+	mgr.StreamHub().Subscribe("test-stream-start-client", sessionID)
+
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+
+	body := map[string]string{"message": "hello from test", "agentId": "codebuddy"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+
+	var found *ws.ServerMessage
+	assert.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok || data.EventType != "stream_start" {
+				continue
+			}
+			found = &ev
+			return true
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	require.NotNil(t, found, "expected a stream_start chat_stream event in the subscriber buffer")
+
+	data := found.Data.(ws.ChatStreamData)
+	payload, ok := data.Payload.(map[string]int64)
+	require.True(t, ok, "stream_start payload must be map[string]int64")
+	assert.Greater(t, payload["message_id"], int64(0), "stream_start must carry the streaming message DB id")
+
+	// The broadcast id must match the persisted assistant streaming row.
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.NotEmpty(t, messages)
+	var streamingRowID int64
+	for _, m := range messages {
+		if m.Role == "assistant" {
+			streamingRowID = m.ID
+		}
+	}
+	assert.Greater(t, streamingRowID, int64(0))
+	assert.Equal(t, streamingRowID, payload["message_id"], "stream_start message_id must equal the assistant streaming row id")
+
+	// Wait for the async AI goroutine to finish to avoid leaking a running session.
+	assert.Eventually(t, func() bool {
+		return !service.IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond)
 }
 
 func TestFileEntryLabel(t *testing.T) {
@@ -3379,4 +3490,63 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
 	assert.Contains(t, req.Prompt, "/src/baz.rs", "prompt should include path without line info for baz.rs")
+}
+
+// --- HTTP chat path must record queue_id on the reply to a drained message ---
+
+// queueReplyBackend returns a trivial successful stream (content + done) so a
+// full POST /api/ai/chat cycle (direct run + drain) can complete end-to-end
+// without launching a real CLI.
+type queueReplyBackend struct{}
+
+func (m *queueReplyBackend) Name() string { return "mock-qreply" }
+func (m *queueReplyBackend) ExecuteStream(_ context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 4)
+	ch <- ai.StreamEvent{Type: "content", Content: "ok"}
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+	return ch, nil
+}
+
+// TestDrainReplyQueueID_HTTPPath verifies the WebSocket/HTTP chat path: when a
+// second message is enqueued while the session is running, its reply must carry
+// the consumed message's queue_id in chat_history so the frontend can anchor the
+// reply to its own question (anchorRepliesToQuestions). Without this the reply
+// falls back to raw DB id order (msg2,msg3,reply2,reply3) — the display looks
+// identical to the old pre-queue behavior.
+func TestDrainReplyQueueID_HTTPPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const backendID = "mock-qreply"
+	ai.RegisterBackend(backendID, func() ai.AIBackend { return &queueReplyBackend{} })
+	model.Agents["qreply-agent"] = &model.Agent{ID: "qreply-agent", Backend: backendID}
+
+	sessionID, err := service.CreateSession(env.ProjectDir, backendID, "qreply", "qreply-agent", "", "default", "chat")
+	assert.NoError(t, err)
+
+	send := func(msg, queueID string) *httptest.ResponseRecorder {
+		body := map[string]any{"message": msg, "agentId": "qreply-agent", "queueId": queueID}
+		req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+		withProjectCookie(req, env.ProjectDir)
+		return callHandler(AIChat, req)
+	}
+
+	// Message 1 executes directly.
+	w1 := send("1", "pending-q1")
+	assert.Equal(t, http.StatusOK, w1.Code)
+	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
+
+	// Message 2 enqueued — session is idle again, so it starts a fresh run.
+	w2 := send("2", "pending-q2")
+	assert.Equal(t, http.StatusOK, w2.Code)
+	assert.Eventually(t, func() bool { return !service.IsSessionRunning(sessionID) }, 10*time.Second, 50*time.Millisecond)
+
+	// The LATEST assistant row (the reply to message 2) must carry queue_id pending-q2.
+	var qid string
+	err = service.ReadDB().QueryRow(
+		"SELECT queue_id FROM chat_history WHERE role='assistant' AND session_id=? ORDER BY id DESC LIMIT 1", sessionID,
+	).Scan(&qid)
+	assert.NoError(t, err, "assistant reply row should exist")
+	assert.Equal(t, "pending-q2", qid, "drain reply must record the consumed message's queue_id so the frontend can anchor it")
 }

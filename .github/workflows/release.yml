@@ -694,10 +694,18 @@ jobs:
           cd desktop
           npm ci
 
-      - name: Build desktop (macOS arm64 + x64)
+      - name: Set macOS signing cert env (only if secret exists)
+        if: ${{ secrets.MAC_CERT != '' }}
         env:
-          CSC_LINK: ${{ secrets.MAC_CERT }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          MAC_CERT: ${{ secrets.MAC_CERT }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          echo "CSC_LINK=$MAC_CERT" >> "$GITHUB_ENV"
+          echo "CSC_KEY_PASSWORD=$MAC_CERT_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build desktop (macOS arm64 + x64)
+        # CSC_LINK is only set when the MAC_CERT secret exists (see step above).
+        # Without it electron-builder skips signing (ad-hoc) instead of failing.
         run: |
           cd desktop
           npx tsc -p tsconfig.json

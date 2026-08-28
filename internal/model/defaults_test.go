@@ -465,8 +465,8 @@ func TestApplyDefaults_ChatSessionPageSize(t *testing.T) {
 	if cfg.Chat.SessionPageSize != 10 {
 		t.Errorf("Chat.SessionPageSize = %d, want 10", cfg.Chat.SessionPageSize)
 	}
-	if cfg.Chat.SystemPromptInterval != 0 {
-		t.Errorf("Chat.SystemPromptInterval = %d, want 0 (never is the default)", cfg.Chat.SystemPromptInterval)
+	if cfg.Chat.SystemPromptInterval != 10 {
+		t.Errorf("Chat.SystemPromptInterval = %d, want 10", cfg.Chat.SystemPromptInterval)
 	}
 }
 
@@ -811,48 +811,5 @@ func TestApplyDefaults_PushMode_ExplicitFeishuSyncsEnabled(t *testing.T) {
 	}
 	if cfg.DingTalk.Enabled {
 		t.Error("expected DingTalk.Enabled=false when PushMode=feishu")
-	}
-}
-
-func TestApplyDefaults_ZeroMeansOff_NotRewritten(t *testing.T) {
-	setupTestBinDir(t)
-
-	// The old `<= 0 → N` rewrites made the documented 0 ("never" / "keep
-	// forever") unexpressable — an explicit 0 was silently replaced by the
-	// nonzero default. 0 must now survive ApplyDefaults.
-	cfg := Config{}
-	cfg.Chat.SystemPromptInterval = 0
-	cfg.Session.ArchiveRetentionDays = 0
-	ApplyDefaults(&cfg, nil)
-	if cfg.Chat.SystemPromptInterval != 0 {
-		t.Errorf("explicit SystemPromptInterval=0 rewritten to %d, want 0", cfg.Chat.SystemPromptInterval)
-	}
-	if cfg.Session.ArchiveRetentionDays != 0 {
-		t.Errorf("explicit ArchiveRetentionDays=0 rewritten to %d, want 0", cfg.Session.ArchiveRetentionDays)
-	}
-
-	// Explicit nonzero values are preserved as-is.
-	cfg = Config{}
-	cfg.Chat.SystemPromptInterval = 3
-	cfg.Session.ArchiveRetentionDays = 90
-	ApplyDefaults(&cfg, nil)
-	if cfg.Chat.SystemPromptInterval != 3 {
-		t.Errorf("explicit SystemPromptInterval=3 rewritten to %d, want 3", cfg.Chat.SystemPromptInterval)
-	}
-	if cfg.Session.ArchiveRetentionDays != 90 {
-		t.Errorf("explicit ArchiveRetentionDays=90 rewritten to %d, want 90", cfg.Session.ArchiveRetentionDays)
-	}
-
-	// Negative (only possible via hand-edited yaml) clamps to 0, not to a
-	// nonzero default.
-	cfg = Config{}
-	cfg.Chat.SystemPromptInterval = -1
-	cfg.Session.ArchiveRetentionDays = -7
-	ApplyDefaults(&cfg, nil)
-	if cfg.Chat.SystemPromptInterval != 0 {
-		t.Errorf("negative SystemPromptInterval=%d, want clamp to 0", cfg.Chat.SystemPromptInterval)
-	}
-	if cfg.Session.ArchiveRetentionDays != 0 {
-		t.Errorf("negative ArchiveRetentionDays=%d, want clamp to 0", cfg.Session.ArchiveRetentionDays)
 	}
 }

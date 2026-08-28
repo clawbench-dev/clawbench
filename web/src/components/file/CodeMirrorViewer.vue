@@ -26,7 +26,8 @@ import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
-import { defaultKeymap, historyKeymap, history, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
+import { defaultKeymap, historyKeymap, history, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands'
+import { search, searchKeymap, highlightSelectionMatches, openSearchPanel, searchPanelOpen } from '@codemirror/search'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
@@ -51,7 +52,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['save', 'saveAndExit', 'cancel', 'exitEdit'])
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const editorHost = ref(null)
 // EditorView must be stored in a shallowRef: Vue's ref() wraps objects in a
 // reactive Proxy, and CodeMirror's undo/redo build transactions against the
@@ -148,6 +149,7 @@ const wrapCompartment = new Compartment()
 const overlayCompartment = new Compartment()
 const jumpFlashCompartment = new Compartment()
 const completionCompartment = new Compartment()
+const searchCompartment = new Compartment()
 
 // Gutter markers for diff markers (M/D/+), clickable to open the diff drawer.
 class DiffGutterMarker extends GutterMarker {
@@ -201,6 +203,10 @@ function maybeShowQuoteBar() {
     if (props.editable) return
     const editor = view.value
     if (!editor) return
+    // The built-in search panel moves the selection onto each match as the
+    // user navigates (findNext/select all). That is not a user quote gesture,
+    // so suppress the quote bar while search is active.
+    if (searchPanelOpen(editor.state)) return
     const sel = editor.state.selection.main
     if (sel.empty) {
         quoteQuestion.hideBar()
@@ -379,6 +385,27 @@ function onScrollToLine(e) {
 // All extensions are passed directly to EditorState at creation — NO basicSetup,
 // NO vue-codemirror. Toggleable parts live in top-level Compartments, which
 // CodeMirror reconfigures reliably (verified against raw CodeMirror).
+// Localize the built-in search panel text via CodeMirror's phrases facet.
+// The panel renders from `state.phrase(...)` keys (Find/Replace/next/...),
+// which default to English; supplying the app locale's translations keeps the
+// panel consistent with the rest of the UI.
+function buildSearchPhrases() {
+    const zh = locale.value === 'zh'
+    return EditorState.phrases.of({
+        'Find': zh ? '查找' : 'Find',
+        'Replace': zh ? '替换' : 'Replace',
+        'next': zh ? '下一个' : 'Next',
+        'previous': zh ? '上一个' : 'Previous',
+        'all': zh ? '全部' : 'All',
+        'match case': zh ? '区分大小写' : 'Match case',
+        'regexp': zh ? '正则' : 'Regexp',
+        'by word': zh ? '全词匹配' : 'By word',
+        'replace': zh ? '替换' : 'Replace',
+        'replace all': zh ? '全部替换' : 'Replace all',
+        'close': zh ? '关闭' : 'Close',
+    })
+}
+
 function buildAllExtensions() {
     return [
         readonlyCompartment.of(props.editable ? [] : [EditorState.readOnly.of(true)]),
@@ -386,10 +413,24 @@ function buildAllExtensions() {
         completionCompartment.of([]), // placeholder; loaded async in mountCompletion()
         lineNumbersCompartment.of(props.showLineNumbers ? [lineNumbers()] : []),
         wrapCompartment.of(props.wordWrap ? [EditorView.lineWrapping] : []),
+        buildSearchPhrases(),
         codeMirrorTheme,
         syntaxHighlighting(codeHighlightStyle),
         history(),
-        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap]),
+        // Tab/Space indent handling. CodeMirror 6 leaves Tab unbound by default,
+        // so without indentWithTab the browser's native tab traversal swallows
+        // the key while editing. It is a no-op in read-only mode (indentMore
+        // returns false), and autocomplete's Tab (choose candidate) still takes
+        // precedence while the completion popup is open.
+        keymap.of([{ key: 'Mod-s', run: handleSaveShortcut, preventDefault: true }, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        searchCompartment.of([
+            search({ top: true }),
+            // Mod-f/Mod-g/Mod-Shift-g/Mod-Alt-g are bound here; the global
+            // Ctrl+F handler in App.vue skips contenteditable targets, so
+            // inside the editor these take precedence and never collide.
+            keymap.of(searchKeymap),
+            highlightSelectionMatches(),
+        ]),
         interactionExtension,
         selectionExtension,
         editStateExtension,
@@ -553,6 +594,13 @@ function handleRedo() {
     if (view.value) redo(view.value)
 }
 
+// Open the built-in CodeMirror search panel programmatically (used by the
+// toolbar search button and the global Ctrl+F routing). The search extension
+// is always mounted, so this works in both browse and edit mode.
+function openSearch() {
+    if (view.value) openSearchPanel(view.value)
+}
+
 // Ctrl/Cmd+S save shortcut (Mod = Ctrl on Windows/Linux, Cmd on Mac). Mirrors
 // the save button: only when editing, dirty, and not already saving.
 function handleSaveShortcut() {
@@ -591,7 +639,7 @@ async function handleExit() {
     return false
 }
 
-defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value })
+defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, isDirty: () => dirty.value, openSearch })
 </script>
 
 <style scoped>
@@ -843,5 +891,130 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer .cm-completionMatchedText {
   color: var(--accent-color);
   font-weight: 600;
+}
+
+/* Search panel (built-in @codemirror/search) — match the app's dark theme.
+   Sized for touch: generous padding, larger controls, side margins so the
+   panel never hugs the screen edge on mobile. */
+.cm-viewer .cm-panels {
+  background: transparent;
+  border: none;
+}
+.cm-viewer .cm-search {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 8px 10px 0;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+  font-size: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  z-index: 5;
+  /* Pick the native control rendering that matches the active theme so the
+     checkboxes don't stay stuck in the browser's light-mode colors. */
+  color-scheme: light;
+}
+[data-theme-base="dark"] .cm-viewer .cm-search {
+  color-scheme: dark;
+}
+.cm-viewer .cm-search .cm-textfield {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  outline: none;
+  font-family: inherit;
+  font-size: 14px;
+  min-width: 0;
+}
+.cm-viewer .cm-search .cm-textfield:focus {
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search .cm-button {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  min-height: 36px;
+  line-height: 1;
+}
+.cm-viewer .cm-search .cm-button:hover {
+  background: var(--bg-quaternary, var(--bg-tertiary));
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search .cm-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cm-viewer .cm-search label {
+  color: var(--text-muted);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.cm-viewer .cm-search label input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-tertiary);
+  display: inline-block;
+  vertical-align: middle;
+  position: relative;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.cm-viewer .cm-search label input[type='checkbox']:hover {
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search label input[type='checkbox']:checked {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+.cm-viewer .cm-search label input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.cm-viewer .cm-search label input[type='checkbox']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color) 50%, transparent);
+  outline-offset: 1px;
+}
+.cm-viewer .cm-search [name='close'] {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  padding: 8px 10px;
+  min-height: 36px;
+  margin-left: auto;
+  line-height: 1;
+}
+.cm-viewer .cm-search [name='close']:hover {
+  color: var(--text-primary);
+}
+.cm-viewer .cm-textfield-autofill {
+  color-scheme: dark;
 }
 </style>

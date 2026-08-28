@@ -86,33 +86,11 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 
 	sessionLabel := common.FormatSessionLabel(sessionID, sessionTitle)
 
-	if sessionMessenger.IsSessionRunning(sessionID) {
-		if err := sessionMessenger.EnqueueMessage(sessionID, msg); err != nil {
-			slog.Warn("dingtalk: enqueue message failed", "error", err, "session_id", sessionID)
-			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息入队失败: "+err.Error()))
-			return
-		}
-		// Verify the session still has a consumer. If it ended between IsSessionRunning
-		// and EnqueueMessage, the queued message would be orphaned — clear it and
-		// resend via the resume path to avoid duplicate delivery.
-		if !sessionMessenger.IsSessionRunning(sessionID) {
-			slog.Info("dingtalk: session ended after enqueue, falling back to send", "session_id", sessionID)
-			sessionMessenger.ClearQueue(sessionID)
-			if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
-				slog.Warn("dingtalk: fallback send failed", "error", err, "session_id", sessionID)
-				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
-				return
-			}
-			_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-				[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", sessionLabel)))
-			return
-		}
-		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
-		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-			[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到运行中的会话 **%s**", sessionLabel)))
-		return
-	}
-
+	// SendMessageToSession routes through the unified enqueue path
+	// (EnqueueAndMaybeStart): if the session is running the message is queued
+	// and the drain loop picks it up; if not, the execution is started. The B2
+	// self-heal inside handles the drain-loop exit race, so no separate
+	// IsSessionRunning branching is needed here.
 	if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
 		slog.Warn("dingtalk: send message to session failed", "error", err, "session_id", sessionID)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))

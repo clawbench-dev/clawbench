@@ -99,6 +99,127 @@ export function isThumbExtension(path: string): boolean {
 }
 
 /**
+ * Wrap bare inline <svg> elements (returned directly by the AI, not rendered
+ * from markdown image syntax) in a lightbox wrapper so they get the same
+ * "view" affordance as raster images: a top-right expand icon on hover.
+ *
+ * Runs on the rendered HTML string BEFORE mermaid diagrams are produced —
+ * at this stage mermaid is still a <pre> code block (no svg), and mermaid.ts
+ * later adds its own expand icon at the DOM level. The wrapper marks the svg
+ * with a .lightbox-svg class so repeated application is idempotent.
+ *
+ * Callers MUST invoke this AFTER all <a href>-anchored regex steps (audio/video
+ * link conversion, path/commit/localhost annotations): the wrapper <span>
+ * breaks those regexes' structural matches across the svg content.
+ *
+ * SVGs already inside an interactive UI element injected by the pipeline
+ * (e.g. the lucide icon inside a .chat-file-open-btn button) are skipped —
+ * they are not content images and must not get a lightbox affordance.
+ */
+export function wrapInlineSvgs(html: string): string {
+  const result: string[] = []
+  const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  const tagStack: string[] = []
+
+  while ((match = tagRe.exec(html))) {
+    const tag = match[0]
+    const name = match[1].toLowerCase()
+
+    if (name === 'svg') {
+      if (tag.startsWith('</')) {
+        // Closing svg — the matching open (if any) was pushed as 'svg'.
+        if (tagStack[tagStack.length - 1] === 'svg') tagStack.pop()
+        continue
+      }
+      // Opening svg
+      const openIndex = match.index
+      const openTag = tag
+
+      // Skip content inside interactive UI elements injected by the pipeline.
+      const inInteractive = tagStack.some(t => t === 'button' || t === 'a')
+
+      // Idempotency: skip SVGs we already wrapped — the wrapper adds the
+      // .lightbox-svg marker class to the svg's own opening tag.
+      const alreadyWrapped = /\bclass\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
+
+      if (alreadyWrapped || inInteractive) {
+        // Treat this svg as a balanced unit: skip its full span without wrapping.
+        const depth = countSvgDepth(html, openIndex + openTag.length)
+        if (depth >= 0) {
+          result.push(html.slice(lastIndex, openIndex))
+          result.push(html.slice(openIndex, depth))
+          lastIndex = depth
+          tagRe.lastIndex = depth
+          continue
+        }
+        // Unbalanced svg — leave as-is
+        tagStack.push('svg')
+        continue
+      }
+
+      // Balance-count to the matching close tag (handles nested <svg>).
+      const closeEnd = countSvgDepth(html, openIndex + openTag.length)
+      if (closeEnd >= 0) {
+        const innerHtml = html.slice(openIndex + openTag.length, closeEnd - '</svg>'.length)
+        // Add the lightbox-svg marker class, preserving any existing class.
+        // Handles both single- and double-quoted class attributes.
+        const tagged = /(\bclass\s*=\s*("|')[^"']*)\2/i.test(openTag)
+          ? openTag.replace(/(\bclass\s*=\s*("|')[^"']*)\2/i, '$1 lightbox-svg$2')
+          : openTag.replace(/\/?>$/, ' class="lightbox-svg">')
+
+        result.push(html.slice(lastIndex, openIndex))
+        result.push(`<span class="lightbox-svg-wrap">${tagged}${innerHtml}</svg><span class="lightbox-expand-icon"></span></span>`)
+        lastIndex = closeEnd
+        tagRe.lastIndex = closeEnd
+        continue
+      }
+
+      // Unbalanced — treat as normal element for stack tracking
+      tagStack.push('svg')
+      continue
+    }
+
+    // Track non-svg tags for the interactive-container heuristic.
+    if (tag.startsWith('</')) {
+      if (tagStack[tagStack.length - 1] === name) tagStack.pop()
+    } else if (!/\/>$/.test(tag)) {
+      tagStack.push(name)
+    }
+  }
+
+  result.push(html.slice(lastIndex))
+  return result.join('')
+}
+
+/**
+ * Find the end offset (just past the closing </svg>) of the svg element whose
+ * open tag ends at `from`. Counts nesting depth so inner <svg> elements are
+ * included. Returns -1 when the svg is unclosed/ unbalanced.
+ */
+function countSvgDepth(html: string, from: number): number {
+  let depth = 1
+  let pos = from
+  while (depth > 0) {
+    const tail = html.slice(pos)
+    const nextOpen = tail.search(/<svg\b[^>]*>/i)
+    const nextClose = tail.indexOf('</svg>')
+    if (nextClose === -1) return -1
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth++
+      const nestedTag = tail.slice(nextOpen).match(/^<svg\b[^>]*>/i)![0]
+      pos += nextOpen + nestedTag.length
+    } else {
+      depth--
+      if (depth === 0) return pos + nextClose + '</svg>'.length
+      pos += nextClose + '</svg>'.length
+    }
+  }
+  return -1
+}
+
+/**
  * Build a thumbnail URL for a project-relative, already-segment-encoded path.
  * The URL is kept stable (no cache-buster) so the backend's ETag/Last-Modified
  * revalidation returns fresh content as soon as the source file changes.

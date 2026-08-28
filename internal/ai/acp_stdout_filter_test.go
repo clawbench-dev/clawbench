@@ -33,6 +33,18 @@ func TestACPStdoutFilter_PassesValidJSON(t *testing.T) {
 	}
 }
 
+func TestACPStdoutFilter_PassesLargeJSONMessage(t *testing.T) {
+	payload := strings.Repeat("x", 2*1024*1024)
+	input := `{"jsonrpc":"2.0","method":"session/update","params":{"content":"` + payload + `"}}` + "\n"
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	_, err := io.Copy(&buf, f)
+	require.NoError(t, err)
+	assert.Equal(t, input, buf.String())
+}
+
 func TestACPStdoutFilter_FixesStringNumericID(t *testing.T) {
 	// CodeWhale returns "id":"1" (string) when the request sent "id":1 (number)
 	input := `{"jsonrpc":"2.0","id":"1","result":{"status":"ok"}}

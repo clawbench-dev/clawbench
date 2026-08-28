@@ -96,6 +96,7 @@ public class BackgroundService extends Service {
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
     private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
+    private static final String KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -212,6 +213,14 @@ public class BackgroundService extends Service {
     // Must be static so startNativeEventWs() can set it before the Service is created.
     private static volatile boolean nativeWsNeeded = false;
 
+    // Desktop floating status window controller. Non-static: tied to this
+    // Service instance's lifecycle. Created in onCreate() when the floating
+    // window feature is enabled, destroyed in onDestroy(). Null otherwise.
+    private FloatingStatusController floatingController;
+    // Most recently seen session_id from session_update/task_update events,
+    // tracked so the panel's session rows can deep-link into the right session.
+    private volatile String floatingSessionId = "";
+
     // Event ID dedup (mirrors frontend processedEventIds pattern)
     // Uses Collections.synchronizedSet with LinkedHashSet for atomic eviction:
     // LinkedHashSet maintains insertion order, so we can remove the oldest
@@ -301,11 +310,76 @@ public class BackgroundService extends Service {
                 .putBoolean(KEY_NATIVE_PUSH_ENABLED, enabled)
                 .apply();
         if (!enabled) {
-            // Stop native WS and cancel WorkManager polling
-            stopNativeEventWs(context);
+            // Stop native WS and cancel WorkManager polling — but only when the
+            // floating window is also disabled: the floating window consumes the
+            // same native WS event stream, so it must keep the connection alive.
+            if (!isFloatingWindowEnabled(context)) {
+                stopNativeEventWs(context);
+            }
             cancelPendingEventsWork(context);
         }
         AppLog.i(TAG, "NativePush: set enabled=" + enabled);
+    }
+
+    /**
+     * Check whether the desktop floating status window feature is enabled.
+     * Defaults to false — this is an opt-in feature.
+     */
+    public static boolean isFloatingWindowEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_FLOATING_WINDOW_ENABLED, false);
+    }
+
+    /**
+     * Enable or disable the desktop floating status window feature.
+     * Takes effect immediately when the service is running: enabling creates
+     * the controller, disabling destroys it. Otherwise the change applies on
+     * the next service creation.
+     */
+    public static void setFloatingWindowEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_FLOATING_WINDOW_ENABLED, enabled)
+                .apply();
+        AppLog.i(TAG, "FloatingWindow: set enabled=" + enabled);
+        BackgroundService svc = instance;
+        if (svc != null && isRunning) {
+            svc.syncFloatingController();
+        }
+    }
+
+    /**
+     * Align the floating controller with the persisted enable flag.
+     * Creates the controller when the feature is enabled (hidden while the
+     * main activity is foreground), destroys it when disabled. Called from
+     * onCreate() and whenever the toggle changes while the service is running.
+     */
+    private void syncFloatingController() {
+        boolean enabled = isFloatingWindowEnabled(this);
+        if (enabled && floatingController == null) {
+            floatingController = new FloatingStatusController(this);
+            // Panel session-row taps deep-link into the tapped session carrying
+            // its project path (capsule taps always expand the panel).
+            floatingController.setOnSessionClick((sid, projectPath) ->
+                    MainActivity.launchFromFloatingWindow(sid, projectPath));
+            // Every panel expand / event-while-expanded pulls a fresh overview.
+            floatingController.setOverviewRequestListener(() -> {
+                String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .getString(KEY_SERVER_URL, "");
+                if (!serverUrl.isEmpty()) {
+                    networkExecutor.execute(() -> fetchOverviewSessions(serverUrl));
+                }
+            });
+            // Only show the capsule while the app is in the background.
+            if (MainActivity.isForeground) {
+                floatingController.setAppForeground(true);
+            }
+            AppLog.i(TAG, "FloatingWindow: controller initialized");
+        } else if (!enabled && floatingController != null) {
+            floatingController.destroy();
+            floatingController = null;
+            AppLog.i(TAG, "FloatingWindow: controller destroyed (toggle off)");
+        }
     }
 
     /**
@@ -632,6 +706,10 @@ public class BackgroundService extends Service {
         // Restore previously saved ports (from before Service was killed)
         restoreForwardedPorts();
 
+        // Initialize the desktop floating status window controller (opt-in feature).
+        // Created here so it lives exactly as long as this Service instance.
+        syncFloatingController();
+
         // NOTE: Do NOT call stopSelf() here even if forwardedPorts is empty!
         // The Service may have been started by startForegroundService(ADD_PORT)
         // and the ADD_PORT intent hasn't been delivered yet (onStartCommand comes
@@ -753,6 +831,10 @@ public class BackgroundService extends Service {
         }
         cancelPingRampUp();
         stopNativeEventWs();
+        if (floatingController != null) {
+            floatingController.destroy();
+            floatingController = null;
+        }
         stopConnectionMonitor();
         releaseWifiLock();
         releaseWakeLock();
@@ -2075,6 +2157,13 @@ public class BackgroundService extends Service {
      * MUST be called from a background thread (network I/O).
      */
     private void startNativeEventWs(String serverUrl) {
+        // App is going to background — the floating status window may appear.
+        // Run this BEFORE the nativeWsActive early-return guard so a re-start
+        // while the WS is already active still syncs foreground state.
+        if (floatingController != null) {
+            floatingController.setAppForeground(false);
+        }
+
         if (nativeWsActive) {
             AppLog.d(TAG, "NativeWS: already active, skipping");
             return;
@@ -2175,6 +2264,11 @@ public class BackgroundService extends Service {
         nativeWsActive = false;
         nativeWsNeeded = false;
         stopWsPingLoop();
+
+        // App is returning to the foreground — hide the floating status window.
+        if (floatingController != null) {
+            floatingController.setAppForeground(true);
+        }
         // Cancel any pending reconnect
         if (wsReconnectHandler != null && wsReconnectRunnable != null) {
             wsReconnectHandler.removeCallbacks(wsReconnectRunnable);
@@ -2260,6 +2354,12 @@ public class BackgroundService extends Service {
                     .getString(KEY_SERVER_URL, "");
             if (!serverUrl.isEmpty()) {
                 networkExecutor.execute(() -> fetchPendingEvents(serverUrl));
+                // The floating window's "hasActive" state is event-driven, but the
+                // "running" session_update is broadcast once at session start — which
+                // may have happened while the native WS was down (app foreground).
+                // Poll /api/ai/sessions/overview on connect so the running session
+                // shows the capsule even though the start event was missed.
+                networkExecutor.execute(() -> fetchOverviewSessions(serverUrl));
             }
         }
 
@@ -2296,6 +2396,26 @@ public class BackgroundService extends Service {
                         return;
                     }
                     addProcessedEventId(eventId);
+                }
+
+                // Track the most recent session_id so a floating-capsule tap can
+                // deep-link back into the right session.
+                String sid = data.optString("session_id", "");
+                if (!sid.isEmpty()) {
+                    floatingSessionId = sid;
+                }
+
+                // Dispatch session/task events to the floating status controller
+                // (runs after ack + dedup so WS replay never re-renders it).
+                // Isolated in its own try/catch so a controller exception cannot
+                // swallow the notification/cursor logic below.
+                try {
+                    if (floatingController != null
+                            && ("session_update".equals(event) || "task_update".equals(event))) {
+                        floatingController.handleEvent(event, data);
+                    }
+                } catch (Exception e) {
+                    AppLog.w(TAG, "FloatingWindow: handleEvent failed", e);
                 }
 
                 // Only notify for terminal states and permission pending
@@ -2624,6 +2744,70 @@ public class BackgroundService extends Service {
 
         } catch (Exception e) {
             AppLog.w(TAG, "PendingEvents: fetch failed", e);
+        }
+    }
+
+    /**
+     * Poll /api/ai/sessions/overview and hand the raw JSON to the floating
+     * window controller. Two purposes:
+     *
+     * 1. On WS connect: a running session is reported via the "running"
+     *    session_update event, which may have been broadcast while the native
+     *    WS was down (e.g. session started while the app was in the
+     *    foreground). The overview re-seeds the capsule so it appears anyway.
+     * 2. On panel expand (and every event while expanded): refreshes the
+     *    grouped session list rendered in the panel.
+     *
+     * Parsing is left to the controller/panel (buildGroups); this method only
+     * forwards the JSONObject. MUST be called from a background thread
+     * (network I/O).
+     */
+    private void fetchOverviewSessions(String serverUrl) {
+        if (floatingController == null) {
+            return;
+        }
+        try {
+            // Send the full cookie set for this host. /api/ai/sessions/overview
+            // requires only Auth (session cookie); the project cookie is sent
+            // along harmlessly for consistency with other /api/ai/sessions calls.
+            String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
+            if (cookies == null || cookies.trim().isEmpty()) {
+                AppLog.d(TAG, "FloatingWindow: no cookies, skipping overview poll");
+                return;
+            }
+
+            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS);
+            if (trustAllSSLContext != null && serverUrl.startsWith("https://")) {
+                clientBuilder.sslSocketFactory(trustAllSSLContext.getSocketFactory(), new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                });
+                clientBuilder.hostnameVerifier((hostname, session) -> true);
+            }
+
+            Request request = new Request.Builder()
+                    .url(serverUrl + "/api/ai/sessions/overview")
+                    .header("Cookie", cookies)
+                    .get()
+                    .build();
+
+            try (Response response = clientBuilder.build().newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    AppLog.d(TAG, "FloatingWindow: /api/ai/sessions/overview returned HTTP " + response.code());
+                    return;
+                }
+                String body = response.body() != null ? response.body().string() : "";
+                if (body.isEmpty()) {
+                    return;
+                }
+                JSONObject data = new JSONObject(body);
+                floatingController.onOverviewLoaded(data);
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "FloatingWindow: overview poll failed", e);
         }
     }
 

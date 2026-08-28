@@ -90,6 +90,15 @@ describe('FileOverlay', () => {
     expect(wrapper.find('.search-drawer-stub').exists()).toBe(true)
   })
 
+  it('emits closeSearch (not toggleSearch) when SearchDrawer closes', async () => {
+    const wrapper = mountOverlay({ overlayOpen: true, searchOpen: true })
+    const drawer = wrapper.findComponent(SearchDrawerStub)
+    drawer.vm.$emit('close')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('closeSearch')).toBeTruthy()
+    expect(wrapper.emitted('toggleSearch')).toBeFalsy()
+  })
+
   it('renders GitHistoryDrawer when fileHistoryOpen is true', () => {
     const wrapper = mountOverlay({ overlayOpen: true, fileHistoryOpen: true })
     expect(wrapper.find('.git-history-stub').exists()).toBe(true)

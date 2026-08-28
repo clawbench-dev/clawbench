@@ -1162,6 +1162,57 @@ describe('AskUserQuestion action handler', () => {
       cleanup(container)
     })
   })
+
+  describe('recommend button', () => {
+    function createAskDOMWithRecommend(): { container: HTMLDivElement; emit: any; recommendBtn: HTMLElement } {
+      const { container, emit } = createAskDOM(false)
+      const actions = document.createElement('div')
+      actions.className = 'ask-question-actions'
+      actions.innerHTML = `<button class="ask-question-recommend">Recommend</button>`
+      container.appendChild(actions)
+      const recommendBtn = container.querySelector('.ask-question-recommend') as HTMLElement
+      return { container, emit, recommendBtn }
+    }
+
+    it('emits a localized "recommend" prompt as the sent message', () => {
+      const { container, emit, recommendBtn } = createAskDOMWithRecommend()
+
+      const clickRecommend = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(clickRecommend, 'target', { value: recommendBtn, writable: false })
+      const result = handleToolAction('AskUserQuestion', clickRecommend, emit)
+
+      expect(result).toBe(true)
+      expect(emit).toHaveBeenCalledWith('send-message', 'Which one do you recommend?')
+      cleanup(container)
+    })
+
+    it('marks the view as submitted and disables the recommend button', () => {
+      const { container, emit, recommendBtn } = createAskDOMWithRecommend()
+
+      const clickRecommend = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(clickRecommend, 'target', { value: recommendBtn, writable: false })
+      handleToolAction('AskUserQuestion', clickRecommend, emit)
+
+      expect(container.classList.contains('ask-submitted')).toBe(true)
+      expect(recommendBtn.textContent).toBe('Recommended')
+      expect(recommendBtn.style.pointerEvents).toBe('none')
+      cleanup(container)
+    })
+
+    it('does not emit again when recommend is clicked after submission', () => {
+      const { container, emit, recommendBtn } = createAskDOMWithRecommend()
+
+      const clickRecommend = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(clickRecommend, 'target', { value: recommendBtn, writable: false })
+      handleToolAction('AskUserQuestion', clickRecommend, emit)
+      expect(emit).toHaveBeenCalledTimes(1)
+
+      // Second click after submission — the view has ask-submitted, so no second emit
+      handleToolAction('AskUserQuestion', clickRecommend, emit)
+      expect(emit).toHaveBeenCalledTimes(1)
+      cleanup(container)
+    })
+  })
 })
 
 // ────────────────────────────────────────────────────────────

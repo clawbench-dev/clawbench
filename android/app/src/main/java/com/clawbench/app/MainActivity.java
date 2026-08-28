@@ -105,6 +105,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_SERVER_LIST = "server_list";
     private static final String KEY_THEME = "theme_base";
+    private static final String KEY_THEME_BG = "theme_bg";
+    private static final String KEY_THEME_TEXT = "theme_text";
+    private static final String KEY_THEME_TEXT_SECONDARY = "theme_text_secondary";
+    private static final String KEY_THEME_ACCENT = "theme_accent";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -178,39 +182,56 @@ public class MainActivity extends AppCompatActivity {
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
                 if (filePathCallback == null) return;
-                Uri[] results = null;
-                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-                    Intent data = result.getData();
-                    String dataString = data.getDataString();
-                    if (dataString != null) {
-                        results = new Uri[]{ Uri.parse(dataString) };
-                    } else if (data.getClipData() != null) {
-                        // Multiple files selected
-                        int count = data.getClipData().getItemCount();
-                        results = new Uri[count];
-                        for (int i = 0; i < count; i++) {
-                            results[i] = data.getClipData().getItemAt(i).getUri();
-                        }
-                    }
-                    // Only use camera URI as fallback when RESULT_OK — this means
-                    // the user actively chose the camera option and took a photo.
-                    // Without this guard, cancelling the picker would falsely report
-                    // the pre-created camera temp file as the "selected" file.
-                    if (results == null && cameraImageUri != null) {
-                        results = new Uri[]{ cameraImageUri };
-                    }
-                }
+                Uri[] results = resolveFileChooserResult(result);
                 // Use empty array instead of null for cancellation — some WebView implementations
                 // fire the JS change event with stale file data when onReceiveValue(null) is called.
                 // An empty array explicitly means "0 files selected".
                 filePathCallback.onReceiveValue(results != null ? results : new Uri[0]);
                 filePathCallback = null;
                 // Clean up unused camera temp file if user didn't take a photo
-                if (cameraImageUri != null && (results == null || !cameraImageUri.equals(results[0]))) {
+                if (cameraImageUri != null
+                        && (results == null || results.length == 0 || !cameraImageUri.equals(results[0]))) {
                     new File(cameraImageUri.getPath()).delete();
                 }
                 cameraImageUri = null;
             });
+
+    /**
+     * Resolve the file chooser activity result into the list of selected URIs.
+     *
+     * Returns null when nothing was selected (cancelled). Falls back to the
+     * pre-created cameraImageUri when the result is RESULT_OK but carries no
+     * data — ACTION_IMAGE_CAPTURE writes the photo to EXTRA_OUTPUT and returns
+     * RESULT_OK with data==null, so the photo is only available via that URI.
+     *
+     * Package-private for unit testing.
+     */
+    Uri[] resolveFileChooserResult(androidx.activity.result.ActivityResult result) {
+        if (result == null || result.getResultCode() != Activity.RESULT_OK) return null;
+        Intent data = result.getData();
+        Uri[] results = null;
+        if (data != null) {
+            String dataString = data.getDataString();
+            if (dataString != null) {
+                results = new Uri[]{ Uri.parse(dataString) };
+            } else if (data.getClipData() != null) {
+                // Multiple files selected
+                int count = data.getClipData().getItemCount();
+                results = new Uri[count];
+                for (int i = 0; i < count; i++) {
+                    results[i] = data.getClipData().getItemAt(i).getUri();
+                }
+            }
+        }
+        // Fall back to the camera FileProvider URI when the result carries
+        // no data — ACTION_IMAGE_CAPTURE writes to EXTRA_OUTPUT and returns
+        // RESULT_OK with data==null, so the photo is only available via the
+        // pre-created cameraImageUri.
+        if (results == null && cameraImageUri != null) {
+            results = new Uri[]{ cameraImageUri };
+        }
+        return results;
+    }
 
     // Map of ports currently being forwarded: port -> host (thread-safe for access from WebView background threads)
     final Map<Integer, String> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
@@ -331,6 +352,30 @@ public class MainActivity extends AppCompatActivity {
         int bgPrimary, bgSecondary, textPrimary, textMuted, textHint;
         boolean isLight;
         switch (theme) {
+            case "one-light":
+                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF0F0F0;
+                textPrimary = 0xFF383A42; textMuted = 0xFFA0A1A7; textHint = 0xFFA0A1A7;
+                isLight = true; break;
+            case "ayu-light":
+                bgPrimary = 0xFFFAFAFA; bgSecondary = 0xFFF3F3F3;
+                textPrimary = 0xFF5C6166; textMuted = 0xFFA0A5AA; textHint = 0xFFA0A5AA;
+                isLight = true; break;
+            case "everforest-light":
+                bgPrimary = 0xFFFDF6E3; bgSecondary = 0xFFF2E9D0;
+                textPrimary = 0xFF5C6A72; textMuted = 0xFF939F91; textHint = 0xFF939F91;
+                isLight = true; break;
+            case "nord-light":
+                bgPrimary = 0xFFECEFF4; bgSecondary = 0xFFE5E9F0;
+                textPrimary = 0xFF2E3440; textMuted = 0xFF8A93A5; textHint = 0xFF8A93A5;
+                isLight = true; break;
+            case "mint-light":
+                bgPrimary = 0xFFE8F5E9; bgSecondary = 0xFFDCF0DD;
+                textPrimary = 0xFF1B5E20; textMuted = 0xFF6B9A72; textHint = 0xFF6B9A72;
+                isLight = true; break;
+            case "sky-light":
+                bgPrimary = 0xFFE3F2FD; bgSecondary = 0xFFD9EDF9;
+                textPrimary = 0xFF0D47A1; textMuted = 0xFF5C93C8; textHint = 0xFF5C93C8;
+                isLight = true; break;
             case "github-light":
                 bgPrimary = 0xFFFFFFFF; bgSecondary = 0xFFF8F9FA;
                 textPrimary = 0xFF212529; textMuted = 0xFF6C757D; textHint = 0xFF6C757D;
@@ -402,6 +447,18 @@ public class MainActivity extends AppCompatActivity {
             case "vitesse-dark":
                 bgPrimary = 0xFF121212; bgSecondary = 0xFF181818;
                 textPrimary = 0xFFDBD7CA; textMuted = 0xFF758575; textHint = 0xFF758575;
+                isLight = false; break;
+            case "rose-pine":
+                bgPrimary = 0xFF191724; bgSecondary = 0xFF1F1D2E;
+                textPrimary = 0xFFE0DEF4; textMuted = 0xFF6E6A86; textHint = 0xFF6E6A86;
+                isLight = false; break;
+            case "everforest-dark":
+                bgPrimary = 0xFF1E2326; bgSecondary = 0xFF22282B;
+                textPrimary = 0xFFD3C6AA; textMuted = 0xFF859289; textHint = 0xFF859289;
+                isLight = false; break;
+            case "kanagawa":
+                bgPrimary = 0xFF1F1F28; bgSecondary = 0xFF16161D;
+                textPrimary = 0xFFDCD7BA; textMuted = 0xFF727169; textHint = 0xFF727169;
                 isLight = false; break;
             default:
                 bgPrimary = 0xFF0D1117; bgSecondary = 0xFF161B22;
@@ -1464,6 +1521,78 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Request the SYSTEM_ALERT_WINDOW overlay permission for the desktop floating
+     * status window. Launches the system "display over other apps" settings screen
+     * when the permission is not yet granted; the result is re-checked on the next
+     * onResume() (where syncFloatingController in BackgroundService covers creation).
+     */
+    void requestOverlayPermission() {
+        if (!Settings.canDrawOverlays(this)) {
+            AppLog.i(TAG, "FloatingWindow: requesting overlay permission");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (Exception e) {
+                AppLog.w(TAG, "FloatingWindow: failed to open overlay permission settings", e);
+            }
+        } else {
+            AppLog.d(TAG, "FloatingWindow: overlay permission already granted");
+        }
+    }
+
+    /**
+     * Bring the main activity to the front from the desktop floating status window
+     * (capsule tap). Static so BackgroundService can invoke it without an activity
+     * reference. Carries the tapped session id as a deep link for the frontend.
+     * No project path is available for capsule taps (it opens the most recently
+     * seen session), so this delegates to the two-arg variant with a null path.
+     */
+    public static void launchFromFloatingWindow(String sessionId) {
+        launchFromFloatingWindow(sessionId, null);
+    }
+
+    /**
+     * Bring the main activity to the front from the desktop floating status window
+     * panel. Static so BackgroundService can invoke it without an activity
+     * reference. Carries the tapped session id and its project path as a deep link
+     * for the frontend: the frontend uses projectPath to switch the project cookie
+     * before opening cross-project sessions (a bare session id would be rejected
+     * with 403 when the session belongs to a different project).
+     */
+    public static void launchFromFloatingWindow(String sessionId, String projectPath) {
+        Context ctx = null;
+        if (instance != null) {
+            ctx = instance.getApplicationContext();
+        } else {
+            BackgroundService svc = BackgroundService.getInstance();
+            if (svc != null) {
+                ctx = svc.getApplicationContext();
+            }
+        }
+        if (ctx == null) {
+            AppLog.w(TAG, "FloatingWindow: no context available for launch");
+            return;
+        }
+        Intent launchIntent = new Intent(ctx, MainActivity.class);
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (sessionId != null && !sessionId.isEmpty()) {
+            launchIntent.putExtra("session_id", sessionId);
+        }
+        if (projectPath != null && !projectPath.isEmpty()) {
+            launchIntent.putExtra("project_path", projectPath);
+        }
+        try {
+            ctx.startActivity(launchIntent);
+        } catch (SecurityException e) {
+            // Android 10+ background-activity-start restriction can reject the
+            // launch; SYSTEM_ALERT_WINDOW is an official exemption but log anyway.
+            AppLog.w(TAG, "FloatingWindow: launch blocked by background start restriction", e);
+        }
+    }
+
+    /**
      * Show the login page for server configuration.
      * Replaces the old AlertDialog-based server dialog with the
      * static HTML login page that matches the web UI style.
@@ -1566,8 +1695,11 @@ public class MainActivity extends AppCompatActivity {
         isForeground = false;
         pauseWebView();
         // App going to background — start native WS so we still get
-        // notifications when Android kills the WebView process.
-        if (webViewConnected && BackgroundService.isNativePushEnabled(this)) {
+        // notifications when Android kills the WebView process. Also needed
+        // when only the floating window is enabled (its events come over the
+        // same native WS, independent of push notifications).
+        if (webViewConnected && (BackgroundService.isNativePushEnabled(this)
+                || BackgroundService.isFloatingWindowEnabled(this))) {
             BackgroundService.startNativeEventWs(this);
         }
     }
@@ -1834,7 +1966,7 @@ public class MainActivity extends AppCompatActivity {
             intent.removeExtra("session_id");
             intent.removeExtra("project_path");
             AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
-        } else if (sessionId != null) {
+        } else if (sessionId != null && !sessionId.isEmpty()) {
             // Session notification: navigate to chat session
             AppLog.i(TAG, "MainActivity: handleNotificationIntent - session_id found, dispatching navigation");
             try {
@@ -2798,6 +2930,22 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Clear the WebView HTTP cache and hard-reload the page.
+         * Called by the frontend after a server upgrade completes so stale
+         * old-version assets (index.html / hash chunks) are not served from cache.
+         */
+        @JavascriptInterface
+        public void reloadApp() {
+            AppLog.i(TAG, "reloadApp: clearing cache and reloading");
+            activity.runOnUiThread(() -> {
+                if (activity.webView != null) {
+                    activity.webView.clearCache(true);
+                    activity.webView.reload();
+                }
+            });
+        }
+
+        /**
          * Share a file from the ClawBench server with another app via ACTION_SEND.
          * Downloads the file to a temp directory, then creates a share intent
          * with a FileProvider content URI.
@@ -3163,6 +3311,32 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Enable or disable the desktop floating status window from the WebView
+         * settings UI. Persisted through BackgroundService; takes effect on the
+         * running service immediately when it is alive. When enabling, also asks
+         * for the SYSTEM_ALERT_WINDOW overlay permission if it isn't granted yet.
+         */
+        @JavascriptInterface
+        public void setFloatingWindowEnabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setFloatingWindowEnabled=" + enabled);
+            BackgroundService.setFloatingWindowEnabled(activity, enabled);
+            if (enabled) {
+                // The JS bridge runs on a WebView thread — hop to the UI thread
+                // before startActivity for the permission settings screen.
+                activity.runOnUiThread(activity::requestOverlayPermission);
+            }
+        }
+
+        /**
+         * Check whether the desktop floating status window is currently enabled.
+         * Used by the WebView to read the initial state on settings page load.
+         */
+        @JavascriptInterface
+        public boolean isFloatingWindowEnabled() {
+            return BackgroundService.isFloatingWindowEnabled(activity);
+        }
+
+        /**
          * Check whether native push notifications are currently enabled.
          * Used by the WebView to read the initial state on settings page load.
          */
@@ -3185,13 +3359,33 @@ public class MainActivity extends AppCompatActivity {
          * Persist the full theme ID set from the WebView (e.g. 'github-light', 'nord').
          * The login page reads this via getTheme() on next launch to match
          * the main interface's color scheme.
+         *
+         * New 5-arg overload: also persists the resolved palette (bg / text /
+         * textSecondary / accent) that the floating status window consumes via
+         * FloatingThemeColors. The JS always sends 5 args.
+         */
+        @JavascriptInterface
+        public void setTheme(String theme, String bg, String text, String textSecondary, String accent) {
+            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
+            activity.prefs.edit()
+                    .putString(KEY_THEME, id)
+                    .putString(KEY_THEME_BG, bg != null ? bg : "")
+                    .putString(KEY_THEME_TEXT, text != null ? text : "")
+                    .putString(KEY_THEME_TEXT_SECONDARY, textSecondary != null ? textSecondary : "")
+                    .putString(KEY_THEME_ACCENT, accent != null ? accent : "")
+                    .apply();
+            // Apply theme to native views (splash overlay, status/nav bar)
+            activity.runOnUiThread(() -> activity.applyThemeColors());
+        }
+
+        /**
+         * Legacy 1-arg overload, kept for callers that only know the theme ID
+         * (e.g. the static login page). Persists only the theme ID; the color
+         * slots stay empty so FloatingThemeColors falls back to github-dark.
          */
         @JavascriptInterface
         public void setTheme(String theme) {
-            String id = (theme != null && !theme.isEmpty()) ? theme : "github-dark";
-            activity.prefs.edit().putString(KEY_THEME, id).apply();
-            // Apply theme to native views (splash overlay, status/nav bar)
-            activity.runOnUiThread(() -> activity.applyThemeColors());
+            setTheme(theme, null, null, null, null);
         }
     }
 

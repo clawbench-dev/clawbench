@@ -146,20 +146,6 @@ func (dingtalkSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
 }
 
-// EnqueueMessage appends a message to the session's in-memory queue.
-// Always succeeds — the underlying service.EnqueueMessage is an in-memory append.
-func (dingtalkSessionMessenger) EnqueueMessage(sessionID, message string) error {
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      message,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
-	return nil
-}
-
-func (dingtalkSessionMessenger) ClearQueue(sessionID string) {
-	service.ClearQueue(sessionID)
-}
-
 func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	return service.SendMessageToSessionFromDingTalk(sessionID, message)
 }
@@ -247,18 +233,6 @@ func (feishuSessionMessenger) ListRecentSessions(limit int) ([]common.SessionInf
 
 func (feishuSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
-}
-
-func (feishuSessionMessenger) EnqueueMessage(sessionID, message string) error {
-	service.EnqueueMessage(sessionID, model.QueuedMessage{
-		Text:      message,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	})
-	return nil
-}
-
-func (feishuSessionMessenger) ClearQueue(sessionID string) {
-	service.ClearQueue(sessionID)
 }
 
 func (feishuSessionMessenger) SendMessageToSession(sessionID, message string) error {
@@ -1079,6 +1053,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		return ctxState.Usage
 	})
 
+	// Inject pending_events write-ahead for user_message events (breaks import
+	// cycle between ws and service). StreamHub.Emit stores user_message before
+	// broadcast so offline clients can recover them after reconnect.
+	ws.GetManager().StreamHub().SetEventStoreFunc(service.StoreNotifiableEvent)
+
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -1211,6 +1190,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	go func() {
 		<-ctx.Done()
 		slog.Info("received shutdown signal, draining connections...")
+		// Force a final flush of every actively streaming session BEFORE draining
+		// HTTP connections: a restart mid-stream then keeps all but the last few
+		// hundred ms of AI output (including thinking) instead of losing the tail.
+		service.FlushStreamingNow()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

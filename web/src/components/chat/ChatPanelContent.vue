@@ -180,6 +180,7 @@ import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
+import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
@@ -188,7 +189,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate, isShowingSummary } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
-import { nextClientSeq, sortMessages } from '@/utils/chatStreamUtils.ts'
+import { nextClientSeq } from '@/utils/chatStreamUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
@@ -227,6 +228,7 @@ const identity = useSessionIdentity()
 const agentsComposable = useAgents()
 const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
 const messages = ref([])
+const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
 const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
@@ -351,6 +353,7 @@ const toolUpdateFetchDebounce = new Map()
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
   messages,
+  dispatch: messageStore.dispatch,
   loading,
   inputDisabled,
   blockTasks: render.blockTasks,
@@ -359,11 +362,11 @@ const session = useChatSession({
   onParseAssistantContent: (content) => render.parseAssistantContent(content),
   onExtractScheduledTasks: (msgs) => render.extractScheduledTasks(msgs),
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
-  onScrollBottom: (force) => scrollBottom(force),
-  onConnectStream: (sessionId, options) => stream.connectStream(sessionId, options),
+  onScrollBottom: (force, streaming) => scrollBottom(force, streaming),
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
+  onEnsureStreamingPlaceholder: () => stream.ensureStreamingPlaceholder({ reuseExistingStreaming: true }),
 })
 
 // onStreamEnd: fires when current session stream completes with a reason
@@ -399,9 +402,7 @@ function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      if (messages.value[i].pending) messages.value.splice(i, 1)
-    }
+    messageStore.dispatch({ type: 'clear_pending' })
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
     // Refresh git state — agent may have modified files before cancellation
@@ -428,11 +429,12 @@ watch(loading, (newVal, oldVal) => {
 
 const stream = useChatStream({
   messages,
+  dispatch: messageStore.dispatch,
   currentSessionId: identity.currentSessionId,
   currentBackend: identity.currentBackend,
   loading,
   onRenderNeeded: (forceFull) => render.updateRenderedContents(forceFull),
-  onScrollBottom: (force) => scrollBottom(force),
+  onScrollBottom: (force, streaming) => scrollBottom(force, streaming),
   onLoadHistory: () => session.loadHistory(false),
   onMessage: () => emit('message'),
   onOpen: () => emit('open'),
@@ -500,6 +502,7 @@ const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath } = 
 
 const manager = useSessionManager({
   messages,
+  dispatch: messageStore.dispatch,
   loading,
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
@@ -735,20 +738,25 @@ async function sendMessage(text) {
        resetQuotePin()
        inputBarRef.value?.clearInput()
        clearPendingFiles()
-       // Push a pending user message, enqueue it, and resubmit on needs_start.
-       // Shared with the AskUserQuestion-card path so both get identical
-       // needs_start handling (avoids silently dropping the message, which would
-       // leave no assistant placeholder and no loading indicator).
-       await enqueueAndMaybeStart({
-         sessionId: identity.currentSessionId.value,
-         text: inputText || '',
-         attachedFiles: capturedAttached,
-         pendingFiles: capturedPending,
-         pushMessage: (msg) => messages.value.push(msg),
-         onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
-         enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
-         resubmit: (text, filePaths, files) => sendMessageNow(text, filePaths, files),
-       })
+       // Push a pending user message and enqueue it. The backend handles the
+       // "session not running" race internally (B2 self-heal), so no
+       // needs_start/resubmit round-trip is needed here. Shared with the
+       // AskUserQuestion-card path for identical enqueue behavior.
+       try {
+         await enqueueAndMaybeStart({
+           sessionId: identity.currentSessionId.value,
+           text: inputText || '',
+           attachedFiles: capturedAttached,
+           pendingFiles: capturedPending,
+           pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
+           onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+           enqueue: (sid, text, attached, pending, qid) => manager.enqueueMessage(sid, text, attached, pending, qid),
+         })
+       } catch {
+         // Enqueue failed (network down / 5xx) — the message was not delivered.
+         // Restore the input so the user's text isn't lost.
+         inputBarRef.value?.restoreInput(inputText || '')
+       }
        return
      }
 
@@ -764,7 +772,13 @@ async function sendMessage(text) {
     inputBarRef.value?.clearInput()
     clearPendingFiles()
 
-    await sendMessageNow(inputText, filePaths, allFiles)
+    try {
+      await sendMessageNow(inputText, filePaths, allFiles)
+    } catch {
+      // Send failed (network down / 5xx) — the message was not delivered.
+      // Restore the input so the user's text isn't lost.
+      inputBarRef.value?.restoreInput(inputText)
+    }
 }
 
 /** Actually send a message to the backend (no queue check). */
@@ -773,17 +787,17 @@ async function sendMessageNow(text, filePaths, files) {
     // the message gets enqueued. This avoids in-place ID mutation (v-for key
     // instability) and ensures the backend receives queueId for precise matching.
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    messages.value.push({
-        role: 'user',
-        id: pendingId,
-        content: text || '',
-        blocks: text ? [{ type: 'text', text: text || '' }] : [],
-        filePath: filePaths.length > 0 ? filePaths[0] : '',
-        files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-        createdAt: new Date().toISOString(),
-        seq: nextClientSeq()
-    })
-    sortMessages(messages.value)
+    const optimisticMsg = {
+      role: 'user',
+      id: pendingId,
+      content: text || '',
+      blocks: text ? [{ type: 'text', text: text || '' }] : [],
+      filePath: filePaths.length > 0 ? filePaths[0] : '',
+      files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+      createdAt: new Date().toISOString(),
+      seq: nextClientSeq(),
+    }
+    messageStore.dispatch({ type: 'optimistic_push', msg: optimisticMsg })
 
     render.updateRenderedContents()
     loading.value = true
@@ -817,6 +831,13 @@ async function sendMessageNow(text, filePaths, files) {
         if (data.sessionId && !identity.currentSessionId.value) {
             identity.currentSessionId.value = data.sessionId
         }
+        // Direct-send path: adopt the DB id immediately so this bubble sorts
+        // with DB-backed messages instead of staying transient (huge sort
+        // value) until the next loadHistory — otherwise it renders AFTER later
+        // queued messages that already adopted their DB ids (misorder).
+        if (data.msgId && !data.running) {
+            messageStore.dispatch({ type: 'optimistic_adopt_id', id: pendingId, dbId: data.msgId })
+        }
         // Session already running — another request is in progress
         if (data.running) {
             // Session already running — the message was enqueued.
@@ -845,12 +866,7 @@ async function sendMessageNow(text, filePaths, files) {
         }
     } catch (err) {
         // Remove the optimistically pushed user message on failure
-        const localIdx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.id === pendingId
-        )
-        if (localIdx !== -1) {
-            messages.value.splice(localIdx, 1)
-        }
+        messageStore.dispatch({ type: 'optimistic_remove', id: pendingId })
         stream.disconnectStream()
         loading.value = false
         // Restore screen lock on send failure — output won't proceed
@@ -860,6 +876,9 @@ async function sendMessageNow(text, filePaths, files) {
         if (err.msgKey === 'SessionBackendNotFound' || err.msgKey === 'SessionNotFound') {
             identity.currentSessionId.value = ''
         }
+        // Re-throw so callers (sendMessage) can restore the input box — a
+        // failed send must not silently swallow the user's typed text.
+        throw err
     }
 }
 
@@ -868,38 +887,77 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Shared with the normal input path: push a pending user message, enqueue
-      // it, and resubmit on needs_start. Previously this path fired the enqueue
-      // without awaiting/checking needs_start, so when the backend dequeued the
-      // answer (session no longer running) it was silently lost — leaving no
-      // assistant placeholder and no loading indicator.
-      await enqueueAndMaybeStart({
-        sessionId: identity.currentSessionId.value,
-        text,
-        attachedFiles: [],
-        pendingFiles: [],
-        pushMessage: (msg) => messages.value.push(msg),
-        onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
-        enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
-        resubmit: (msg, filePaths, files) => sendMessageNow(msg, filePaths, files),
-      })
+      // Shared with the normal input path: push a pending user message and
+      // enqueue it. The backend's B2 self-heal handles the session-ended race.
+      // On failure, enqueueMessage already shows the toast and rolls back the
+      // pending message — nothing to restore here (no input box involved).
+      try {
+        await enqueueAndMaybeStart({
+          sessionId: identity.currentSessionId.value,
+          text,
+          attachedFiles: [],
+          pendingFiles: [],
+          pushMessage: (msg) => messageStore.dispatch({ type: 'optimistic_push', msg }),
+          onPendingRendered: () => { render.updateRenderedContents(); scrollBottom(true) },
+          enqueue: (sid, msg, attached, pending, qid) => manager.enqueueMessage(sid, msg, attached, pending, qid),
+        })
+      } catch {
+        /* failure already surfaced by enqueueMessage */
+      }
     } else {
       await sendMessage(text)
     }
 }
 
-function scrollBottom(force = false) {
-    messageListRef.value?.scrollToBottom(force)
+function scrollBottom(force = false, streaming = false) {
+    messageListRef.value?.scrollToBottom(force, streaming)
 }
 
 async function handleLoadMore() {
     const el = messageListRef.value?.messagesRef
     if (!el) return
     const oldScrollHeight = el.scrollHeight
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    const wasAtBottom = distFromBottom < 100
+    // When not at the bottom, anchor the viewport to the first visible message
+    // instead of relying on the pure scrollHeight delta — prepended content plus
+    // async growth (Mermaid, lazy original text) can shift the delta and drift
+    // the view. Same anchoring idea as ChatMessageList's array-replacement watch.
+    let anchorKey = ''
+    let anchorOffset = 0
+    if (!wasAtBottom) {
+      const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+      const containerRect = el.getBoundingClientRect()
+      for (const item of items) {
+        const rect = item.getBoundingClientRect()
+        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
+          anchorKey = item.getAttribute('data-msg-key') || ''
+          anchorOffset = rect.top - containerRect.top
+          break
+        }
+      }
+    }
     await session.loadMoreMessages()
     // Wait for DOM update + one frame for async rendering (Mermaid, KaTeX)
     await nextTick()
     await new Promise(resolve => requestAnimationFrame(resolve))
+    if (wasAtBottom) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+    if (anchorKey) {
+      const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+      for (const item of items) {
+        if (item.getAttribute('data-msg-key') === anchorKey) {
+          const rect = item.getBoundingClientRect()
+          const containerRect = el.getBoundingClientRect()
+          const desiredTop = containerRect.top + anchorOffset
+          el.scrollTop += rect.top - desiredTop
+          return
+        }
+      }
+    }
+    // Fallback: anchor message gone — scrollHeight delta
     const newScrollHeight = el.scrollHeight
     el.scrollTop = newScrollHeight - oldScrollHeight
 }
@@ -917,7 +975,10 @@ function showMetadata(msg) {
     metadataModal.value.createdAt = msg.createdAt || ''
     metadataModal.value.relatedFile = (msg.files && msg.files.length > 0) ? msg.files[0].path || msg.files[0] : ''
     metadataModal.value.messageId = msg.id || null
-    metadataModal.value.sessionId = msg.sessionId || ''
+    // Streaming/finalized placeholders don't carry a sessionId (created
+    // client-side). Fall back to the current session so the detail modal
+    // always shows one.
+    metadataModal.value.sessionId = msg.sessionId || identity.currentSessionId.value || ''
     metadataModal.value.ftsIndexed = false
     metadataModal.value.vecIndexed = false
     metadataDrawer.open()
@@ -1008,7 +1069,7 @@ async function ensureMessageContent(msg) {
         // back into this chat) ends up visually stuck mid-list. Re-sync once:
         // - at bottom (session switch): isAtBottom=true → pinned back to bottom
         // - user manually toggled original while reading: isAtBottom=false → keep position
-        scrollBottom()
+        if (messageListRef.value?.isAtBottom?.()) scrollBottom()
     } catch (err) {
         appLog.w(TAG, 'failed to load original content', err)
     } finally {

@@ -12,6 +12,7 @@ import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import { apiGet } from '@/utils/api'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 
@@ -39,6 +40,7 @@ const i18n = createI18n({
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
           placeholderQuickSend: 'Quick send',
+          placeholderSwipeHistory: 'Swipe history',
           placeholderQueue: 'Queue',
           clearInput: 'Clear',
           quickMenu: 'Quick',
@@ -97,9 +99,10 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn() }),
 }))
 
+const mockAttachedFilesValue = { value: [] }
 vi.mock('@/composables/useChatContext.ts', () => ({
   useChatContext: () => ({
-    attachedFiles: [],
+    attachedFiles: mockAttachedFilesValue,
     addAttachedFile: vi.fn(),
     removeAttachedFile: vi.fn(),
     hasAttachedFile: () => false,
@@ -201,7 +204,7 @@ vi.mock('@/utils/path.ts', () => ({
 vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
   isImageFile: () => false,
   isUploadPath: () => false,
-  normalizeFileEntry: (f: any) => f,
+  normalizeFileEntry: (f: any) => (typeof f === 'string' ? { path: f, isDir: false } : { path: f?.path || '', isDir: f?.isDir ?? false, startLine: f?.startLine, endLine: f?.endLine }),
 }))
 
 vi.mock('@/utils/fileManager.ts', () => ({
@@ -502,6 +505,40 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
   })
 
+  it('restoreInput restores the cleared text after a failed send', async () => {
+    // When a message send fails (network down / 5xx), the parent clears the
+    // input before the request and must be able to put the text back.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    // Simulate a send: parent calls clearInput() (deletes draft too), then
+    // the request fails and the parent calls restoreInput().
+    wrapper.vm.clearInput()
+    expect(wrapper.vm.inputText).toBe('')
+    wrapper.vm.restoreInput('hello world')
+    expect(wrapper.vm.inputText).toBe('hello world')
+  })
+
+  it('restoreInput also restores the draft cache entry', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'draft text'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.clearInput()
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+    wrapper.vm.restoreInput('draft text')
+    // clearInput() deleted the draft; restoreInput must re-create it so a
+    // session switch afterwards does not lose the recovered text.
+    expect(wrapper.vm.getDraft('sess-1')).toBe('draft text')
+  })
+
+  it('restoreInput with empty text does not recreate a draft', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.restoreInput('')
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+  })
+
   it('draft is preserved across session switches via watcher', async () => {
     // Test the saveDraft + watcher integration:
     // The watcher saves draft for old session and restores for new session.
@@ -570,6 +607,14 @@ describe('ChatInputBar', () => {
     expect(typeof wrapper.vm.onQuickSendTouchMove).toBe('function')
     expect(typeof wrapper.vm.onQuickSendTouchEnd).toBe('function')
     expect(typeof wrapper.vm.cancelQuickSendPress).toBe('function')
+  })
+
+  it('exposes quick send mouse long-press handlers', () => {
+    const wrapper = mountBar()
+    expect(typeof wrapper.vm.onQuickSendMouseDown).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseUp).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseMove).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendMouseLeave).toBe('function')
   })
 
   it('exposes quickSendPressingId ref', () => {
@@ -660,6 +705,72 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.quickSendPressingId).toBe('1')
     wrapper.vm.cancelQuickSendPress()
     expect(wrapper.vm.quickSendPressingId).toBeNull()
+  })
+
+  it('mouse long-press on quick send item injects command into input', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    const mouseDownEvent = { clientX: 10, clientY: 20 }
+    wrapper.vm.onQuickSendMouseDown(item, mouseDownEvent)
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/test')
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    wrapper.vm.onQuickSendMouseUp()
+    // The synthetic click after release must not send (long-press already injected)
+    wrapper.vm.handleQuickSendClick(item)
+    expect(wrapper.emitted('send')).toBeFalsy()
+    vi.useRealTimers()
+  })
+
+  it('mouse short press (mousedown + mouseup) still sends via click', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 10, clientY: 20 })
+    vi.advanceTimersByTime(200)
+    wrapper.vm.onQuickSendMouseUp()
+    await wrapper.vm.$nextTick()
+    // Short press must not inject into the input
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    // Release → the normal click sends the command
+    wrapper.vm.handleQuickSendClick(item)
+    expect(wrapper.emitted('send')).toBeTruthy()
+    expect(wrapper.emitted('send')![0]).toEqual(['/test'])
+    vi.useRealTimers()
+  })
+
+  it('mouse long-press is cancelled when pointer moves beyond threshold', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 0, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    // Move beyond 10px threshold
+    wrapper.vm.onQuickSendMouseMove({ clientX: 30, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    vi.useRealTimers()
+  })
+
+  it('mouse long-press is cancelled on mouseleave', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar()
+    const item = { id: '1', label: 'Test', command: '/test' }
+    wrapper.vm.onQuickSendMouseDown(item, { clientX: 0, clientY: 0 })
+    expect(wrapper.vm.quickSendPressingId).toBe('1')
+    wrapper.vm.onQuickSendMouseLeave()
+    expect(wrapper.vm.quickSendPressingId).toBeNull()
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    vi.useRealTimers()
   })
 
   it('session button emits open-session-tab', async () => {
@@ -1229,6 +1340,344 @@ describe('ChatInputBar', () => {
     })
   })
 
+  describe('input history navigation', () => {
+    const HISTORY = [
+      { id: 1, role: 'user', content: 'first message' },
+      { id: 2, role: 'assistant', content: 'reply 1' },
+      { id: 3, role: 'user', content: 'second message' },
+      { id: 4, role: 'user', content: '  padded message  ' },
+    ]
+
+    async function pressArrow(wrapper: ReturnType<typeof mountBar>, key: string) {
+      await wrapper.find('.chat-textarea').trigger('keydown', { key })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+    }
+
+    it('ArrowUp walks history newest-first and ArrowDown walks back', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('second message')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('first message')
+      // At the oldest entry, further ArrowUp stays put
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('first message')
+      // ArrowDown walks back toward the newest
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('second message')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown from the newest entry restores the original draft and resets navigation', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'draft in progress'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('draft in progress')
+      // Navigation is reset: the next ArrowUp starts from the newest entry again
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown from fresh non-empty input clears it', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'typing'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('ignores ArrowUp when there is no user history', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: [] })
+      wrapper.vm.inputText = 'nothing before'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Text is untouched (no history to navigate)
+      expect(wrapper.vm.inputText).toBe('nothing before')
+      wrapper.unmount()
+    })
+
+    it('excludes pending and queued messages from history', async () => {
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [
+          { id: 1, role: 'user', content: 'confirmed message' },
+          { id: 2, role: 'user', content: 'still pending', pending: true },
+          { id: 3, role: 'user', content: 'still queued', queued: true },
+        ],
+      })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('confirmed message')
+      wrapper.unmount()
+    })
+
+    it('clears input history navigation state after a send', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Simulate the send flow: clearInput is invoked by the parent after sending
+      wrapper.vm.clearInput()
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Navigation restarted from the newest history entry
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('does not navigate history while an @ or slash menu is open', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      // Open the @ menu by typing @ — menu keydown handles ArrowUp
+      wrapper.vm.inputText = '@'
+      await wrapper.vm.$nextTick()
+      await pressArrow(wrapper, 'ArrowUp')
+      // Input stays '@' (menu consumed the key, history did not run)
+      expect(wrapper.vm.inputText).toBe('@')
+      wrapper.unmount()
+    })
+
+    it('loading a history entry starting with @ does not pop the @ menu', async () => {
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: '@chatsearch query' }],
+      })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('@chatsearch query')
+      expect(wrapper.vm.showAtMenu).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('resets navigation state when switching sessions', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      await pressArrow(wrapper, 'ArrowUp')
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('second message')
+      // Switch to another session — navigation must restart from its newest entry
+      await wrapper.setProps({ currentSessionId: 's2' })
+      await wrapper.setProps({ messages: [{ id: 1, role: 'user', content: 'other session msg' }] })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('other session msg')
+      wrapper.unmount()
+    })
+
+    it('navigates history from the first row only when the input is multiline', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      // Cursor on the second row: ArrowUp must move the caret, not navigate history
+      ta.element.setSelectionRange(9, 9) // after 'line two'
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('line one\nline two')
+      // Cursor on the first row: ArrowUp navigates history
+      ta.element.setSelectionRange(0, 0)
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('swipe left/right on the inactive textarea steps history one entry per gesture', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      const swipe = async (dir: 'left' | 'right') => {
+        // Touch coordinates: start centered, end 100px left/right
+        await ta.trigger('touchstart', {
+          touches: [{ clientX: 200, clientY: 100 }],
+        })
+        await ta.trigger('touchend', {
+          changedTouches: [{ clientX: dir === 'left' ? 100 : 300, clientY: 100 }],
+        })
+        await flushPromises()
+        await wrapper.vm.$nextTick()
+      }
+      // Swipe left → newest history entry
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Swipe left again → older
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('second message')
+      // Swipe right → back toward newest
+      await swipe('right')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      // Swipe right past the newest → restore the (empty) draft, navigation resets
+      await swipe('right')
+      expect(wrapper.vm.inputText).toBe('')
+      // Next swipe left starts from the newest entry again
+      await swipe('left')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ignores vertical or short swipes on the inactive textarea', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Vertical swipe (dominant y) must not navigate
+      await ta.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 100, clientY: 300 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      // Too-short horizontal swipe must not navigate
+      await ta.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 130, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('swipe does nothing when there is no user history', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: [] })
+      const ta = wrapper.find('.chat-textarea')
+      wrapper.vm.inputText = 'fresh'
+      await wrapper.vm.$nextTick()
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('fresh')
+      wrapper.unmount()
+    })
+
+    it('swipe navigates even with a multiline draft (no caret guard on gestures)', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Multiline draft + caret on the last row (a state that would block the
+      // keyboard ArrowUp path but must not block the swipe path).
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      ta.element.setSelectionRange(9, 9) // last row
+      // Swipe left → history navigation must still fire
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('shows the swipe-history hint in the placeholder only on mobile surfaces', async () => {
+      // PC: swipe hint must NOT be in the rotating placeholder hints
+      _setIsPCForTest(true)
+      let wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).not.toContain('Swipe history')
+      wrapper.unmount()
+      // Mobile (non-PC): swipe hint must be present
+      _setIsPCForTest(false)
+      wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('restores the message attachments when navigating history', async () => {
+      const withFiles = [
+        { id: 1, role: 'user', content: 'msg with files', files: [
+          { path: '/src/a.ts', isDir: false, startLine: 1, endLine: 10 },
+          '/src/b.ts',
+        ] },
+        { id: 2, role: 'assistant', content: 'reply' },
+        { id: 3, role: 'user', content: 'plain msg' },
+      ]
+      const wrapper = mountBar({ currentSessionId: 's1', messages: withFiles })
+      // ArrowUp → newest user message (plain msg, no files) — attachments cleared
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('plain msg')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      // ArrowUp → older message with files — attachments restored (normalized)
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('msg with files')
+      expect(mockAttachedFilesValue.value).toEqual([
+        { path: '/src/a.ts', isDir: false, startLine: 1, endLine: 10 },
+        { path: '/src/b.ts', isDir: false },
+      ])
+      // ArrowDown back to the fresh input — attachments cleared again
+      await pressArrow(wrapper, 'ArrowDown')
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      wrapper.unmount()
+    })
+
+    it('restores the draft attachments when returning from history navigation', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      // User has text + attachments typed, then browses history
+      wrapper.vm.inputText = 'draft text'
+      mockAttachedFilesValue.value = [{ path: '/draft.ts', isDir: false }]
+      await wrapper.vm.$nextTick()
+      // ArrowUp → history entry replaces text + attachments
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('padded message')
+      expect(mockAttachedFilesValue.value).toEqual([])
+      // ArrowDown back to the fresh input → draft text + attachments restored
+      await pressArrow(wrapper, 'ArrowDown')
+      expect(wrapper.vm.inputText).toBe('draft text')
+      expect(mockAttachedFilesValue.value).toEqual([{ path: '/draft.ts', isDir: false }])
+      wrapper.unmount()
+    })
+
+    it('does not swipe-navigate while the textarea is focused', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      // Focus the textarea (activated state)
+      ta.element.dispatchEvent(new Event('focus'))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.isTextareaFocused).toBe(true)
+      // Swipe left on the focused input must not navigate history
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      // Blur back to inactive — swipe works again
+      ta.element.dispatchEvent(new Event('blur'))
+      await wrapper.vm.$nextTick()
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ignores multi-touch gestures on the textarea', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const ta = wrapper.find('.chat-textarea')
+      await ta.trigger('touchstart', {
+        touches: [
+          { clientX: 100, clientY: 200 },
+          { clientX: 140, clientY: 220 },
+        ],
+      })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 100, clientY: 80 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+
+    it('ignores swipes when the input is disabled', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY, inputDisabled: true })
+      const ta = wrapper.find('.chat-textarea')
+      await ta.trigger('touchstart', { touches: [{ clientX: 200, clientY: 100 }] })
+      await ta.trigger('touchend', { changedTouches: [{ clientX: 80, clientY: 100 }] })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('')
+      wrapper.unmount()
+    })
+  })
+
   describe('compact button', () => {
     afterEach(() => {
       mockContextUsed.value = 0
@@ -1264,7 +1713,7 @@ describe('ChatInputBar', () => {
       expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('disables compact button when /compact command not available', async () => {
+    it('keeps compact button enabled even when /compact command not available', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/help', description: 'Show help' }]
@@ -1274,7 +1723,7 @@ describe('ChatInputBar', () => {
       await wrapper.vm.$nextTick()
       const btn = wrapper.find('.usage-popup-compact-btn')
       expect(btn.exists()).toBe(true)
-      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
     it('shows compact button with command name without slash prefix', async () => {
@@ -1290,7 +1739,7 @@ describe('ChatInputBar', () => {
       expect(btn.attributes('disabled')).toBeUndefined()
     })
 
-    it('disables compact button when not ACP transport', async () => {
+    it('keeps compact button enabled even when not ACP transport', async () => {
       mockContextUsed.value = 80000
       mockContextSize.value = 100000
       mockAvailableCommands.value = [{ name: '/compact', description: 'Compact conversation' }]
@@ -1300,7 +1749,7 @@ describe('ChatInputBar', () => {
       await wrapper.vm.$nextTick()
       const btn = wrapper.find('.usage-popup-compact-btn')
       expect(btn.exists()).toBe(true)
-      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.attributes('disabled')).toBeUndefined()
     })
 
     it('clicking compact button emits send with /compact', async () => {

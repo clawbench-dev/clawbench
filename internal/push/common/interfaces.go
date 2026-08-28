@@ -34,8 +34,10 @@ type SessionMessenger interface {
 	FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error)
 	ListRecentSessions(limit int) ([]SessionInfo, error)
 	IsSessionRunning(sessionID string) bool
-	EnqueueMessage(sessionID, message string) error
-	ClearQueue(sessionID string)
+	// SendMessageToSession sends a message to a session. It routes through the
+	// unified enqueue path: running sessions get the message queued for the
+	// drain loop, non-running sessions start an execution. The B2 self-heal
+	// inside handles the drain-loop exit race.
 	SendMessageToSession(sessionID, message string) error
 }
 

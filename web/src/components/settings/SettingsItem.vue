@@ -162,6 +162,37 @@
       <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
     </div>
   </BottomSheet>
+  <!-- Theme picker BottomSheet with color preview swatches -->
+  <BottomSheet
+    v-if="type === 'select' && isThemeSelect"
+    :open="themePicker.effectiveOpen.value"
+    auto
+    @close="themePicker.close()"
+  >
+    <template #header>
+      <Palette :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ label }}</span>
+    </template>
+    <div class="theme-picker-grid">
+      <div
+        v-for="opt in options"
+        :key="opt.value as PropertyKey"
+        class="theme-picker-cell"
+        :class="{ 'theme-picker-cell--active': modelValue === opt.value }"
+        @click="selectOption(opt.value)"
+      >
+        <div
+          class="theme-picker-swatch"
+          :class="{ 'theme-picker-swatch--auto': opt.value === 'auto' }"
+          :style="previewStyleFor(opt)"
+        >
+          <span class="theme-picker-swatch-accent"></span>
+        </div>
+        <span class="theme-picker-cell-label">{{ opt.label }}</span>
+        <span v-if="modelValue === opt.value" class="theme-picker-cell-check">✓</span>
+      </div>
+    </div>
+  </BottomSheet>
 </template>
 
 <script setup lang="ts">
@@ -180,6 +211,9 @@ interface Props {
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: unknown
   options?: { label: string; value: unknown; modelName?: string }[]
+  /** Optional per-option color previews (bg/text/accent) — when provided, the
+   *  select renders as a theme grid picker instead of a plain option list. */
+  optionPreviews?: Record<string, { bg: string; text: string; accent: string }>
   min?: number
   max?: number
   step?: number
@@ -209,6 +243,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   modelValue: undefined,
   options: undefined,
+  optionPreviews: undefined,
   min: undefined,
   max: undefined,
   step: undefined,
@@ -235,6 +270,29 @@ const editing = ref(false)
 const editValue = ref<unknown>(null)
 const showPassword = ref(false)
 const selectPicker = useTabDrawer('settings', { autoRestore: false })
+// Same tab id as selectPicker so effectiveOpen resolves on the settings page.
+// Only one of the two drawers is used per select (themed grid vs plain list).
+const themePicker = useTabDrawer('settings', { autoRestore: false })
+
+/** Whether this select should render the theme grid picker (has per-option previews). */
+const isThemeSelect = computed(() => !!props.optionPreviews)
+
+/** Build the inline style for a theme swatch. Auto option gets a light/dark split. */
+function previewStyleFor(opt: { label: string; value: unknown }): Record<string, string> {
+  if (opt.value === 'auto') {
+    return {
+      background:
+        'linear-gradient(135deg, #ffffff 0%, #ffffff 48%, #1a1a2e 52%, #1a1a2e 100%)',
+    }
+  }
+  const p = props.optionPreviews?.[String(opt.value)]
+  if (!p) return {}
+  return {
+    background: p.bg,
+    color: p.text,
+    '--swatch-accent': p.accent,
+  }
+}
 
 // Slider debounce: only emit final value after 300ms of inactivity
 let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -333,9 +391,15 @@ function handleClick() {
   if (props.type === 'switch' || props.type === 'slider' || props.type === 'info') {
     return
   }
-  // select: open BottomSheet picker
+  // select: open BottomSheet picker (theme grid when previews are provided)
   if (props.type === 'select') {
-    selectPicker.open()
+    if (isThemeSelect.value) {
+      themePicker.open()
+      selectPicker.close()
+    } else {
+      selectPicker.open()
+      themePicker.close()
+    }
     emit('editToggle', true)
     return
   }
@@ -351,6 +415,7 @@ function handleClick() {
 function selectOption(value: unknown) {
   emit('update:modelValue', value)
   selectPicker.close()
+  themePicker.close()
   emit('editToggle', false)
 }
 
@@ -806,5 +871,84 @@ function confirmEdit() {
   font-weight: 600;
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* ── Theme picker grid ── */
+.theme-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  padding: 12px 16px 20px;
+}
+
+.theme-picker-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  cursor: pointer;
+  position: relative;
+}
+
+.theme-picker-swatch {
+  height: 52px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.theme-picker-swatch--auto {
+  /* light/dark split is set via inline background */
+  border: 2px dashed var(--border-color);
+}
+
+.theme-picker-swatch-accent {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--swatch-accent, var(--accent-color));
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.15);
+}
+
+.theme-picker-cell--active .theme-picker-swatch {
+  box-shadow: 0 0 0 2px var(--accent-color);
+  transform: scale(1.02);
+}
+
+.theme-picker-cell-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-picker-cell-check {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+@media (hover: hover) {
+  .theme-picker-cell:hover .theme-picker-swatch {
+    box-shadow: 0 0 0 1px var(--accent-color);
+  }
 }
 </style>

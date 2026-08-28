@@ -25,6 +25,26 @@ describe('parseAssistantContent', () => {
     expect(result.metadata).toBeNull()
   })
 
+  it('unwraps nested JSON serialization inside a text block', () => {
+    const content = JSON.stringify({
+      blocks: [
+        {
+          type: 'text',
+          text: JSON.stringify({ content: { text: '解包后的消息', type: 'text' }, messageId: 'm1', sessionUpdate: 'user_message_chunk' }),
+        },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks).toHaveLength(1)
+    expect(result.blocks[0].text).toBe('解包后的消息')
+  })
+
+  it('keeps normal text block text unchanged', () => {
+    const content = JSON.stringify({ blocks: [{ type: 'text', text: '普通文本' }] })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0].text).toBe('普通文本')
+  })
+
   it('parses JSON with blocks array', () => {
     const content = JSON.stringify({
       blocks: [

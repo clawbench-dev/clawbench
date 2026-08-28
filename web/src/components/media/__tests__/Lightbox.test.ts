@@ -1028,6 +1028,46 @@ describe('Lightbox', () => {
 
       document.body.removeChild(container)
     })
+
+    it('collects inline lightbox-svg alongside images in document order', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img src="a.png" alt="Image A">' +
+        '<span class="lightbox-svg-wrap"><svg class="lightbox-svg" viewBox="0 0 100 50"><rect></rect></svg><span class="lightbox-expand-icon"></span></span>' +
+        '<img src="b.png" alt="Image B">'
+      document.body.appendChild(container)
+
+      const clickedSvg = container.querySelector('svg.lightbox-svg')
+      const result = vm.collectMdImages(container, null, null, clickedSvg)
+      expect(result.list).toHaveLength(3)
+      expect(result.list[0].src).toBeTruthy()
+      expect(result.list[0].name).toBe('Image A')
+      expect(result.list[1].svg).toContain('<svg')
+      expect(result.list[1].src).toBe('')
+      expect(result.list[2].src).toBeTruthy()
+      expect(result.startIdx).toBe(1) // clicked svg is index 1
+
+      document.body.removeChild(container)
+    })
+
+    it('uses data-name attribute for inline svg name', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<svg class="lightbox-svg" data-name="chart.svg" viewBox="0 0 10 10"><rect></rect></svg>'
+      document.body.appendChild(container)
+
+      const clickedSvg = container.querySelector('svg.lightbox-svg')
+      const result = vm.collectMdImages(container, null, null, clickedSvg)
+      expect(result.list[0].name).toBe('chart.svg')
+
+      document.body.removeChild(container)
+    })
   })
 
   // ── deriveMermaidName ──
