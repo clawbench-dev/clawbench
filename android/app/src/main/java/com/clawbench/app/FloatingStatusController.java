@@ -284,11 +284,21 @@ public class FloatingStatusController {
                 // must bring up the capsule even though no event triggered it.
                 cancelPendingHide();
                 ensureWindow();
+                // The capsule starts in its initial empty state ("—" label,
+                // transparent dot); render the first running session so it has
+                // real content, not just the theme background.
+                String[] first = firstRunningSession(overview);
+                if (first != null && view != null) {
+                    render("session_update", "running", first[0], "", "");
+                }
             }
         });
     }
 
-    /** Add sessions flagged running by the overview into the running set. Any thread. */
+    /**
+     * Add sessions flagged running by the overview into the running set. Any
+     * thread. No-op when the overview is malformed.
+     */
     private void seedRunningFromOverview(JSONObject overview) {
         JSONArray projects = overview.optJSONArray("projects");
         if (projects == null) {
@@ -331,6 +341,35 @@ public class FloatingStatusController {
                 }
             });
         }
+    }
+
+    /**
+     * Title of the first running session in the overview, or null when none.
+     * Used by the WS-connect fallback to render real content into the capsule.
+     * Any thread.
+     */
+    private String[] firstRunningSession(JSONObject overview) {
+        JSONArray projects = overview.optJSONArray("projects");
+        if (projects == null) {
+            return null;
+        }
+        for (int i = 0; i < projects.length(); i++) {
+            JSONObject project = projects.optJSONObject(i);
+            if (project == null) {
+                continue;
+            }
+            JSONArray sessions = project.optJSONArray("sessions");
+            if (sessions == null) {
+                continue;
+            }
+            for (int j = 0; j < sessions.length(); j++) {
+                JSONObject s = sessions.optJSONObject(j);
+                if (s != null && s.optBoolean("running", false)) {
+                    return new String[]{s.optString("title", "")};
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -381,8 +420,11 @@ public class FloatingStatusController {
         String preview = data.optString("response_preview_plain", "");
 
         boolean active = isActiveStatus(eventType, status);
-        hasActive = active;
+        // trackSessionState must run before deriving hasActive: a terminal
+        // event for one session must not clear hasActive while other sessions
+        // are still running in the tracked set.
         trackSessionState(eventType, status, sessionId);
+        hasActive = active || !runningSessions.isEmpty();
 
         // While the panel is expanded, every event should refresh the overview
         // so the session list stays current without waiting for the next tap.
@@ -412,8 +454,17 @@ public class FloatingStatusController {
                 // While the panel is expanded the user is looking at the list,
                 // so never auto-hide it; the overview refresh keeps it current.
                 if (windowShowing && !expanded) {
-                    render(fEventType, fStatus, fSessionTitle, fToolName, fPreview);
-                    scheduleTerminalHide();
+                    if (!runningSessions.isEmpty()) {
+                        // Other sessions are still running: keep the capsule in
+                        // a generic running state instead of showing "done" and
+                        // hiding. The overview refresh re-seeds the running set
+                        // and lets a later event render the real session title.
+                        render("session_update", "running", "", "", "");
+                        requestOverviewRefresh();
+                    } else {
+                        render(fEventType, fStatus, fSessionTitle, fToolName, fPreview);
+                        scheduleTerminalHide();
+                    }
                 }
             }
         });

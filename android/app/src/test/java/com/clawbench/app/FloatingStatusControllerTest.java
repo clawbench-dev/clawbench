@@ -753,6 +753,77 @@ public class FloatingStatusControllerTest {
         controller.destroy();
     }
 
+    @Test
+    public void overviewFallback_rendersRunningSessionTitle() throws Exception {
+        // Bug 1: the WS-connect fallback in onOverviewLoaded showed the capsule
+        // (ensureWindow) but never rendered overview data into it, so the
+        // capsule displayed the initial empty state ("—" label, transparent dot).
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false); // backgrounded, no prior events
+
+        org.json.JSONObject overview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"T1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
+        controller.onOverviewLoaded(overview);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("a running session from the overview must show the capsule",
+                controller.isWindowShowing());
+        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
+        assertNotNull("capsule view must be built for the fallback", capsule);
+        String label = findTextByClass(capsule, TextView.class, 0);
+        assertTrue("capsule must render the running session title, got: " + label,
+                label != null && label.contains("T1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_otherSessionsRunning_keepsWindow() throws Exception {
+        // Bug 2: a terminal event for one session set hasActive=false, so the
+        // 3s hide fired even though another session was still running.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        controller.handleEvent("session_update", sessionEvent("running", "s2"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("another session still running must keep the window",
+                controller.isWindowShowing());
+        assertNull("no terminal hide may be scheduled while other sessions run",
+                getPrivateField(controller, "fadeHideRunnable"));
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_lastSession_endsWindow() throws Exception {
+        // Regression guard: when the last running session ends, the "done"
+        // capsule must still be shown briefly and then hidden.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication(), () -> {});
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertNotNull("last session ending must schedule the terminal hide",
+                getPrivateField(controller, "fadeHideRunnable"));
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        assertFalse("the window must hide after the terminal delay",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
     // =====================================================
     // setExpanded + overview request callback
     // =====================================================
