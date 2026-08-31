@@ -30,6 +30,16 @@ const E2E_PORT = process.env.E2E_PORT || '20100'
  */
 export const test = base.extend({
   page: async ({ page }, use) => {
+    // Dismiss the first-run Welcome overlay BEFORE the page loads.
+    // Every test gets a fresh browser context (empty localStorage), so without
+    // this flag WelcomeOverlay.show() renders the full-screen overlay and
+    // intercepts pointer events on the send button etc. (the overlay is a
+    // first-run UX; real users dismiss it via "Don't show again").
+    // addInitScript runs before each navigation, covering page.reload() too.
+    await page.addInitScript(() => {
+      localStorage.setItem('clawbench_welcome_dismissed', 'true')
+    })
+
     // Navigate to the app root
     const response = await page.goto('/')
 
