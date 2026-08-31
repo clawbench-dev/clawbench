@@ -7,7 +7,7 @@
     <LoginView v-else-if="!isAuthenticated" @login-success="handleLoginSuccess" />
 
     <!-- Main app -->
-    <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
+    <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :data-pc="isPC" :key="projectKey">
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
@@ -472,6 +472,7 @@ import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
+import { usePlatformDetect } from './composables/usePlatformDetect'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
@@ -1024,6 +1025,9 @@ const terminalKeyboardNeedsShrink = computed(() => terminalKeyboardActive.value 
 // keyboard via visualViewport and compensate in the web layer.
 const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
+
+// Platform detection for PC keyboard accessibility features
+const { isPC } = usePlatformDetect()
 
 const quoteQuestion = useQuoteQuestion()
 const sessionDrawerRef = ref(null)

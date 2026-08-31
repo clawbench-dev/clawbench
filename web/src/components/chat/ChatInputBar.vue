@@ -993,10 +993,11 @@ function onTextareaKeydown(e) {
   if (handleMenuKeydown(e)) return
   // Input history navigation (ArrowUp/ArrowDown), only when the input is active
   if (handleHistoryKeydown(e)) return
-  // Default: Enter (without modifier) sends
+  // Default: Enter (without modifier) sends — use the same logic as click to
+  // handle attachments, quick menu, and voice suppression consistently.
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
-    emit('send', inputText.value.trim())
+    handleSendClick()
   }
 }
 

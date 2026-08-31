@@ -1,7 +1,12 @@
 <template>
   <Teleport to="body">
     <Transition name="menu-fade">
-      <div v-if="show" class="popup-menu" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
+      <div v-if="show" ref="menuRef" class="popup-menu" role="menu" :style="menuStyle" tabindex="-1"
+           @click.stop="emit('update:show', false)"
+           @keydown.escape="handleEscape"
+           @keydown.enter.prevent="handleEnter"
+           @keydown.arrow-down.prevent="handleArrowDown"
+           @keydown.arrow-up.prevent="handleArrowUp">
         <slot />
       </div>
     </Transition>
@@ -9,7 +14,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
 
 const props = defineProps({
@@ -27,6 +32,43 @@ const emit = defineEmits(['update:show'])
 // Reactive style — updated manually so we can react to DOM geometry changes
 // (scroll, resize) that Vue's computed cannot track.
 const menuStyle = ref({})
+const menuRef = ref(null)
+const selectedIndex = ref(-1)
+
+// ── Keyboard navigation (ArrowUp/Down + Enter) ──
+function getFocusableItems() {
+  if (!menuRef.value) return []
+  return Array.from(menuRef.value.querySelectorAll('button, [role="button"], a, [tabindex]:not([tabindex="-1"])'))
+}
+
+function updateSelection(idx) {
+  const items = getFocusableItems()
+  if (items.length === 0) return
+  selectedIndex.value = Math.max(0, Math.min(idx, items.length - 1))
+  items[selectedIndex.value]?.focus()
+}
+
+function handleArrowDown() {
+  updateSelection(selectedIndex.value + 1)
+}
+
+function handleArrowUp() {
+  updateSelection(selectedIndex.value - 1)
+}
+
+function handleEscape() {
+  emit('update:show', false)
+}
+
+function handleEnter() {
+  const items = getFocusableItems()
+  const idx = selectedIndex.value
+  if (idx >= 0 && idx < items.length) {
+    items[idx].click()
+  } else if (items.length > 0) {
+    items[0].click()
+  }
+}
 
 /** Recalculate position from current anchor geometry. */
 function updatePosition() {
@@ -56,12 +98,17 @@ function onLayoutChange() {
 
 watch(() => props.show, (val) => {
   if (val) {
+    selectedIndex.value = -1
     // Compute position — defer one frame so that a soft keyboard dismissal
     // triggered by the same tap can begin before we read getBoundingClientRect().
     // The menu is inside a Transition so it won't paint until the next tick anyway.
     requestAnimationFrame(() => {
       if (!props.show) return // may have been closed already
       updatePosition()
+      // On PC, auto-focus the menu so arrow keys work immediately
+      nextTick(() => {
+        menuRef.value?.focus()
+      })
     })
     // Listen for layout changes that could move the anchor
     window.addEventListener('scroll', onLayoutChange, true) // capture to catch all scrolls

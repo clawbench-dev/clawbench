@@ -49,3 +49,30 @@ html, body {
 * {
     scrollbar-color: var(--scrollbar-thumb) transparent;
 }
+
+/* ==========================================================================
+   Keyboard Accessibility — Focus Visible (PC only)
+   Applied globally when data-pc="true" on the app container.
+   Touch/mobile devices suppress focus rings; PC users get clear focus indicators.
+   ========================================================================== */
+[data-pc="true"] button:focus-visible,
+[data-pc="true"] [role="button"]:focus-visible,
+[data-pc="true"] a:focus-visible,
+[data-pc="true"] input:focus-visible,
+[data-pc="true"] textarea:focus-visible,
+[data-pc="true"] select:focus-visible,
+[data-pc="true"] [tabindex]:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-color, #0066cc) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+[data-pc="true"] button:focus-visible {
+    border-radius: 4px;
+}
+
+[data-pc="true"] .chat-send-btn:focus-visible,
+[data-pc="true"] .chat-stop-btn:focus-visible {
+    outline-offset: 2px;
+    border-radius: 50%;
+}

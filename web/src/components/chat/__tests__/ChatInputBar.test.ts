@@ -588,6 +588,26 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('send')![0]).toEqual(['hello'])
   })
 
+  it('Enter key behaves identically to handleSendClick — opens quick menu when empty and no attachments', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    const textarea = wrapper.find('.chat-textarea')
+    await textarea.trigger('keydown', { key: 'Enter' })
+    // Should NOT emit 'send' — instead quick menu should open (same as clicking send button)
+    expect(wrapper.emitted('send')).toBeFalsy()
+  })
+
+  it('Enter key with attached files but empty text emits send (same as handleSendClick)', async () => {
+    const wrapper = mountBar({ attachedFiles: [{ path: '/file.txt', isDir: false }] })
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    const textarea = wrapper.find('.chat-textarea')
+    await textarea.trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeTruthy()
+    expect(wrapper.emitted('send')![0]).toEqual([''])
+  })
+
   it('archive button is disabled when no currentSessionId', () => {
     const wrapper = mountBar({ currentSessionId: '' })
     const archiveBtn = wrapper.find('.chat-action-btn-archive')
