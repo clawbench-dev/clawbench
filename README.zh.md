@@ -178,6 +178,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - 语法高亮，粘性行号，自动换行切换，30+ 语言扩展（高频语言静态导入，低频语言懒加载）
 - **代码自动补全**：编辑模式下为 11 种语言提供语言感知的自动补全（JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown），基于 CodeMirror 内置补全源
 - **Sticky Scroll**：VS Code 风格的粘性滚动，基于后端 tree-sitter 符号数据，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
+- **VS Code 风格搜索条**：`Ctrl+F`/`Cmd+F` 打开内嵌搜索条（大小写/全词/正则三个选项图标内联在输入框内，支持上一个/下一个/匹配计数，编辑模式下带替换行）——CodeMirror 与 Markdown 预览共用同一套交互的自定义搜索面板
 - 双击复制代码行内容（闪烁动画反馈）
 - **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动
 - **引用提问**：选中代码片段后，一键向 AI 提问，自动附上文件路径和行号
@@ -218,6 +219,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **思维流内联显示**：思考过程流式内联展示，完成后自动折叠为可点击芯片；思考内容惰性加载，流结束后仅保存缩略信息，展开时按需加载全文
 - **会话进度指示**：会话抽屉显示胶囊进度条，颜色随用量变化（蓝/橙/红）
 - **ACP 上下文状态持久化**：模式、思考档位、上下文用量自动持久化到数据库，服务器重启后状态不丢失
+- **CodeBuddy ACP 模式本地技能**：自动扫描 `~/.codebuddy/skills/` 的 `SKILL.md`（name + description），技能以 `/` 斜杠命令形式出现在 Web 会话中，同时技能摘要注入系统提示词——与 TUI 模式行为一致
 
 ### 🤖 AI 对话
 - **工具调用可视化**：名称、参数、执行结果实时展示，成功/失败状态一目了然
@@ -321,7 +323,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 
 ### 🎨 主题
-- **27 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 11 个（GitHub Light、One Light、Ayu Light、Everforest Light、High Contrast Light、Mint Light、Sky Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 16 个（Solarized Dark/Deep、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
+- **36 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 16 个（GitHub Light、One Light、Ayu Light、Light Modern、Light Plus、Quiet Light、Vitesse Light、Bluloco Light、Material Lighter、Alabaster、Everforest Light、High Contrast Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 20 个（Solarized Dark/Deep、Monokai、Material Darker、Dark Plus、Bluloco Dark、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
 - **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark
 - **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览
 - **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题

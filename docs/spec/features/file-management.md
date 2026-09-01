@@ -97,6 +97,8 @@ sequenceDiagram
 - **目录跳转**：在文件管理器工具栏中点击定位按钮，弹出路径输入对话框，输入后直接跳转到目标目录。支持 Enter 确认和 Esc 关闭
 - **文件预览覆盖层**：点击文件时切换到 `view` Tab，以覆盖层形式预览文件内容。覆盖层支持栈式导航——文件中的链接可以继续打开新文件（入栈），返回时出栈回到上一个文件，关闭覆盖层清空栈后显示空状态（最近文件列表或"打开文件管理器"按钮）
 - **文件查看与编辑**：代码文件使用 CodeMirror 渲染，支持浏览/编辑双模式切换。浏览模式提供语法高亮、行号、VS Code 风格 sticky scroll（作用域定义行钉顶）和代码符号大纲；编辑模式提供 undo/redo、脏状态追踪、退出确认和语言感知的自动补全（11 种语言，基于 CodeMirror 内置补全源）。Markdown 支持渲染预览与源码编辑的标题锚定滚动同步；图片、PDF、音频（内联播放器）、视频（内联播放器）和 Office 文档使用专用预览器；OpenAPI 文件以 Swagger UI 渲染，支持"Try it out"在线测试（CORS 代理转发 API 请求绕过浏览器限制）。无法安全预览的类型回退到下载或文本模式
+- **文件内查找（VS Code 风格搜索条）**：`Ctrl+F`/`Cmd+F` 在代码查看与 Markdown 预览中打开内嵌搜索条——三个选项图标（大小写 Aa / 全词 ab / 正则 .*）内联在输入框内，支持上一个/下一个跳转、匹配计数，编辑模式下附带替换行。CodeMirror 用自定义 ViewPlugin 渲染面板（内建 `@codemirror/search` 面板的扁平 DOM 在窄面板下会把选项组/替换组拆行，自定义实现保证整组换行），Markdown 预览复用 `MarkdownSearchBar`（底部全宽内嵌条，不再弹 SearchDrawer 底部弹框）
+- **TOC 停靠栏**：Markdown 渲染的目录面板支持左侧/右侧停靠切换（标题栏 PanelLeft/PanelRight 图标，偏好持久化到 localStorage）；导出 HTML 时 TOC 改为右侧内联常驻侧栏，可收起到窄 rail，点击条目滚动不关闭
 - **Excalidraw 画布**：`.excalidraw` 文件直接以画布编辑模式打开（无只读浏览态），通过 iframe 内嵌独立 Excalidraw 构建实现绘制与编辑。保存写回原文件，退出时检测未保存修改并确认；语言和主题跟随应用（自动发送到 iframe），与代码编辑器共享同一套脏检查保存流程
 - **代码符号提取**：通过 tree-sitter（纯 Go，无 CGO）从源代码文件提取 17 种符号（class、function、method、variable 等），支持 200+ 编程语言。用户快速了解文件的结构和 API
 - **Sticky Scroll**：代码浏览模式下，将当前视口外层作用域的定义行（函数/类）钉顶显示，最多 5 行。点击钉顶行可平滑滚动到定义位置。基于后端 tree-sitter 符号数据，解决长文件中上下文迷失的问题

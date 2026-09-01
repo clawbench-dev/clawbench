@@ -166,7 +166,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
 - **Code Autocompletion**: Language-aware autocompletion for 11 languages (JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown) in edit mode, leveraging CodeMirror's built-in completion sources
 - **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
-- Double-click to copy code line content (flash animation feedback)
+- **VS Code-Style Search Bar**: `Ctrl+F`/`Cmd+F` opens an inline search bar (case / whole-word / regexp toggles built into the input, prev/next/match count, optional replace row in edit mode) — a custom panel shared by CodeMirror, with the same interaction for Markdown preview
+- **Double-click to copy code line content** (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
 - **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
 - **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
@@ -206,6 +207,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
 - **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 - **ACP Context State Persistence**: Mode, thinking effort, and context usage auto-persisted to database; state survives server restarts
+- **CodeBuddy Local Skills in ACP Mode**: `~/.codebuddy/skills/` skills (SKILL.md with name + description) are auto-scanned and exposed as `/` slash commands in web sessions, with a skills summary injected into the system prompt — matching TUI mode behavior
 
 ### 🤖 AI Conversation
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
@@ -308,7 +310,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 
 
 ### 🎨 Themes
-- **27 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 11 light (GitHub Light, One Light, Ayu Light, Everforest Light, High Contrast Light, Mint Light, Sky Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 16 dark (Solarized Dark/Deep, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
+- **36 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 16 light (GitHub Light, One Light, Ayu Light, Light Modern, Light Plus, Quiet Light, Vitesse Light, Bluloco Light, Material Lighter, Alabaster, Everforest Light, High Contrast Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 20 dark (Solarized Dark/Deep, Monokai, Material Darker, Dark Plus, Bluloco Dark, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
 - **Follow System**: `auto` mode picks the default GitHub Light/Dark based on the system color scheme
 - **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews
 - **Persistent & Status Bar Aware**: Selection is saved locally and restored on reload; Android status bar color follows the active theme
