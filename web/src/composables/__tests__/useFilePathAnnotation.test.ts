@@ -2149,8 +2149,118 @@ describe('openFilePath', () => {
       expect(parseFileUri(undefined as unknown as string).path).toBe('')
     })
 
-    it('drops non-numeric hashes but keeps the path', () => {
-      expect(parseFileUri('docs/guide.md#section').path).toBe('docs/guide.md')
+    it('parses colon line suffixes (:10, :10-20, :L10, :L10-L20, :L10-20)', () => {
+      expect(parseFileUri('src/main.go:10')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: undefined })
+      expect(parseFileUri('src/main.go:10-20')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+      expect(parseFileUri('src/main.go:L10')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: undefined })
+      expect(parseFileUri('src/main.go:L10-L20')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+      expect(parseFileUri('src/main.go:L10-20')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+    })
+
+    it('handles inverted line range (lineEnd < lineStart) by treating as single line', () => {
+      expect(parseFileUri('src/main.go:20-10')).toMatchObject({ path: 'src/main.go', lineStart: 20, lineEnd: undefined })
+      expect(parseFileUri('src/main.go#L20-L10')).toMatchObject({ path: 'src/main.go', lineStart: 20, lineEnd: undefined })
+    })
+
+    it('handles non-positive line numbers gracefully', () => {
+      expect(parseFileUri('src/main.go:0')).toMatchObject({ path: 'src/main.go', lineStart: undefined, lineEnd: undefined })
+      expect(parseFileUri('src/main.go#L0')).toMatchObject({ path: 'src/main.go', lineStart: undefined, lineEnd: undefined })
+    })
+
+    it('parses Windows drive paths with :L line numbers without corrupting drive letter', () => {
+      const r = parseFileUri('C:\\repo\\src\\main.go:L10-L20')
+      expect(r.path).toBe('C:\\repo\\src\\main.go')
+      expect(r.lineStart).toBe(10)
+      expect(r.lineEnd).toBe(20)
+    })
+  })
+
+  describe('DOM annotation consistency for :L line numbers', () => {
+    const projectRoot = '/home/user/project'
+
+    it('annotates <a>, <code>, and plain text with matching lineStart and lineEnd for :L10-L20', () => {
+      const html = `
+        <a href="src/main.go:L10-L20">link</a>
+        <code>src/main.go:L10-L20</code>
+        <p>Check src/main.go:L10-L20 for details</p>
+      `
+      const { html: resultHtml } = annotateFilePaths(html, { projectRoot })
+      const doc = new DOMParser().parseFromString(resultHtml, 'text/html')
+
+      const a = doc.querySelector('a.chat-file-path')
+      expect(a).not.toBeNull()
+      expect(a?.getAttribute('data-line-start')).toBe('10')
+      expect(a?.getAttribute('data-line-end')).toBe('20')
+
+      const code = doc.querySelector('code.chat-file-path')
+      expect(code).not.toBeNull()
+      expect(code?.getAttribute('data-line-start')).toBe('10')
+      expect(code?.getAttribute('data-line-end')).toBe('20')
+
+      const span = doc.querySelector('span.chat-file-path')
+      expect(span).not.toBeNull()
+      expect(span?.getAttribute('data-line-start')).toBe('10')
+      expect(span?.getAttribute('data-line-end')).toBe('20')
+    })
+  })
+
+  describe('verifyFilePaths data-path-type attribute', () => {
+    beforeEach(() => {
+      clearVerifiedCache()
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('sets data-path-type="file" on file annotations and open buttons', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }),
+      })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const container = document.createElement('div')
+      container.innerHTML = '<span class="chat-file-path" data-file-path="src/main.go">src/main.go</span><button class="chat-file-open-btn" data-file-path="src/main.go">open</button>'
+
+      await verifyFilePaths(['src/main.go'], container)
+
+      expect(container.querySelector('.chat-file-path')?.getAttribute('data-path-type')).toBe('file')
+      expect(container.querySelector('.chat-file-open-btn')?.getAttribute('data-path-type')).toBe('file')
+    })
+
+    it('sets data-path-type="dir" on directory annotations', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'src': 'dir' } }),
+      })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const container = document.createElement('div')
+      container.innerHTML = '<span class="chat-file-path" data-file-path="src">src</span><button class="chat-file-open-btn" data-file-path="src">open</button>'
+
+      await verifyFilePaths(['src'], container)
+
+      expect(container.querySelector('.chat-file-path')?.getAttribute('data-path-type')).toBe('dir')
+      expect(container.querySelector('.chat-file-open-btn')?.getAttribute('data-path-type')).toBe('dir')
+    })
+
+    it('sets data-path-type="file" when swapping to fallback file', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ results: { 'wrong/path.go': 'none', 'correct/path.go': 'file' } }),
+      })
+      vi.stubGlobal('fetch', mockFetch)
+
+      const container = document.createElement('div')
+      container.innerHTML = '<span class="chat-file-path" data-file-path="wrong/path.go" data-fallback-path="correct/path.go">path.go</span><button class="chat-file-open-btn" data-file-path="wrong/path.go" data-fallback-path="correct/path.go">open</button>'
+
+      await verifyFilePaths(['wrong/path.go', 'correct/path.go'], container)
+
+      const span = container.querySelector('.chat-file-path[data-file-path="correct/path.go"]')
+      const btn = container.querySelector('.chat-file-open-btn[data-file-path="correct/path.go"]')
+      expect(span?.getAttribute('data-path-type')).toBe('file')
+      expect(btn?.getAttribute('data-path-type')).toBe('file')
     })
   })
 

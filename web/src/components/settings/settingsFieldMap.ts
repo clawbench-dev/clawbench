@@ -243,6 +243,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
       { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
     ]}},
+    { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
   ],

@@ -46,6 +46,9 @@ var corsAllowedHeaders = []string{
 // corsProxyDialer is the base dialer with timeout settings.
 var corsProxyDialer = &net.Dialer{Timeout: 10 * time.Second}
 
+// netLookupIP is net.LookupIP, overridable for hermetic testing.
+var netLookupIP = net.LookupIP
+
 // corsProxyClient is the HTTP client used for forwarding proxy requests.
 // It uses a custom DialContext that re-validates the resolved IP against
 // the SSRF blocklist on every connection, preventing DNS rebinding attacks.
@@ -62,7 +65,7 @@ var corsProxyClient = &http.Client{
 				return nil, err
 			}
 			// Resolve the IP that the dialer will actually connect to
-			ips, err := net.LookupIP(host)
+			ips, err := netLookupIP(host)
 			if err != nil {
 				return nil, err
 			}
@@ -229,7 +232,7 @@ func checkSSRF(host string) error {
 	}
 
 	// Resolve hostname to IPs
-	ips, err := net.LookupIP(hostname)
+	ips, err := netLookupIP(hostname)
 	if err != nil {
 		return err
 	}

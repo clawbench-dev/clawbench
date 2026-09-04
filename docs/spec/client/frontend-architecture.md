@@ -92,6 +92,7 @@ flowchart LR
 - **输入草稿与会话快照**：`useChatContext` 提供 `snapshotAttachments`/`restoreAttachments`——切换会话时把未发送的输入文本（按会话草稿缓存）、已选附件和引用提问快照保存，切回时恢复；消息发送或附件清理后丢弃对应快照，避免脏数据残留
 - **宽屏聊天区切换**：宽屏布局下（`useWideScreenLayout` 管理），Dock 底部固定一个聊天区显示/隐藏切换按钮。隐藏时聊天面板从 SplitView 移除、左侧面板占满全宽，焦点转移到左侧面板，聊天快捷键同步停用；显示时恢复分栏。专注模式（coding focus）与聊天模式一键切换
 - **统一刷新按钮**：`RefreshButton` 组件统一全系统刷新交互——加载中旋转动画、成功确认勾选动画、最短旋转时长兜底防闪烁。聊天、文件、任务、Git 等场景共用同一控件，避免各面板刷新交互不一致。配套 `.refresh-spin` 工具类和 600ms 最短旋转时长保证视觉连贯
+- **Markdown 代码链接预览（useCodeLinkPreview）**：`useCodeLinkPreview` 管理代码链接浮层卡片与抽屉的状态机（idle/loading/ready/error）及交互模式（transient/pinned/sheet）。通过 DOM 事件委托捕获 Markdown 容器中的点击事件，并通过请求序号与 AbortController 控制并发；`CodeLinkPreview.vue` 统一呈现浮层卡片与移动端 `BottomSheet`，支持代码语法高亮、行号粘性吸顶、范围行高亮与鼠标拖拽
 
 ### appLog 统一日志（强制规范）
 
@@ -123,3 +124,4 @@ flowchart LR
 - **主题在 CSS 加载前解析**：`index.html` 内联脚本在 CSS 加载前读取 localStorage 并设置 `data-theme`，防止首屏闪白（FOUC）。旧版 `light`/`dark` 值自动迁移到命名主题 ID，已移除的强调色设置键自动清理——迁移逻辑保证升级用户无感知
 - **主题是纯前端本地设置**：主题选择只存 localStorage，不进入服务端配置——同一服务器多设备访问可以各自选择偏好，互不干扰
 - **Session 信息栏精简**：移除思考深度和传输协议（CLI/ACP）显示，将后端图标和 Agent 名称合并为单个 Tag，空间留给紧凑上下文按钮。减少信息噪音，突出与操作相关的状态
+- **代码切片预览的资源防护与优雅降级**：`sliceCodeForPreview` 在前端切片环节强制实施三重保护（最大 200 行、最大 512 KiB、单行 128 KiB 硬截断），杜绝长行或大文件打爆 DOM 渲染性能；内置 8 MiB 权重上限与 20 项容量的 LRU 缓存，30s TTL 自动淘汰，并在大文件（> 2 MiB）场景跳过缓存，兼顾再次点击时的响应速度与低内存占用

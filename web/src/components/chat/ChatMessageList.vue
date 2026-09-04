@@ -135,6 +135,12 @@
     @next="tableRowNext"
   />
 
+  <!-- Code link preview for chat messages -->
+  <CodeLinkPreview
+    v-if="codeLinkPreview.enabled.value"
+    :preview="codeLinkPreview"
+  />
+
   </div>
 </template>
 
@@ -148,7 +154,9 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
+import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader.ts'
@@ -193,6 +201,7 @@ const { handleDblClick } = useDoubleClickCopy()
 const { openFilePath } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
+const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef })
 
 // Whether a message is the most recent assistant reply (drives the 'mixed'
 // display mode: the last assistant reply renders as original text, older ones
@@ -301,6 +310,22 @@ async function handleChatClick(event) {
   // 2. Table row click — open row-form modal
   if (handleTableRowClick(event)) return
 
+  // Code link preview: handle desktop clicks or touch taps on code link paths
+  if (codeLinkPreview.enabled.value) {
+    const isTouch = codeLinkPreview.isTouchDevice()
+    const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
+    const linkOrBtn = (event.target).closest('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
+    const pathEl = (event.target).closest('.chat-file-path[data-file-path]')
+    if ((isModifier && linkOrBtn) || (!isTouch && pathEl)) {
+      codeLinkPreview.handleClick(event)
+      return
+    }
+    if (isTouch && pathEl && pathEl.getAttribute('data-path-type') === 'file') {
+      codeLinkPreview.handleClick(event)
+      return
+    }
+  }
+
   // 3. Worktree action button — show modal with "Switch" or "Open directory"
   const wtBtn = (event.target).closest('.chat-worktree-btn')
   if (wtBtn) {
@@ -330,6 +355,7 @@ async function handleChatClick(event) {
         }
       } else if (filePath) {
         // Open directory
+        codeLinkPreview.close()
         const ok = await openFilePath(filePath)
         if (ok) chatUI.navigateToFileViewer?.()
       }
@@ -357,6 +383,7 @@ async function handleChatClick(event) {
   if (btn) {
     event.preventDefault()
     event.stopPropagation()
+    codeLinkPreview.close()
     const filePath = btn.getAttribute('data-file-path')
     const lineStart = btn.getAttribute('data-line-start')
     const lineEnd = btn.getAttribute('data-line-end')
@@ -368,6 +395,7 @@ async function handleChatClick(event) {
   }
 
   handleDblClick(event, async (href, lineStart, lineEnd) => {
+    codeLinkPreview.close()
     const ok = await openFilePath(href, lineStart, lineEnd)
     if (ok) chatUI.navigateToFileViewer?.()
   })
@@ -1074,6 +1102,7 @@ watch(() => props.currentSessionId, () => {
   scrollFrameScheduler.cancelAll()
   scrollTick.value = 0
   userMsgIndexDrawer.close()
+  codeLinkPreview.close()
   userMsgIndexList.value = []
   // Reset "all loaded" hint and load-more tracking on session switch
   showAllLoaded.value = false
@@ -1164,6 +1193,7 @@ defineExpose({
   scrolledDown,
   closeUserMsgIndex,
   toggleUserMsgIndex,
+  closeCodePreview: () => codeLinkPreview.close(),
 })
 </script>
 

@@ -541,3 +541,60 @@ describe('ChatMessageList — transient more-messages hint', () => {
     expect(source).toMatch(/else \{[\s\S]*?showMoreHint\.value = false/)
   })
 })
+
+describe('ChatMessageList — CodeLinkPreview integration', () => {
+  it('imports CodeLinkPreview and useCodeLinkPreview', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'")
+    expect(source).toContain("import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'")
+  })
+
+  it('instantiates useCodeLinkPreview with containerRef bound to messagesRef', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef })')
+  })
+
+  it('renders CodeLinkPreview conditioned on codeLinkPreview.enabled.value', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('<CodeLinkPreview')
+    expect(source).toContain('v-if="codeLinkPreview.enabled.value"')
+    expect(source).toContain(':preview="codeLinkPreview"')
+  })
+
+  it('handles modifier click or touch tap for in-place code preview in handleChatClick', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain('if (codeLinkPreview.enabled.value)')
+    expect(source).toContain('codeLinkPreview.handleClick(event)')
+  })
+
+  it('closes preview when clicking file-open button or double clicking', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // File-open button handler
+    const btnSection = source.slice(source.indexOf("closest('.chat-file-open-btn')"))
+    expect(btnSection.slice(0, 300)).toContain('codeLinkPreview.close()')
+
+    // Double click handler
+    const dblSection = source.slice(source.indexOf('handleDblClick(event'))
+    expect(dblSection.slice(0, 200)).toContain('codeLinkPreview.close()')
+  })
+
+  it('closes preview on session switch', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const sessionWatch = source.slice(source.indexOf('watch(() => props.currentSessionId'))
+    expect(sessionWatch.slice(0, 1000)).toContain('codeLinkPreview.close()')
+  })
+
+  it('exposes closeCodePreview in defineExpose', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const exposeSection = source.slice(source.indexOf('defineExpose({'))
+    expect(exposeSection).toContain('closeCodePreview: () => codeLinkPreview.close()')
+  })
+})
+

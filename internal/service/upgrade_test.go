@@ -84,6 +84,16 @@ func TestGetUserRegistryBase_EnvVar(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_EnvVarLowercase(t *testing.T) {
+	origUpper, hasUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
+	os.Unsetenv("NPM_CONFIG_REGISTRY")
+	defer func() {
+		if hasUpper {
+			os.Setenv("NPM_CONFIG_REGISTRY", origUpper)
+		} else {
+			os.Unsetenv("NPM_CONFIG_REGISTRY")
+		}
+	}()
+
 	orig := os.Getenv("npm_config_registry")
 	defer os.Setenv("npm_config_registry", orig)
 	os.Setenv("npm_config_registry", "https://registry.example.com/")
@@ -118,6 +128,7 @@ func TestGetUserRegistryBase_InvalidEnvVarIgnored(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_FromNpmRc(t *testing.T) {
+	clearNpmEnv(t)
 	withTempHome(t)
 	writeNpmRc(t, "registry=https://registry.npmmirror.com\n")
 
@@ -126,12 +137,14 @@ func TestGetUserRegistryBase_FromNpmRc(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_NoNpmrc(t *testing.T) {
+	clearNpmEnv(t)
 	withTempHome(t)
 
 	assert.Equal(t, "", getUserRegistryBase())
 }
 
 func TestGetUserRegistryBase_CommentedNpmrc(t *testing.T) {
+	clearNpmEnv(t)
 	withTempHome(t)
 	writeNpmRc(t, "# registry=https://ignored.example.com\n")
 
@@ -139,6 +152,15 @@ func TestGetUserRegistryBase_CommentedNpmrc(t *testing.T) {
 }
 
 func TestGetUserRegistryBase_DegenerateValuesIgnored(t *testing.T) {
+	origLower, hasLower := os.LookupEnv("npm_config_registry")
+	os.Unsetenv("npm_config_registry")
+	defer func() {
+		if hasLower {
+			os.Setenv("npm_config_registry", origLower)
+		} else {
+			os.Unsetenv("npm_config_registry")
+		}
+	}()
 	for _, v := range []string{"http://", "https://", "http:", "default", "ftp://x"} {
 		orig := os.Getenv("NPM_CONFIG_REGISTRY")
 		os.Setenv("NPM_CONFIG_REGISTRY", v)
@@ -292,6 +314,29 @@ func withTempHome(t *testing.T) {
 	origUp := os.Getenv("USERPROFILE")
 	os.Setenv("USERPROFILE", dir)
 	t.Cleanup(func() { os.Setenv("USERPROFILE", origUp) })
+}
+
+func clearNpmEnv(t *testing.T) {
+	t.Helper()
+	origNpmUpper, hasNpmUpper := os.LookupEnv("NPM_CONFIG_REGISTRY")
+	os.Unsetenv("NPM_CONFIG_REGISTRY")
+	t.Cleanup(func() {
+		if hasNpmUpper {
+			os.Setenv("NPM_CONFIG_REGISTRY", origNpmUpper)
+		} else {
+			os.Unsetenv("NPM_CONFIG_REGISTRY")
+		}
+	})
+
+	origNpmLower, hasNpmLower := os.LookupEnv("npm_config_registry")
+	os.Unsetenv("npm_config_registry")
+	t.Cleanup(func() {
+		if hasNpmLower {
+			os.Setenv("npm_config_registry", origNpmLower)
+		} else {
+			os.Unsetenv("npm_config_registry")
+		}
+	})
 }
 
 func writeNpmRc(t *testing.T, content string) {

@@ -29,7 +29,14 @@
   <!-- Inline search bar (bottom of the preview), replacing the SearchDrawer
        bottom sheet for rendered markdown. Its open state is driven by the
        searchDrawer state via props; closing is reported upward. -->
-  <MarkdownSearchBar ref="searchBarRef" :open="!!searchOpen" :container="bodyRef" @close="emit('closeSearch')" /></template>
+  <MarkdownSearchBar ref="searchBarRef" :open="!!searchOpen" :container="bodyRef" @close="emit('closeSearch')" />
+
+  <!-- Markdown code-link click preview -->
+  <CodeLinkPreview
+    v-if="codeLinkPreview.enabled.value && viewMode === 'rendered'"
+    :preview="codeLinkPreview"
+  />
+</template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
@@ -53,6 +60,8 @@ import {
   type BlockInfo,
 } from '@/composables/useMarkdownDiff.ts'
 import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
+import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
 
 const props = defineProps<{
@@ -121,6 +130,7 @@ const { handleDblClick } = useDoubleClickCopy({
 
 const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
 const { isPC } = usePlatformDetect()
+const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef })
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -136,6 +146,22 @@ function handleClick(event: MouseEvent) {
 
     // Check for table row click — open row-form modal
     if (handleTableRowClick(event)) return
+
+    // Handle code-link preview clicks (desktop) or touch taps.
+    if (codeLinkPreview.enabled.value) {
+        const isTouch = codeLinkPreview.isTouchDevice()
+        const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
+        const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
+        const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]')
+        if ((isModifier && linkOrBtn) || (!isTouch && pathEl)) {
+            codeLinkPreview.handleClick(event)
+            return
+        }
+        if (isTouch && pathEl && pathEl.getAttribute('data-path-type') === 'file') {
+            codeLinkPreview.handleClick(event)
+            return
+        }
+    }
 
     // Check for commit-hash click
     const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
@@ -157,6 +183,7 @@ function handleClick(event: MouseEvent) {
         const lineStart = btn.getAttribute('data-line-start')
         const lineEnd = btn.getAttribute('data-line-end')
         if (filePath) {
+            codeLinkPreview.close()
             openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
         }
         return
@@ -186,6 +213,7 @@ function handleClick(event: MouseEvent) {
         // directly; otherwise resolve the relative href against the md's dir.
         const resolvedPath = annotatedPath
             || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
+        codeLinkPreview.close()
         openFilePath(resolvedPath, lineStart, lineEnd)
     })
 }

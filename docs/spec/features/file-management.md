@@ -119,6 +119,7 @@ sequenceDiagram
 - **文件刷新与差异高亮**：`useFileRefresh` 统一三种刷新触发（手动刷新按钮、fsnotify 自动刷新、聊天驱动刷新），保存滚动位置并高亮变更。Markdown 渲染模式使用块级差异标记（无闪烁动画），代码文件使用行级差异 + 两阶段闪烁（红色删除→蓝色新增）。编辑中文件被外部修改时弹窗确认，防止静默覆盖用户未保存的编辑。并发刷新自动去重和合并
 - **文件路径标注**：聊天中和代码预览中出现的文件路径自动标注为可点击链接，点击打开文件查看器。支持双候选路径解析：优先基于当前文件所在目录（baseDir）解析相对路径，解析失败时自动回退到项目根目录解析——解决相对路径在不同上下文中可能指向不同文件的问题。外部文件路径（项目根目录之外）也可标注和打开
 - **二进制文件处理**：后端检测并安全处理二进制文件。检测阶段读取前 8KB 查找 null 字节；二进制文本最多返回 64KB，并将非打印字符替换为 `.`；大文本最多返回 512KB，并在 UTF-8 边界截断。默认响应对二进制文件返回 `isBinary: true` 和空内容，前端显示占位符及“Open as text”按钮，用户确认后通过 `?forceText=1` 获取净化文本
+- **Markdown 代码链接预览**：Markdown 预览模式下，点击验证通过的代码文件路径或 `path:line` 链接时弹出代码切片预览浮层卡片。支持固定（Pin/Unpin）和头部拖拽；支持最大 200 行 / 512 KiB 切片保护与超大文件（> 2 MiB）警告；触摸设备点击路径弹出 BottomSheet 抽屉；桌面端支持 Ctrl/Cmd+Click 快捷固定预览。提供 `markdownCodeLinkPreview` 本地设置开关（默认关闭），关闭时完全禁用监听并清理 8 MiB LRU 缓存
 - **键盘快捷键**：Ctrl+C/X/V 剪贴板操作、Delete/Shift+Delete 删除、Ctrl+N/Ctrl+Shift+N 新建文件/文件夹、F2 重命名、Alt+Up/Backspace 上级目录、Ctrl+R/F5 刷新、Ctrl+Shift+H 显示隐藏文件、Ctrl+Shift+M/Ctrl+A 多选、Ctrl+1/Ctrl+2 列表/网格切换
 
 ### 设计要点
@@ -134,5 +135,6 @@ sequenceDiagram
 - **符号提取有文件大小限制**：超过 1MB 的文件跳过符号提取，避免大文件拖慢响应。Markdown 文件特殊处理，提取标题层级而非代码符号
 - **CodeMirror 浏览/编辑双模式**：同一组件通过 `editable` prop 切换浏览与编辑模式。编辑模式使用特殊引用管理避免 Vue reactive proxy 破坏 CodeMirror 的 undo/redo；未保存时退出触发确认对话框。代码编辑是文件查看的自然延伸——用户看完代码后直接修改，无需切换工具
 - **Markdown 标题锚定滚动同步**：在 Markdown 渲染预览与源码编辑之间切换时，通过最近 TOC 标题锚定滚动位置。标题对齐为主策略，百分比比率为降级方案——解决切换视图后丢失阅读位置的问题
+- **Markdown 代码预览的单例与事件委托设计**：全屏范围内至多维持一个活动预览实例，避免多浮层重叠消耗 DOM 与内存。在 Markdown body 根节点使用事件代理监听 `mouseout`/`focusin`/`focusout`/`click`，零侵入 marked 渲染产物；仅针对经过验证的 `data-path-type="file"` 目标触发预览。4 象限智能锚定（`placeNearAnchor`）结合 CSS zoom 自适应边界计算，确保任何视口尺寸与缩放比例下弹窗不溢出
 - **目录树下载使用 File System Access API**：选择本地目标目录后逐文件写入，无需后端打包，支持任意大小目录
 - **文件夹上传使用 webkitGetAsEntry**：递归遍历拖放的目录项，提取所有文件（含相对路径）和空目录，回退到扁平模式
