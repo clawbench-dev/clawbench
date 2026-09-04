@@ -99,6 +99,8 @@ sequenceDiagram
 - **文件查看与编辑**：代码文件使用 CodeMirror 渲染，支持浏览/编辑双模式切换。浏览模式提供语法高亮、行号、VS Code 风格 sticky scroll（作用域定义行钉顶）和代码符号大纲；编辑模式提供 undo/redo、脏状态追踪、退出确认和语言感知的自动补全（11 种语言，基于 CodeMirror 内置补全源）。Markdown 支持渲染预览与源码编辑的标题锚定滚动同步；图片、PDF、音频（内联播放器）、视频（内联播放器）和 Office 文档使用专用预览器；OpenAPI 文件以 Swagger UI 渲染，支持"Try it out"在线测试（CORS 代理转发 API 请求绕过浏览器限制）。无法安全预览的类型回退到下载或文本模式
 - **文件内查找（VS Code 风格搜索条）**：`Ctrl+F`/`Cmd+F` 在代码查看与 Markdown 预览中打开内嵌搜索条——三个选项图标（大小写 Aa / 全词 ab / 正则 .*）内联在输入框内，支持上一个/下一个跳转、匹配计数，编辑模式下附带替换行。CodeMirror 用自定义 ViewPlugin 渲染面板（内建 `@codemirror/search` 面板的扁平 DOM 在窄面板下会把选项组/替换组拆行，自定义实现保证整组换行），Markdown 预览复用 `MarkdownSearchBar`（底部全宽内嵌条，不再弹 SearchDrawer 底部弹框）
 - **TOC 停靠栏**：Markdown 渲染的目录面板支持左侧/右侧停靠切换（标题栏 PanelLeft/PanelRight 图标，偏好持久化到 localStorage）；导出 HTML 时 TOC 改为右侧内联常驻侧栏，可收起到窄 rail，点击条目滚动不关闭
+- **Markdown 渲染与导出**：Markdown 渲染预览与源码编辑共享标题锚定滚动同步；渲染视图工具栏提供「导出 HTML」——不再克隆屏幕上 DOM，而是从源 markdown 经 `useMarkdownRenderPipeline` 共享渲染管线重建（与 MarkdownPreview 同一份 render + 路径标注 + 图片重写逻辑），产物为自包含单文件：mermaid 已渲染、图片 base64 内嵌、KaTeX 字体按文档实际用到的 family 转 data URI、固定右侧 TOC rail、携带用户代码/界面字体选择、灯箱缩放/平移交互。预览与导出共用管线避免样式漂移，`file://` 打开观感与 App 内一致
+- **文件分享链接**：FileHeader 提供「分享链接」入口，为任意文件生成不可猜测的随机 token 公开链接（`file_shares` 表映射 token → 绝对路径）。任何人免登录即可只读查看（`/share/{token}` 独立 SPA，类型分派渲染：Markdown 带 TOC、代码、图片/PDF/音视频/Office、OpenAPI）并下载原文件。管理端点（POST/GET/DELETE `/api/share`）走鉴权，公开数据端点 `/api/share/{token}/file|local|download` 无鉴权——token 即唯一凭证，无记录一律 404 零暴露。重新生成旋转 token 使旧链接立即失效；删除/批量删除/重命名/移动文件自动清理关联分享；「已分享文件」抽屉列出所有分享（打开文件/新标签页/复制链接/一键清空）
 - **Excalidraw 画布**：`.excalidraw` 文件直接以画布编辑模式打开（无只读浏览态），通过 iframe 内嵌独立 Excalidraw 构建实现绘制与编辑。保存写回原文件，退出时检测未保存修改并确认；语言和主题跟随应用（自动发送到 iframe），与代码编辑器共享同一套脏检查保存流程
 - **代码符号提取**：通过 tree-sitter（纯 Go，无 CGO）从源代码文件提取 17 种符号（class、function、method、variable 等），支持 200+ 编程语言。用户快速了解文件的结构和 API
 - **Sticky Scroll**：代码浏览模式下，将当前视口外层作用域的定义行（函数/类）钉顶显示，最多 5 行。点击钉顶行可平滑滚动到定义位置。基于后端 tree-sitter 符号数据，解决长文件中上下文迷失的问题
@@ -130,6 +132,8 @@ sequenceDiagram
 - **文件覆盖层使用导航栈**：`useFileNavStack` 管理文件预览栈。点击文件或文件内链接时入栈，返回操作出栈，关闭覆盖层清空栈；目录浏览和面包屑状态由文件管理模块独立维护
 - **双候选路径解析**：文件路径标注时，相对路径同时解析出 baseDir 候选和 projectRoot 候选。标注阶段存储两个候选路径，异步验证时如果主候选不存在但备选存在，自动替换——避免因路径解析上下文不同而导致标注失效
 - **路径穿越防护是 symlink 感知的**：路径校验先解析 symlink 再判断是否在项目根目录下——简单的字符串比较会被 symlink 绕过
+- **分享链接以不可猜测 token 为唯一凭证**：token 是分享链接唯一防线，因此刻意保持无状态公开访问（不给公开端点加登录），换取"发给任何人即开即用"的零摩擦；无分享记录时一律 404，功能不被使用时零暴露。关闭/重新生成即旋转 token 使旧链接立即失效，不需要令牌黑名单
+- **导出用共享管线而非 DOM 克隆**：HTML 导出从源 markdown 重跑渲染管线而不是克隆屏幕 DOM——克隆会把交互态样式、懒加载内容一并带入且随预览实现漂移；共享管线保证独立文档与 App 内预览逐像素一致，也避免两套渲染逻辑长期分叉
 - **fsnotify 防抖**：文件保存可能触发多个底层事件（写入、属性变更、close），防抖避免前端反复刷新
 - **缩略图是按需生成的**：不预生成所有图片的缩略图，而是请求时才生成——节省存储空间，且缩略图可从原图随时重建
 - **预览器按能力分流**：`FileViewer` 根据文件类型选择 `OfficePreview`、`OpenApiPreview`、`PdfPreview`、`AudioPreview`（内联播放器）、`VideoPreview`（内联播放器）、`CodeMirrorViewer`（代码浏览+编辑）或 `MarkdownPreview`；所有本地资源统一通过[本地文件服务](../infra/local-file-serving.md)加载

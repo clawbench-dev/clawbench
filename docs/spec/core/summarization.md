@@ -38,6 +38,7 @@ flowchart LR
 - **聊天自动摘要**：聊天会话正常完成时自动生成摘要（取消/断线的会话不触发）。`summarizeMessage` 统一调度入口固定采用「提取结论」策略，直接提取最后回答（`ExtractLastAnswerFromBlocks`），不做 AI 压缩。完成后通过 `summary_update` WS 事件推送前端（含 SummaryCards）
 - **任务执行摘要**：定时任务执行完成后生成摘要，与聊天摘要共享 `summarizeMessage` 调度入口和存储模型，续接对话时无需类型转换
 - **SummaryCards 结构化卡片**：摘要结果携带结构化卡片元数据（`SummaryCards`），持久化到 `summaries.summary_cards` 列。包含三类卡片：工具卡片（`SummaryTool`，记录工具名称和输入摘要）、定时任务 ID（关联执行记录）、ask-question 卡片（`AskQuestionCard`，含标题和选项）。前端据此在摘要视图中渲染工具调用摘要和交互选项，无需加载完整消息内容
+- **摘要视图 warning/error 横幅**：摘要生成时把原回复中的 warning/error 块收集进 `SummaryCards.Warnings` 通道（与 file-changes 卡片同机制），随 DB → loadHistory API / summary_update WS 透传到前端，摘要分支渲染时复用原文的横幅样式与继续/重试按钮逻辑——消息一旦有摘要，后端会把 content 剥离为 `{"blocks":[]}`，warning/error 数据不再随原文下发，因此必须走摘要卡片通道才能在摘要视图保留错误提示
 - **TTS 语音摘要**：TTS 请求触发时按需生成语音专用摘要。提取 AI 结论和 AskUserQuestion 内容，合并为可朗读文本。结果缓存到独立的 `tts_summaries` 表。语音摘要后端可配置：`simple`（提取结论）或 `api`（LLM 二次压缩）
 - **多 pass 压缩**：AI（语音）摘要结果超过 4KB 时自动触发二次摘要，最多两轮。防止超长中间结果传递给下游（尤其是 TTS）
 - **Block 提取算法**：`ExtractLastAnswerFromBlocks` 跳过中间推理，提取最后一个 tool_use 之后的文本作为 AI 结论。无后续文本时回退到最长的文本块——AI Agent 的对话模式通常在工具调用后给出最终综合回答

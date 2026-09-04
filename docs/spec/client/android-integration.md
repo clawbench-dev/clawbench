@@ -82,6 +82,8 @@ flowchart LR
 | `/api/ai/events/pending` | GET | 离线期间漏发事件 |
 
 > Web 前端使用 `/api/client-log`；当前 Android `AppLog` 仍 POST 到 `/api/android-log`。服务端将两条路由都交给 `ServeClientLog`，因此旧 APK 与新 Web 客户端可以同时工作。
+>
+> 服务端日志落盘带 50MB 轮转——每次 append 前检查文件大小，超限即轮转为 `.1` 并重开新文件，`js.log`/`android.log` 不再无限增长。
 
 ### 功能清单
 

@@ -95,6 +95,8 @@ Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture�
 
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `public/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载它，Vue 主包不包含 React 依赖。
 
+`web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
+
 ## 开发规则
 
 - **前端必须使用 appLog**：所有前端代码使用 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`（测试文件除外）。Tag 约定：短 PascalCase 模块名。
