@@ -691,9 +691,14 @@ describe('CodeLinkPreview.vue', () => {
     expect(chatContext.attachedFiles.value).toHaveLength(0)
   })
 
-  it('triggers revealInTree and calls store.loadFiles and switches tab to browse', async () => {
+  it('triggers revealInTree and locates the file via the shared file-manager behavior', async () => {
     const switchTabMock = vi.fn()
     const loadFilesSpy = vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined as any)
+    // navToFileInManager first verifies existence through /api/file/batch-exists.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/main.ts': 'file' } }),
+    }))
     const preview = createMockPreviewController()
     mount(CodeLinkPreview, {
       props: { preview },
@@ -707,13 +712,14 @@ describe('CodeLinkPreview.vue', () => {
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
     await nextTick()
+    await nextTick()
 
-    expect(loadFilesSpy).toHaveBeenCalledWith('src')
+    expect(loadFilesSpy).toHaveBeenCalledWith('src', false, 0, true)
     expect(preview.close).toHaveBeenCalled()
-    expect(switchTabMock).toHaveBeenCalledWith('browse')
+    vi.unstubAllGlobals()
   })
 
-  it('shows only the file name (not the directory path) in the sheet header', async () => {
+  it('shows file name in title and parent dir in the draggable header marquee', async () => {
     const writeTextMock = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
       clipboard: { writeText: writeTextMock },
@@ -734,19 +740,24 @@ describe('CodeLinkPreview.vue', () => {
       global: { plugins: [i18n] },
     })
 
-    // Header title shows only the bare file name + a subdued line reference —
-    // the full directory path is intentionally not rendered (saves space).
+    // Header title shows the file name + line reference.
     const titleEl = document.querySelector('.bs-header-title.code-preview-sheet-title')
     expect(titleEl).not.toBeNull()
     expect(titleEl?.textContent).toContain('agent-loop.ts')
     expect(titleEl?.textContent).not.toContain('packages/agent/src/')
-    expect(document.querySelector('.bs-header-description')).toBeNull()
+
+    // Header description shows the parent directory (no file name), draggable.
+    const dirMarquee = document.querySelector('.bs-header-description.code-preview-sheet-dir-marquee')
+    expect(dirMarquee).not.toBeNull()
+    expect(dirMarquee?.textContent).toContain('packages/agent/src')
+    expect(dirMarquee?.textContent).not.toContain('agent-loop.ts')
 
     const rangeEl = document.querySelector('.code-preview-sheet-title .code-preview-line-ref')
     expect(rangeEl).not.toBeNull()
     expect(rangeEl?.textContent).toBe(':245-250')
 
-    const copyBtn = document.querySelector('.bs-header-actions .copy-path-btn') as HTMLButtonElement
+    // Copy path now lives in the second-row toolbar.
+    const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn') as HTMLButtonElement
     expect(copyBtn).not.toBeNull()
 
     // Clicking the copy button copies the full path
@@ -756,12 +767,48 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
+  it('hides the parent-dir marquee when the file name needs the header space', async () => {
+    // Mock narrow header + very wide title so the file name overflows.
+    const origCW = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')
+    const origSW = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollWidth')
+    Object.defineProperty(Element.prototype, 'clientWidth', { configurable: true, get: () => 200 })
+    Object.defineProperty(Element.prototype, 'scrollWidth', { configurable: true, get: () => 900 })
+
+    const preview = createMockPreviewController({
+      mode: ref('sheet'),
+      target: ref({
+        filePath: 'packages/agent/src/agent-loop.ts',
+        lineStart: 179,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    await nextTick()
+
+    // Title scrollWidth (900) + min-path margin > available width -> path hidden.
+    expect(document.querySelector('.code-preview-sheet-dir-marquee')).toBeNull()
+
+    if (origCW) Object.defineProperty(Element.prototype, 'clientWidth', origCW)
+    else delete (Element.prototype as Record<string, unknown>).clientWidth
+    if (origSW) Object.defineProperty(Element.prototype, 'scrollWidth', origSW)
+    else delete (Element.prototype as Record<string, unknown>).scrollWidth
+  })
+
   it('renders thumb-friendly footer actions in sheet mode', async () => {
     const switchTabMock = vi.fn()
     const loadFilesSpy = vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined as any)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/main.ts': 'file' } }),
+    }))
     const preview = createMockPreviewController({
       mode: ref('sheet'),
       openFull: vi.fn(),
+      refresh: vi.fn(),
     })
 
     mount(CodeLinkPreview, {
@@ -775,43 +822,45 @@ describe('CodeLinkPreview.vue', () => {
     const footer = document.querySelector('.code-preview-sheet-footer')
     expect(footer).not.toBeNull()
 
+    // Footer layout: Refresh (leftmost icon), Reveal in file tree, Quote to Chat, Open Full
+    const collapseBtn = footer?.querySelector('.collapse-btn')
+    expect(collapseBtn).toBeNull()
+
+    // Refresh icon button is back in the footer, first child.
+    const refreshBtn = footer?.querySelector('.refresh-btn') as HTMLButtonElement
+    expect(refreshBtn).not.toBeNull()
+    expect(footer?.firstElementChild).toBe(refreshBtn)
+    refreshBtn.click()
+    expect(preview.refresh).toHaveBeenCalled()
+
     // Test Open Full button in footer
     const openFullBtn = footer?.querySelector('.primary-btn') as HTMLButtonElement
     expect(openFullBtn).not.toBeNull()
     openFullBtn.click()
     expect(preview.openFull).toHaveBeenCalled()
 
-    // Test Refresh button in footer
-    const refreshBtn = footer?.querySelector('.refresh-btn') as HTMLButtonElement
-    expect(refreshBtn).not.toBeNull()
-    refreshBtn.click()
-    expect(preview.refresh).toHaveBeenCalled()
-
-    // Test Reveal in file tree in row2 tools
-    const row2 = document.querySelector('.code-preview-sheet-row2')
-    const revealBtn = row2?.querySelector('button[title="Reveal in file tree"]') as HTMLButtonElement
-    expect(revealBtn).not.toBeNull()
-    revealBtn.click()
-    await nextTick()
-    expect(loadFilesSpy).toHaveBeenCalledWith('src')
-    expect(switchTabMock).toHaveBeenCalledWith('browse')
-
-    // Test Collapse button in footer
-    const collapseBtn = footer?.querySelector('.collapse-btn') as HTMLButtonElement
-    expect(collapseBtn).not.toBeNull()
-    collapseBtn.click()
-    expect(preview.close).toHaveBeenCalled()
-
-    // Test Quote to Chat button in footer
+    // Test Quote to Chat button in footer (closes the sheet)
     const quoteBtn = footer?.querySelector('.quote-btn') as HTMLButtonElement
     expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
     expect(preview.close).toHaveBeenCalled()
     expect(switchTabMock).toHaveBeenCalledWith('chat')
+
+    // Reveal in tree lives in the footer. Re-open the sheet first (quote closed it).
+    preview.visible.value = true
+    await nextTick()
+    const newFooter = document.querySelector('.code-preview-sheet-footer')
+    const revealBtn = newFooter?.querySelector('.reveal-btn') as HTMLButtonElement
+    expect(revealBtn).not.toBeNull()
+    revealBtn.click()
+    await nextTick()
+    await nextTick()
+    expect(loadFilesSpy).toHaveBeenCalledWith('src', false, 0, true)
+    vi.unstubAllGlobals()
   })
 
-  it('displays context metadata badge with language, line count, and size', () => {
+  it('displays context metadata with line count and size (no file-type label)', () => {
     const preview = createMockPreviewController({
       fileContent: ref({
         content: 'line 1\nline 2',
@@ -839,7 +888,8 @@ describe('CodeLinkPreview.vue', () => {
 
     const metaEl = document.querySelector('.code-preview-meta') as HTMLElement
     expect(metaEl).not.toBeNull()
-    expect(metaEl.textContent).toContain('TS')
+    // The extension already conveys the type, so no language label is shown.
+    expect(metaEl.textContent).not.toContain('TS')
     expect(metaEl.textContent).toContain('120 lines')
     expect(metaEl.textContent).toContain('2.0 KB')
   })
@@ -1358,20 +1408,21 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // Drawer header: icon + file name title only (no full-path row)
+    // Drawer header: icon + file name title + parent-dir marquee
     const title = document.querySelector('.bs-header-title.code-preview-sheet-title')
     expect(title).not.toBeNull()
     expect(title?.textContent).toContain('agent-loop.ts')
     expect(title?.querySelector('.code-preview-line-ref')?.textContent).toBe(':179')
-    expect(document.querySelector('.bs-header-description')).toBeNull()
+    const dirMarquee = document.querySelector('.bs-header-description.code-preview-sheet-dir-marquee')
+    expect(dirMarquee).not.toBeNull()
+    expect(dirMarquee?.textContent).toContain('packages/agent/src')
 
-    // Header: only the copy-path shortcut lives in the header actions
-    const headerActions = document.querySelector('.bs-header-actions')
-    const copyBtn = headerActions?.querySelector('.copy-path-btn')
+    // Copy path now lives in the second-row toolbar (header has no buttons)
+    expect(document.querySelector('.bs-header-actions')).toBeNull()
+    const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn')
     expect(copyBtn).not.toBeNull()
-    expect(headerActions?.querySelectorAll('button').length).toBe(1)
 
-    // Body toolbar: meta + code view tools (Search, Wrap, Copy Code, Reveal in Tree)
+    // Body toolbar: meta + tools (Copy Path, Search, Wrap, Line Numbers, Copy Code)
     const row2 = document.querySelector('.code-preview-sheet-row2')
     expect(row2).not.toBeNull()
     const metaInfo = row2?.querySelector('.code-preview-sheet-meta-info')
@@ -1379,16 +1430,19 @@ describe('CodeLinkPreview.vue', () => {
 
     const tools = row2?.querySelectorAll('.code-preview-sheet-tools button')
     expect(tools?.length).toBe(5)
-    expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toContain('Find')
-    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toMatch(/wrap/i)
-    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toContain('Line Numbers')
-    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toMatch(/copy/i)
-    expect(tools?.[4]?.getAttribute('aria-label') || tools?.[4]?.getAttribute('title')).toContain('Reveal in file tree')
+    expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toMatch(/copy/i)
+    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toContain('Find')
+    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toMatch(/wrap/i)
+    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toContain('Line Numbers')
+    expect(tools?.[4]?.getAttribute('aria-label') || tools?.[4]?.getAttribute('title')).toMatch(/copy/i)
 
-    // Bottom Sheet Footer has collapse button
+    // Bottom Sheet Footer: Refresh icon first, then Reveal / Quote / Open Full
     const footer = document.querySelector('.code-preview-sheet-footer')
-    const collapseBtn = footer?.querySelector('.collapse-btn')
-    expect(collapseBtn).not.toBeNull()
+    expect(footer?.querySelector('.collapse-btn')).toBeNull()
+    expect(footer?.querySelector('.refresh-btn')).not.toBeNull()
+    expect(footer?.querySelector('.reveal-btn')).not.toBeNull()
+    expect(footer?.querySelector('.quote-btn')).not.toBeNull()
+    expect(footer?.querySelector('.primary-btn')).not.toBeNull()
 
     wrapper.unmount()
   })
@@ -1426,13 +1480,17 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('supports thumb-friendly sheet layout: header tools, body toolbar, collapse & refresh in footer', async () => {
+  it('supports thumb-friendly sheet layout: header copy path, body toolbar, footer locate/quote/open', async () => {
     const writeTextMock = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
       clipboard: { writeText: writeTextMock },
     })
     const switchTabMock = vi.fn()
     const loadFilesSpy = vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined as any)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'packages/agent/src/types.ts': 'file' } }),
+    }))
 
     const preview = createMockPreviewController({
       mode: ref('sheet'),
@@ -1458,63 +1516,61 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // 1. Header: copy-path shortcut only (Search/Wrap/Copy/Reveal stay in the body toolbar)
-    const headerActions = document.querySelector('.bs-header-actions')
-    const copyPathBtn = headerActions?.querySelector('.copy-path-btn') as HTMLElement
+    // 1. Header has no action buttons; copy-path lives in the body toolbar.
+    expect(document.querySelector('.bs-header-actions')).toBeNull()
+    const copyPathBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn') as HTMLElement
     expect(copyPathBtn).not.toBeNull()
     copyPathBtn.click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('packages/agent/src/types.ts:415-420')
 
-    // 2. Body toolbar: Search -> Wrap -> Line Numbers -> Copy Code -> Reveal in Tree
+    // 2. Body toolbar: Copy Path -> Search -> Wrap -> Line Numbers -> Copy Code
     const row2 = document.querySelector('.code-preview-sheet-row2')
     const toolBtns = row2?.querySelectorAll('.code-preview-sheet-tools button')
     expect(toolBtns?.length).toBe(5)
 
-    // Tool 0: Search opens the in-preview search bar
-    const searchBtn = toolBtns?.[0] as HTMLElement
+    // Tool 1: Search opens the in-preview search bar
+    const searchBtn = toolBtns?.[1] as HTMLElement
     expect(searchBtn.getAttribute('aria-label') || searchBtn.getAttribute('title')).toContain('Find')
     searchBtn.click()
     await nextTick()
     expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
 
-    // Tool 1: Wrap toggle
-    const wrapBtn = toolBtns?.[1] as HTMLElement
+    // Tool 2: Wrap toggle
+    const wrapBtn = toolBtns?.[2] as HTMLElement
     expect(wrapBtn.getAttribute('aria-label') || wrapBtn.getAttribute('title')).toMatch(/wrap/i)
 
-    // Tool 2: Line numbers toggle (uses the shared global file-viewer setting)
-    const lineNumBtn = toolBtns?.[2] as HTMLElement
+    // Tool 3: Line numbers toggle (uses the shared global file-viewer setting)
+    const lineNumBtn = toolBtns?.[3] as HTMLElement
     expect(lineNumBtn.getAttribute('aria-label') || lineNumBtn.getAttribute('title')).toContain('Line Numbers')
     lineNumBtn.click()
     await nextTick()
     expect(document.querySelectorAll('.code-preview-line-row .code-preview-line-number').length).toBe(0)
 
-    // Tool 3: Copy Code
-    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toMatch(/copy/i)
-    ;(toolBtns?.[3] as HTMLElement).click()
+    // Tool 4: Copy Code
+    expect(toolBtns?.[4]?.getAttribute('aria-label') || toolBtns?.[4]?.getAttribute('title')).toMatch(/copy/i)
+    ;(toolBtns?.[4] as HTMLElement).click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('export interface AgentContext { ... }')
 
-    // Tool 4: Reveal in tree (pushed to the right to avoid accidental taps)
-    expect(toolBtns?.[4]?.getAttribute('aria-label') || toolBtns?.[4]?.getAttribute('title')).toContain('Reveal in file tree')
-    ;(toolBtns?.[4] as HTMLElement).click()
-    await nextTick()
-    expect(loadFilesSpy).toHaveBeenCalledWith('packages/agent/src')
-    expect(switchTabMock).toHaveBeenCalledWith('browse')
-
-    // 3. Footer: Leftmost is collapse, followed by refresh
+    // 3. Footer: Refresh icon first, then Reveal in file tree, Quote to Chat, Open Full
     const footer = document.querySelector('.code-preview-sheet-footer')
     expect(footer).not.toBeNull()
-
-    const collapseBtn = footer?.querySelector('.collapse-btn') as HTMLElement
-    expect(collapseBtn).not.toBeNull()
-    collapseBtn.click()
-    expect(preview.close).toHaveBeenCalled()
+    expect(footer?.querySelector('.collapse-btn')).toBeNull()
 
     const refreshBtn = footer?.querySelector('.refresh-btn') as HTMLElement
     expect(refreshBtn).not.toBeNull()
+    expect(footer?.firstElementChild).toBe(refreshBtn)
     refreshBtn.click()
     expect(preview.refresh).toHaveBeenCalled()
+
+    const revealBtn = footer?.querySelector('.reveal-btn') as HTMLElement
+    expect(revealBtn).not.toBeNull()
+    revealBtn.click()
+    await nextTick()
+    await nextTick()
+    expect(loadFilesSpy).toHaveBeenCalledWith('packages/agent/src', false, 0, true)
+    vi.unstubAllGlobals()
 
     wrapper.unmount()
   })

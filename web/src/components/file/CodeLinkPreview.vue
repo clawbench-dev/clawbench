@@ -16,28 +16,17 @@
       <span class="bs-header-icon">
         <FileIcon :path="targetFilePath" :size="18" />
       </span>
-      <span class="bs-header-title code-preview-sheet-title">
+      <span ref="sheetTitleRef" class="bs-header-title code-preview-sheet-title">
         {{ fileBaseName }}<span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
       </span>
-      <span class="bs-header-actions code-preview-sheet-header-actions">
-        <!-- Copy Path (the only action in the header; the rest stay in the
-             second-row toolbar for thumb ergonomics) -->
-        <button
-          class="code-preview-btn icon-only copy-path-btn"
-          :class="{ 'is-copied': isPathCopied }"
-          :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-          :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-          @click.stop="handleCopyPath"
-        >
-          <svg v-if="isPathCopied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-          </svg>
-        </button>
-      </span>
+      <div
+        v-if="fileDirPath && !titleOverflows"
+        class="bs-header-description code-preview-sheet-dir-marquee"
+      >
+        <!-- Parent directory only (no file name). Hidden when the file name
+             needs the space; otherwise draggable to reveal the full path. -->
+        <HeaderMarquee :text="fileDirPath">{{ fileDirPath }}</HeaderMarquee>
+      </div>
     </template>
 
     <div class="code-preview-sheet-body">
@@ -50,6 +39,22 @@
         </div>
 
         <div class="code-preview-sheet-tools">
+          <!-- Copy Path -->
+          <button
+            class="code-preview-btn icon-only copy-path-btn"
+            :class="{ 'is-copied': isPathCopied }"
+            :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+            :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+            @click="handleCopyPath"
+          >
+            <svg v-if="isPathCopied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+            </svg>
+          </button>
           <!-- Search in Preview -->
           <button
             class="code-preview-btn icon-only"
@@ -105,17 +110,6 @@
             <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
-          </button>
-          <!-- Reveal in Tree (Folder) -->
-          <button
-            class="code-preview-btn icon-only"
-            :title="t('file.codePreview.revealInTree')"
-            :aria-label="t('file.codePreview.revealInTree')"
-            @click="handleRevealInTree"
-          >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
           </button>
         </div>
@@ -180,19 +174,7 @@
     <!-- Bottom Action Bar (Thumb area - Left-hand optimized) -->
     <template #footer>
       <div class="code-preview-sheet-footer">
-        <!-- Collapse Sheet (Leftmost: natural left-hand thumb rest) -->
-        <button
-          class="code-preview-footer-btn icon-btn collapse-btn"
-          :title="t('file.codePreview.collapse')"
-          :aria-label="t('file.codePreview.collapse')"
-          @click="preview.close()"
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-
-        <!-- Refresh Code (Next to collapse: easy reach for left thumb) -->
+        <!-- Refresh (leftmost icon button) -->
         <button
           class="code-preview-footer-btn icon-btn refresh-btn"
           :class="{ 'is-loading': preview.status.value === 'loading' }"
@@ -205,19 +187,21 @@
           </svg>
         </button>
 
-        <!-- Quote to Chat -->
+        <!-- Open directory: opens the containing dir in the file manager
+             and selects the file (same behavior as file-search results). -->
         <button
-          class="code-preview-footer-btn action-btn quote-btn"
-          :title="t('file.codePreview.quoteToChat')"
-          @click="handleQuoteToChat"
+          class="code-preview-footer-btn reveal-btn"
+          :title="t('file.codePreview.revealInTree')"
+          :aria-label="t('file.codePreview.revealInTree')"
+          @click="handleRevealInTree"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          <span>{{ t('file.codePreview.quoteToChat') }}</span>
+          <span class="reveal-btn-label">{{ t('file.codePreview.revealInTree') }}</span>
         </button>
 
-        <!-- Open Full / View Details -->
+        <!-- Open Full / View Details — kept next to "Locate file" -->
         <button
           v-if="preview.errorCode.value === 'too-large'"
           class="code-preview-footer-btn action-btn primary-btn"
@@ -234,6 +218,18 @@
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
           </svg>
           <span>{{ t('file.codePreview.openFull') }}</span>
+        </button>
+
+        <!-- Quote to Chat -->
+        <button
+          class="code-preview-footer-btn action-btn quote-btn"
+          :title="t('file.codePreview.quoteToChat')"
+          @click="handleQuoteToChat"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span>{{ t('file.codePreview.quoteToChat') }}</span>
         </button>
       </div>
     </template>
@@ -585,6 +581,7 @@ import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/utils/codeLinkPreview'
@@ -592,7 +589,7 @@ import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/
 import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
 import { store } from '@/stores/app'
-import { dirName } from '@/utils/path'
+import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import '@/assets/code-link-preview.css'
 
@@ -622,6 +619,41 @@ const bodyRef = ref<{ scrollToTargetLine: () => void; scrollLineIntoView: (i: nu
 const firstActionBtnRef = ref<HTMLButtonElement | null>(null)
 const copied = ref(false)
 const isWordWrap = ref<boolean>(true)
+
+// ── Sheet header title overflow detection ──
+// The drawer header shows the file name first and the parent-dir path second.
+// When the file name would not fit even with the path hidden, the path is not
+// rendered at all so the name gets every pixel available.
+const sheetTitleRef = ref<HTMLElement | null>(null)
+const titleOverflows = ref(false)
+let titleResizeObserver: ResizeObserver | null = null
+
+function measureSheetTitle() {
+  const title = sheetTitleRef.value
+  if (!title) return
+  const header = title.parentElement // the .bs-header flex row
+  if (!header) return
+  // Reserve the leading file icon + paddings. A parent-dir marquee that would
+  // only get a sliver (< 60px) is not worth showing — the file name should
+  // never be starved for space.
+  const MIN_PATH_PX = 60
+  const avail = header.clientWidth - 40 // icon (24) + gaps/padding
+  // No layout (e.g. tests / display:none): keep the path visible by default.
+  if (!(header.clientWidth > 0)) {
+    titleOverflows.value = false
+    return
+  }
+  const titleNeeds = title.scrollWidth
+  titleOverflows.value = titleNeeds + MIN_PATH_PX > Math.max(1, avail)
+}
+
+watch(
+  () => [props.preview.target.value?.filePath, props.preview.target.value?.lineStart, props.preview.target.value?.lineEnd, props.preview.visible.value],
+  () => {
+    // Let the DOM settle with the new title before measuring.
+    nextTick(() => measureSheetTitle())
+  }
+)
 
 try {
   const saved = localStorage.getItem(STORAGE_KEY_WRAP)
@@ -713,11 +745,11 @@ function formatFileSize(bytes: number): string {
 const contextMeta = computed(() => {
   const filePath = props.preview.target.value?.filePath
   if (!filePath) return ''
-  const ft = getFileType(filePath)
-  const langLabel = ft.label || ft.lang || 'Text'
   const total = props.preview.slicedCode.value?.totalLines
   const size = props.preview.fileContent.value?.size
-  const parts = [langLabel]
+  // File type/language label is omitted: the file-name extension already
+  // conveys it. Keep line count + size, which the name does not show.
+  const parts: string[] = []
   if (total) {
     parts.push(t('file.codePreview.linesCount', { n: total }))
   }
@@ -794,11 +826,11 @@ const handleQuoteToChat = () => {
 const handleRevealInTree = async () => {
   const filePath = props.preview.target.value?.filePath
   if (!filePath) return
-  const parentDir = dirName(filePath)
   props.preview.close()
-  await store.loadFiles(parentDir)
-  switchTab('browse')
-  useToast().show(t('file.codePreview.revealedInTree', { dir: parentDir || '/' }), { icon: '📂', type: 'info', duration: 2000 })
+  // Shared "reveal in file manager" behavior (same as file-search results):
+  // navigates to the containing directory and highlights the file there.
+  // No toast — the resulting file-manager navigation is self-evident.
+  await navToFileInManager(filePath)
 }
 
 const toggleWordWrap = () => {
@@ -1517,6 +1549,17 @@ onMounted(() => {
       resizeObserver.observe(cardRef.value)
     }
   }
+
+  // Re-measure the sheet title when the header row or the title itself
+  // changes size (resize, different file, etc.).
+  if (typeof ResizeObserver !== 'undefined') {
+    titleResizeObserver = new ResizeObserver(() => measureSheetTitle())
+    nextTick(() => {
+      const header = sheetTitleRef.value?.parentElement
+      if (header) titleResizeObserver?.observe(header)
+      measureSheetTitle()
+    })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -1531,6 +1574,10 @@ onBeforeUnmount(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
+  }
+  if (titleResizeObserver) {
+    titleResizeObserver.disconnect()
+    titleResizeObserver = null
   }
 })
 </script>
