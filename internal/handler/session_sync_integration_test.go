@@ -182,7 +182,7 @@ func TestACPSync_RealAgent_ExternalAdditionsAfterFirstSync(t *testing.T) {
 	// Initial external history: 2 turns = 4 messages.
 	initial := []mockMsg{
 		{Role: "user", Text: "当前是什么项目？"},
-		{Role: "assistant", Text: "ClawBench — 移动优先的 AI 工作站。"},
+		{Role: "assistant", Text: "ClawBench — 多端一体的 AI 工作台。"},
 		{Role: "user", Text: "/context"},
 		{Role: "assistant", Text: "Context 摘要…"},
 	}

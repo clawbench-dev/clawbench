@@ -75,8 +75,8 @@ export default {
     swipeAgainToExit: 'Swipe again to exit',
   },
   login: {
-    slogan: 'From Terminal to Palm',
-    subtitle: 'AI Workstation Built for Mobile',
+    slogan: 'From Palm to Desktop',
+    subtitle: 'An AI Workbench, United Across Devices',
     prompt: 'Enter password to continue.',
     passwordPlaceholder: 'Enter password',
     verifying: 'Verifying...',

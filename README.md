@@ -1,16 +1,16 @@
 [English](README.md) | [中文](README.zh.md)
 
-# ClawBench — AI Workstation Built for Mobile
+# ClawBench — AI Workbench, United Across Devices
 
 <p align="center">
   <img src="docs/screenshots/product_hero.en.png" alt="ClawBench" width="960">
 </p>
 
-**From Terminal to Palm** — An AI workstation built for mobile.
+**From Palm to Desktop** — An AI workbench for every screen.
 
-Brings the full power of AI coding agents to browsers and mobile apps, creating a true mobile development environment. File browsing, code editing, AI conversation, Git operations, scheduled tasks — one app does it all.
+Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, scheduled tasks, one app does it all, whether you're on the go or at your desk.
 
-Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online.
+Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, scheduled tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
@@ -89,8 +89,8 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### Prerequisites
 
-- **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
-- **A phone**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or use a mobile browser (Chrome recommended) to access the server address
+- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
+- **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
 
 ### npm Install
 
@@ -130,10 +130,22 @@ docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/
 
 > A random 8-character hex password is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
 
-Once deployed, access `http://server-ip:20000` from your phone app or mobile browser:
+Once deployed, access `http://server-ip:20000` from your phone app or any browser:
 
-- **Phone App**: Native integration, auto-connect, full feature support
-- **Mobile Browser**: **Chrome** recommended — supports installing as a PWA app (Add to Home Screen) for a near-native experience
+- **Android App**: Native integration, auto-connect, full feature support
+- **Mobile / Desktop Browser**: **Chrome** recommended on mobile — supports installing as a PWA app (Add to Home Screen) for a near-native experience
+
+### 📱 Run Completely on an Android Phone (Termux)
+
+> See the full guide in **[Termux (Android)](docs/TERMUX.md)**.
+
+ClawBench runs completely on your Android phone inside [Termux](https://f-droid.org/repo/com.termux.app.apk). The pure-Go `linux-arm64` backend, the built-in web frontend, and your AI coding agents all run locally on the phone — no separate PC or server required:
+
+```bash
+pkg install -y nodejs-lts git
+npm install -g @xulongzhe/clawbench
+clawbench
+```
 
 > 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
 

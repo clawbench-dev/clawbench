@@ -1,6 +1,6 @@
 [中文](README.zh.md) | [English](README.md)
 
-# ClawBench —— 为移动端打造的AI工作台
+# ClawBench —— 多端一体的 AI 工作台
 
 <p align="center">
   <img src="docs/screenshots/product_hero.png" alt="ClawBench" width="960">
@@ -8,9 +8,9 @@
 
 > 🎬 **演示视频**：[OpenClaw 和 Hermes 就是玩具，于是我写了一个能干活的](https://b23.tv/ewACF0h) — Bilibili
 
-**从终端到掌心** — 为移动端打造的 AI 工作台。
+**从掌心到桌面，多端一体的 AI 工作台。**
 
-将强大的 AI 编程智能体能力完整移植到浏览器与移动端 App，打造真正的移动端工作环境。文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端 —— 一个应用，全部搞定。
+将强大的 AI 编程智能体能力带到每一块屏幕——手机、平板与桌面。文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端 —— 一个应用，全部搞定，无论你在通勤路上还是坐在桌前。
 
 **单文件部署，无任何依赖**
 
@@ -18,7 +18,7 @@
   <img src="assets/architecture.zh.svg" alt="ClawBench 部署架构" width="640">
 </p>
 
-- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
+- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/TERMUX.md) 在安卓手机上完全运行
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
 
 ---
@@ -98,8 +98,8 @@
 
 ### 前置准备
 
-- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端
-- **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用手机浏览器访问服务端地址
+- **一台 PC（Linux / macOS / Windows）或装有 Termux 的安卓手机**：用于运行 ClawBench 服务端，并安装至少一个 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）
+- **任意设备**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用任意浏览器（桌面 / 平板 / 手机）访问服务端地址
 
 ### npm 安装
 
@@ -138,7 +138,19 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 > 首次启动会自动生成32位随机密码，以字符框突出打印到控制台，请妥善保存。
 
-部署完成后，使用手机 App 或手机浏览器访问 `http://服务器IP:20000` 即可开始使用。
+部署完成后，使用手机 App 或任意浏览器访问 `http://服务器IP:20000` 即可开始使用。
+
+### 📱 在安卓手机上完全运行（Termux）
+
+> 完整指南见 **[Termux（安卓）](docs/TERMUX.md)** 。
+
+ClawBench 可在安卓手机的 [Termux](https://f-droid.org/repo/com.termux.app.apk) 终端模拟器中**完全运行**：纯 Go 的 `linux-arm64` 后端、内置 Web 前端、AI 编程智能体全部在手机本地执行，无需额外 PC 或服务器：
+
+```bash
+pkg install -y nodejs-lts git
+npm install -g @xulongzhe/clawbench
+clawbench
+```
 
 > 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网（无需 VPS）三种方式。
 

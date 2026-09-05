@@ -334,7 +334,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Root --help handler
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		fmt.Println("ClawBench - Mobile-first AI workstation")
+		fmt.Println("ClawBench - AI Workbench, United Across Devices")
 		fmt.Println()
 		fmt.Println("Usage: clawbench <command> [options]")
 		fmt.Println()
