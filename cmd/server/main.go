@@ -35,6 +35,7 @@ import (
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
 	_ "clawbench/internal/ai/backends/vecli"
+	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/cli"
 	"clawbench/internal/frontend"
 	"clawbench/internal/frp"
