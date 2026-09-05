@@ -528,11 +528,13 @@ body.code-preview-dragging * {
    header layout used by TocDrawer / FileDetailsDrawer: icon + file name +
    draggable parent-path marquee. The marquee takes the flexible width and
    can be dragged horizontally to reveal the full path when it overflows. */
-.code-preview-sheet-title {
+/* File name is space-priority: it may grow to use the whole header width
+   when the path marquee is hidden (titleOverflows). It shrinks and
+   ellipsizes only if the name alone cannot fit. Selector is qualified with
+   .bs-header so it wins over the base .bs-header-title (flex-shrink:0,
+   inline-flex) regardless of stylesheet injection order. */
+.bs-header .code-preview-sheet-title {
   font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
-  /* File name is space-priority: it may grow to use the whole header width
-     when the path marquee is hidden (titleOverflows). It shrinks and
-     ellipsizes only if the name alone cannot fit. */
   flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
@@ -540,7 +542,7 @@ body.code-preview-dragging * {
   white-space: nowrap;
 }
 
-.code-preview-sheet-title .code-preview-line-ref {
+.bs-header .code-preview-sheet-title .code-preview-line-ref {
   font-size: 12px;
   font-weight: 400;
   margin-left: 4px;
@@ -643,8 +645,7 @@ body.code-preview-dragging * {
   background: rgba(52, 168, 83, 0.1);
 }
 
-/* Refresh spinner — applies to the footer button AND the toolbar refresh
-   (both carry .refresh-btn; the toolbar one is a .code-preview-btn). */
+/* Refresh spinner for the footer icon button (.refresh-btn.is-loading). */
 .refresh-btn.is-loading svg {
   animation: code-preview-spin 0.8s linear infinite;
 }

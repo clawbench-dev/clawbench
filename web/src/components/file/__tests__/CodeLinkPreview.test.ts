@@ -58,10 +58,9 @@ const i18n = createI18n({
           refresh: 'Refresh',
           pin: 'Pin preview',
           unpin: 'Unpin preview',
-          openFull: 'Open full file',
+          openFull: 'Open file',
           viewDetails: 'View details / Download',
           close: 'Close preview',
-          collapse: 'Collapse',
           expand: 'Expand context (+5)',
           shrink: 'Shrink context (-5)',
           expandAbove: 'Expand {n} lines above',
@@ -86,8 +85,7 @@ const i18n = createI18n({
           quotedToChat: 'Quoted code added to chat',
           copyPath: 'Copy path',
           pathCopied: 'File path copied',
-          revealInTree: 'Reveal in file tree',
-          revealedInTree: 'Located in file list: {dir}',
+          revealInTree: 'Open Directory',
           toggleFullscreen: 'Full screen',
           exitFullscreen: 'Exit full screen',
           fontSize: 'Toggle font size',
@@ -294,7 +292,7 @@ describe('CodeLinkPreview.vue', () => {
     const floating = document.querySelector('.code-link-preview-floating')
     expect(floating?.textContent).toContain('Binary file cannot be previewed')
     // Header openFull button is still available
-    const openBtn = floating?.querySelector('button[title="Open full file"]')
+    const openBtn = floating?.querySelector('button[title="Open file"]')
     expect(openBtn).not.toBeNull()
   })
 
@@ -312,7 +310,7 @@ describe('CodeLinkPreview.vue', () => {
     expect(floating?.textContent).toContain('File exceeds 10MiB limit')
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()
-    const openFullBtn = floating?.querySelector('button[title="Open full file"]')
+    const openFullBtn = floating?.querySelector('button[title="Open file"]')
     expect(openFullBtn).toBeNull()
   })
 
@@ -708,7 +706,7 @@ describe('CodeLinkPreview.vue', () => {
       },
     })
 
-    const revealBtn = document.querySelector('button[title="Reveal in file tree"]') as HTMLButtonElement
+    const revealBtn = document.querySelector('button[title="Open Directory"]') as HTMLButtonElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
     await nextTick()

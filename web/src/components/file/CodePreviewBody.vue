@@ -57,7 +57,6 @@
 
       <div
         class="code-preview-lines"
-        :class="{ 'hide-gutter': !showLineNumbers }"
         :style="{ '--gutter-digits': gutterDigits }"
       >
         <div
