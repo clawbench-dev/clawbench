@@ -160,13 +160,15 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **File Preview Overlay**: Click a file to open a preview overlay in the `view` tab; supports navigation stack (multi-file switching + back), close to return to empty state
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 - **OpenAPI/Swagger Preview**: OpenAPI spec files (YAML/JSON) rendered as interactive Swagger UI with "Try it out" support; CORS proxy (`/api/openapi-proxy`) enables direct API testing from the preview
+- **File Share Link**: Generate an unguessable public link for any file — anyone with the link can read or download it without logging in (Markdown with TOC, code, images/PDF/media/Office preview). Regenerate rotates the token so old links die instantly; closing the share revokes the link; a shared-files drawer lists and manages all active shares (open file / open in new tab / copy link / one-click clear)
 
 ### 🎨 Code Preview & Editing
 - CodeMirror-based code browsing and editing dual mode, read-only by default, one-click switch to edit mode
 - Syntax highlighting, sticky line numbers, word wrap toggle, 30+ language extensions (high-frequency static imports, low-frequency lazy loading)
 - **Code Autocompletion**: Language-aware autocompletion for 11 languages (JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown) in edit mode, leveraging CodeMirror's built-in completion sources
 - **Sticky Scroll**: VS Code-style sticky scroll based on backend tree-sitter symbol data, showing enclosing scope context (functions, classes, structs, etc.) as you scroll
-- Double-click to copy code line content (flash animation feedback)
+- **VS Code-Style Search Bar**: `Ctrl+F`/`Cmd+F` opens an inline search bar (case / whole-word / regexp toggles built into the input, prev/next/match count, optional replace row in edit mode) — a custom panel shared by CodeMirror, with the same interaction for Markdown preview
+- **Double-click to copy code line content** (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
 - **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
 - **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
@@ -181,6 +183,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
 - **Image Lightbox**: Images support zoom, swipe browsing; Mermaid SVG diagrams can be navigated alongside images in lightbox
 - **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
+- **HTML Export**: Export the rendered Markdown as a standalone self-contained HTML file (media embedded as base64, KaTeX fonts inlined) rebuilt from the shared render pipeline so the exported document matches the in-app preview pixel-for-pixel — including the user's code/UI font choice, right-side TOC rail and lightbox zoom/pan
 
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
@@ -197,15 +200,17 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Image Upload**: Upload images for AI conversation (multimodal)
 - **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback); on reconnect, auto-checks session state to prevent UI stuck when AI completed during disconnect
 - **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/CodeWhale/MiMo/Pi/Copilot/Kimi exits Plan Mode
-- **Message Queue**: Messages queue when AI is busy, sent sequentially
+- **Message Queue**: Messages queue when AI is busy, sent sequentially; queued messages are persisted to the database and dequeued in order for execution
 - **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
-- **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
+- **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; **message display modes** control the default view — Mixed (default: the most recent AI reply shows full text, older messages show summaries), Summary-only or Original-only; individual messages can still be toggled via the bottom banner; summary view also surfaces warning/error banners that were part of the reply; TTS playback also uses the summary
 - **Recommended Reply**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
 - **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 - **ACP Context State Persistence**: Mode, thinking effort, and context usage auto-persisted to database; state survives server restarts
+- **Token Usage Detail**: The context-usage panel and message details show input/output/cache-read tokens, cache hits (with hit-rate hit/(hit+miss)), thinking tokens and credit sub-items that stay stable during streaming; tapping an assistant message opens message-level metadata (backend session ID, model, duration, trace identity). Usage comes from per-agent ACP `_meta` extensions normalized by the backend
+- **CodeBuddy Local Skills in ACP Mode**: `~/.codebuddy/skills/` skills (SKILL.md with name + description) are auto-scanned and exposed as `/` slash commands in web sessions, with a skills summary injected into the system prompt — matching TUI mode behavior
 
 ### 🤖 AI Conversation
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
@@ -308,9 +313,10 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 
 
 ### 🎨 Themes
-- **27 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 11 light (GitHub Light, One Light, Ayu Light, Everforest Light, High Contrast Light, Mint Light, Sky Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 16 dark (Solarized Dark/Deep, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
+- **36 Named Themes**: VSCode-style self-contained color schemes sorted by background brightness — 16 light (GitHub Light, One Light, Ayu Light, Light Modern, Light Plus, Quiet Light, Vitesse Light, Bluloco Light, Material Lighter, Alabaster, Everforest Light, High Contrast Light, Nord Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and 20 dark (Solarized Dark/Deep, Monokai, Material Darker, Dark Plus, Bluloco Dark, Nord, Everforest Dark, One Dark Pro, Dracula, Rose Pine, Gruvbox Dark, GitHub Dark, Catppuccin Mocha, Vitesse Dark, Tokyo Night, Kanagawa, Ayu Dark, Night Owl, High Contrast Dark)
 - **Follow System**: `auto` mode picks the default GitHub Light/Dark based on the system color scheme
-- **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews
+- **Quick Theme Picker**: Palette button in the header switches themes on the fly with live color previews; its dropdown mirrors the project-picker panel style and pins a "More appearance options" entry that deep-links into Settings → Appearance (full theme grid + fonts + UI zoom)
+- **Custom Fonts**: Pick from common open-source fonts for code (monospace) and interface (proportional) channels with optional fallback fonts — pure CSS font-stack switching, falls back to defaults when a font isn't installed; App header font configuration, Markdown export and the xterm/CodeMirror/Mermaid renderers all honor the selection
 - **Persistent & Status Bar Aware**: Selection is saved locally and restored on reload; Android status bar color follows the active theme
 
 ### 📱 PWA Support
@@ -323,6 +329,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - Git parameter injection protection (SHA/branch name/tag name validation, `--` separator)
 - Configurable file upload size and count (default 100MB / 20 files), all file types supported
 - XSS protection (DOMPurify sanitization)
+- File share links use unguessable capability tokens as the sole credential — revoking or regenerating a link kills it instantly; when unused, the public endpoints return 404 so the feature has zero exposure
 - TLS support (auto-discover certificate directory; drop in fullchain.pem + privkey.pem to enable HTTPS)
 
 ---

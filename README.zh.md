@@ -172,12 +172,14 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **文件预览覆盖层**：点击文件直接在 `view` Tab 中弹出预览覆盖层，支持导航栈（多文件切换 + 返回），关闭即回到空状态
 - **二进制文件预览**：二进制文件显示占位界面，支持"以文本方式打开"；大文件自动截断（64KB 二进制 / 512KB 文本），截断时显示提示横幅
 - **OpenAPI/Swagger 预览**：OpenAPI 规范文件（YAML/JSON）渲染为交互式 Swagger UI，支持"Try it out"在线测试；CORS 代理（`/api/openapi-proxy`）使预览内可直接调用 API
+- **文件分享链接**：为任意文件生成不可猜测的公开链接，任何拿到链接的人免登录即可只读查看或下载（Markdown 带 TOC、代码、图片/PDF/音视频/Office 预览）。重新生成会轮换 token 使旧链接立即失效；关闭分享即撤销链接；"已分享文件"抽屉集中管理所有有效分享（打开文件/新标签页打开/复制链接/一键清空）
 
 ### 🎨 代码预览与编辑
 - 基于 CodeMirror 的代码浏览/编辑双模式，只读模式默认，一键切换编辑模式
 - 语法高亮，粘性行号，自动换行切换，30+ 语言扩展（高频语言静态导入，低频语言懒加载）
 - **代码自动补全**：编辑模式下为 11 种语言提供语言感知的自动补全（JS/TS/HTML/CSS/Python/SQL/Go/Less/Sass/Liquid/Markdown），基于 CodeMirror 内置补全源
 - **Sticky Scroll**：VS Code 风格的粘性滚动，基于后端 tree-sitter 符号数据，滚动时自动显示当前所在的作用域上下文（函数/类/结构体等）
+- **VS Code 风格搜索条**：`Ctrl+F`/`Cmd+F` 打开内嵌搜索条（大小写/全词/正则三个选项图标内联在输入框内，支持上一个/下一个/匹配计数，编辑模式下带替换行）——CodeMirror 与 Markdown 预览共用同一套交互的自定义搜索面板
 - 双击复制代码行内容（闪烁动画反馈）
 - **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动
 - **引用提问**：选中代码片段后，一键向 AI 提问，自动附上文件路径和行号
@@ -193,6 +195,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - 智能目录抽屉（TOC），支持 Tree-sitter 代码符号提取（100+ 语言，17 种符号类型图标），LaTeX 数学公式，Mermaid 图表
 - **图片灯箱**：图片支持放大、左右切换浏览；Mermaid SVG 图表可与图片一起在灯箱中导航
 - **文件路径跳转**：Markdown 中的文件路径可点击跳转，支持行范围导航
+- **HTML 导出**：渲染视图工具栏一键导出为自包含 HTML 文件（媒体 base64 内嵌、KaTeX 字体内联），由共享渲染管线从源码重建，导出文档与 App 内预览逐像素一致——含所选代码/界面字体、右侧 TOC 常驻侧栏与灯箱缩放/平移交互
 
 ### 🤖 AI 智能体
 - **流式响应**：WebSocket 实时推送，思维过程、工具调用全程可见
@@ -209,15 +212,17 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **图片上传**：支持上传图片与 AI 对话（多模态）
 - **断连保护**：消息立即落库，网络断开不丢失，15 秒心跳保活 + 30 秒超时自动重连（降级轮询时实时更新内容）；重连后自动检查会话状态，防止因断线期间 AI 完成但界面卡死
 - **自动恢复**：Claude / CodeBuddy / Qoder / CodeWhale / MiMo / Pi / Copilot / Kimi 退出 Plan Mode 后自动发送"继续"
-- **消息队列**：AI 忙碌时消息排队，依次发送
+- **消息队列**：AI 忙碌时消息排队，依次发送；排队消息实时落库，队列按数据库记录按序出队执行
 - **消息聚类分析**：自动分析聊天历史消息模式，将语义相似的用户消息聚类分组，一键添加到快捷发送；Union-Find + Sørensen-Dice 相似度算法，按需计算带进度追踪
-- **自动摘要**：会话完成后自动生成最后一条助手消息的摘要，底部横幅一键切换摘要/原文；TTS 朗读也使用摘要
+- **自动摘要**：会话完成后自动生成最后一条助手消息的摘要；**消息展示模式**控制默认展示方式——混合模式（默认：最近一条 AI 回复展示原文，其余展示摘要）/ 摘要模式 / 原文模式，单条消息仍可通过底部横幅单独切换；摘要视图也会展示原回复中的 warning/error 横幅；TTS 朗读也使用摘要
 - **推荐回复**：AI 回复完成后自动生成下一步建议，输入框上方展示推荐横幅，一键采纳填入输入框；支持快捷指令感知和项目上下文感知
 - **@ 命令**：输入 `@chatsearch` 搜索历史对话、`@task` 管理定时任务，自动补全弹出菜单，用户消息显示紫色命令徽章
 - **RAG 结果卡片**：AI 回复中的 RAG 搜索结果渲染为紫色卡片，点击弹出详情抽屉，可一键恢复对话
 - **思维流内联显示**：思考过程流式内联展示，完成后自动折叠为可点击芯片；思考内容惰性加载，流结束后仅保存缩略信息，展开时按需加载全文
 - **会话进度指示**：会话抽屉显示胶囊进度条，颜色随用量变化（蓝/橙/红）
 - **ACP 上下文状态持久化**：模式、思考档位、上下文用量自动持久化到数据库，服务器重启后状态不丢失
+- **Token 用量明细**：上下文用量面板与消息详情展示输入/输出/缓存读、缓存命中（命中率 hit/(hit+miss)）、thinking token 与信用额度等分项，流式过程中稳定显示不闪烁；点击助手消息可查看消息级元数据（后端会话 ID、模型、耗时、追踪标识），用量来源为各 Agent ACP `_meta` 扩展的归一化解析
+- **CodeBuddy ACP 模式本地技能**：自动扫描 `~/.codebuddy/skills/` 的 `SKILL.md`（name + description），技能以 `/` 斜杠命令形式出现在 Web 会话中，同时技能摘要注入系统提示词——与 TUI 模式行为一致
 
 ### 🤖 AI 对话
 - **工具调用可视化**：名称、参数、执行结果实时展示，成功/失败状态一目了然
@@ -321,9 +326,10 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 
 
 ### 🎨 主题
-- **27 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 11 个（GitHub Light、One Light、Ayu Light、Everforest Light、High Contrast Light、Mint Light、Sky Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 16 个（Solarized Dark/Deep、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
+- **36 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 16 个（GitHub Light、One Light、Ayu Light、Light Modern、Light Plus、Quiet Light、Vitesse Light、Bluloco Light、Material Lighter、Alabaster、Everforest Light、High Contrast Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 20 个（Solarized Dark/Deep、Monokai、Material Darker、Dark Plus、Bluloco Dark、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
 - **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark
-- **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览
+- **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览；下拉面板风格与项目选择界面统一，底部固定"更多外观选项"入口，点击深链到设置 → 外观（完整主题网格/字体/界面缩放）
+- **自定义字体**：支持选择常用开源字体作为代码字体（等宽）与界面字体（比例）主通道，可另配备选字体——纯 CSS 字体栈切换，设备未安装自动回退默认栈；导出 HTML 与 xterm/CodeMirror/Mermaid 等 JS 渲染器均跟随所选字体
 - **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题
 
 ### 📱 PWA 支持
@@ -336,6 +342,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - Git 参数注入防护（SHA/分支名/标签名校验，`--` 分隔符）
 - 文件上传大小和数量可配置（默认 100MB / 20 个），支持所有文件类型
 - XSS 防护（DOMPurify 净化）
+- 文件分享链接以不可猜测的 capability token 为唯一凭证——撤销或重新生成链接立即失效；未使用该功能时公开端点一律 404，零暴露
 - TLS 支持（自动发现证书目录，放入 fullchain.pem + privkey.pem 即可启用 HTTPS）
 
 ---

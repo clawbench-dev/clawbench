@@ -58,7 +58,7 @@ sequenceDiagram
   - 系统事件信封：`{type:"event", event:"session_update"|"task_update"|"summary_update"}`，`summary_update` 事件携带 `SummaryCards` 结构化卡片元数据
   - 信号事件：`replay_done`（LoadSession 异步回放完成，空 payload）、`thinking_done`、`done`（均为空 payload）
   - 客户端消息：支持 `subscribe`/`unsubscribe`/`cancel`/`permission_respond`/`ack`/`pong` 六种客户端消息
-- **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`
+- **断线缓冲与重放**：WebSocket 客户端断开 ≤10s 重连时，`ws.Manager` 自动回放缓冲事件；`disconnectedBufferWindow = 10s`、`maxBufferedEvents = 50`。后端重放时给缓冲事件打 `Replayed` 标记（`replayed: true`），前端据此进入 `isReplayingEvents` 状态——补发的历史终态事件（如断线期间已完成的 `session_update`/`task_update`）不再被当作 live 事件处理，避免刷新后误弹历史完成通知/完成弹窗
 - **订阅超时清理**：客户端超过 120s 无活动即清理订阅，避免僵尸连接
 - **重连时 ACP 状态重发**：`StreamHub` 在客户端重新订阅时，重新推送该会话缓存的 ACP 状态（mode/effort/config/commands），使断线后状态保持一致
 - **前端重连状态同步**：WS 重连是唯一的前端完整状态同步触发点——App 从后台恢复或前台切换时不再单独重载历史，统一由重连分支负责 `reset → connect → 检查会话状态`。重连后前端主动检查当前会话是否仍在运行（通过 `loadSessionsOnce` 刷新状态）：若会话在断线期间完成，清理卡住的流式状态并重新加载历史；空闲时也重载当前会话历史以补齐断线期间遗漏的消息。重连采用自包含的前景分支，不依赖后台分支中可能被 Android `pauseTimers()` 冻结的 `setTimeout`——消除旧方案中 reset 定时器被冻结导致重连状态不一致的竞态。`session_update` 事件到达时若流式状态不一致（如 `completed` 但 `loading` 仍为 true），强制清理并重载历史——防止因 WS 事件丢失导致界面卡死
