@@ -13,7 +13,7 @@ Brings the full power of AI coding agents to browsers and mobile apps, creating 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
 
 <p align="center">
   <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
@@ -185,8 +185,8 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
 - **Multi-Agent Support**: General assistant, coding expert, handyman, etc.; custom agents can be loaded via `config/agents/*.yaml` (supplementary method for non-standard agents)
-- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build — session-level isolation
-- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 10 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok), selection auto-persisted
+- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode — session-level isolation
+- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 11 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 3-level breadcrumb navigation (list → detail with merged overview & history → execution detail); task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)

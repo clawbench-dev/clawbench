@@ -8,7 +8,7 @@
 
 - **触发条件**：用户首次访问（`localStorage 'clawbench_welcome_dismissed'` 未设置）或通过 `clawbench-show-welcome` 自定义事件触发（`web/src/components/settings/SettingsCategory.vue`）
 - **关闭机制**：用户点击关闭后写入 `STORAGE_KEY`，之后不再显示
-- **数据源**：实时拉取 `GET /api/backends`（12 个后端规格）和 `GET /api/agents`（已注册 Agent）
+- **数据源**：实时拉取 `GET /api/backends`（14 个后端规格）和 `GET /api/agents`（已注册 Agent）
 
 ## 流程图
 
@@ -21,7 +21,7 @@ sequenceDiagram
     participant DB
 
     F->>H: GET /api/backends
-    H-->>F: 13 个后端规格 (含 install_cmd)
+    H-->>F: 14 个后端规格 (含 install_cmd)
     F->>H: GET /api/agents
     H->>DB: 查询 agents 表
     DB-->>H: 已注册 Agent 列表
@@ -58,7 +58,7 @@ sequenceDiagram
 
 ### 功能清单
 
-- **后端检测面板**：显示所有 13 个注册后端（`internal/model/BackendRegistry`），每项标注：
+- **后端检测面板**：显示所有 14 个注册后端（`internal/model/BackendRegistry`），每项标注：
   - 后端名称 + 描述
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）

@@ -19,7 +19,7 @@
 </p>
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
 
 ---
 
@@ -197,8 +197,8 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 ### 🤖 AI 智能体
 - **流式响应**：WebSocket 实时推送，思维过程、工具调用全程可见
 - **多 Agent 支持**：全能助手、编码专家、勤杂工等；自定义 Agent 可通过 `config/agents/*.yaml` 加载（非常规 Agent 的补充方式）
-- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build，会话级隔离
-- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok 十后端支持，选择自动持久化
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode，会话级隔离
+- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode 十一后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
 - **定时任务**：AI 通过 CLI 子命令创建 Cron 调度，定时自动执行；独立标签页管理，3 级面包屑导航（列表 → 详情「概览+历史合一」→ 执行详情）；频率预设（每小时/每天/每周/每月）+ 自定义 Cron 表达式；任务卡片内嵌聊天消息；执行级别已读追踪 + TTS 朗读；执行完成后自动摘要 + 完成通知（音效/震动/Toast）

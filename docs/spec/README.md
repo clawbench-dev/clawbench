@@ -1,6 +1,6 @@
 # ClawBench 系统设计规格
 
-ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、定时任务系统、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
+ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、定时任务系统、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
 
 ## 模块地图
 
@@ -9,7 +9,7 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 | 模块 | 说明 |
 |------|------|
 | [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → SessionExecutor → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、@chatsearch/@task 命令注入、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文仅截断工具输出、thinking 惰性加载、工具调用耗时、会话重置（卡死会话一键重启进程保留上下文）、完成弹窗（后台完成时 Android 通知风格卡片，可追问/标记已读/跳转，详见[完成通知弹窗](features/completion-popup.md)）、未读自动清除、错误码透传与展示、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复 |
-| [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback、raw_output 累积缓冲、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复 |
+| [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback、raw_output 累积缓冲、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、ZCode ACP 桥接（zcode-acp-server）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复 |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件 |
 | [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话、分叉（含 beforeMessageId、可选 Agent）、会话标题派生（transcript 双候选提取）、设置即时持久化、过期归档自动清理、Codex 项目级历史会话发现（磁盘扫描 + ACP 合并）、优雅退出（WaitStreamsDrained + GracefulStopAll 等待流落库再回收进程） |
 | [摘要管线](core/summarization.md) | 双管线（TTS vs 阅读摘要）、summarizeMessage 统一调度、SummaryCards 结构化卡片、多 pass 压缩、Block 提取算法、降级链（AI 失败使用结论文本）、热重载、推荐回复（stable/rolling 分离 + prompt caching） |
@@ -18,7 +18,7 @@ ClawBench 是移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy�
 
 | 模块 | 说明 |
 |------|------|
-| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；13 个后端规格 |
+| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；14 个后端规格 |
 | [定时任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
 | [语音输入](features/stt.md) | 双模式语音识别（流式 WS + 非流式 POST）、vLLM Whisper 引擎、增量识别 + 最终全量、安全上下文检测、快捷键触发 |
