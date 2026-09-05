@@ -2118,3 +2118,31 @@ func TestServeClientLog_InvalidJSON(t *testing.T) {
 	ServeClientLog(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ============================================================================
+// ServeClientLog — append failure surfaces as 500
+// ============================================================================
+
+func TestServeClientLog_WriteFailure_Returns500(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping as root: root can create directories in non-existent paths")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows: unix-style impossible paths don't behave as expected")
+	}
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	// Point the log dir at an impossible path so the append fails, then verify
+	// the failure is surfaced as a 500 (not silently swallowed).
+	model.ConfigInstance.LogDir = "/nonexistent/path/that/cannot/be/created"
+
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
+		"entries": []ClientLogEntry{
+			{Level: "I", Tag: "Test", Msg: "boom", Ts: 1700000000000, Source: "js"},
+		},
+	})
+
+	w := callHandler(ServeClientLog, req)
+	assertStatus(t, w, http.StatusInternalServerError)
+}
