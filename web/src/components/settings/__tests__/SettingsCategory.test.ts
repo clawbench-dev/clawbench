@@ -121,6 +121,7 @@ vi.mock('@/composables/usePwaInstall', () => ({
 
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ needs_restart: true }),
+  apiGet: vi.fn().mockResolvedValue({ dir: '', fonts: [] }),
 }))
 
 const mockToastShow = vi.fn()

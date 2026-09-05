@@ -37,7 +37,7 @@ export const DEFAULT_MONO_STACK = "'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI
  */
 export const DEFAULT_TERMINAL_MONO_STACK = "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace"
 
-export type FontKind = 'default' | 'bundled' | 'system'
+export type FontKind = 'default' | 'bundled' | 'system' | 'custom'
 
 export interface FontChoice {
   /** Stable storage value: 'default' or a font family name. */
@@ -72,6 +72,31 @@ const BUNDLED_UI: string[] = [
   'Source Sans 3',
   'IBM Plex Sans',
 ]
+
+// ── Custom (user-supplied) fonts ─────────────────────────────────────────
+// Fonts dropped into the configured custom font directory (Settings →
+// Appearance → 自定义字体目录). The list is populated at runtime by
+// customFonts.loadCustomFonts() from GET /api/fonts/list and must NOT live in
+// the static candidate tables above: those tables drive static i18n label
+// completeness tests, while custom families use the file stem as their
+// display label (value-string fallback) and vary per installation.
+let customChoices: FontChoice[] = []
+
+/** Replace the runtime custom-font candidate registry (called after each scan). */
+export function setCustomFontChoices(choices: FontChoice[]): void {
+  customChoices = choices
+}
+
+/** The current runtime custom-font candidates (empty before the first scan). */
+export function getCustomFontChoices(): FontChoice[] {
+  return customChoices
+}
+
+/** True when id is a currently-registered custom font family. */
+export function isCustomFontId(id: string | undefined | null): boolean {
+  if (!id) return false
+  return customChoices.some(c => c.id === id)
+}
 
 /** CJK-capable system fonts (macOS / Windows / Linux), shared by the UI
  *  candidate list and the code-font fallback pool (Chinese comments). */
@@ -188,11 +213,23 @@ export function readUiFallbackFont(storage: Pick<Storage, 'getItem'> = localStor
 }
 
 /**
- * Quote a font family name for a CSS font stack when it contains spaces.
- * Simple names pass through unquoted.
+ * Escape a font family name for inclusion in a single-quoted CSS font-family /
+ * @font-face family string: backslash then embedded single quote.
+ * Names without those characters pass through unchanged.
+ */
+export function escapeCssFamilyName(name: string): string {
+  return name.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+}
+
+/**
+ * Quote a font family name for a CSS font stack when it needs it (whitespace,
+ * embedded single quote or backslash). Simple identifiers pass through
+ * unquoted. Embedded quotes/backslashes are CSS-escaped so arbitrary
+ * custom-font stems (e.g. "Ace 'Round") cannot break the stack.
  */
 export function quoteFamilyName(name: string): string {
-  return /\s/.test(name) && !/^['"]/.test(name) ? `'${name}'` : name
+  if (/[\s'\\]/.test(name) && !/^['"]/.test(name)) return `'${escapeCssFamilyName(name)}'`
+  return name
 }
 
 /**
@@ -294,10 +331,10 @@ export function applyFontConfig(
   uiChoice: string = readUiFont(),
   uiFallback: string = readUiFallbackFont(),
 ): void {
-  const monoValid = resolveChoice(monoChoice, MONO_FONT_CHOICES) !== null
-  const monoFbValid = resolveChoice(monoFallback, MONO_FALLBACK_CHOICES) !== null
-  const uiValid = resolveChoice(uiChoice, UI_FONT_CHOICES) !== null
-  const uiFbValid = resolveChoice(uiFallback, UI_FONT_CHOICES) !== null
+  const monoValid = resolveChoice(monoChoice, MONO_FONT_CHOICES) !== null || isCustomFontId(monoChoice)
+  const monoFbValid = resolveChoice(monoFallback, MONO_FALLBACK_CHOICES) !== null || isCustomFontId(monoFallback)
+  const uiValid = resolveChoice(uiChoice, UI_FONT_CHOICES) !== null || isCustomFontId(uiChoice)
+  const uiFbValid = resolveChoice(uiFallback, UI_FONT_CHOICES) !== null || isCustomFontId(uiFallback)
   applyFontToDocument(doc, '--font-mono', monoValid ? monoChoice : DEFAULT_FONT_CHOICE, monoFbValid ? monoFallback : DEFAULT_FONT_CHOICE, DEFAULT_MONO_STACK)
   applyFontToDocument(doc, '--font-ui', uiValid ? uiChoice : DEFAULT_FONT_CHOICE, uiFbValid ? uiFallback : DEFAULT_FONT_CHOICE, DEFAULT_UI_STACK)
 }
@@ -356,7 +393,7 @@ function measureDiffers(ctx: CanvasRenderingContext2D, text: string, id: string)
  * correctness gate.
  */
 export function isFontAvailable(id: string, kind: FontKind): boolean {
-  if (kind === 'bundled') return true
+  if (kind === 'bundled' || kind === 'custom') return true
   const cached = availabilityCache.get(id)
   if (cached !== undefined) return cached
   let available = true
@@ -390,7 +427,7 @@ export async function filterAvailableFonts(
   void preloadBundledFonts(candidates)
   const result: FontChoice[] = []
   for (const c of candidates) {
-    if (c.id === DEFAULT_FONT_CHOICE || c.kind === 'bundled' || c.id === selectedId) {
+    if (c.id === DEFAULT_FONT_CHOICE || c.kind === 'bundled' || c.kind === 'custom' || c.id === selectedId) {
       result.push(c)
     } else if (isFontAvailable(c.id, c.kind)) {
       result.push(c)

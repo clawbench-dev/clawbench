@@ -61,6 +61,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.TLS.CertDir = DefaultTLSCertDir()
 	}
 
+	// --- Fonts ---
+	// Custom font directory defaults to <DataDir>/fonts when unset.
+	if cfg.Fonts.Dir == "" {
+		cfg.Fonts.Dir = DefaultFontsDir()
+	}
+
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)
 	if cfg.DevPort == 0 {

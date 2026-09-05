@@ -94,7 +94,8 @@ import { downloadByUrl } from '@/utils/download'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
-import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
+import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
+import { loadCustomFonts } from '@/utils/customFonts'
 
 const props = defineProps<{
   categoryId: string
@@ -132,6 +133,24 @@ onMounted(() => {
 watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
 }, { immediate: true })
+
+// Re-scan the custom font directory every time the Appearance category opens
+// (and whenever its configured directory changes), so newly-dropped font files
+// become selectable without reloading the page. customFontTick bumps after each
+// scan to re-render the font option lists (the registry itself is not reactive).
+const customFontTick = ref(0)
+async function refreshCustomFonts() {
+  await loadCustomFonts()
+  customFontTick.value++
+}
+watch(() => props.categoryId, (id) => {
+  if (id === 'appearance') void refreshCustomFonts()
+}, { immediate: true })
+// fonts.dir is served nested under config response "fonts"; use a reactive
+// deep read so a changed directory triggers a rescan.
+watch(() => (serverConfig.value?.fonts as Record<string, unknown> | undefined)?.dir, () => {
+  if (props.categoryId === 'appearance') void refreshCustomFonts()
+})
 
 function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
@@ -183,6 +202,9 @@ const cards = computed<RenderCard[]>(() => {
   const otherItems: ItemSpec[] = []
   let cur: CardGroup | null = null
   const flush = () => { if (cur) { out.push(cur); cur = null } }
+  // Custom-font scan count — read so a completed scan re-renders the font
+  // option lists (the custom registry itself is not reactive).
+  void customFontTick.value
   for (const entry of renderList.value) {
     if (entry.type === 'item') {
       if (entry.spec.sectionHeader) {
@@ -231,26 +253,47 @@ function getItemLabel(entry: ItemSpec): string {
 
 function resolveItemOptions(item: ItemSpec): SelectOption[] | undefined {
   const resolvedOptions = item.options
-  if (resolvedOptions) {
-    return resolvedOptions.map((opt) => ({
-      ...opt,
-      label: (opt as { label?: string }).label || resolveOptionLabel(item.key, opt),
-    }))
-  }
-  return undefined
+  if (!resolvedOptions) return undefined
+  const mapped: SelectOption[] = resolvedOptions.map((opt) => ({
+    ...opt,
+    label: (opt as { label?: string }).label || resolveOptionLabel(item.key, opt),
+  }))
+  // Append the runtime-scanned custom fonts (family = display label, no i18n key).
+  const custom = customFontOptions(item.key)
+  if (custom.length > 0) mapped.push(...custom)
+  return mapped
+}
+
+/** Keys of the four font-select items that accept custom fonts. */
+const FONT_SELECT_KEYS = ['fontMono', 'fontMonoFallback', 'fontUi', 'fontUiFallback'] as const
+
+function isFontSelectKey(key: string): key is (typeof FONT_SELECT_KEYS)[number] {
+  return (FONT_SELECT_KEYS as readonly string[]).includes(key)
+}
+
+/** Resolved SelectOption[] for the custom-font group, empty when none scanned. */
+function customFontOptions(key: string): SelectOption[] {
+  if (!isFontSelectKey(key)) return []
+  const stack = key === 'fontUi' || key === 'fontUiFallback' ? DEFAULT_UI_STACK : DEFAULT_MONO_STACK
+  return getCustomFontChoices().map(c => ({
+    label: c.id,
+    value: c.id,
+    groupKey: 'settings.items.fontsGroup.custom',
+    previewFont: buildFontStack(c.id, stack),
+  }))
 }
 
 /**
  * Options availability filter for font select rows: drop system candidates the
  * current device does not have, so the picker only shows fonts that would
- * actually render (bundled always shown). Applies to the four font keys —
- * primary + fallback for both mono and ui.
+ * actually render (bundled + custom always shown). Applies to the four font
+ * keys — primary + fallback for both mono and ui.
  */
 function resolveOptionsFilter(item: ItemSpec): ((opts: SelectOption[]) => Promise<SelectOption[]>) | undefined {
-  if (item.key === 'fontMono') return (opts) => filterFontOptions(opts, MONO_FONT_CHOICES, String(localConfig.fontMono ?? 'default'))
-  if (item.key === 'fontUi') return (opts) => filterFontOptions(opts, UI_FONT_CHOICES, String(localConfig.fontUi ?? 'default'))
-  if (item.key === 'fontMonoFallback') return (opts) => filterFontOptions(opts, MONO_FALLBACK_CHOICES, String(localConfig.fontMonoFallback ?? 'default'))
-  if (item.key === 'fontUiFallback') return (opts) => filterFontOptions(opts, UI_FONT_CHOICES, String(localConfig.fontUiFallback ?? 'default'))
+  if (item.key === 'fontMono') return (opts) => filterFontOptions(opts, [...MONO_FONT_CHOICES, ...getCustomFontChoices()], String(localConfig.fontMono ?? 'default'))
+  if (item.key === 'fontUi') return (opts) => filterFontOptions(opts, [...UI_FONT_CHOICES, ...getCustomFontChoices()], String(localConfig.fontUi ?? 'default'))
+  if (item.key === 'fontMonoFallback') return (opts) => filterFontOptions(opts, [...MONO_FALLBACK_CHOICES, ...getCustomFontChoices()], String(localConfig.fontMonoFallback ?? 'default'))
+  if (item.key === 'fontUiFallback') return (opts) => filterFontOptions(opts, [...UI_FONT_CHOICES, ...getCustomFontChoices()], String(localConfig.fontUiFallback ?? 'default'))
   return undefined
 }
 

@@ -166,6 +166,9 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.RAG.SearchPoolSize != 20 {
 		t.Errorf("RAG.SearchPoolSize = %d, want 20", cfg.RAG.SearchPoolSize)
 	}
+	if cfg.Fonts.Dir != filepath.Join(tmpDir, ".clawbench", "fonts") {
+		t.Errorf("Fonts.Dir = %q, want %q", cfg.Fonts.Dir, filepath.Join(tmpDir, ".clawbench", "fonts"))
+	}
 }
 
 func TestApplyDefaultsPartialConfig(t *testing.T) {
@@ -216,6 +219,21 @@ func TestApplyDefaultsBoolPresencePortForwardEnabledFalse(t *testing.T) {
 
 	if cfg.PortForward.Enabled {
 		t.Error("PortForward.Enabled should stay false when explicitly set to false")
+	}
+}
+
+func TestApplyDefaultsFontsDirPreserved(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Fonts.Dir = "/custom/font-dir"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Fonts.Dir != "/custom/font-dir" {
+		t.Errorf("Fonts.Dir = %q, want explicitly-set %q", cfg.Fonts.Dir, "/custom/font-dir")
+	}
+	if cfg.ResolveFontsDir() != "/custom/font-dir" {
+		t.Errorf("ResolveFontsDir() = %q, want %q", cfg.ResolveFontsDir(), "/custom/font-dir")
 	}
 }
 

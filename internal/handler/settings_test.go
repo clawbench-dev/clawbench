@@ -2432,3 +2432,97 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	assert.Equal(t, float64(800), stt["chunk_ms"])
 	assert.Equal(t, "Ctrl+M", stt["shortcut_key"])
 }
+
+// --- fonts.dir: config response + PATCH plumbing ---
+
+func TestServeConfig_Get_FontsDir(t *testing.T) {
+	origDataDir := model.DataDir
+	model.DataDir = "/data/.clawbench"
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	fonts, ok := resp["fonts"].(map[string]any)
+	require.True(t, ok, "response should contain fonts section")
+	// Unset config → resolved default <DataDir>/fonts is reported.
+	assert.Equal(t, "/data/.clawbench/fonts", fonts["dir"])
+}
+
+func TestServeConfig_Patch_FontsDir(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = "/default/fonts"
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"dir":"/custom/fonts"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "/custom/fonts", model.ConfigInstance.Fonts.Dir)
+
+	// fonts.dir is a hot-reload field — no restart needed, no cold fields.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool), "fonts.dir should not require restart")
+	changed, ok := resp["changed_cold_fields"].([]any)
+	assert.True(t, ok)
+	assert.Empty(t, changed)
+}
+
+func TestServeConfig_Patch_FontsDirEmptyResetsToDefault(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = "/custom/fonts"
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"dir":""}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	// Stored empty — runtime resolution falls back to the default dir.
+	assert.Equal(t, "", model.ConfigInstance.Fonts.Dir)
+	assert.Equal(t, filepath.Join(model.DataDir, "fonts"), model.ConfigInstance.ResolveFontsDir())
+}
+
+func TestServeConfig_Patch_FontsForbiddenNestedKey(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

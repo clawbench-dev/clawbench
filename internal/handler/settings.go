@@ -117,6 +117,8 @@ var hotReloadFields = map[string]bool{
 	"feishu.users":              true,
 	"push_mode":                 true,
 	"file_search.display_limit": true,
+	// Fonts — custom font directory, read at request time by the fonts handlers
+	"fonts.dir": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -202,6 +204,7 @@ type configResponse struct {
 	PushMode            string               `json:"push_mode"`
 	FileSearch          configFileSearch     `json:"file_search"`
 	TLS                 configTLS            `json:"tls"`
+	Fonts               configFonts          `json:"fonts"`
 }
 
 type configChat struct {
@@ -343,6 +346,11 @@ type configTLS struct {
 	Active  bool   `json:"active"`   // Whether HTTPS is currently active (valid cert found)
 }
 
+// configFonts exposes the custom font directory to the settings panel.
+type configFonts struct {
+	Dir string `json:"dir"` // Resolved custom font directory (defaults to <DataDir>/fonts)
+}
+
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
@@ -421,6 +429,7 @@ var PatchableConfigPaths = map[string]bool{
 	"push_mode":                         true,
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
+	"fonts.dir":                         true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -565,6 +574,9 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		TLS: configTLS{
 			CertDir: cfg.TLS.CertDir,
 			Active:  cfg.ResolveTLSActive(),
+		},
+		Fonts: configFonts{
+			Dir: cfg.ResolveFontsDir(),
 		},
 	}
 
@@ -988,6 +1000,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if tlsMap, ok := patch["tls"].(map[string]any); ok {
 		if v, ok := tlsMap["cert_dir"].(string); ok {
 			cfg.TLS.CertDir = v
+		}
+	}
+
+	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
+		if v, ok := fontsMap["dir"].(string); ok {
+			cfg.Fonts.Dir = v
 		}
 	}
 

@@ -20,6 +20,10 @@ import (
 	"clawbench/internal/platform"
 )
 
+// mimeOctetStream is the generic binary MIME type used when a file extension
+// is not recognized.
+const mimeOctetStream = "application/octet-stream"
+
 // mimeTypes maps file extensions to MIME types for ServeLocalFile.
 var mimeTypes = map[string]string{
 	".png":  "image/png",
@@ -517,7 +521,7 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	ext := strings.ToLower(filepath.Ext(absPath))
 	mime := mimeTypes[ext]
 	if mime == "" {
-		mime = "application/octet-stream"
+		mime = mimeOctetStream
 	}
 
 	// If ?download=1 is present, force download with Content-Disposition header.
@@ -841,7 +845,7 @@ func batchBase64ProcessOne(p, baseAbs string, maxFileSize, totalBase64, maxTotal
 
 	mime := mimeTypes[ext]
 	if mime == "" {
-		mime = "application/octet-stream"
+		mime = mimeOctetStream
 	}
 
 	b64 := base64.StdEncoding.EncodeToString(data)

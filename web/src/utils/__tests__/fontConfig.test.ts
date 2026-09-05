@@ -16,6 +16,10 @@ import {
   isFontAvailable,
   filterAvailableFonts,
   preloadBundledFonts,
+  setCustomFontChoices,
+  getCustomFontChoices,
+  isCustomFontId,
+  quoteFamilyName,
   _resetAvailabilityCache,
   DEFAULT_UI_STACK,
   DEFAULT_MONO_STACK,
@@ -32,6 +36,17 @@ import {
 
 function mockStorage(initial: Record<string, string> = {}): Pick<Storage, 'getItem'> {
   return { getItem: (k: string) => (k in initial ? initial[k] : null) }
+}
+
+/** Minimal document stub recording --font-* custom property writes. */
+function fakeDocument() {
+  const styles: Record<string, string> = {}
+  return {
+    documentElement: {
+      style: { setProperty: (prop: string, value: string) => { styles[prop] = value } },
+    },
+    get styles() { return styles },
+  }
 }
 
 describe('buildFontStack', () => {
@@ -52,6 +67,12 @@ describe('buildFontStack', () => {
   it('quotes font names containing spaces', () => {
     expect(buildFontStack('JetBrains Mono', DEFAULT_MONO_STACK)).toBe(`'JetBrains Mono', ${DEFAULT_MONO_STACK}`)
     expect(buildFontStack('Sarasa Mono SC', DEFAULT_MONO_STACK)).toBe(`'Sarasa Mono SC', ${DEFAULT_MONO_STACK}`)
+  })
+
+  it('escapes embedded quotes and backslashes inside quoted names', () => {
+    expect(quoteFamilyName("Ace 'Round")).toBe(`'Ace \\'Round'`)
+    expect(quoteFamilyName('Weird\\Name')).toBe(`'Weird\\\\Name'`)
+    expect(quoteFamilyName('Simple')).toBe('Simple')
   })
 
   it('keeps ui default stack for default ui choice', () => {
@@ -142,16 +163,6 @@ describe('resolveChoice', () => {
 })
 
 describe('applyFontToDocument / applyFontConfig', () => {
-  function fakeDocument() {
-    const styles: Record<string, string> = {}
-    return {
-      documentElement: {
-        style: { setProperty: (prop: string, value: string) => { styles[prop] = value } },
-      },
-      get styles() { return styles },
-    }
-  }
-
   it('sets --font-mono to default stack when choice is default', () => {
     const doc = fakeDocument() as unknown as Document
     applyFontToDocument(doc, '--font-mono', DEFAULT_FONT_CHOICE, 'default', DEFAULT_MONO_STACK)
@@ -321,6 +332,52 @@ describe('default-stack source consistency (drift guard)', () => {
 
   it('DEFAULT_TERMINAL_MONO_STACK is exported and non-empty', () => {
     expect(DEFAULT_TERMINAL_MONO_STACK.length).toBeGreaterThan(10)
+  })
+})
+
+describe('custom font registry (runtime-scanned)', () => {
+  afterEach(() => {
+    setCustomFontChoices([])
+  })
+
+  it('registry starts empty and is replaceable', () => {
+    expect(getCustomFontChoices()).toEqual([])
+    expect(isCustomFontId('Sarasa Mono SC')).toBe(false)
+
+    setCustomFontChoices([{ id: 'Sarasa Mono SC', kind: 'custom' }])
+    expect(getCustomFontChoices()).toEqual([{ id: 'Sarasa Mono SC', kind: 'custom' }])
+    expect(isCustomFontId('Sarasa Mono SC')).toBe(true)
+    expect(isCustomFontId('JetBrains Mono')).toBe(false)
+    expect(isCustomFontId(null)).toBe(false)
+  })
+
+  it('isFontAvailable always true for custom kind', () => {
+    expect(isFontAvailable('Anything', 'custom')).toBe(true)
+  })
+
+  it('filterAvailableFonts keeps custom candidates without a canvas', async () => {
+    setCustomFontChoices([{ id: 'My Custom', kind: 'custom' }])
+    const candidates = [...MONO_FONT_CHOICES, { id: 'My Custom', kind: 'custom' as const }]
+    const out = await filterAvailableFonts(candidates, 'default')
+    const ids = out.map(c => c.id)
+    expect(ids).toContain('My Custom')
+  })
+
+  it('applyFontConfig accepts a registered custom id', () => {
+    const doc = fakeDocument() as unknown as Document
+    setCustomFontChoices([{ id: 'Sarasa Mono SC', kind: 'custom' }])
+    applyFontConfig(doc, 'Sarasa Mono SC', 'default', 'default', 'default')
+    expect(doc.styles['--font-mono']).toBe(`'Sarasa Mono SC', ${DEFAULT_MONO_STACK}`)
+    expect(doc.styles['--font-ui']).toBe(DEFAULT_UI_STACK)
+  })
+
+  it('applyFontConfig falls back to default stack when the registry is empty', () => {
+    // Mirrors cold start: a stored custom selection cannot be validated until
+    // the first scan fills the registry — it safely degrades to the default.
+    const doc = fakeDocument() as unknown as Document
+    setCustomFontChoices([])
+    applyFontConfig(doc, 'Some Custom', 'default', 'default', 'default')
+    expect(doc.styles['--font-mono']).toBe(DEFAULT_MONO_STACK)
   })
 })
 

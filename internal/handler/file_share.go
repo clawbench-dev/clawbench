@@ -391,7 +391,7 @@ func serveShareRaw(w http.ResponseWriter, r *http.Request, absPath, name string,
 	ext := strings.ToLower(filepath.Ext(absPath))
 	mime := mimeTypes[ext]
 	if mime == "" {
-		mime = "application/octet-stream"
+		mime = mimeOctetStream
 	}
 
 	if download {

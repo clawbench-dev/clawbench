@@ -1313,6 +1313,9 @@ async function initializeApp() {
   initGlobalEvents()
   loadTasks()
   loadConfig()
+  // Preload custom fonts (Settings → Appearance → 自定义字体目录) so terminals,
+  // the file viewer and mermaid pick up a stored custom selection on cold start.
+  import('@/utils/customFonts').then(m => m.loadCustomFonts()).catch(() => {})
   registerAppEventListeners()
 
   // Request browser notification permission (web mode only).

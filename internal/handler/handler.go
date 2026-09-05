@@ -232,6 +232,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/config/test", middleware.Auth(ServeConfigTest))
 	register("/api/config/restart", middleware.Auth(ServeConfigRestart))
 	register("/api/config/password", middleware.Auth(ServeConfigPassword))
+	register("/api/fonts/list", middleware.Auth(ServeFontsList))
+	register("/api/fonts/file", middleware.Auth(ServeFontFile))
 	register("/api/projects", middleware.Auth(ServeProjects))
 	register("/api/project", middleware.Auth(ServeProjectSet))
 	register("/api/ai/chat", middleware.Auth(AIChat))
