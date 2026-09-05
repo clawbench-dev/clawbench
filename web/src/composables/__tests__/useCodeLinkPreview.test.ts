@@ -121,6 +121,40 @@ describe('useCodeLinkPreview', () => {
     expect(second.visible.value).toBe(true)
   })
 
+  it('keeps transient preview open when pointer re-enters the target path', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'test content',
+      name: 'test.ts',
+      path: 'src/test.ts',
+      supported: true,
+      size: 12,
+    })
+
+    const preview = useCodeLinkPreview()
+    const anchor = document.createElement('span')
+    anchor.className = 'chat-file-path'
+    anchor.setAttribute('data-file-path', 'src/test.ts')
+    anchor.setAttribute('data-path-type', 'file')
+
+    preview.showPreview({ filePath: 'src/test.ts', anchorEl: anchor })
+    await vi.runAllTicks()
+    expect(preview.visible.value).toBe(true)
+
+    // Mouse leaves the anchor: a 200ms close is scheduled
+    preview.handleMouseOut({ target: anchor, relatedTarget: null } as unknown as MouseEvent)
+    vi.advanceTimersByTime(100)
+
+    // Pointer re-enters the anchor before the timer fires -> close cancelled
+    preview.handleMouseOver({ target: anchor, relatedTarget: document.body } as unknown as MouseEvent)
+    vi.advanceTimersByTime(300)
+    expect(preview.visible.value).toBe(true)
+
+    // Leaving both target and card still closes after the grace period
+    preview.handleMouseOut({ target: anchor, relatedTarget: null } as unknown as MouseEvent)
+    vi.advanceTimersByTime(300)
+    expect(preview.visible.value).toBe(false)
+  })
+
   it('keeps preview open when moving pointer to card, closes 200ms after leaving both', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: 'test content',

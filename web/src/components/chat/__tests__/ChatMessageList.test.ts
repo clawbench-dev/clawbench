@@ -571,6 +571,16 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     expect(source).toContain('codeLinkPreview.handleClick(event)')
   })
 
+  it('only intercepts verified file paths so dirs/unverified fall through to original handlers', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // Guard must exist so directories and not-yet-verified paths are NOT
+    // swallowed by the preview interceptor (they keep navigating as before).
+    expect(source).toContain("const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'")
+    expect(source).toContain('isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))')
+    expect(source).toContain('isVerifiedFile && isTouch && pathEl')
+  })
+
   it('closes preview when clicking file-open button or double clicking', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''

@@ -148,16 +148,21 @@ function handleClick(event: MouseEvent) {
     if (handleTableRowClick(event)) return
 
     // Handle code-link preview clicks (desktop) or touch taps.
+    // Only verified *file* paths are intercepted — directories and paths that
+    // have not yet been verified (data-path-type unset) fall through to the
+    // handlers below (anchor navigation / open button / dbl-click), preserving
+    // the pre-feature behavior for those cases.
     if (codeLinkPreview.enabled.value) {
         const isTouch = codeLinkPreview.isTouchDevice()
         const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
         const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
         const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]')
-        if ((isModifier && linkOrBtn) || (!isTouch && pathEl)) {
+        const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+        if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
             codeLinkPreview.handleClick(event)
             return
         }
-        if (isTouch && pathEl && pathEl.getAttribute('data-path-type') === 'file') {
+        if (isVerifiedFile && isTouch && pathEl) {
             codeLinkPreview.handleClick(event)
             return
         }

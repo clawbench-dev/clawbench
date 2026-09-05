@@ -398,6 +398,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
   }
 
+  const handleMouseOver = (e: MouseEvent) => {
+    if (!enabled.value) return
+    // When the pointer re-enters any annotated path (file or dir), treat the
+    // pointer as "in target" again and cancel any pending transient close.
+    // This is the counterpart of handleMouseOut below — without it the flag is
+    // never set back to true, so a transient card would close even while the
+    // user hovers the very path that opened it.
+    const targetEl = (e.target as HTMLElement)?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
+    if (!targetEl) return
+    isPointerInTarget = true
+    clearLeaveTimer()
+  }
+
   const handleMouseOut = (e: MouseEvent) => {
     if (!enabled.value) return
     const targetEl = (e.target as HTMLElement)?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
@@ -405,6 +418,9 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
     const related = e.relatedTarget as HTMLElement | null
     if (related && targetEl.contains(related)) return
+    // Moving straight from one annotated path onto another: the mouseover of the
+    // next path re-arms the flag, so do not let this mouseout start a close race.
+    if (related && (related as HTMLElement).closest?.('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')) return
 
     isPointerInTarget = false
     if (mode.value === 'transient') {
@@ -488,6 +504,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const bindEvents = (el: HTMLElement | null) => {
     if (!el) return
     el.addEventListener('touchstart', handleTouchStart, { passive: true })
+    el.addEventListener('mouseover', handleMouseOver)
     el.addEventListener('mouseout', handleMouseOut)
     el.addEventListener('focusin', handleFocusIn)
     el.addEventListener('focusout', handleFocusOut)
@@ -497,6 +514,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const unbindEvents = (el: HTMLElement | null) => {
     if (!el) return
     el.removeEventListener('touchstart', handleTouchStart)
+    el.removeEventListener('mouseover', handleMouseOver)
     el.removeEventListener('mouseout', handleMouseOut)
     el.removeEventListener('focusin', handleFocusIn)
     el.removeEventListener('focusout', handleFocusOut)
@@ -572,6 +590,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     onCardPointerLeave,
     onCardFocusIn,
     onCardFocusOut,
+    handleMouseOver,
     handleMouseOut,
     handleFocusIn,
     handleFocusOut,

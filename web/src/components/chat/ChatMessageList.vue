@@ -310,17 +310,22 @@ async function handleChatClick(event) {
   // 2. Table row click — open row-form modal
   if (handleTableRowClick(event)) return
 
-  // Code link preview: handle desktop clicks or touch taps on code link paths
+  // Code link preview: handle desktop clicks or touch taps on code link paths.
+  // Only verified *file* paths are intercepted — directories and paths that have
+  // not yet been verified (data-path-type unset) fall through to the original
+  // handlers below (anchor navigation / open button), preserving the pre-feature
+  // behavior for those cases.
   if (codeLinkPreview.enabled.value) {
     const isTouch = codeLinkPreview.isTouchDevice()
     const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
     const linkOrBtn = (event.target).closest('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
     const pathEl = (event.target).closest('.chat-file-path[data-file-path]')
-    if ((isModifier && linkOrBtn) || (!isTouch && pathEl)) {
+    const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+    if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
       codeLinkPreview.handleClick(event)
       return
     }
-    if (isTouch && pathEl && pathEl.getAttribute('data-path-type') === 'file') {
+    if (isVerifiedFile && isTouch && pathEl) {
       codeLinkPreview.handleClick(event)
       return
     }
