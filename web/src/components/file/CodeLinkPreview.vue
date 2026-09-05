@@ -145,121 +145,23 @@
       </div>
 
       <!-- Content Area -->
-      <div class="code-preview-content">
-        <!-- Loading -->
-        <div v-if="preview.status.value === 'loading'" class="code-preview-status" aria-live="polite">
-          <div class="code-preview-spinner" />
-          <span>{{ t('file.codePreview.loading') }}</span>
-        </div>
-
-        <!-- Error -->
-        <div v-else-if="preview.status.value === 'error'" class="code-preview-status" role="status">
-          <span>{{ errorMessageText }}</span>
-          <button v-if="preview.errorCode.value === 'network'" class="code-preview-btn" @click="preview.refresh()">
-            {{ t('file.codePreview.retry') }}
-          </button>
-        </div>
-
-        <!-- Code viewer -->
-        <div
-          v-else-if="preview.status.value === 'ready'"
-          ref="sheetScrollRef"
-          class="code-preview-scroll"
-          :class="{ 'is-word-wrap': isWordWrap }"
-        >
-          <!-- Top Expand Bar -->
-          <div
-            v-if="canExpandAbove"
-            class="code-preview-expand-bar expand-above"
-            role="region"
-            :aria-label="t('file.codePreview.expandAbove', { n: stepAbove })"
-          >
-            <button
-              type="button"
-              class="code-preview-expand-btn"
-              :title="t('file.codePreview.expandAbove', { n: stepAbove })"
-              @click="handleExpandAbove(stepAbove)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="18 15 12 9 6 15" />
-              </svg>
-              <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
-              <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }})</span>
-            </button>
-            <button
-              v-if="remainingAbove > stepAbove"
-              type="button"
-              class="code-preview-expand-btn expand-all"
-              :title="t('file.codePreview.expandToTop')"
-              @click="handleExpandAbove(remainingAbove)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="17 11 12 6 7 11" />
-                <polyline points="17 18 12 13 7 18" />
-              </svg>
-              <span>{{ t('file.codePreview.expandToTop') }}</span>
-            </button>
-          </div>
-
-          <div class="code-preview-lines">
-            <div
-              v-for="(line, idx) in codeLines"
-              :key="line.lineNum"
-              class="code-preview-line-row"
-              :class="{
-                'is-target-line': line.isTarget,
-                'is-search-match': matchingLineIndices.includes(idx),
-                'is-current-search-match': matchingLineIndices[activeMatchIndex] === idx
-              }"
-            >
-              <div
-                class="code-preview-line-number"
-                :class="{ 'is-target-line': line.isTarget }"
-                aria-hidden="true"
-              >
-                {{ line.lineNum }}
-              </div>
-              <div class="code-preview-line-code">
-                <code class="hljs" v-html="line.html || '&nbsp;'" />
-              </div>
-            </div>
-          </div>
-
-          <!-- Bottom Expand Bar -->
-          <div
-            v-if="canExpandBelow"
-            class="code-preview-expand-bar expand-below"
-            role="region"
-            :aria-label="t('file.codePreview.expandBelow', { n: stepBelow })"
-          >
-            <button
-              type="button"
-              class="code-preview-expand-btn"
-              :title="t('file.codePreview.expandBelow', { n: stepBelow })"
-              @click="handleExpandBelow(stepBelow)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-              <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
-              <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }})</span>
-            </button>
-            <button
-              v-if="remainingBelow > stepBelow"
-              type="button"
-              class="code-preview-expand-btn expand-all"
-              :title="t('file.codePreview.expandToBottom')"
-              @click="handleExpandBelow(remainingBelow)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="7 13 12 18 17 13" />
-                <polyline points="7 6 12 11 17 6" />
-              </svg>
-              <span>{{ t('file.codePreview.expandToBottom') }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <CodePreviewBody
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :is-word-wrap="isWordWrap"
+        :code-lines="codeLines"
+        :matching-line-indices="matchingLineIndices"
+        :active-match-index="activeMatchIndex"
+        :remaining-above="remainingAbove"
+        :remaining-below="remainingBelow"
+        :step-above="stepAbove"
+        :step-below="stepBelow"
+        :expand-above-lines="expandAbove"
+        :expand-below-lines="expandBelow"
+        @refresh="preview.refresh()"
+      />
     </div>
 
     <!-- Bottom Action Bar (Thumb area - Left-hand optimized) -->
@@ -624,121 +526,23 @@
       </div>
 
       <!-- Body / Scroll pane -->
-      <div class="code-preview-content">
-        <!-- Loading -->
-        <div v-if="preview.status.value === 'loading'" class="code-preview-status" aria-live="polite">
-          <div class="code-preview-spinner" />
-          <span>{{ t('file.codePreview.loading') }}</span>
-        </div>
-
-        <!-- Error -->
-        <div v-else-if="preview.status.value === 'error'" class="code-preview-status" role="status">
-          <span>{{ errorMessageText }}</span>
-          <button v-if="preview.errorCode.value === 'network'" class="code-preview-btn" @click="preview.refresh()">
-            {{ t('file.codePreview.retry') }}
-          </button>
-        </div>
-
-        <!-- Code Content -->
-        <div
-          v-else-if="preview.status.value === 'ready'"
-          ref="scrollPaneRef"
-          class="code-preview-scroll"
-          :class="{ 'is-word-wrap': isWordWrap }"
-        >
-          <!-- Top Expand Bar -->
-          <div
-            v-if="canExpandAbove"
-            class="code-preview-expand-bar expand-above"
-            role="region"
-            :aria-label="t('file.codePreview.expandAbove', { n: stepAbove })"
-          >
-            <button
-              type="button"
-              class="code-preview-expand-btn"
-              :title="t('file.codePreview.expandAbove', { n: stepAbove })"
-              @click="handleExpandAbove(stepAbove)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="18 15 12 9 6 15" />
-              </svg>
-              <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
-              <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }})</span>
-            </button>
-            <button
-              v-if="remainingAbove > stepAbove"
-              type="button"
-              class="code-preview-expand-btn expand-all"
-              :title="t('file.codePreview.expandToTop')"
-              @click="handleExpandAbove(remainingAbove)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="17 11 12 6 7 11" />
-                <polyline points="17 18 12 13 7 18" />
-              </svg>
-              <span>{{ t('file.codePreview.expandToTop') }}</span>
-            </button>
-          </div>
-
-          <div class="code-preview-lines">
-            <div
-              v-for="(line, idx) in codeLines"
-              :key="line.lineNum"
-              class="code-preview-line-row"
-              :class="{
-                'is-target-line': line.isTarget,
-                'is-search-match': matchingLineIndices.includes(idx),
-                'is-current-search-match': matchingLineIndices[activeMatchIndex] === idx
-              }"
-            >
-              <div
-                class="code-preview-line-number"
-                :class="{ 'is-target-line': line.isTarget }"
-                aria-hidden="true"
-              >
-                {{ line.lineNum }}
-              </div>
-              <div class="code-preview-line-code">
-                <code class="hljs" v-html="line.html || '&nbsp;'" />
-              </div>
-            </div>
-          </div>
-
-          <!-- Bottom Expand Bar -->
-          <div
-            v-if="canExpandBelow"
-            class="code-preview-expand-bar expand-below"
-            role="region"
-            :aria-label="t('file.codePreview.expandBelow', { n: stepBelow })"
-          >
-            <button
-              type="button"
-              class="code-preview-expand-btn"
-              :title="t('file.codePreview.expandBelow', { n: stepBelow })"
-              @click="handleExpandBelow(stepBelow)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-              <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
-              <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }})</span>
-            </button>
-            <button
-              v-if="remainingBelow > stepBelow"
-              type="button"
-              class="code-preview-expand-btn expand-all"
-              :title="t('file.codePreview.expandToBottom')"
-              @click="handleExpandBelow(remainingBelow)"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="7 13 12 18 17 13" />
-                <polyline points="7 6 12 11 17 6" />
-              </svg>
-              <span>{{ t('file.codePreview.expandToBottom') }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <CodePreviewBody
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :is-word-wrap="isWordWrap"
+        :code-lines="codeLines"
+        :matching-line-indices="matchingLineIndices"
+        :active-match-index="activeMatchIndex"
+        :remaining-above="remainingAbove"
+        :remaining-below="remainingBelow"
+        :step-above="stepAbove"
+        :step-below="stepBelow"
+        :expand-above-lines="expandAbove"
+        :expand-below-lines="expandBelow"
+        @refresh="preview.refresh()"
+      />
     </div>
   </Teleport>
 </template>
@@ -747,6 +551,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/utils/codeLinkPreview'
@@ -770,8 +575,9 @@ const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
 const STORAGE_KEY_WRAP = 'clawbench:code-preview-word-wrap'
 
 const cardRef = ref<HTMLElement | null>(null)
-const scrollPaneRef = ref<HTMLElement | null>(null)
-const sheetScrollRef = ref<HTMLElement | null>(null)
+// The currently-rendered code pane (sheet mode OR floating mode — only one
+// renders at a time), typed as the exposed instance of CodePreviewBody.
+const bodyRef = ref<{ scrollToTargetLine: () => void; scrollLineIntoView: (i: number) => void; scrollContainer: HTMLElement | null } | null>(null)
 const firstActionBtnRef = ref<HTMLButtonElement | null>(null)
 const copied = ref(false)
 const isWordWrap = ref<boolean>(true)
@@ -831,13 +637,7 @@ const totalMatches = computed(() => matchingLineIndices.value.length)
 const scrollToMatch = (matchIdx: number) => {
   const lineIdx = matchingLineIndices.value[matchIdx]
   if (lineIdx === undefined) return
-  const container = props.preview.mode.value === 'sheet' ? sheetScrollRef.value : scrollPaneRef.value
-  if (!container) return
-  const lineRows = container.querySelectorAll('.code-preview-line-row')
-  const row = lineRows[lineIdx] as HTMLElement | undefined
-  if (row && typeof row.scrollIntoView === 'function') {
-    row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }
+  bodyRef.value?.scrollLineIntoView(lineIdx)
 }
 
 const findNext = () => {
@@ -1211,41 +1011,21 @@ const remainingBelow = computed(() => {
   return Math.max(0, sliced.totalLines - sliced.endLine)
 })
 
-const canExpandAbove = computed(() => remainingAbove.value > 0)
-const canExpandBelow = computed(() => remainingBelow.value > 0)
-
 const stepAbove = computed(() => Math.min(10, remainingAbove.value))
 const stepBelow = computed(() => Math.min(10, remainingBelow.value))
 
 let isDirectionalExpanding = false
 
-const handleExpandAbove = async (lines: number) => {
-  const scrollEl = scrollPaneRef.value || sheetScrollRef.value
-  const oldScrollHeight = scrollEl ? scrollEl.scrollHeight : 0
-  const oldScrollTop = scrollEl ? scrollEl.scrollTop : 0
-
+// Handlers passed down to CodePreviewBody as `expand-above-lines` /
+// `expand-below-lines`. They only mutate the slice via the preview composable;
+// CodePreviewBody anchors the scroll position around its own scroll container.
+// The isDirectionalExpanding flag suppresses the codeLines watcher below so an
+// expansion does not trigger a target-line recenter that would fight the
+// scroll anchoring performed by the body.
+const expandAbove = async (lines: number) => {
   isDirectionalExpanding = true
   try {
-    props.preview.expandAbove(lines)
-    await nextTick()
-
-    if (scrollEl) {
-      const deltaHeight = scrollEl.scrollHeight - oldScrollHeight
-      if (deltaHeight > 0) {
-        scrollEl.scrollTop = oldScrollTop + deltaHeight
-      }
-    }
-  } finally {
-    nextTick(() => {
-      isDirectionalExpanding = false
-    })
-  }
-}
-
-const handleExpandBelow = async (lines: number) => {
-  isDirectionalExpanding = true
-  try {
-    props.preview.expandBelow(lines)
+    await props.preview.expandAbove(lines)
     await nextTick()
   } finally {
     nextTick(() => {
@@ -1254,34 +1034,20 @@ const handleExpandBelow = async (lines: number) => {
   }
 }
 
-const getRelativeOffsetTop = (child: HTMLElement, parent: HTMLElement): number => {
-  let top = 0
-  let el: HTMLElement | null = child
-  while (el && el !== parent) {
-    top += el.offsetTop
-    el = el.offsetParent as HTMLElement | null
+const expandBelow = async (lines: number) => {
+  isDirectionalExpanding = true
+  try {
+    await props.preview.expandBelow(lines)
+    await nextTick()
+  } finally {
+    nextTick(() => {
+      isDirectionalExpanding = false
+    })
   }
-  return top
 }
 
 const scrollToTargetLine = () => {
-  nextTick(() => {
-    const scrollEl = scrollPaneRef.value || sheetScrollRef.value
-    if (!scrollEl) return
-    const targetEls = scrollEl.querySelectorAll('.code-preview-line-row.is-target-line')
-    if (targetEls.length > 0) {
-      const firstEl = targetEls[0] as HTMLElement
-      const lastEl = targetEls[targetEls.length - 1] as HTMLElement
-      const rangeTop = getRelativeOffsetTop(firstEl, scrollEl)
-      const rangeBottom = getRelativeOffsetTop(lastEl, scrollEl) + lastEl.clientHeight
-      const rangeHeight = rangeBottom - rangeTop
-      const containerHeight = scrollEl.clientHeight
-      const idealScrollTop = rangeHeight >= containerHeight
-        ? rangeTop
-        : rangeTop - Math.floor((containerHeight - rangeHeight) / 2)
-      scrollEl.scrollTop = Math.max(0, idealScrollTop)
-    }
-  })
+  bodyRef.value?.scrollToTargetLine()
 }
 
 const cardStyle = computed(() => {
