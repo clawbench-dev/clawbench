@@ -397,9 +397,7 @@ func TestClientLogFilePath(t *testing.T) {
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
 	model.ConfigInstance.LogDir = "/tmp/test-logs"
-	assert.Equal(t, filepath.Join("/tmp/test-logs", "android.log"), clientLogFilePath("android"))
-	assert.Equal(t, filepath.Join("/tmp/test-logs", "android.log"), clientLogFilePath(""))
-	assert.Equal(t, filepath.Join("/tmp/test-logs", "js.log"), clientLogFilePath("js"))
+	assert.Equal(t, filepath.Join("/tmp/test-logs", "client.log"), clientLogFilePath())
 }
 
 // ============================================================================
@@ -426,12 +424,12 @@ func TestServeClientLog_ValidEntries(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Verify file was written
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
 	content := string(data)
-	assert.Contains(t, content, "I/MainActivity")
+	assert.Contains(t, content, "[android] I/MainActivity")
 	assert.Contains(t, content, "App started")
-	assert.Contains(t, content, "E/Network")
+	assert.Contains(t, content, "[android] E/Network")
 	assert.Contains(t, content, "Connection failed")
 }
 
@@ -468,11 +466,13 @@ func TestServeClientLog_NewlineEscaping(t *testing.T) {
 	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
 	content := string(data)
 	// Newlines in message should be escaped to \n
 	assert.Contains(t, content, "line1\\nline2")
+	// Empty source defaults to android inline marker
+	assert.Contains(t, content, "[android] I/Test")
 	// But each entry should end with actual newline
 	lines := strings.Split(content, "\n")
 	assert.True(t, len(lines) >= 2, "should have at least 2 lines (entry + trailing)")
@@ -529,7 +529,7 @@ func TestServeClientLog_AppendsToExistingFile(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w2.Code)
 
 	// Both should be in the file
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
 	content := string(data)
 	assert.Contains(t, content, "first batch")
@@ -555,18 +555,20 @@ func TestServeClientLog_JsSourceWritesToJsLog(t *testing.T) {
 	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// Should write to js.log
-	data, err := os.ReadFile(filepath.Join(tmpDir, "js.log"))
+	// js entries land in the unified client.log with [js] inline markers
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
 	content := string(data)
-	assert.Contains(t, content, "D/ChatStream")
+	assert.Contains(t, content, "[js] D/ChatStream")
 	assert.Contains(t, content, "SSE connected")
-	assert.Contains(t, content, "W/Store")
+	assert.Contains(t, content, "[js] W/Store")
 	assert.Contains(t, content, "state mismatch")
 
-	// Should NOT create android.log
-	_, err = os.Stat(filepath.Join(tmpDir, "android.log"))
-	assert.True(t, os.IsNotExist(err), "android.log should not exist")
+	// No source-specific files are created anymore
+	for _, name := range []string{"android.log", "js.log"} {
+		_, err = os.Stat(filepath.Join(tmpDir, name))
+		assert.True(t, os.IsNotExist(err), "%s should not exist", name)
+	}
 }
 
 func TestServeClientLog_EmptySourceDefaultsToAndroid(t *testing.T) {
@@ -588,15 +590,17 @@ func TestServeClientLog_EmptySourceDefaultsToAndroid(t *testing.T) {
 	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// Should write to android.log (default)
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	// Empty source defaults to android inline marker in the unified file
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "I/Legacy")
+	assert.Contains(t, string(data), "[android] I/Legacy")
 	assert.Contains(t, string(data), "no source")
 
-	// js.log should not exist
-	_, err = os.Stat(filepath.Join(tmpDir, "js.log"))
-	assert.True(t, os.IsNotExist(err), "js.log should not exist")
+	// No source-specific files are created anymore
+	for _, name := range []string{"android.log", "js.log"} {
+		_, err = os.Stat(filepath.Join(tmpDir, name))
+		assert.True(t, os.IsNotExist(err), "%s should not exist", name)
+	}
 }
 
 func TestServeClientLog_MixedSourcesWriteToSeparateFiles(t *testing.T) {
@@ -622,23 +626,29 @@ func TestServeClientLog_MixedSourcesWriteToSeparateFiles(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, float64(3), result["written"])
 
-	// android.log has 2 entries
-	androidData, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	// All sources interleave in the single client.log, in request order, each
+	// carrying its inline source marker.
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
-	androidContent := string(androidData)
-	assert.Contains(t, androidContent, "I/AppLog")
-	assert.Contains(t, androidContent, "android msg")
-	assert.Contains(t, androidContent, "W/Native")
-	assert.Contains(t, androidContent, "android warn")
-	assert.NotContains(t, androidContent, "js msg")
+	content := string(data)
+	assert.Contains(t, content, "[android] I/AppLog")
+	assert.Contains(t, content, "android msg")
+	assert.Contains(t, content, "[js] D/ChatStream")
+	assert.Contains(t, content, "js msg")
+	assert.Contains(t, content, "[android] W/Native")
+	assert.Contains(t, content, "android warn")
 
-	// js.log has 1 entry
-	jsData, err := os.ReadFile(filepath.Join(tmpDir, "js.log"))
-	require.NoError(t, err)
-	jsContent := string(jsData)
-	assert.Contains(t, jsContent, "D/ChatStream")
-	assert.Contains(t, jsContent, "js msg")
-	assert.NotContains(t, jsContent, "android msg")
+	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	require.Len(t, lines, 3)
+	assert.Contains(t, lines[0], "[android] I/AppLog")
+	assert.Contains(t, lines[1], "[js] D/ChatStream")
+	assert.Contains(t, lines[2], "[android] W/Native")
+
+	// No source-specific files are created anymore
+	for _, name := range []string{"android.log", "js.log"} {
+		_, err = os.Stat(filepath.Join(tmpDir, name))
+		assert.True(t, os.IsNotExist(err), "%s should not exist", name)
+	}
 }
 
 func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
@@ -660,9 +670,9 @@ func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
 	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "I/OldApk")
+	assert.Contains(t, string(data), "[android] I/OldApk")
 	assert.Contains(t, string(data), "legacy route")
 }
 
@@ -2077,7 +2087,7 @@ func TestAppendClientLog_DirCreationError(t *testing.T) {
 	// Set log dir to an impossible path
 	model.ConfigInstance.LogDir = "/nonexistent/path/that/cannot/be/created"
 
-	err := appendClientLog("android", []byte("test log line\n"))
+	err := appendClientLog([]byte("test log line\n"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "create log dir")
 }
@@ -2089,10 +2099,10 @@ func TestAppendClientLog_SuccessfulWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	model.ConfigInstance.LogDir = tmpDir
 
-	err := appendClientLog("android", []byte("test log line\n"))
+	err := appendClientLog([]byte("test log line\n"))
 	assert.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "test log line")
 }

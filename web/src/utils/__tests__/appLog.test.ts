@@ -187,14 +187,31 @@ describe('appLog HTTP relay', () => {
     expect(body.entries).toHaveLength(120)
   })
 
-  it('skips HTTP relay in Android app mode (native bridge handles it)', async () => {
+  it('sends HTTP in App mode when capture armed, skipping console and native bridge', async () => {
+    const logSpy = vi.fn()
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    ;(window as any).ClawBenchNative = { log: vi.fn(), isNativeApp: () => true }
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
 
     setLogCaptureEnabled(true)
     appLog.d('Test', 'hello')
-    // Give a tick for any async operations
-    await new Promise(r => setTimeout(r, 100))
+    // Single HTTP copy — console and native bridge must both be skipped.
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled(), { timeout: 3000 })
+    expect(logSpy).not.toHaveBeenCalled()
+    expect(console.log).not.toHaveBeenCalled()
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    expect(body.entries[0]).toMatchObject({ level: 'D', tag: 'Test', msg: 'hello', source: 'js' })
+  })
+
+  it('App mode with capture OFF keeps console + native bridge and sends no HTTP', async () => {
+    const logSpy = vi.fn()
+    const cLog = vi.spyOn(console, 'log').mockImplementation(() => {})
+    ;(window as any).ClawBenchNative = { log: logSpy, isNativeApp: () => true }
+
+    setLogCaptureEnabled(false)
+    appLog.d('Test', 'hello')
+    expect(logSpy).toHaveBeenCalledWith('D', 'Test', 'hello')
+    expect(cLog).toHaveBeenCalledWith('[Test]', 'hello')
+    await new Promise(r => setTimeout(r, 2500))
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 

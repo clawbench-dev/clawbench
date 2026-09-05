@@ -83,9 +83,11 @@ function isNativeApp(): boolean {
 }
 
 function enqueue(level: string, tag: string, args: unknown[]): void {
-  // Skip HTTP relay in Android app — logs already go via native bridge
-  if (isNativeApp()) return
-
+  // Native (App) mode no longer short-circuits here: when capture is ON the
+  // JS logs are meant to be the single HTTP copy (console/native bridge are
+  // skipped upstream), and when capture is OFF the doFlush gate + stopFlushTimer
+  // buffer drop ensure nothing is ever POSTed. Buffering while disabled is
+  // harmless (entries are discarded on stopFlushTimer).
   const msg = args.map(safeStringify).join(' ')
   buffer.push({ level, tag, msg, ts: Date.now(), source: 'js' })
 
@@ -159,11 +161,26 @@ if (typeof document !== 'undefined') {
 
 // --- Public API ---
 
+type ConsoleMethod = 'log' | 'info' | 'warn' | 'error'
+
+function emit(method: ConsoleMethod, level: 'D' | 'I' | 'W' | 'E', tag: string, args: unknown[]): void {
+  // App (native) mode with capture ON: JS logs go to the server ONLY via the
+  // HTTP relay — a single, structured ([js]-tagged) copy. Skipping console and
+  // the native bridge avoids the duplicate "WebView:LOG" logcat line and the
+  // lossy [object Object] serialization that goes with it.
+  const singleHttp = isNativeApp() && httpRelayEnabled
+  if (!singleHttp) {
+    ;(console as Record<ConsoleMethod, (...a: unknown[]) => void>)[method](`[${tag}]`, ...args)
+    relayToNative(level, tag, args)
+  }
+  enqueue(level, tag, args)
+}
+
 export const appLog = {
-  d(tag: string, ...args: unknown[]) { console.log(`[${tag}]`, ...args); relayToNative('D', tag, args); enqueue('D', tag, args) },
-  i(tag: string, ...args: unknown[]) { console.info(`[${tag}]`, ...args); relayToNative('I', tag, args); enqueue('I', tag, args) },
-  w(tag: string, ...args: unknown[]) { console.warn(`[${tag}]`, ...args); relayToNative('W', tag, args); enqueue('W', tag, args) },
-  e(tag: string, ...args: unknown[]) { console.error(`[${tag}]`, ...args); relayToNative('E', tag, args); enqueue('E', tag, args) },
+  d(tag: string, ...args: unknown[]) { emit('log', 'D', tag, args) },
+  i(tag: string, ...args: unknown[]) { emit('info', 'I', tag, args) },
+  w(tag: string, ...args: unknown[]) { emit('warn', 'W', tag, args) },
+  e(tag: string, ...args: unknown[]) { emit('error', 'E', tag, args) },
 }
 
 /** Clear the HTTP relay buffer. For testing only. */

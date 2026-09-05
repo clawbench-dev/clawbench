@@ -13,12 +13,10 @@ import (
 	"clawbench/internal/model"
 )
 
-// clientLogMu protects concurrent writes to client log files.
-// Each source (android, js) gets its own mutex and log file.
-var (
-	androidClientLogMu sync.Mutex
-	jsClientLogMu      sync.Mutex
-)
+// clientLogMu protects concurrent writes to the unified client log file.
+// All sources (android native, js frontend) share ONE file; each line carries
+// an inline [source] marker so entries can be distinguished when reading.
+var clientLogMu sync.Mutex
 
 // ClientLogEntry represents a single log entry from a client (Android app or JS frontend).
 type ClientLogEntry struct {
@@ -34,21 +32,9 @@ type clientLogRequest struct {
 	Entries []ClientLogEntry `json:"entries"`
 }
 
-// clientLogFilePath returns the log file path for the given source.
-func clientLogFilePath(source string) string {
-	name := "android.log"
-	if source == "js" {
-		name = "js.log"
-	}
-	return filepath.Join(model.ConfigInstance.LogDir, name)
-}
-
-// clientLogMu returns the mutex for the given source.
-func clientLogMu(source string) *sync.Mutex {
-	if source == "js" {
-		return &jsClientLogMu
-	}
-	return &androidClientLogMu
+// clientLogFilePath returns the unified client log file path.
+func clientLogFilePath() string {
+	return filepath.Join(model.ConfigInstance.LogDir, "client.log")
 }
 
 // effectiveSource returns the effective source, defaulting to "android" when empty.
@@ -60,9 +46,9 @@ func effectiveSource(s string) string {
 }
 
 // ServeClientLog handles POST /api/client-log (and legacy POST /api/android-log).
-// It receives batched log entries from clients and appends them to per-source
-// log files (.clawbench/logs/android.log, .clawbench/logs/js.log) in a
-// human-readable format.
+// It receives batched log entries from clients and appends them to a single
+// unified log file ({LogDir}/logs/client.log); each line carries an inline
+// [js] / [android] marker for its origin.
 func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -84,58 +70,46 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		req.Entries = req.Entries[:200]
 	}
 
-	// Group entries by effective source
-	groups := make(map[string][]ClientLogEntry)
+	// Format entries (one line per entry; escape newlines in messages).
+	// Unified file — each line carries the effective source as [js]/[android].
+	lines := make([]byte, 0, len(req.Entries)*128)
 	for _, e := range req.Entries {
+		t := time.UnixMilli(e.Ts)
+		msg := strings.ReplaceAll(e.Msg, "\n", "\\n")
 		src := effectiveSource(e.Source)
-		groups[src] = append(groups[src], e)
+		line := fmt.Sprintf(
+			"%s [%s] %s/%s: %s\n",
+			t.Format("2006-01-02T15:04:05.000"),
+			src,
+			e.Level,
+			e.Tag,
+			msg,
+		)
+		lines = append(lines, line...)
 	}
 
-	totalWritten := 0
+	clientLogMu.Lock()
+	err := appendClientLog(lines)
+	clientLogMu.Unlock()
 
-	for src, entries := range groups {
-		// Format entries (one line per entry; escape newlines in messages)
-		lines := make([]byte, 0, len(entries)*128)
-		for _, e := range entries {
-			t := time.UnixMilli(e.Ts)
-			msg := strings.ReplaceAll(e.Msg, "\n", "\\n")
-			line := fmt.Sprintf(
-				"%s %s/%s: %s\n",
-				t.Format("2006-01-02T15:04:05.000"),
-				e.Level,
-				e.Tag,
-				msg,
-			)
-			lines = append(lines, line...)
-		}
-
-		// Append to file (source-specific mutex)
-		mu := clientLogMu(src)
-		mu.Lock()
-		err := appendClientLog(src, lines)
-		mu.Unlock()
-
-		if err != nil {
-			model.WriteError(w, model.Internal(fmt.Errorf("write %s client log: %w", src, err)))
-			return
-		}
-		totalWritten += len(entries)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("write client log: %w", err)))
+		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"written": totalWritten})
+	writeJSON(w, http.StatusOK, map[string]any{"written": len(req.Entries)})
 }
 
-// clientLogMaxBytes is the per-source client-log file cap. When an append
-// would push the file past this size the current file is rotated to .1
-// (replacing any older .1) and a fresh file is started. js.log/android.log
-// grow unboundedly otherwise (they are append-only with no rotation),
-// eventually filling the disk.
-const clientLogMaxBytes = 50 << 20 // 50 MiB per source
+// clientLogMaxBytes is the client-log file cap. When an append would push the
+// file past this size the current file is rotated to .1 (replacing any older
+// .1) and a fresh file is started. client.log grows unboundedly otherwise
+// (it is append-only with no rotation), eventually filling the disk.
+const clientLogMaxBytes = 50 << 20 // 50 MiB
 
-// appendClientLog appends formatted log lines to the source-specific log file.
-// Caller must hold the appropriate mutex.
-func appendClientLog(source string, lines []byte) error {
-	path := clientLogFilePath(source)
+// appendClientLog appends formatted log lines to the unified client log file.
+// Caller must hold clientLogMu.
+func appendClientLog(lines []byte) error {
+	path := clientLogFilePath()
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)

@@ -3066,8 +3066,8 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Start capturing Android logs and sending them to the server.
-         * The logs are written to .clawbench/logs/android.log on the server
-         * and can be viewed in the built-in file browser.
+         * The logs are written (as [android] lines) to the unified
+         * .clawbench/logs/client.log on the server.
          */
         @JavascriptInterface
         public void startLogCapture() {

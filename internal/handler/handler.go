@@ -328,6 +328,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// JS frontend sends logs via fetch (no auth required for debug logs).
 	// This endpoint only accepts log entries (write-only, no read); the data is
 	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
+	// Both routes land in the unified {LogDir}/logs/client.log ([js]/[android] markers).
 	register("/api/client-log", ServeClientLog)
 	// Legacy: keep /api/android-log for old APKs that hardcode this URL.
 	register("/api/android-log", ServeClientLog)

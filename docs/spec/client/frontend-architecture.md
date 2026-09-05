@@ -102,7 +102,8 @@ flowchart LR
 > 所有前端代码**必须**使用 `appLog.d/i/w/e()` 替代原始 `console.*`（仅 `*.test.ts` 文件内允许裸 `console.*`）。
 
 - **入口**：`web/src/utils/appLog.ts`
-- **Web 模式端点**：`POST /api/client-log`（`LOG_ENDPOINT`，200 条/请求上限，2s flush）
+- **上报端点**：`POST /api/client-log`（`LOG_ENDPOINT`，200 条/请求上限，2s flush），服务端汇入统一 `{data-dir}/logs/client.log`（行内 `[js]` 标记）
+- **「调试日志捕获」开启后的通道选择**：网页模式 = `console` + HTTP 双份；**App 模式 = 仅 HTTP 单份**（跳过 `console` 与 native 桥，避免 logcat 的 `WebView:LOG` 重复与对象被字符串化成 `[object Object]`）；关闭时仅本地可见，不发服务器
 - **Android Bridge**：`AndroidNative.log(level, tag, msg)` 三参数签名 + `isNativeApp()` + `window !== window.top` 双保险
 - **日志级别映射**：DEBUG → D、INFO → I、WARN → W、ERROR → E
 - **标签约定**：PascalCase 模块名（'ChatStream' / 'PortForward' / 'Store' 等）
