@@ -55,6 +55,8 @@ export async function apiGet<T = unknown>(url: string, opts: ApiOptions = {}): P
         const data = await resp.json().catch(() => ({})) as Record<string, unknown>
         if (!resp.ok) {
             const err = new Error(data.error ? String(data.error) : resp.statusText)
+            const typedErr = err as Error & { status?: number }
+            typedErr.status = resp.status
             if (data.msgKey) (err as Error & { msgKey?: string }).msgKey = String(data.msgKey)
             throw err
         }

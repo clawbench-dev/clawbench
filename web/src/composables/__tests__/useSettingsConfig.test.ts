@@ -130,6 +130,13 @@ describe('useSettingsConfig', () => {
     expect('swipeSession' in localConfig).toBe(true)
   })
 
+  it('localConfig has markdownCodeLinkPreview defaulting to true', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-markdownCodeLinkPreview')
+    expect('markdownCodeLinkPreview' in localConfig).toBe(true)
+    expect(localConfig.markdownCodeLinkPreview).toBe(true)
+  })
+
   it('localConfig has notificationSound defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-notificationSound')

@@ -95,16 +95,28 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
         if (m) {
             lineStart = parseInt(m[1], 10)
             if (m[2]) lineEnd = parseInt(m[2], 10)
+            if (lineStart <= 0) {
+                lineStart = undefined
+                lineEnd = undefined
+            } else if (lineEnd !== undefined && lineEnd < lineStart) {
+                lineEnd = undefined
+            }
         }
     }
 
-    // 3. Fall back to a trailing ":N[-M]" line suffix when no hash was present.
+    // 3. Fall back to a trailing ":N[-M]" or ":LN[-LM]" line suffix when no hash was present.
     if (lineStart === undefined) {
-        const cm = raw.match(/:(\d+)(?:-(\d+))?$/)
+        const cm = raw.match(/:L?(\d+)(?:-L?(\d+))?$/i)
         if (cm) {
             raw = raw.slice(0, raw.length - cm[0].length)
             lineStart = parseInt(cm[1], 10)
             if (cm[2]) lineEnd = parseInt(cm[2], 10)
+            if (lineStart <= 0) {
+                lineStart = undefined
+                lineEnd = undefined
+            } else if (lineEnd !== undefined && lineEnd < lineStart) {
+                lineEnd = undefined
+            }
         }
     }
 
@@ -232,7 +244,7 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     // Reject glob patterns, URLs, env vars
     if (shouldRejectPath(path)) return null
     // Reject bare identifiers without / or file extension
-    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(/:\d+(-\d+)?$/, ''))) return null
+    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(/:L?(\d+)(?:-L?(\d+))?$/i, ''))) return null
 
     // ── Tilde expansion ──
     if (path.startsWith('~/') || path === '~') {
@@ -356,12 +368,18 @@ function extractLineInfo(matchStr: string, match: RegExpExecArray): { path: stri
     const lineStartStr = match[1]
     const lineEndStr = match[2]
     if (!lineStartStr) return { path: matchStr }
-    const lineSuffix = matchStr.match(/:\d+(-\d+)?$/)
+    const lineSuffix = matchStr.match(/:L?(\d+)(?:-L?(\d+))?$/i)
     const path = lineSuffix ? matchStr.slice(0, matchStr.length - lineSuffix[0].length) : matchStr
+    const lineStart = parseInt(lineStartStr, 10)
+    let lineEnd = lineEndStr ? parseInt(lineEndStr, 10) : undefined
+    if (lineStart <= 0) return { path: matchStr }
+    if (lineEnd !== undefined && lineEnd < lineStart) {
+        lineEnd = undefined
+    }
     return {
         path,
-        lineStart: parseInt(lineStartStr, 10),
-        lineEnd: lineEndStr ? parseInt(lineEndStr, 10) : undefined,
+        lineStart,
+        lineEnd,
     }
 }
 
@@ -370,16 +388,20 @@ function extractLineInfo(matchStr: string, match: RegExpExecArray): { path: stri
  * Used by Step 2 for <code> tag content.
  */
 function extractLineInfoFromText(text: string): { path: string; lineStart?: number; lineEnd?: number } {
-    const m = text.match(/:\d+(-\d+)?$/)
+    const m = text.match(/:L?(\d+)(?:-L?(\d+))?$/i)
     if (!m) return { path: text }
     const colonIdx = text.lastIndexOf(':')
     const path = text.slice(0, colonIdx)
-    const linePart = text.slice(colonIdx + 1)
-    const [startStr, endStr] = linePart.split('-')
+    const lineStart = parseInt(m[1], 10)
+    let lineEnd = m[2] ? parseInt(m[2], 10) : undefined
+    if (lineStart <= 0) return { path: text }
+    if (lineEnd !== undefined && lineEnd < lineStart) {
+        lineEnd = undefined
+    }
     return {
         path,
-        lineStart: parseInt(startStr, 10),
-        lineEnd: endStr ? parseInt(endStr, 10) : undefined,
+        lineStart,
+        lineEnd,
     }
 }
 
@@ -390,7 +412,7 @@ function extractLineInfoFromText(text: string): { path: string; lineStart?: numb
 // many slashes but no file extension (e.g. a 2KB+ Base64 blob) triggers catastrophic
 // backtracking (2^slashCount) and freezes the UI thread. A dedicated dotfile branch
 // preserves matching of hidden last segments (e.g. /project/.worktrees).
-const FILE_PATH_RE = /(?:~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0-9]*|~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\/\.[^/\s<>"')\]]+|\.\.?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)*\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\/](?![\\/])[^\\/\s<>"')\]]+(?:[\\/][^\\/\s<>"')\]]+)*(?:\.[a-zA-Z][a-zA-Z0-9]*)?)(?::(\d+)(?:-(\d+))?)?/g
+const FILE_PATH_RE = /(?:~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0-9]*|~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\/\.[^/\s<>"')\]]+|\.\.?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)*\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\/](?![\\/])[^\\/\s<>"')\]]+(?:[\\/][^\\/\s<>"')\]]+)*(?:\.[a-zA-Z][a-zA-Z0-9]*)?)(?::[Ll]?(\d+)(?:-[Ll]?(\d+))?)?/g
 
 /**
  * Check if a string looks like a file path that should be annotated.
@@ -398,7 +420,7 @@ const FILE_PATH_RE = /(?:~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\.[a-zA-Z][a-zA-
  */
 export function looksLikeFilePath(text: string): boolean {
     if (shouldRejectPath(text)) return false
-    const bare = text.replace(/:\d+(-\d+)?$/, '')
+    const bare = text.replace(/:L?(\d+)(?:-L?(\d+))?$/i, '')
     return /\/|\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(bare)
 }
 
@@ -659,7 +681,12 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
     // Process paths based on type
     for (const [path, pathType] of results) {
         // Keep existing files
-        if (pathType === 'file') continue
+        if (pathType === 'file') {
+            containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
+                el.setAttribute('data-path-type', 'file')
+            })
+            continue
+        }
 
         // Keep project-internal directories (valid navigation targets)
         if (pathType === 'dir') {
@@ -678,6 +705,9 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                     el.replaceWith(...el.childNodes)
                 }
             })
+            containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
+                el.setAttribute('data-path-type', 'dir')
+            })
             continue
         }
 
@@ -693,6 +723,7 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                 // Swap data-file-path to fallback
                 el.setAttribute('data-file-path', fallback)
                 el.removeAttribute('data-fallback-path')
+                el.setAttribute('data-path-type', 'file')
                 // Update external status
                 const isNowExternal = isAbsolutePath(fallback)
                 if (isNowExternal) {

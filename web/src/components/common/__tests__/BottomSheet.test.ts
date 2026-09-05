@@ -546,5 +546,16 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
     expect(wrapper!.emitted('close')).toBeTruthy()
     vi.useRealTimers()
   })
+
+  it('binds panelClass to bs-panel and class to bs-overlay', async () => {
+    wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test', panelClass: 'custom-panel-class' },
+      attrs: { class: 'custom-overlay-class' },
+      attachTo: document.body,
+    })
+    await nextTick()
+    expect($('.bs-overlay')?.classList.contains('custom-overlay-class')).toBe(true)
+    expect($('.bs-panel')?.classList.contains('custom-panel-class')).toBe(true)
+  })
 })
 

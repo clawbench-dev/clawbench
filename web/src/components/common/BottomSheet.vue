@@ -5,12 +5,18 @@
       v-show="open || leaving"
       ref="overlayRef"
       class="bs-overlay"
-      :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen }"
+      :class="[{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen }, $attrs.class]"
       tabindex="-1"
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
     >
-      <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen }">
+      <div
+        class="bs-panel"
+        :class="[
+          { 'bs-leaving': leaving, 'bs-instant': instant, 'bs-auto': auto, 'bs-handle-only': handleOnly, 'bs-wide-auto': isWideScreen },
+          panelClass
+        ]"
+      >
         <!-- Header -->
         <div v-if="!noHeader" class="bs-header" :class="{ 'bs-header-handle-only': handleOnly }" @click="handleClose">
           <div class="bs-handle" />
@@ -50,6 +56,10 @@ const props = defineProps({
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
   closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
   backEvent: String, // 自定义"返回"手势发出的事件名（默认 close）。用于下钻抽屉：边缘内滑返回时发出指定事件而非关闭。
+  panelClass: {
+    type: [String, Array, Object],
+    default: '',
+  },
 })
 
 const emit = defineEmits(['close'])
