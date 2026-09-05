@@ -500,6 +500,72 @@ describe('CodeLinkPreview.vue', () => {
     expect(wrapBtn.getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('centers target line when opening from cache (visible+ready flip in one flush)', async () => {
+    // Reproduces a cache-hit reopen: showPreview resolves from the LRU cache, so
+    // visible=true and status='ready' flip within the same tick — the parent's
+    // pre-flush watchers run before CodePreviewBody has mounted. The target-line
+    // centering must still reach the body once the pane exists in that flush.
+    const origOffsetTop = Object.getOwnPropertyDescriptor(Element.prototype, 'offsetTop')
+    const origClientHeight = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight')
+    Object.defineProperty(Element.prototype, 'offsetTop', { configurable: true, get: () => 480 })
+    Object.defineProperty(Element.prototype, 'clientHeight', { configurable: true, get: () => 300 })
+    const origScrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')
+    let capturedScrollTop: number | null = null
+    Object.defineProperty(Element.prototype, 'scrollTop', {
+      configurable: true,
+      get: () => capturedScrollTop ?? 0,
+      set: (v: number) => {
+        capturedScrollTop = v
+      },
+    })
+
+    const preview = createMockPreviewController({
+      visible: ref(false),
+      status: ref('ready'),
+      slicedCode: ref({
+        code: Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n'),
+        startLine: 1,
+        endLine: 50,
+        totalLines: 100,
+        highlightStart: 25,
+        highlightEnd: 25,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    expect(document.querySelector('.code-preview-scroll')).toBeNull()
+
+    // Cache-hit open: reveal while status is already ready.
+    preview.visible.value = true
+    await nextTick()
+    await nextTick()
+    await nextTick()
+
+    const scrollPane = document.querySelector('.code-preview-scroll') as HTMLElement
+    expect(scrollPane).not.toBeNull()
+    expect(scrollPane.querySelectorAll('.code-preview-line-row.is-target-line').length).toBeGreaterThan(0)
+
+    // rangeHeight (480+300-480=300) >= container (300) -> scrollTop = rangeTop = 480.
+    // jsdom's un-laid-out geometry may collapse the exact value to 0, but the
+    // important regression contract is that the deferred centering RUNS at all:
+    // without the parent's nextTick deferral this stays null (the call is
+    // dropped while bodyRef is still unset in the same flush).
+    expect(capturedScrollTop).not.toBeNull()
+
+    if (origOffsetTop) Object.defineProperty(Element.prototype, 'offsetTop', origOffsetTop)
+    else delete (Element.prototype as Record<string, unknown>).offsetTop
+    if (origClientHeight) Object.defineProperty(Element.prototype, 'clientHeight', origClientHeight)
+    else delete (Element.prototype as Record<string, unknown>).clientHeight
+    if (origScrollTop) Object.defineProperty(Element.prototype, 'scrollTop', origScrollTop)
+    else delete (Element.prototype as Record<string, unknown>).scrollTop
+  })
+
   it('centers target line on scrollPane when ready', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),

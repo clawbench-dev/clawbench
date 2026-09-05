@@ -577,7 +577,7 @@ const STORAGE_KEY_WRAP = 'clawbench:code-preview-word-wrap'
 const cardRef = ref<HTMLElement | null>(null)
 // The currently-rendered code pane (sheet mode OR floating mode — only one
 // renders at a time), typed as the exposed instance of CodePreviewBody.
-const bodyRef = ref<{ scrollToTargetLine: () => void; scrollLineIntoView: (i: number) => void; scrollContainer: HTMLElement | null } | null>(null)
+const bodyRef = ref<{ scrollToTargetLine: () => void; scrollLineIntoView: (i: number) => void } | null>(null)
 const firstActionBtnRef = ref<HTMLButtonElement | null>(null)
 const copied = ref(false)
 const isWordWrap = ref<boolean>(true)
@@ -1047,7 +1047,13 @@ const expandBelow = async (lines: number) => {
 }
 
 const scrollToTargetLine = () => {
-  bodyRef.value?.scrollToTargetLine()
+  // The body component may not be mounted yet when this runs (e.g. a cache-hit
+  // open flips visible/status/codeLines within the same flush, so the parent's
+  // watchers fire before CodePreviewBody has mounted). Defer one tick so the
+  // exposed scroll helper exists when invoked.
+  nextTick(() => {
+    bodyRef.value?.scrollToTargetLine()
+  })
 }
 
 const cardStyle = computed(() => {
@@ -1501,21 +1507,5 @@ onBeforeUnmount(() => {
   height: 100%;
   max-height: 82dvh;
   overflow: hidden;
-}
-
-
-.code-preview-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--primary-color, #1a73e8);
-  border-radius: 50%;
-  animation: code-preview-spin 0.8s linear infinite;
-}
-
-@keyframes code-preview-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 </style>
