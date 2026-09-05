@@ -4,10 +4,12 @@
     <div class="server-info-header">
       <Server :size="13" class="server-info-icon" />
       <span class="server-info-address">{{ serverAddress }}</span>
-      <button v-if="showLogout" class="logout-btn" @click="$emit('logout')" :title="t('login.logout')">
-        <LogOut :size="12" />
-      </button>
     </div>
+    <!-- Logout (APP mode only) -->
+    <button v-if="showLogout" class="logout-btn" @click="$emit('logout')">
+      <LogOut :size="13" />
+      <span class="logout-label">{{ t('login.logout') }}</span>
+    </button>
     <div class="header-divider"></div>
     <!-- Connection error / reconnecting state -->
     <div v-if="wsDisconnected" class="connection-status">
@@ -188,24 +190,31 @@ defineExpose({ startPolling, stopPolling })
 }
 
 .logout-btn {
-  margin-left: auto;
-  padding: 3px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: var(--radius-sm, 4px);
-  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 0;
+  border: none;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-red, #ef4444);
+  font-size: 12px;
+  font-weight: 500;
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
 }
 
+.logout-label {
+  line-height: 1;
+}
+
 @media (hover: hover) {
   .logout-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
+    background: color-mix(in srgb, var(--color-red, #ef4444) 10%, var(--bg-tertiary));
+    color: var(--color-red, #ef4444);
   }
 }
 

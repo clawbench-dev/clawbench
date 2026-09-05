@@ -56,6 +56,19 @@ npm test                             # Vitest 前端测试
 - 杀进程树按子孙先 TERM → 再 KILL 顺序，避免留下新僵尸
 - `--kill-protected` 可显式覆盖保护（危险，谨慎使用）
 
+## 客户端日志回传
+
+前端 JS 与 Android 原生日志统一回传服务器，汇入**单文件** `{data-dir}/logs/client.log`，行内用 `[js]` / `[android]` 标记区分来源。
+
+- **开启设置**：设置 → 调试（Debug）→「调试日志捕获」（`logCapture`，默认关）。开启后：
+  - **App 模式（Android）**：前端 JS 日志跳过 console 与 native 桥，仅 HTTP 上报一份（单份，无 `WebView:LOG` 重复与 `[object Object]` 失真）；
+  - **网页模式**：console 照常输出 + HTTP 上报；
+  - 关闭时日志只在本地可见（logcat / console），不发服务器。
+- **JS（`web/src/utils/appLog.ts`）**：批量 POST `/api/client-log`（2s / 200 条缓冲 / 200 条每请求），`source="js"` → `[js]` 行。
+- **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/android-log`（legacy alias，旧 APK 兼容），`source="android"` → `[android]` 行。
+- **服务端（`internal/handler/android_log.go`）**：`ServeClientLog` 统一写 `{LogDir}/logs/client.log`，行格式 `2006-01-02T15:04:05.000 [js] I/ChatStream: msg`（换行转义为 `\n`），50MiB 轮转到 `client.log.1`。端点无鉴权（仅写日志、不入库）。
+- **查看**：`tail -f {data-dir}/logs/client.log`、`grep '\[js\]' {data-dir}/logs/client.log`（例：`tail -f /opt/clawbench-green-data/logs/client.log`）。
+
 ## 架构
 
 ### 后端（Go）
@@ -68,8 +81,8 @@ npm test                             # Vitest 前端测试
 |---|------|
 | `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输 |
 | `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker） |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。13 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发） |
-| `internal/model/` | 数据模型、后端注册表、模型发现、28 个 LLM Provider |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。14 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发）与 `~/.codebuddy/skills/` 技能扫描（YAML frontmatter 解析 → 斜杠命令 + 系统提示词注入） |
+| `internal/model/` | 数据模型、后端注册表、模型发现、27 个 LLM Provider |
 | `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
 | `internal/stt/` | STT（语音输入）：vLLM Whisper，流式/非流式双端点 |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类分析（ClusterWorker：Union-Find + Sørensen-Dice） |
@@ -94,6 +107,8 @@ Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture�
 组件按域分组：Chat、File、Terminal、Git、Session/Agent、Task、Settings、Common。
 
 `web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `public/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载它，Vue 主包不包含 React 依赖。
+
+`web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
 ## 开发规则
 

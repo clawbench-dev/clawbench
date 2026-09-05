@@ -163,6 +163,18 @@ describe('SystemResourcesPanel', () => {
     expect(wrapper.find('.logout-btn').exists()).toBe(true)
   })
 
+  it('renders logout button as its own row with label below the address', () => {
+    const wrapper = mountPanel({ showLogout: true })
+    const btn = wrapper.find('.logout-btn')
+    expect(btn.exists()).toBe(true)
+    // Label is visible text, not just an icon with a tooltip
+    expect(btn.text()).toContain('login.logout')
+    // Full-width row: separated from the server info header row
+    const panel = wrapper.find('.system-resources-panel')
+    expect(panel.find('.server-info-header').exists()).toBe(true)
+    expect(panel.find('.logout-btn').exists()).toBe(true)
+  })
+
   it('emits logout event when logout button is clicked', async () => {
     const wrapper = mountPanel({ showLogout: true })
     await wrapper.find('.logout-btn').trigger('click')
