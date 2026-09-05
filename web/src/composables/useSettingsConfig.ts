@@ -330,6 +330,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontUi: 'default',
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
+  markdownCodeLinkPreview: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults

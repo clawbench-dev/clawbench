@@ -149,6 +149,16 @@ func TestCheckSSRF_HostnameResolution(t *testing.T) {
 	AllowLocalProxy = false
 	defer func() { AllowLocalProxy = orig }()
 
+	origLookup := netLookupIP
+	defer func() { netLookupIP = origLookup }()
+
+	netLookupIP = func(host string) ([]net.IP, error) {
+		if host == "dns.google" {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host}
+	}
+
 	// Public hostname should resolve and pass
 	err := checkSSRF("dns.google:443")
 	if err != nil {

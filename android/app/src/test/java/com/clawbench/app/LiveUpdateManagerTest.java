@@ -1,5 +1,6 @@
 package com.clawbench.app;
 
+import android.content.Context;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -265,5 +266,75 @@ public class LiveUpdateManagerTest {
         manager.onEvent("task_update", "completed", "t1");
         manager.onEvent("session_update", "completed", "");
         assertEquals("non-session events and empty session ids must not request an overview", 0, calls[0]);
+    }
+
+    @Test
+    public void onOverviewLoaded_updatesCountsAndPostsNotification() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        LiveUpdateManager manager = new LiveUpdateManager(context);
+        assertFalse(manager.isVisible());
+
+        // 1. null overview is safe
+        manager.onOverviewLoaded(null);
+        assertEquals(0, manager.getRunningCount());
+        assertEquals(0, manager.getPendingCount());
+        assertEquals(0, manager.getUnreadCount());
+
+        // 2. overview with active session posts notification
+        JSONObject o = overview(
+                session("s1", true, false, 0),
+                session("s2", false, true, 0),
+                session("s3", false, false, 2));
+        manager.onOverviewLoaded(o);
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+        assertEquals(1, manager.getRunningCount());
+        assertEquals(1, manager.getPendingCount());
+        assertEquals(1, manager.getUnreadCount());
+        assertTrue(manager.isVisible());
+
+        // 3. overview with zero counts cancels notification
+        JSONObject empty = new JSONObject("{\"projects\":[],\"total\":0}");
+        manager.onOverviewLoaded(empty);
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+
+        assertEquals(0, manager.getRunningCount());
+        assertEquals(0, manager.getPendingCount());
+        assertEquals(0, manager.getUnreadCount());
+        assertFalse(manager.isVisible());
+
+        // 4. destroy cleans up
+        manager.destroy();
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        assertFalse(manager.isVisible());
+    }
+
+    @Test
+    public void onEvent_handlesAllLifecycleStatuses() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        LiveUpdateManager manager = new LiveUpdateManager(context);
+
+        // permission_pending
+        manager.onEvent("session_update", "permission_pending", "s1");
+        // permission_resolved
+        manager.onEvent("session_update", "permission_resolved", "s1");
+        // completed
+        manager.onEvent("session_update", "completed", "s1");
+        // cancelled
+        manager.onEvent("session_update", "cancelled", "s1");
+        // failed
+        manager.onEvent("session_update", "failed", "s1");
+
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+    }
+
+    @Test
+    public void openPromotedSettings_handlesContextSafely() {
+        // Null context safe
+        LiveUpdateManager.openPromotedSettings(null);
+
+        // Real Robolectric context safe fallback
+        Context context = RuntimeEnvironment.getApplication();
+        LiveUpdateManager.openPromotedSettings(context);
     }
 }

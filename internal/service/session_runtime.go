@@ -584,15 +584,21 @@ func CancelSession(sessionID string) bool {
 	}
 
 	// Cancel the Go context first so the agent process starts shutting down,
-	// freeing its stdin pipe. Then send ACP Cancel (with 3s timeout) so the
-	// agent can stop its turn gracefully on next stdin read.
+	// freeing its stdin pipe. For ACP sessions the context cancellation makes
+	// the SDK's Prompt() return ctx.Err() and automatically send exactly one
+	// `session/cancel` notification to the agent (see acp-go-sdk
+	// ClientSideConnection.Prompt). Do NOT also call
+	// ACPConnManager.CancelTurn here: doing so would send a SECOND
+	// session/cancel in quick succession. CodeBuddy treats back-to-back
+	// cancels as two separate user cancels and its run auto-restart can leave
+	// the session in a stale "pendingCancellations" state that poisons the
+	// next turn's permission gate (msg 43596: next turn spuriously resolved
+	// as cancelled / outcome=CANCELLED).
 	sessionCancelReasons.Store(sessionID, "user")
 	// NOTE: do NOT clear queued messages here — the goroutine's RunDrainLoop
 	// cancel branch collects the queueIDs, clears them and emits queue_cancel
 	// itself. Clearing first would lose the queue_cancel event.
 	cancel()
-
-	ai.GetACPConnManager().CancelTurn(sessionID)
 
 	// Claim the terminal push slot BEFORE emitting. If a concurrent terminal path
 	// (the goroutine's done) already claimed it, we lose the guard — suppress the

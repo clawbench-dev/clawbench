@@ -436,4 +436,15 @@ describe('settingsFieldMap', () => {
     expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': '', 'rag.vector_enabled': true })).toBe(false)
     expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
+
+  it('projectFiles category contains markdownCodeLinkPreview local switch', () => {
+    const projectFilesEntries = categoryItems['projectFiles']
+    const entry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'markdownCodeLinkPreview')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item entry')
+    expect(entry!.spec.source).toBe('local')
+    expect(entry!.spec.type).toBe('switch')
+    expect(entry!.spec.labelKey).toBe('settings.items.markdownCodeLinkPreview')
+    expect(entry!.spec.descriptionKey).toBe('settings.items.markdownCodeLinkPreviewDesc')
+  })
 })

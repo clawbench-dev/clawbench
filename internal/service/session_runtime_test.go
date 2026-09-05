@@ -321,10 +321,15 @@ func TestCancelSession_StuckThenNewMessage(t *testing.T) {
 	assert.True(t, result2, "session should be startable after force-clear")
 }
 
-func TestCancelSession_CallsACPConnManagerCancelTurn(t *testing.T) {
-	// Verify that CancelSession does not panic when ACPConnManager has no
-	// connection for the session (CancelTurn is a no-op on nil conn).
-	// The actual CancelTurn behavior is tested in acp_pool_test.go.
+func TestCancelSession_CancelsContextWithoutACPConn(t *testing.T) {
+	// CancelSession must succeed and cancel the Go context even when no ACP
+	// connection exists for the session. It deliberately does NOT call
+	// ACPConnManager.CancelTurn anymore (single session/cancel is delivered by
+	// the SDK's automatic ctx-cancel path — see acp-go-sdk
+	// ClientSideConnection.Prompt) to avoid the double-cancel that poisons
+	// CodeBuddy's next permission gate (msg 43596). The wire-level single-cancel
+	// guarantee is verified by the integration test
+	// TestCodebuddyACP_CancelDoesNotPoisonNextGate.
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
