@@ -55,7 +55,11 @@
         </button>
       </div>
 
-      <div class="code-preview-lines">
+      <div
+        class="code-preview-lines"
+        :class="{ 'hide-gutter': !showLineNumbers }"
+        :style="{ '--gutter-digits': gutterDigits }"
+      >
         <div
           v-for="(line, idx) in codeLines"
           :key="line.lineNum"
@@ -67,6 +71,7 @@
           }"
         >
           <div
+            v-if="showLineNumbers"
             class="code-preview-line-number"
             :class="{ 'is-target-line': line.isTarget }"
             aria-hidden="true"
@@ -133,6 +138,7 @@ const props = defineProps<{
   errorMessageText: string
   errorCode: string | null
   isWordWrap: boolean
+  showLineNumbers: boolean
   codeLines: FormattedCodeLine[]
   matchingLineIndices: number[]
   activeMatchIndex: number
@@ -156,6 +162,15 @@ const scrollEl = ref<HTMLElement | null>(null)
 
 const canExpandAbove = computed(() => props.remainingAbove > 0)
 const canExpandBelow = computed(() => props.remainingBelow > 0)
+
+// Digit count of the widest visible line number, so the sticky gutter column
+// hugs the actual line-number width instead of reserving a fixed 44px slot.
+// codeLines are contiguous (startLine..endLine), so the last row is the widest.
+const gutterDigits = computed(() => {
+  const last = props.codeLines[props.codeLines.length - 1]
+  const n = last ? last.lineNum : props.remainingAbove + 1
+  return Math.max(1, String(Math.max(1, n)).length)
+})
 
 function getRelativeOffsetTop(child: HTMLElement, parent: HTMLElement): number {
   let top = 0

@@ -31,10 +31,14 @@ vi.mock('@/utils/fileType', () => ({
 const mockLocalConfig = reactive<Record<string, any>>({
   uiScale: 1,
   markdownCodeLinkPreview: true,
+  lineNumbers: true,
 })
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     localConfig: mockLocalConfig,
+    setLocalConfig: (key: string, value: unknown) => {
+      mockLocalConfig[key] = value
+    },
   }),
   toFixedCSS: (val: number) => val,
   getZoomedViewport: () => ({ width: 1024, height: 768 }),
@@ -95,6 +99,9 @@ const i18n = createI18n({
           noMatches: 'No matches',
           matchIndex: '{current} of {total}',
           linesCount: '{n} lines',
+        },
+        header: {
+          lineNumbers: 'Line Numbers',
         },
       },
     },
@@ -706,7 +713,7 @@ describe('CodeLinkPreview.vue', () => {
     expect(switchTabMock).toHaveBeenCalledWith('browse')
   })
 
-  it('decomposes long file paths into filename, subdued line reference, and directory path in sheet mode', async () => {
+  it('shows only the file name (not the directory path) in the sheet header', async () => {
     const writeTextMock = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
       clipboard: { writeText: writeTextMock },
@@ -727,19 +734,19 @@ describe('CodeLinkPreview.vue', () => {
       global: { plugins: [i18n] },
     })
 
-    const filenameEl = document.querySelector('.code-preview-sheet-filename')
-    expect(filenameEl).not.toBeNull()
-    expect(filenameEl?.textContent).toBe('agent-loop.ts')
+    // Header title shows only the bare file name + a subdued line reference —
+    // the full directory path is intentionally not rendered (saves space).
+    const titleEl = document.querySelector('.bs-header-title.code-preview-sheet-title')
+    expect(titleEl).not.toBeNull()
+    expect(titleEl?.textContent).toContain('agent-loop.ts')
+    expect(titleEl?.textContent).not.toContain('packages/agent/src/')
+    expect(document.querySelector('.bs-header-description')).toBeNull()
 
-    const rangeEl = document.querySelector('.code-preview-sheet-header .code-preview-line-ref')
+    const rangeEl = document.querySelector('.code-preview-sheet-title .code-preview-line-ref')
     expect(rangeEl).not.toBeNull()
     expect(rangeEl?.textContent).toBe(':245-250')
 
-    const dirEl = document.querySelector('.code-preview-sheet-dir')
-    expect(dirEl).not.toBeNull()
-    expect(dirEl?.textContent).toBe('packages/agent/src/')
-
-    const copyBtn = document.querySelector('.code-preview-sheet-row1-actions .copy-path-btn') as HTMLButtonElement
+    const copyBtn = document.querySelector('.bs-header-actions .copy-path-btn') as HTMLButtonElement
     expect(copyBtn).not.toBeNull()
 
     // Clicking the copy button copies the full path
@@ -1328,7 +1335,7 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('renders mobile sheet in two rows with path and copy button on row 1, meta and tools on row 2', async () => {
+  it('renders mobile sheet header (file-name title) with meta and tools in body', async () => {
     const preview = createMockPreviewController({
       mode: ref('sheet'),
       target: ref({
@@ -1351,32 +1358,32 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // Mobile Row 1
-    const row1 = document.querySelector('.code-preview-sheet-row1')
-    expect(row1).not.toBeNull()
-    const pathBox = row1?.querySelector('.code-preview-sheet-path-box')
-    expect(pathBox).not.toBeNull()
-    const titleFile = pathBox?.querySelector('.code-preview-sheet-file')
-    expect(titleFile).not.toBeNull()
-    expect(titleFile?.querySelector('.code-preview-sheet-filename')?.textContent).toBe('agent-loop.ts')
-    expect(titleFile?.querySelector('.code-preview-line-ref')?.textContent).toBe(':179')
+    // Drawer header: icon + file name title only (no full-path row)
+    const title = document.querySelector('.bs-header-title.code-preview-sheet-title')
+    expect(title).not.toBeNull()
+    expect(title?.textContent).toContain('agent-loop.ts')
+    expect(title?.querySelector('.code-preview-line-ref')?.textContent).toBe(':179')
+    expect(document.querySelector('.bs-header-description')).toBeNull()
 
-    const copyBtn = row1?.querySelector('.copy-path-btn')
+    // Header: only the copy-path shortcut lives in the header actions
+    const headerActions = document.querySelector('.bs-header-actions')
+    const copyBtn = headerActions?.querySelector('.copy-path-btn')
     expect(copyBtn).not.toBeNull()
+    expect(headerActions?.querySelectorAll('button').length).toBe(1)
 
-    // Mobile Row 2
+    // Body toolbar: meta + code view tools (Search, Wrap, Copy Code, Reveal in Tree)
     const row2 = document.querySelector('.code-preview-sheet-row2')
     expect(row2).not.toBeNull()
     const metaInfo = row2?.querySelector('.code-preview-sheet-meta-info')
     expect(metaInfo?.textContent).toContain('804')
 
     const tools = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(tools?.length).toBe(4)
-    // Ordered for left-hand thumb ergonomics: Search, Wrap, Copy Code, Reveal in Tree
+    expect(tools?.length).toBe(5)
     expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toContain('Find')
     expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toMatch(/wrap/i)
-    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toMatch(/copy/i)
-    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toContain('Reveal in file tree')
+    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toContain('Line Numbers')
+    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toMatch(/copy/i)
+    expect(tools?.[4]?.getAttribute('aria-label') || tools?.[4]?.getAttribute('title')).toContain('Reveal in file tree')
 
     // Bottom Sheet Footer has collapse button
     const footer = document.querySelector('.code-preview-sheet-footer')
@@ -1419,7 +1426,7 @@ describe('CodeLinkPreview.vue', () => {
     wrapper.unmount()
   })
 
-  it('supports left-hand optimized mobile sheet layout: click-to-copy path on row1, tool order on row2, collapse & refresh in footer', async () => {
+  it('supports thumb-friendly sheet layout: header tools, body toolbar, collapse & refresh in footer', async () => {
     const writeTextMock = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, {
       clipboard: { writeText: writeTextMock },
@@ -1451,36 +1458,46 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // 1. Row 1: Click entire row1 / path-box to copy path
-    const row1 = document.querySelector('.code-preview-sheet-row1') as HTMLElement
-    expect(row1).not.toBeNull()
-    row1.click()
+    // 1. Header: copy-path shortcut only (Search/Wrap/Copy/Reveal stay in the body toolbar)
+    const headerActions = document.querySelector('.bs-header-actions')
+    const copyPathBtn = headerActions?.querySelector('.copy-path-btn') as HTMLElement
+    expect(copyPathBtn).not.toBeNull()
+    copyPathBtn.click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('packages/agent/src/types.ts:415-420')
 
-    // 2. Row 2: Tools ordered for left-hand comfort: Search -> Wrap -> Copy Code -> Reveal in Tree
+    // 2. Body toolbar: Search -> Wrap -> Line Numbers -> Copy Code -> Reveal in Tree
     const row2 = document.querySelector('.code-preview-sheet-row2')
     const toolBtns = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(toolBtns?.length).toBe(4)
+    expect(toolBtns?.length).toBe(5)
 
-    // Tool 0: Search
-    expect(toolBtns?.[0]?.getAttribute('aria-label') || toolBtns?.[0]?.getAttribute('title')).toContain('Find')
-    ;(toolBtns?.[0] as HTMLElement).click()
+    // Tool 0: Search opens the in-preview search bar
+    const searchBtn = toolBtns?.[0] as HTMLElement
+    expect(searchBtn.getAttribute('aria-label') || searchBtn.getAttribute('title')).toContain('Find')
+    searchBtn.click()
     await nextTick()
     expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
 
     // Tool 1: Wrap toggle
-    expect(toolBtns?.[1]?.getAttribute('aria-label') || toolBtns?.[1]?.getAttribute('title')).toMatch(/wrap/i)
+    const wrapBtn = toolBtns?.[1] as HTMLElement
+    expect(wrapBtn.getAttribute('aria-label') || wrapBtn.getAttribute('title')).toMatch(/wrap/i)
 
-    // Tool 2: Copy Code
-    expect(toolBtns?.[2]?.getAttribute('aria-label') || toolBtns?.[2]?.getAttribute('title')).toMatch(/copy/i)
-    ;(toolBtns?.[2] as HTMLElement).click()
+    // Tool 2: Line numbers toggle (uses the shared global file-viewer setting)
+    const lineNumBtn = toolBtns?.[2] as HTMLElement
+    expect(lineNumBtn.getAttribute('aria-label') || lineNumBtn.getAttribute('title')).toContain('Line Numbers')
+    lineNumBtn.click()
+    await nextTick()
+    expect(document.querySelectorAll('.code-preview-line-row .code-preview-line-number').length).toBe(0)
+
+    // Tool 3: Copy Code
+    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toMatch(/copy/i)
+    ;(toolBtns?.[3] as HTMLElement).click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('export interface AgentContext { ... }')
 
-    // Tool 3: Reveal in tree (pushed to top-right to avoid accidental taps)
-    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toContain('Reveal in file tree')
-    ;(toolBtns?.[3] as HTMLElement).click()
+    // Tool 4: Reveal in tree (pushed to the right to avoid accidental taps)
+    expect(toolBtns?.[4]?.getAttribute('aria-label') || toolBtns?.[4]?.getAttribute('title')).toContain('Reveal in file tree')
+    ;(toolBtns?.[4] as HTMLElement).click()
     await nextTick()
     expect(loadFilesSpy).toHaveBeenCalledWith('packages/agent/src')
     expect(switchTabMock).toHaveBeenCalledWith('browse')

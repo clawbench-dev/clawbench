@@ -251,10 +251,16 @@ body.code-preview-dragging * {
   left: 0;
   z-index: 2;
   flex-shrink: 0;
-  min-width: 44px;
+  /* Width tracks the digit count of the widest line number (set via
+     --gutter-digits on .code-preview-lines) instead of a fixed 44px slot,
+     so short line ranges (e.g. 10–99) do not waste horizontal space. */
+  width: calc(var(--gutter-digits, 2) * 1ch + 20px);
+  min-width: 0;
   padding: 0 8px 0 6px;
   text-align: right;
   user-select: none;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
   background: var(--code-bg, var(--bg-primary, #ffffff));
   border-right: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
   color: var(--text-muted, #8c8c8c);
@@ -518,91 +524,37 @@ body.code-preview-dragging * {
   height: 100%;
 }
 
-.code-preview-sheet-header {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: 100%;
-  padding: 4px 10px 8px 10px;
-  min-width: 0;
-  background: var(--bg-secondary, #f8f9fa);
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-  flex-shrink: 0;
-  box-sizing: border-box;
-}
-
-.code-preview-sheet-row1 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-height: 28px;
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 2px 4px;
-  margin: -2px -4px;
-  transition: background-color 0.15s ease;
-}
-
-.code-preview-sheet-row1:hover {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
-}
-
-.code-preview-sheet-row1:active {
-  background: var(--bg-hover, rgba(0, 0, 0, 0.08));
-}
-
-.code-preview-sheet-title-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 4px;
-  min-width: 0;
-  flex: 1;
-  user-select: text;
+/* Sheet header (BottomSheet #header slot) — mirrors the standard drawer
+   header layout used by TocDrawer / FileDetailsDrawer: icon + file name +
+   trailing actions. The full path is intentionally NOT shown here (the IDE
+   drawer shows only the file name so the title row stays compact). */
+.code-preview-sheet-title {
   font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
-  line-height: 1.35;
-  max-height: 38px;
-  overflow: hidden;
-}
-
-.code-preview-sheet-dir {
-  color: var(--text-tertiary, #80868b);
-  font-size: 11.5px;
-  font-weight: 400;
+  /* Take the remaining width so the copy-path action sits at the right edge;
+     long names ellipsize instead of wrapping. */
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
+  flex-shrink: 1;
 }
 
-.code-preview-sheet-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  flex-shrink: 0;
-  max-width: 100%;
+.code-preview-sheet-title .code-preview-line-ref {
+  font-size: 12px;
+  font-weight: 400;
+  margin-left: 4px;
 }
 
-.code-preview-sheet-filename {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #202124);
-  word-break: break-all;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  line-height: 1.35;
-}
-
-.code-preview-sheet-row1-actions {
+.code-preview-sheet-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
+  gap: 2px;
+}
+
+.code-preview-sheet-header-actions .code-preview-btn {
+  width: 26px;
+  height: 26px;
 }
 
 .code-preview-sheet-row2 {
@@ -611,7 +563,11 @@ body.code-preview-dragging * {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  min-height: 28px;
+  min-height: 32px;
+  padding: 2px 10px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  flex-shrink: 0;
 }
 
 .code-preview-sheet-meta-info {

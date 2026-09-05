@@ -43,6 +43,7 @@ function mountBody(overrides: Record<string, unknown> = {}) {
       errorMessageText: '',
       errorCode: null,
       isWordWrap: true,
+      showLineNumbers: true,
       codeLines: makeLines(),
       matchingLineIndices: [] as number[],
       activeMatchIndex: 0,
@@ -61,6 +62,29 @@ function mountBody(overrides: Record<string, unknown> = {}) {
 describe('CodePreviewBody.vue', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('sets gutter-width CSS var from the widest visible line number', () => {
+    const { wrapper } = mountBody()
+    const lines = wrapper.find('.code-preview-lines')
+    // makeLines() spans lines 10..13 (two digits).
+    expect(lines.attributes('style')).toContain('--gutter-digits: 2')
+
+    // Three-digit range -> gutter widens to 3.
+    const wide = mountBody({
+      codeLines: [
+        { lineNum: 98, html: 'a', isTarget: false },
+        { lineNum: 100, html: 'b', isTarget: false },
+        { lineNum: 101, html: 'c', isTarget: false },
+      ],
+    })
+    expect(wide.wrapper.find('.code-preview-lines').attributes('style')).toContain('--gutter-digits: 3')
+
+    // Single-digit range stays minimal.
+    const tiny = mountBody({
+      codeLines: [{ lineNum: 1, html: 'a', isTarget: false }],
+    })
+    expect(tiny.wrapper.find('.code-preview-lines').attributes('style')).toContain('--gutter-digits: 1')
   })
 
   it('renders loading status with aria-live', () => {

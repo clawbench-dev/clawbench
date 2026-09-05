@@ -4,108 +4,120 @@
     v-if="preview.visible.value && preview.mode.value === 'sheet'"
     :open="preview.visible.value"
     auto
-    :handle-only="true"
     panel-class="code-preview-sheet-panel"
     class="code-preview-sheet"
     :title="sheetTitle"
     @close="preview.close()"
   >
-    <div class="code-preview-sheet-body">
-      <!-- Mobile Header: Row 1 & Row 2 (Directly below 12px drag handle) -->
-      <div class="code-preview-sheet-header">
-        <!-- Mobile Row 1: File Path (Up to 2 lines, click to copy) + Copy Path Btn -->
-        <div
-          class="code-preview-sheet-row1"
+    <!-- Standard drawer header (same structure as TocDrawer / FileDetailsDrawer):
+         icon + file title + scrollable full path, with the high-frequency
+         view tools (copy path / search / wrap) on the right. -->
+    <template #header>
+      <span class="bs-header-icon">
+        <FileIcon :path="targetFilePath" :size="18" />
+      </span>
+      <span class="bs-header-title code-preview-sheet-title">
+        {{ fileBaseName }}<span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
+      </span>
+      <span class="bs-header-actions code-preview-sheet-header-actions">
+        <!-- Copy Path (the only action in the header; the rest stay in the
+             second-row toolbar for thumb ergonomics) -->
+        <button
+          class="code-preview-btn icon-only copy-path-btn"
+          :class="{ 'is-copied': isPathCopied }"
           :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-          @click="handleCopyPath"
+          :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+          @click.stop="handleCopyPath"
         >
-          <div class="code-preview-sheet-title-group code-preview-sheet-path-box">
-            <span v-if="fileDirPath" class="code-preview-sheet-dir">{{ fileDirPath }}/</span>
-            <span class="code-preview-sheet-file">
-              <span class="code-preview-sheet-filename">{{ fileBaseName }}</span>
-              <span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
-            </span>
-          </div>
+          <svg v-if="isPathCopied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+        </button>
+      </span>
+    </template>
 
-          <div class="code-preview-sheet-row1-actions">
-            <button
-              class="code-preview-btn icon-only copy-path-btn"
-              :class="{ 'is-copied': isPathCopied }"
-              :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-              :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-              @click.stop="handleCopyPath"
-            >
-              <svg v-if="isPathCopied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              </svg>
-            </button>
-          </div>
+    <div class="code-preview-sheet-body">
+      <!-- Second-row toolbar: file meta info plus the code view tools
+           (Search, Wrap, Copy Code, Reveal in Tree). Only the copy-path
+           shortcut lives in the drawer header. -->
+      <div class="code-preview-sheet-row2">
+        <div class="code-preview-sheet-meta-info">
+          <span v-if="contextMeta">{{ contextMeta }}</span>
         </div>
 
-        <!-- Mobile Row 2: File Meta Info + Tools (Search, Wrap, Copy Code, Reveal in Tree) -->
-        <div class="code-preview-sheet-row2">
-          <div class="code-preview-sheet-meta-info">
-            <span v-if="contextMeta">{{ contextMeta }}</span>
-          </div>
-
-          <div class="code-preview-sheet-tools">
-            <!-- Search in Preview -->
-            <button
-              class="code-preview-btn icon-only"
-              :class="{ 'is-active': isSearchOpen }"
-              :title="t('file.codePreview.findInPreview')"
-              :aria-label="t('file.codePreview.findInPreview')"
-              @click="toggleSearch"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-            </button>
-            <!-- Word Wrap Toggle -->
-            <button
-              class="code-preview-btn icon-only"
-              :class="{ 'is-active': isWordWrap }"
-              :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-              :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-              @click="toggleWordWrap"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
-              </svg>
-            </button>
-            <!-- Copy Code -->
-            <button
-              class="code-preview-btn icon-only"
-              :class="{ 'is-copied': copied }"
-              :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-              :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-              @click="handleCopy"
-            >
-              <svg v-if="copied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            </button>
-            <!-- Reveal in Tree (Folder) -->
-            <button
-              class="code-preview-btn icon-only"
-              :title="t('file.codePreview.revealInTree')"
-              :aria-label="t('file.codePreview.revealInTree')"
-              @click="handleRevealInTree"
-            >
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-          </div>
+        <div class="code-preview-sheet-tools">
+          <!-- Search in Preview -->
+          <button
+            class="code-preview-btn icon-only"
+            :class="{ 'is-active': isSearchOpen }"
+            :title="t('file.codePreview.findInPreview')"
+            :aria-label="t('file.codePreview.findInPreview')"
+            @click="toggleSearch"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+          <!-- Word Wrap Toggle -->
+          <button
+            class="code-preview-btn icon-only"
+            :class="{ 'is-active': isWordWrap }"
+            :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
+            :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
+            @click="toggleWordWrap"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
+            </svg>
+          </button>
+          <!-- Line Numbers Toggle -->
+          <button
+            class="code-preview-btn icon-only"
+            :class="{ 'is-active': showLineNumbers }"
+            :title="t('file.header.lineNumbers')"
+            :aria-label="t('file.header.lineNumbers')"
+            :aria-pressed="showLineNumbers"
+            @click="toggleLineNumbers"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 9h16" />
+              <path d="M4 15h16" />
+              <path d="M10 3L8 21" />
+              <path d="M16 3l-2 18" />
+            </svg>
+          </button>
+          <!-- Copy Code -->
+          <button
+            class="code-preview-btn icon-only"
+            :class="{ 'is-copied': copied }"
+            :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
+            :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
+            @click="handleCopy"
+          >
+            <svg v-if="copied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
+          <!-- Reveal in Tree (Folder) -->
+          <button
+            class="code-preview-btn icon-only"
+            :title="t('file.codePreview.revealInTree')"
+            :aria-label="t('file.codePreview.revealInTree')"
+            @click="handleRevealInTree"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
         </div>
       </div>
       <!-- Notices -->
@@ -151,6 +163,7 @@
         :error-message-text="errorMessageText"
         :error-code="preview.errorCode.value"
         :is-word-wrap="isWordWrap"
+        :show-line-numbers="showLineNumbers"
         :code-lines="codeLines"
         :matching-line-indices="matchingLineIndices"
         :active-match-index="activeMatchIndex"
@@ -332,6 +345,24 @@
           >
             <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
+            </svg>
+          </button>
+          <button
+            class="code-preview-btn"
+            :class="{ 'is-active': showLineNumbers }"
+            :aria-pressed="showLineNumbers"
+            :title="t('file.header.lineNumbers')"
+            :aria-label="t('file.header.lineNumbers')"
+            :data-tooltip="t('file.header.lineNumbers')"
+            @pointerenter="showTooltip($event, t('file.header.lineNumbers'))"
+            @pointerleave="hideTooltip()"
+            @click="toggleLineNumbers"
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 9h16" />
+              <path d="M4 15h16" />
+              <path d="M10 3L8 21" />
+              <path d="M16 3l-2 18" />
             </svg>
           </button>
           <button
@@ -532,6 +563,7 @@
         :error-message-text="errorMessageText"
         :error-code="preview.errorCode.value"
         :is-word-wrap="isWordWrap"
+        :show-line-numbers="showLineNumbers"
         :code-lines="codeLines"
         :matching-line-indices="matchingLineIndices"
         :active-match-index="activeMatchIndex"
@@ -552,6 +584,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, i
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/utils/codeLinkPreview'
@@ -568,9 +601,17 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
-const { localConfig } = useSettingsConfig()
+const { localConfig, setLocalConfig } = useSettingsConfig()
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
+
+// Reuse the global "show line numbers" file-viewer setting so the code-link
+// preview follows the same preference as the main editor.
+const showLineNumbers = computed(() => localConfig.lineNumbers !== false)
+
+function toggleLineNumbers() {
+  setLocalConfig('lineNumbers', !showLineNumbers.value)
+}
 
 const STORAGE_KEY_WRAP = 'clawbench:code-preview-word-wrap'
 
@@ -1495,17 +1536,17 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-:deep(.bs-header) {
-  height: auto;
-  min-height: 48px;
-  padding: 8px 10px 6px 12px;
-}
-
 .code-preview-sheet-body {
   display: flex;
   flex-direction: column;
   height: 100%;
   max-height: 82dvh;
   overflow: hidden;
+}
+
+/* Sheet header keeps a touch-friendlier height than the compact default so the
+   copy-path / search / wrap buttons in .bs-header-actions stay easy to hit. */
+:deep(.code-preview-sheet .bs-header) {
+  min-height: 44px;
 }
 </style>
