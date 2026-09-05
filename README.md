@@ -203,6 +203,7 @@ clawbench
 - Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
 - **Image Lightbox**: Images support zoom, swipe browsing; Mermaid SVG diagrams can be navigated alongside images in lightbox
 - **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
+- **Code Link Preview**: With "File link preview" enabled (Settings → Project & Files → File Display), clicking a validated file path or `path:line` link in Markdown preview opens a code-slice floating card — desktop cards auto-dismiss when the pointer leaves, `Ctrl/Cmd+Click` pins them, and touch devices open a bottom sheet on tap. The card supports syntax highlighting, line-range highlighting, drag repositioning, and actions like "Quote to chat / Copy path / Reveal in tree / Find in preview", with built-in slice protection (200-line / 512 KiB cap, oversized-file warning)
 - **HTML Export**: Export the rendered Markdown as a standalone self-contained HTML file (media embedded as base64, KaTeX fonts inlined) rebuilt from the shared render pipeline so the exported document matches the in-app preview pixel-for-pixel — including the user's code/UI font choice, right-side TOC rail and lightbox zoom/pan
 
 ### 🤖 AI Agents
@@ -236,6 +237,7 @@ clawbench
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
 - **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
 - **File Path Navigation**: Clickable file paths in AI responses, with line range navigation
+- **Code Link Preview**: With "File link preview" enabled, file paths in chat messages support the same code-slice floating preview — click a path for a card, `Ctrl/Cmd+Click` to pin, or tap on touch devices for a bottom sheet, letting you skim AI-referenced code without opening the file
 - **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port mapping is auto-registered and the URL opens via WebView with zero manual config
 - **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder; an input-bar trailing icon injects the command into the input box for editing before sending; input placeholder hints at the current quick send; message clusters analysis discovers recurring patterns and adds them
 - **Input Draft & Attachment Restore**: When switching sessions, unsent input text, attached files and staged quotes are snapshotted and restored when you switch back — no lost input from accidental session switches
