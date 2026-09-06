@@ -40,7 +40,7 @@ flowchart TD
 - **首次访问欢迎面板**：用户首次访问时显示 `WelcomeOverlay`（不是分步向导）。[WelcomeOverlay 详情](../features/setup-wizard.md)。Agent 创建通过自动发现或 `AgentInstallDialog` 完成，不存在 `/api/setup/*` 端点
 - **Agent 自动发现**：启动时检测 PATH 中是否存在 AI CLI 工具，为新发现的工具自动在数据库中创建 Agent（含 ACP 命令检测，即检查后端规格中的 `AcpCommand` 字段）。用户安装新 CLI 后重启即自动识别
 - **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
-- **Model 自动发现**：通过 CLI 命令（如 `deepseek models`）或 `BackendSpec.RegisterDiscoverModelsFunc` 注册的自定义发现函数发现可用模型。Kimi 后端通过 `RegisterDiscoverModelsFunc("kimi", DiscoverKimiModels)` 注册模型发现函数，支持 kimi-k3、kimi-for-coding 等模型。当 `ListModelsCmd` 为空时使用 `KnownModels` 或用户手动定义；ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果），ACP stdout filter 还拦截 `NewSessionResponse.models` 字段作为模型发现的后备数据源（绕过 ACP SDK v0.13.5 不包含该字段的限制）。结果缓存到 SQLite 与内存
+- **Model 自动发现**：通过 CLI 命令（如 `deepseek models`）或 `BackendSpec.RegisterDiscoverModelsFunc` 注册的自定义发现函数发现可用模型。Kimi 通过 `RegisterDiscoverModelsFunc("kimi", DiscoverKimiModels)`、Codex 通过 `RegisterDiscoverModelsFunc("codex", DiscoverCodexModels)` 注册发现函数。发现优先级：有 `ListModelsCmd` 时执行 CLI 命令解析输出；没有则走自定义发现函数；两者皆无才使用 `KnownModels` 或用户手动定义。ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果），ACP stdout filter 还拦截 `NewSessionResponse.models` 字段作为模型发现的后备数据源（绕过 ACP SDK v0.13.5 不包含该字段的限制）。结果缓存到 SQLite 与内存
 - **后台模型刷新**：启动后后台定期刷新模型缓存，更新自动发现的 Agent 的模型列表。新增模型无需重启
 - **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖，标志区分用户定义和自动发现。用户对配置有最终控制权
@@ -65,4 +65,5 @@ flowchart TD
 - **API 密钥与密码联动**：加密密钥由登录密码派生。`agent_api_keys` 表和 `crypto.go` 已移除，密码修改不再触发 API Key 加密轮换
 - **模型缓存避免重复发现**：首次发现结果写入本地缓存，后续启动直接读取缓存。同步发现只在首次运行，之后由后台异步刷新
 - **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含 CLI 发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因 CLI 模型列表中不存在而报 `InvalidModelForAgent`
-- **部分后端无 CLI 模型列表**：Codex、VeCLI、Qoder 等后端不支持 `--list-models` 类命令，模型由供应商注册表的 `KnownModels` 或用户手动提供。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端不支持 `--list-models` 类命令，模型由供应商注册表的 `KnownModels` 或用户手动提供。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **无 CLI 列表后端的自定义发现**：Codex 通过多级策略发现模型——优先读现代 Codex CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用的完整授权模型清单，stripped 二进制也能拿到），失败再回退到对 Rust 二进制做字符串提取、读 Codex state SQLite 库（`~/.codex/state_*.sqlite`），最后落到按版本内置的已知模型默认值。前两级成功后把该后端从"无 CLI 列表"阵营中移出，让 Codex 会话能直接选择账号真实可用的模型

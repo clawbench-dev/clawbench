@@ -44,7 +44,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [SSH 隧道](infra/ssh-tunnel.md) | direct-tcpip 端口映射、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、状态查询走 `/api/ssh/info` |
 | [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |
 | [Proxy 注册表](infra/proxy.md) | 反向代理、Host 头重写、特权端口映射、前端端口展示、CORS 代理（Swagger UI "Try it out"） |
-| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（含 Kimi 模型发现函数）、ACP 运行时模型验证、多实例 Cookie 隔离、TLS 证书自动发现、Schema 迁移、默认项目持久化、配置连通性测试、覆盖率门禁 |
+| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（含 Kimi 与 Codex 自定义模型发现函数）、ACP 运行时模型验证、多实例 Cookie 隔离、TLS 证书自动发现、Schema 迁移、默认项目持久化、配置连通性测试、覆盖率门禁 |
 | [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、摘要与权限事件推送 |
 | [应用自升级](infra/self-upgrade.md) | 版本检查、备份替换、进度推送、服务重启与断线轮询 |
 | [本地文件服务](infra/local-file-serving.md) | `/api/local-file/` 路径编码、媒体预览、下载与访问边界、目录树列表、批量文件存在检查、批量图片 Base64 |
