@@ -276,6 +276,29 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
     })
 
+    // CSS-only contract for height governance: which state classes pair with the
+    // wrapper "open" class decides whether the CSS applies a small fixed-height
+    // box (streaming — content grows inside a ~10-line viewport) or the large
+    // max-height cap (expanded done). jsdom cannot measure heights, so we assert
+    // the class contract that the CSS rules hang off.
+    it('applies the streaming class contract so the CSS can fix the viewport height', () => {
+      // Streaming: block is open (no collapse) → .thinking-streaming present.
+      const streaming = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Running analysis', done: false }],
+        streaming: true,
+      })
+      expect(streaming.find('.chat-thinking').classes()).toContain('thinking-streaming')
+      expect(streaming.find('.thinking-content-wrapper').classes()).toContain('thinking-content-open')
+
+      // Streaming finished → block auto-collapses (existing auto-collapse behavior).
+      const done = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Running analysis', done: true }],
+        streaming: false,
+      })
+      expect(done.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+      expect(done.find('.thinking-content-wrapper').classes()).not.toContain('thinking-content-open')
+    })
+
     it('adds thinking-collapsed class when done', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Done thinking', done: true }],

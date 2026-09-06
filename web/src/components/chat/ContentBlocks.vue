@@ -1145,7 +1145,12 @@ onUnmounted(() => {
   /* Uses base callout style — border transition handled by content wrapper */
 }
 
-/* Content wrapper: CSS grid 0fr↔1fr transition for buttery smooth expand/collapse */
+/* Content wrapper: CSS grid 0fr↔1fr transition for buttery smooth expand/collapse.
+   Non-streaming ("done") states cap the expanded content at a generous viewport
+   fraction with inner scrolling — the box never blows past ~half the screen even
+   for very long reasoning, matching how tool-detail text is capped (500px). The
+   cap lives on .thinking-inline-content (not this wrapper) because the grid
+   transition must stay height-unconstrained to animate 0fr↔1fr correctly. */
 .thinking-content-wrapper {
   display: grid;
   grid-template-rows: 0fr;
@@ -1166,6 +1171,36 @@ onUnmounted(() => {
   line-height: 1.65;
   color: var(--text-secondary);
   word-break: break-word;
+}
+
+/* Height governance across the block lifecycle:
+   - While streaming the block is expanded live; cap the *expanded* content so a
+     runaway deep-think never keeps stretching the message. Short content (a few
+     lines) renders at natural height, so there is no awkward empty box.
+   - The moment streaming ends the block auto-collapses to a chip (existing
+     behavior); a user-expanded block re-opens under the large non-streaming cap.
+   - Slim blocks (think_id, content fetched on demand) sit under the same large
+     cap as expanded-done content.
+   The two caps apply only when the grid wrapper is OPEN — while the 0fr→1fr
+   expand/collapse animation runs the box animates freely between 0 and its
+   content/cap height, and a closed block never leaves a stray scrollbar. */
+.thinking-content-wrapper.thinking-content-open .thinking-inline-content {
+  /* ~10 lines at the 12px/1.65 typography above; caps long reasoning while
+     streaming without growing the message unbounded. */
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Large cap for *finished* content (block.done reached via thinking_done, or a
+   message that stopped streaming): a generous viewport fraction — reasoning is
+   usually several hundred lines, so ~half a viewport of scrollable depth keeps
+   it inspectable without dominating the conversation. Only the user-expanded
+   done state shows inline content at rest (finished blocks otherwise
+   auto-collapse to a chip); the 0fr↔1fr expand animation stays smooth because
+   the transition is not height-gated. */
+.chat-thinking.thinking-expanded-done .thinking-content-wrapper.thinking-content-open .thinking-inline-content {
+  max-height: min(50vh, 520px);
 }
 
 .thinking-header {
