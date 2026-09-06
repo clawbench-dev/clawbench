@@ -196,6 +196,8 @@ func TestDiscoverCodexModels_BinaryStrategyWins(t *testing.T) {
 	// When the strings strategy finds models, it must take priority over the
 	// hardcoded defaults. (Strings below minLen=4 are not extracted, so use
 	// multi-char model IDs.)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
 	mockCodexInstall(t, []string{"gpt-5.5", "o4-mini"})
 	models := DiscoverCodexModels()
 
@@ -206,6 +208,8 @@ func TestDiscoverCodexModels_BinaryStrategyWins(t *testing.T) {
 
 func TestDiscoverCodexModels_FallsBackToDefaults(t *testing.T) {
 	// Codex installed but the binary tree has no extractable models → defaults.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
 	mockCodexInstall(t, []string{"unrelated string"})
 	models := DiscoverCodexModels()
 
@@ -229,8 +233,38 @@ func TestDiscoverCodexModelsDefaults_NotInstalled(t *testing.T) {
 	assert.Nil(t, models)
 }
 
+func TestDiscoverCodexModelsFromCache(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexDir, 0o755))
+	cache := `{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},{"slug":"gpt-6-astra","display_name":"duplicate","visibility":"list"},{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"},{"slug":"hidden","visibility":"hide"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o644))
+	t.Setenv("CODEX_HOME", codexDir)
+	models := discoverCodexModelsFromCache()
+	require.Len(t, models, 2)
+	assert.Equal(t, "gpt-6-astra", models[0].ID)
+	assert.Equal(t, "GPT-5.6 Luna", models[1].Name)
+}
+
+func TestDiscoverCodexModels_CacheWins(t *testing.T) {
+	home := t.TempDir()
+	codexDir := filepath.Join(home, ".codex")
+	require.NoError(t, os.MkdirAll(codexDir, 0o755))
+	cache := `{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o644))
+	t.Setenv("CODEX_HOME", codexDir)
+	mockCodexInstall(t, []string{"gpt-5.5"})
+
+	models := DiscoverCodexModels()
+	require.Len(t, models, 2)
+	assert.Equal(t, "gpt-6-astra", models[0].ID)
+	assert.True(t, models[0].Default)
+	assert.Equal(t, "gpt-5.6-luna", models[1].ID)
+}
+
 func TestDiscoverCodexModelsFromStateDB_NoCodexDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", "")
 	models := discoverCodexModelsFromStateDB()
 	assert.Nil(t, models)
 }
@@ -239,6 +273,7 @@ func TestDiscoverCodexModelsFromStateDB_NoStateFile(t *testing.T) {
 	home := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o755))
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 	models := discoverCodexModelsFromStateDB()
 	assert.Nil(t, models)
 }
@@ -249,6 +284,7 @@ func TestDiscoverCodexModelsFromStateDB_UnrelatedFilesOnly(t *testing.T) {
 	require.NoError(t, os.MkdirAll(codexDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("[x]\n"), 0o644))
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
 	models := discoverCodexModelsFromStateDB()
 	assert.Nil(t, models)
 }
