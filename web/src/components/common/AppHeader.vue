@@ -893,7 +893,12 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex-shrink: 0;
 }
 
-/* Badge capsule: combines project + branch into one pill shape */
+/* Badge capsule: combines project + branch into one pill shape.
+   overflow:hidden clips the segments (and their highlight/hover accent
+   backgrounds) to the pill's rounded ends — without it, a highlighted
+   end segment (border-radius:0) would show a square corner sticking out of
+   the semicircular right/left edge. Dropdown/menu/reveal surfaces are all
+   teleported to <body>, so nothing inside needs to overflow this box. */
 .badge-capsule {
     display: flex;
     align-items: center;
@@ -903,6 +908,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex: 0 1 auto;
     min-width: 0;
     max-width: calc(100% - 50px); /* leave room for logo + server button */
+    overflow: hidden;
     transition: background 0.15s, border-color 0.15s;
 }
 
