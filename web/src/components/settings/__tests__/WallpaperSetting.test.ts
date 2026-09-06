@@ -1,0 +1,203 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import { ref, nextTick } from 'vue'
+import WallpaperSetting from '@/components/settings/WallpaperSetting.vue'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
+
+// appLog relays to native/server; keep it inert in unit tests.
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
+// Module-level state shared by the mocked useSettingsConfig and the tests.
+const serverConfig = ref<Record<string, unknown>>({ appearance: { wallpaper_file: '', panel_opacity: 0.85 } })
+const localConfig = ref<Record<string, string | number | boolean | null>>({ theme: 'auto' })
+const mockLoadConfig = vi.fn(async () => {})
+const mockPatchConfig = vi.fn(async () => ({ needsRestart: false, changedColdFields: [] }))
+
+vi.mock('@/composables/useSettingsConfig', () => ({
+  useSettingsConfig: () => ({
+    serverConfig,
+    localConfig,
+    loadConfig: mockLoadConfig,
+    patchConfig: mockPatchConfig,
+  }),
+  setLocalConfig: vi.fn(),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: vi.fn() }),
+}))
+
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: {
+    en: {
+      settings: {
+        items: {
+          wallpaper: 'Background image',
+          wallpaperDesc: 'Desc',
+          wallpaperLoading: 'Loading',
+          wallpaperPreview: 'Preview',
+          wallpaperUpload: 'Upload',
+          wallpaperReplace: 'Replace',
+          wallpaperRemove: 'Remove',
+          wallpaperSetOk: 'Set',
+          wallpaperRemoved: 'Removed',
+          wallpaperUploadFailed: 'Upload failed',
+          wallpaperRemoveFailed: 'Remove failed',
+          wallpaperSaveFailed: 'Save failed',
+          wallpaperPanelOpacity: 'Panel opacity',
+          wallpaperPanelOpacityDesc: 'Desc',
+          resetToDefault: 'Reset',
+        },
+      },
+    },
+  },
+})
+
+function mountSetting() {
+  return mount(WallpaperSetting, {
+    props: { description: 'desc' },
+    global: { plugins: [i18n] },
+  })
+}
+
+function fetchOk() {
+  return {
+    ok: true,
+    status: 200,
+    json: vi.fn(async () => ({ file: 'background.png' })),
+  }
+}
+
+// jsdom lacks matchMedia; the wallpaper scrim resolution calls
+// resolveThemeId('auto') → window.matchMedia. Provide a light-scheme stub.
+function stubMatchMedia() {
+  vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+    matches: false,
+    media: '',
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    onchange: null,
+    dispatchEvent: vi.fn(),
+  }))
+}
+
+describe('WallpaperSetting', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+    stubMatchMedia()
+    vi.stubGlobal('fetch', vi.fn())
+    serverConfig.value = { appearance: { wallpaper_file: '', panel_opacity: 0.85 } }
+    document.documentElement.classList.remove('wallpaper-active')
+  })
+
+  it('shows the upload button and a disabled opacity slider when no wallpaper is set', async () => {
+    const wrapper = mountSetting()
+    await nextTick()
+    const buttons = wrapper.findAll('button').map(b => b.text())
+    expect(buttons).toContain('Upload')
+    const slider = wrapper.find('input[type="range"]')
+    expect(slider.attributes('disabled')).toBeDefined()
+  })
+
+  it('shows the thumbnail, replace and remove buttons when a wallpaper is set', async () => {
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const wrapper = mountSetting()
+    await nextTick()
+    expect(wrapper.find('img.wallpaper-thumb').exists()).toBe(true)
+    const buttons = wrapper.findAll('button').map(b => b.text())
+    expect(buttons).toContain('Remove')
+    expect(buttons).toContain('Replace')
+    const slider = wrapper.find('input[type="range"]')
+    expect(slider.attributes('disabled')).toBeUndefined()
+  })
+
+  it('uploads the selected file via multipart POST', async () => {
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const fetchMock = vi.fn(async () => fetchOk())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountSetting()
+    await nextTick()
+
+    const input = wrapper.find('input[type="file"]')
+    const file = new File(['x'], 'photo.png', { type: 'image/png' })
+    // jsdom lacks DataTransfer/FileList assignment; fake the FileList shape.
+    const fileList = { 0: file, length: 1, item: (i: number) => (i === 0 ? file : null) }
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: fileList,
+    })
+    await input.trigger('change')
+
+    await nextTick()
+    // The upload triggers an async flow with a loadConfig round-trip.
+    await mockLoadConfig()
+    await nextTick()
+
+    const calls = fetchMock.mock.calls
+    const uploadCall = calls.find(c => c[0] === '/api/theme-background')
+    expect(uploadCall).toBeTruthy()
+    const [, init] = uploadCall as [string, RequestInit]
+    expect((init as RequestInit).method).toBe('POST')
+    expect((init as RequestInit).body).toBeInstanceOf(FormData)
+  })
+
+  it('removes the wallpaper via DELETE when Remove is clicked', async () => {
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: vi.fn(async () => ({})) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountSetting()
+    await nextTick()
+    const removeBtn = wrapper.findAll('button').find(b => b.text() === 'Remove')
+    expect(removeBtn).toBeTruthy()
+    await removeBtn!.trigger('click')
+
+    await mockLoadConfig()
+    await nextTick()
+    expect(fetchMock).toHaveBeenCalledWith('/api/theme-background', { method: 'DELETE' })
+  })
+
+  it('persists panel opacity with a debounced PATCH on slider input', async () => {
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const wrapper = mountSetting()
+    await nextTick()
+    const slider = wrapper.find('input[type="range"]')
+    await slider.setValue('0.75')
+    await slider.trigger('input')
+    // Debounce fires after 350ms.
+    await new Promise(r => setTimeout(r, 400))
+    expect(mockPatchConfig).toHaveBeenCalledWith({ appearance: { panel_opacity: 0.75 } })
+  })
+
+  it('does not change the wallpaper image URL while dragging the opacity slider', async () => {
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const wrapper = mountSetting()
+    await nextTick()
+
+    // Trigger an initial apply with the wallpaper active.
+    const { applyWallpaper } = await import('@/utils/themeBackground')
+    applyWallpaper('background.png', 0.85, false)
+    const html = document.documentElement
+    const urlBefore = html.style.getPropertyValue('--wallpaper-url')
+    expect(html.classList.contains('wallpaper-active')).toBe(true)
+
+    // Simulate slider ticks: each calls applyWallpaper with a new alpha.
+    const slider = wrapper.find('input[type="range"]')
+    await slider.setValue('0.8')
+    await slider.trigger('input')
+    await slider.setValue('0.78')
+    await slider.trigger('input')
+    const urlAfter = html.style.getPropertyValue('--wallpaper-url')
+    expect(urlAfter).toBe(urlBefore)
+    expect(html.style.getPropertyValue('--panel-alpha')).toBe('78%')
+  })
+})

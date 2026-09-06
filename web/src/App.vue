@@ -8,6 +8,8 @@
 
     <!-- Main app -->
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
+      <!-- Custom wallpaper layer (rendered when a wallpaper is active) -->
+      <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true"></div>
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
@@ -123,6 +125,7 @@
                       @navigate-back="handleFileHistoryBack"
                       @navigate-forward="handleFileHistoryForward"
                       @share-link="openShareLinkDialog"
+                      @set-as-background="handleSetAsBackground"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -417,7 +420,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, applyThemeAttributes, buildThemePalette } from '@/utils/themeMeta'
+import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -860,11 +864,36 @@ registerOpenSessionTabOverride(() => sessionSidebar.openSessionTabBridge())
 // Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)
 
 const showHidden = ref(false)
-const { localConfig, setLocalConfig: setSetting, loadConfig } = useSettingsConfig()
+const { localConfig, setLocalConfig: setSetting, loadConfig, serverConfig } = useSettingsConfig()
 // Initialize from settings config (which handles legacy key migration)
 showHidden.value = !!localConfig.showHidden
 const sortField = ref(localConfig.sortField || null)
 const sortDir = ref(localConfig.sortDir || 'asc')
+
+// ── Custom wallpaper ────────────────────────────────────────────────
+// wallpaperActive drives the wallpaper-layer visibility; the CSS variables
+// (--wallpaper-url / --wallpaper-scrim / --panel-alpha) and the
+// wallpaper-active class are applied to <html> by applyWallpaper(). The
+// tri-state (unknown) is used by the settings panel's panel-opacity slider
+// disabled logic; here we only care whether a wallpaper is set.
+const wallpaperActive = ref(false)
+
+/** Apply the wallpaper effect from the latest server config + theme state. */
+function refreshWallpaper() {
+  const appearance = serverConfig.value?.appearance ?? {}
+  const state = resolveWallpaperState(serverConfig.value?.appearance)
+  const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
+  wallpaperActive.value = state === 'set'
+  applyWallpaper(
+    String(appearance.wallpaper_file ?? ''),
+    resolvePanelOpacity(appearance),
+    dark,
+  )
+}
+
+// Apply whenever the server config (re)loads — covers cold start (after
+// loadConfig resolves), PATCH round-trips and project switches.
+watch(() => serverConfig.value, refreshWallpaper, { deep: true })
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -1269,6 +1298,8 @@ function registerAppEventListeners() {
       const resolved = e.detail
       applyThemeAttributes(resolved)
       theme.value = resolved
+      // Recompute the wallpaper scrim strength for the new light/dark base.
+      applyWallpaperScrim(isDarkTheme(resolved))
       // Notify native app to update status bar/nav bar/floating window colors
       const palette = buildThemePalette(resolved)
       getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
@@ -1556,6 +1587,17 @@ async function handleTaskOpenFile(filePath, lineStart) {
 
 function handleOverlayClose() {
     closeOverlayAndSync()
+}
+
+/** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
+async function handleSetAsBackground(path) {
+    try {
+        await setWallpaperFromPath(path)
+        await loadConfig()
+        toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
+    } catch {
+        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
+    }
 }
 
 async function handleFileHistoryBack() {

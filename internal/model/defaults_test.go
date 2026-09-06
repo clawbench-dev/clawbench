@@ -169,6 +169,12 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Fonts.Dir != filepath.Join(tmpDir, ".clawbench", "fonts") {
 		t.Errorf("Fonts.Dir = %q, want %q", cfg.Fonts.Dir, filepath.Join(tmpDir, ".clawbench", "fonts"))
 	}
+	if cfg.Appearance.PanelOpacity != 0.85 {
+		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
+	}
+	if cfg.Appearance.WallpaperFile != "" {
+		t.Errorf("Appearance.WallpaperFile = %q, want empty (no wallpaper set)", cfg.Appearance.WallpaperFile)
+	}
 }
 
 func TestApplyDefaultsPartialConfig(t *testing.T) {
@@ -204,6 +210,27 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	// Unset values should get defaults
 	if cfg.Upload.MaxFiles != 20 {
 		t.Errorf("Upload.MaxFiles = %d, want 20 (default)", cfg.Upload.MaxFiles)
+	}
+}
+
+func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Appearance.PanelOpacity = 0.7
+	cfg.Appearance.WallpaperFile = "background.png"
+
+	ApplyDefaults(&cfg, map[string]bool{
+		"appearance":                true,
+		"appearance.panel_opacity":  true,
+		"appearance.wallpaper_file": true,
+	})
+
+	if cfg.Appearance.PanelOpacity != 0.7 {
+		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
+	}
+	if cfg.Appearance.WallpaperFile != "background.png" {
+		t.Errorf("Appearance.WallpaperFile = %q, want %q (explicitly set)", cfg.Appearance.WallpaperFile, "background.png")
 	}
 }
 

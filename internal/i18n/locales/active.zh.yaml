@@ -46,6 +46,9 @@ DirectoryNotFound: 目录未找到
 InvalidFilePath: 无效的文件路径
 FileTooLargeOrInvalid: 文件过大或格式无效
 NoFileProvided: 未提供文件
+FileTooLargeShort: 文件过大
+InvalidImage: "不支持的图片: {{.Error}}"
+WriteFailed: "保存失败: {{.Error}}"
 UploadSaveFailed: "无法保存文件: {{.Error}}"
 FileMustHaveExtension: 文件必须有扩展名
 FileTypeNotAllowed: "不允许的文件类型: {{.Ext}}"

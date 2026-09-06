@@ -119,6 +119,10 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
+	// Appearance — wallpaper file name (managed by the theme-background handler;
+	// only PATCHable as "" to clear) and panel opacity multiplier
+	"appearance.wallpaper_file": true,
+	"appearance.panel_opacity":  true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -205,6 +209,7 @@ type configResponse struct {
 	FileSearch          configFileSearch     `json:"file_search"`
 	TLS                 configTLS            `json:"tls"`
 	Fonts               configFonts          `json:"fonts"`
+	Appearance          configAppearance     `json:"appearance"`
 }
 
 type configChat struct {
@@ -351,6 +356,12 @@ type configFonts struct {
 	Dir string `json:"dir"` // Resolved custom font directory (defaults to <DataDir>/fonts)
 }
 
+// configAppearance exposes custom wallpaper settings to the settings panel.
+type configAppearance struct {
+	WallpaperFile string  `json:"wallpaper_file"` // Active wallpaper file name in <DataDir>/theme ("" = none)
+	PanelOpacity  float64 `json:"panel_opacity"`  // Main work-panel opacity multiplier (0.7–1.0; default 0.85)
+}
+
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
@@ -430,6 +441,8 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
+	"appearance.wallpaper_file":         true,
+	"appearance.panel_opacity":          true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -577,6 +590,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		},
 		Fonts: configFonts{
 			Dir: cfg.ResolveFontsDir(),
+		},
+		Appearance: configAppearance{
+			WallpaperFile: cfg.Appearance.WallpaperFile,
+			PanelOpacity:  cfg.Appearance.PanelOpacity,
 		},
 	}
 
@@ -984,6 +1001,21 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// appearance — custom wallpaper. panel_opacity must be in the valid range.
+	// wallpaper_file is owned by the theme-background handler (it writes the
+	// file into <DataDir>/theme before recording the name); PATCH is only
+	// allowed to CLEAR it (empty string). A non-empty value patched directly
+	// would be a path-traversal entry point — the GET/serve endpoint joins the
+	// stored value onto <DataDir>/theme.
+	if appearance, ok := patch["appearance"].(map[string]any); ok {
+		if v, ok := appearance["panel_opacity"].(float64); ok && (v < 0.7 || v > 1.0) {
+			return fmt.Errorf("appearance.panel_opacity must be between 0.7 and 1.0")
+		}
+		if v, ok := appearance["wallpaper_file"].(string); ok && v != "" {
+			return fmt.Errorf("appearance.wallpaper_file can only be cleared via PATCH (set to empty); use the theme-background endpoint to set a wallpaper")
+		}
+	}
+
 	return nil
 }
 
@@ -1015,6 +1047,15 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if appearance, ok := patch["appearance"].(map[string]any); ok {
+		if v, ok := appearance["panel_opacity"].(float64); ok {
+			cfg.Appearance.PanelOpacity = v
+		}
+		if v, ok := appearance["wallpaper_file"].(string); ok {
+			cfg.Appearance.WallpaperFile = v
 		}
 	}
 

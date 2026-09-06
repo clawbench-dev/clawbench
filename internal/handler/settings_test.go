@@ -2545,3 +2545,116 @@ func TestServeConfig_Patch_FontsDirRelativeRejected(t *testing.T) {
 	// Patch must not have been applied.
 	assert.Equal(t, "/default/fonts", model.ConfigInstance.Fonts.Dir)
 }
+
+// --- appearance (custom wallpaper): config response + PATCH plumbing ---
+
+func TestServeConfig_Get_Appearance(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	cfg.Appearance.PanelOpacity = 0.9
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	appearance, ok := resp["appearance"].(map[string]any)
+	require.True(t, ok, "response should contain appearance section")
+	assert.Equal(t, "background.png", appearance["wallpaper_file"])
+	assert.Equal(t, 0.9, appearance["panel_opacity"])
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacity(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	body := `{"appearance":{"panel_opacity":0.75}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0.75, model.ConfigInstance.Appearance.PanelOpacity)
+
+	// panel_opacity is a hot-reload field — no restart needed.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool))
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacityOutOfRangeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	body := `{"appearance":{"panel_opacity":0.5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0.85, model.ConfigInstance.Appearance.PanelOpacity, "out-of-range patch must not apply")
+}
+
+func TestServeConfig_Patch_AppearanceWallpaperFileNonEmptyRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// Non-empty wallpaper_file is owned by the theme-background handler — a
+	// direct PATCH would be a path-traversal entry point for the GET endpoint.
+	body := `{"appearance":{"wallpaper_file":"background.png"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+}
+
+func TestServeConfig_Patch_AppearanceWallpaperFileClearAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	model.ConfigInstance = cfg
+
+	// Empty string = clear, allowed by PATCH (file cleanup is the DELETE
+	// endpoint's job; config clear alone is safe).
+	body := `{"appearance":{"wallpaper_file":""}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+}

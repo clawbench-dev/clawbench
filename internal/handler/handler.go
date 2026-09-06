@@ -234,6 +234,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/config/password", middleware.Auth(ServeConfigPassword))
 	register("/api/fonts/list", middleware.Auth(ServeFontsList))
 	register("/api/fonts/file", middleware.Auth(ServeFontFile))
+	register("/api/theme-background", middleware.Auth(ServeThemeBackground))
+	register("/api/file/theme-background", middleware.Auth(ServeThemeBackgroundGet))
 	register("/api/projects", middleware.Auth(ServeProjects))
 	register("/api/project", middleware.Auth(ServeProjectSet))
 	register("/api/ai/chat", middleware.Auth(AIChat))

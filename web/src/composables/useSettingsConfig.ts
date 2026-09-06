@@ -438,6 +438,8 @@ const serverDefaults: Record<string, unknown> = {
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',
+  'appearance.wallpaper_file': '',
+  'appearance.panel_opacity': 0.85,
 }
 
 // ── Agent preference helpers ──────────────────────────────

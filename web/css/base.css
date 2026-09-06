@@ -23,6 +23,69 @@ html, body {
     transition: background 0.2s, color 0.2s;
 }
 
+/* ── Custom wallpaper layer ──────────────────────────────────────────
+   Mounted inside .app-container (fixed) so it only covers the authenticated
+   main app — the login view (separate SPA subtree) is never behind it. The
+   layer sits at z-index:0; .main-content is promoted to z-index:1 so every
+   work panel renders above the wallpaper, while overlays/drawers/menus that
+   Teleport to body keep their own stacking contexts. pointer-events:none so
+   the layer never intercepts clicks. */
+
+.wallpaper-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-color: var(--bg-primary);
+    background-image: var(--wallpaper-url);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    pointer-events: none;
+}
+
+.wallpaper-layer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--wallpaper-scrim);
+}
+
+/* Main content sits above the wallpaper layer. When no wallpaper is active
+   this is harmless (layer is inert/absent). */
+.app-container > .main-content,
+.app-container > .bottom-dock-wrapper {
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Wallpaper-active panel translucency ────────────────────────────
+   With a wallpaper set, main work surfaces (the per-tab panels, app header,
+   session sidebar, file overlay) become translucent through --panel-alpha.
+   Overlays/drawers/menus/editors/terminals keep their own solid backgrounds
+   (they are not listed here), so dense content stays readable. Without
+   .wallpaper-active none of these rules apply → byte-identical to before. */
+
+html.wallpaper-active .header,
+html.wallpaper-active .tab-panel,
+html.wallpaper-active .chat-title-bar,
+html.wallpaper-active .session-sidebar,
+html.wallpaper-active .file-header-bar {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* The file overlay fills its whole view TabPanel. If both were translucent the
+   wallpaper would show through TWO scrim layers (nearly invisible); instead the
+   overlay goes fully transparent so the panel beneath it (already at
+   --panel-alpha) is the single visible surface. */
+html.wallpaper-active .file-overlay {
+    background: transparent;
+}
+
+html.wallpaper-active .bottom-dock,
+html.wallpaper-active .wide-dock {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 4px;

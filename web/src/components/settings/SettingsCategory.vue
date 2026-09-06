@@ -25,6 +25,13 @@
         v-if="card.type === 'group'"
         :title="card.title"
       >
+        <!-- Custom wallpaper block: dedicated component with thumbnail/upload/
+             remove + its own panel-opacity slider. Rendered at the top of the
+             wallpaper section card. -->
+        <WallpaperSetting
+          v-if="card.title === t('settings.items.wallpaperSection')"
+          :description="t('settings.items.wallpaperDesc')"
+        />
         <SettingsItem
           v-for="item in card.items"
           :key="item.key"
@@ -77,6 +84,7 @@ import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import SettingsCard from './SettingsCard.vue'
+import WallpaperSetting from './WallpaperSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -220,7 +228,11 @@ const cards = computed<RenderCard[]>(() => {
           flush()
           cur = { type: 'group', title: header, items: [] }
         }
-        cur.items.push(entry.spec)
+        // The wallpaper panel-opacity slider is rendered inside the dedicated
+        // WallpaperSetting component, not as a generic SettingsItem row.
+        if (entry.spec.key !== 'appearance.panel_opacity') {
+          cur.items.push(entry.spec)
+        }
       } else {
         // Header-less items all merge into a single "其他" group (at the end),
         // so a page can never have more than one "其他" card.

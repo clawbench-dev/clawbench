@@ -82,6 +82,11 @@
         <FileOutput :size="14" />
       </button>
 
+      <!-- Set as theme background (image files only) -->
+      <button v-if="isWallpaperSource && toolbarInlineIds.includes('setAsBackground')" class="file-header-btn" @click.stop="handleSetAsBackground" :title="t('file.header.setAsBackground')">
+        <Image :size="14" />
+      </button>
+
       <!-- Open directory button -->
       <button v-if="toolbarInlineIds.includes('openDirectory')" class="file-header-btn" @click.stop="handleOpenDirectory" :title="t('file.header.openDirectory')">
         <FolderOpen :size="14" />
@@ -178,6 +183,10 @@
               <FileOutput :size="14" />
               {{ t('file.header.exportHtml') }}
             </button>
+            <button v-if="isWallpaperSource && toolbarCollapsedIds.includes('setAsBackground')" class="dropdown-item" @click="handleSetAsBackground">
+              <Image :size="14" />
+              {{ t('file.header.setAsBackground') }}
+            </button>
             <button v-if="toolbarCollapsedIds.includes('openDirectory')" class="dropdown-item" @click="handleOpenDirectory">
               <FolderOpen :size="14" />
               {{ t('file.header.openDirectory') }}
@@ -213,7 +222,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -239,7 +248,7 @@ const props = defineProps({
     overlayOpen: Boolean,
     editing: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -301,6 +310,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (!props.editing) ids.push('shareLink')
     ids.push('download')
     if (isMarkdown.value && effectiveViewMode.value === 'rendered') ids.push('exportHtml')
+    if (isWallpaperSource.value) ids.push('setAsBackground')
     ids.push('openDirectory')
     ids.push('gitHistory')
     ids.push('delete')
@@ -345,6 +355,16 @@ const isMediaFile = computed(() => {
 // An empty (but loaded) file has content === '' and must still be editable;
 // only null/undefined (media, binary, too-large, not-yet-loaded) exclude it.
 const hasTextContent = computed(() => typeof props.file?.content === 'string' && !props.file?.tooLarge && !props.file?.isBinary)
+
+// Whether the open file can become the theme wallpaper: raster/vector image
+// formats supported by the wallpaper pipeline (png/jpg/jpeg/gif/webp/svg).
+// Narrower than isImage (which also allows bmp/ico/tiff/avif).
+const wallpaperExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']
+const isWallpaperSource = computed(() => {
+  if (!props.file?.name) return false
+  const ext = props.file.name.split('.').pop()?.toLowerCase() ?? ''
+  return wallpaperExts.includes(ext)
+})
 // Editable: text/source files in raw view (excludes media).
 // Markdown is always editable (even in rendered view) so users can edit the source.
 const isEditable = computed(() => {
@@ -457,6 +477,13 @@ async function handleOpenDirectory() {
     const path = props.file?.path
     if (!path) return
     await navToFileInManager(path)
+}
+
+function handleSetAsBackground() {
+    menuOpen.value = false
+    const path = props.file?.path
+    if (!path) return
+    emit('setAsBackground', path)
 }
 
 function handleRefresh() {
