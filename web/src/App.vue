@@ -17,13 +17,15 @@
           v-if="wallpaperActive"
           :src="wallpaperUrl"
           class="wallpaper-image"
-          :class="{ 'wallpaper-image--blurred': wallpaperBlurPx > 0 }"
+          :class="{
+            'wallpaper-image--blurred': wallpaperBlurPx > 0,
+            'wallpaper-image--edge-fade': wallpaperEdgeFade,
+          }"
           :style="wallpaperImageStyle"
           alt=""
           draggable="false"
         />
         <div class="wallpaper-scrim"></div>
-        <div v-if="wallpaperEdgeFade" class="wallpaper-edge-fade"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />

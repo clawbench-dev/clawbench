@@ -67,21 +67,24 @@ html, body {
     background: var(--wallpaper-scrim);
 }
 
-/* Soft edge fade: inset box-shadow (not a blur) gradients the four edges
-   toward the theme surface color so the wallpaper never ends in a hard line
-   against the translucent panels. Enabled per user preference. */
-.wallpaper-edge-fade {
-    position: absolute;
-    inset: 0;
-    box-shadow: inset 0 0 160px 80px var(--bg-primary);
-}
-
 /* Gaussian blur class: applied by App.vue only when blur radius > 0 so we
    never create a filter layer needlessly. The scale factor lives in the
    inline style (it must track the live radius); this class only needs to
    exist as a stable hook. */
 .wallpaper-image--blurred {
     will-change: filter, transform;
+}
+
+/* Edge fade via an alpha MASK on the image itself (not a colored overlay).
+   Fading the image's own alpha toward 0 lets the .wallpaper-layer's
+   --bg-primary base show through — the transition lives entirely in the alpha
+   channel, which GPUs render as a single smooth ramp. A colored gradient
+   overlay instead blends two colors over the photo and can still show faint
+   contour lines where the gradient's 8-bit steps land on photo detail. The
+   60%→100% outer band leaves the center untouched. */
+.wallpaper-image--edge-fade {
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 60%, transparent 100%);
+    mask-image: radial-gradient(ellipse at center, #000 60%, transparent 100%);
 }
 
 /* Main content sits above the wallpaper layer. When no wallpaper is active
@@ -118,6 +121,67 @@ html.wallpaper-active .file-overlay {
 html.wallpaper-active .bottom-dock,
 html.wallpaper-active .wide-dock {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* ── Extended page surfaces (wallpaper-active) ──────────────────────
+   Full-page roots and page-level bars across the task, port-forward,
+   settings, file-browser and media-preview panels. Their components declare
+   opaque var(--bg-*) backgrounds in scoped CSS; these rules (higher
+   specificity via the html.wallpaper-active prefix) make them translucent so
+   the wallpaper shows through. Content canvases stay opaque by design:
+   video player (#000), code editor (--code-bg), Excalidraw iframe, PDF page
+   canvas (#525659) and the terminal xterm surface. Cards/rows inside these
+   pages (task items, proxy port cards, settings card bodies, form sections)
+   deliberately keep their own opaque backgrounds (conservative depth). */
+
+/* bg-primary full-page roots + page-level action bars */
+html.wallpaper-active .task-list-page,
+html.wallpaper-active .task-detail-page,
+html.wallpaper-active .task-form-page,
+html.wallpaper-active .exec-detail-page,
+html.wallpaper-active .task-overview,
+html.wallpaper-active .detail-actions,
+html.wallpaper-active .form-footer,
+html.wallpaper-active .exec-detail-actions,
+html.wallpaper-active .proxy-panel-content,
+html.wallpaper-active .settings-page__header,
+html.wallpaper-active .image-preview-body,
+html.wallpaper-active .audio-preview-body,
+html.wallpaper-active .pdf-preview-container,
+html.wallpaper-active .pdf-error,
+html.wallpaper-active .office-preview-container {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* bg-secondary page-level bars / page roots (settings list surfaces) */
+html.wallpaper-active .proxy-header,
+html.wallpaper-active .settings-index,
+html.wallpaper-active .settings-category,
+html.wallpaper-active .settings-agents-index,
+html.wallpaper-active .settings-agent-detail,
+html.wallpaper-active .terminal-tab-bar,
+html.wallpaper-active .drilldown-header,
+html.wallpaper-active .manage-tabs {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* bg-tertiary file-manager toolbar */
+html.wallpaper-active .dir-toolbar {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+
+/* file-browser bottom nav bar uses bg-primary */
+html.wallpaper-active .dir-nav-bottom {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* OfficePreview re-encodes its wrappers with !important deep overrides —
+   must match with !important inside the active scope. The wrappers live in
+   the DOM under .office-preview-body (any depth), so a plain descendant
+   selector covers them. */
+html.wallpaper-active .office-preview-body .docx-wrapper,
+html.wallpaper-active .office-preview-body .pptx-preview-wrapper {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent) !important;
 }
 
 /* Scrollbar styling */
