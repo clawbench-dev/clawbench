@@ -520,7 +520,6 @@ export default {
       external: '外部',
       sentToast: '消息已发送',
       markedReadToast: '已标记为已读',
-      collapse: '收起',
       expand: '展开查看完整内容',
     },
     session: {

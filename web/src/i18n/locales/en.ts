@@ -520,7 +520,6 @@ export default {
       external: 'External',
       sentToast: 'Message sent',
       markedReadToast: 'Marked as read',
-      collapse: 'Collapse',
       expand: 'Expand to see full content',
     },
     session: {
