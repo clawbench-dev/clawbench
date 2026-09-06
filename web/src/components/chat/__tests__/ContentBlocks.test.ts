@@ -352,6 +352,75 @@ describe('ContentBlocks', () => {
     })
   })
 
+  // ── Thinking inline-content scroll follow ──
+  // The streaming thinking box is a capped-height scroll container. Each content
+  // flush rewrites innerHTML and the browser keeps the old scrollTop, so the box
+  // must be re-pinned to its bottom — unless the user scrolled up to read
+  // earlier reasoning (latch). jsdom cannot lay out the box, so the geometry is
+  // faked with Object.defineProperty and the scrollTop effect is asserted.
+
+  describe('thinking inline scroll follow', () => {
+    function fakeOverflow(el: HTMLElement, scrollHeight: number, clientHeight: number) {
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: scrollHeight })
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
+    }
+
+    it('pins the streaming thinking box to the bottom after a content flush', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep reasoning', done: false, _key: 'th-stream' }],
+        streaming: true,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220) // content overflows the capped box
+      box.scrollTop = 0
+
+      // A content flush rewrites blockHtmlCache → follow re-pins to bottom.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning more', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(800)
+    })
+
+    it('stops following once the user scrolls up to read earlier reasoning', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep reasoning', done: false, _key: 'th-stream' }],
+        streaming: true,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220)
+      // Follow pins to the bottom, recording scrollTop for direction detection
+      // (reality: the streamed content must overflow before the user can scroll).
+      Object.defineProperty(box, 'scrollTop', { configurable: true, value: 800, writable: true })
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning…', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(800)
+
+      // User scrolls up to read past reasoning: scrollTop decreases → latch.
+      box.scrollTop = 400
+      await wrapper.find('.thinking-inline-content').trigger('scroll')
+      await nextTick()
+
+      // Further content flush must NOT yank the box back to the bottom.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning more', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(400)
+    })
+
+    it('does not pin a finished (non-streaming) thinking box', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Final reasoning', done: true, _key: 'th-done' }],
+        streaming: false,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220)
+      box.scrollTop = 150
+
+      // Any cache rewrite while not streaming must leave the box position alone.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Final reasoning updated', done: true, _key: 'th-done' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(150)
+    })
+  })
+
   // ── Error / Warning blocks ──
 
   describe('error and warning blocks', () => {

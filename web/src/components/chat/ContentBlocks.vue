@@ -125,7 +125,12 @@
             'thinking-content-open': isThinkingStreaming(block) || isThinkingExpandedDone(block, bi) || !!expandingThinking[stableBlockKey(bi, block)],
           }"
         >
-          <div class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
+          <div
+            class="thinking-inline-content"
+            :ref="(el) => setThinkingInlineRef(stableBlockKey(bi, block), el)"
+            @scroll="handleThinkingInlineScroll(stableBlockKey(bi, block), $event)"
+            v-html="getThinkingHtml(bi, block)"
+          ></div>
         </div>
       </div>
       <!-- Tool use block -->
@@ -244,7 +249,7 @@
 
 <script setup lang="ts">
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
-import { ref, watch, onUnmounted, computed, onMounted, reactive } from 'vue'
+import { ref, watch, onUnmounted, computed, onMounted, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
@@ -257,6 +262,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
+import { updateThinkingUserLeftBottom } from '@/utils/thinkingScroll'
 import {
   isSevereWarning,
   getWarningText as getWarningTextUtil,
@@ -650,6 +656,59 @@ function setThinkingRef(key: string, el: any) {
   }
 }
 
+// ── Thinking inline-content scroll follow ──
+// The streaming thinking box is a fixed-height (`max-height` + `overflow-y`)
+// scroll container. Each streaming render batch rewrites its innerHTML and the
+// browser keeps the old scrollTop, so new reasoning lines accumulate below the
+// viewport unless we re-pin the box to the bottom. Follow is per-block, latched
+// off the instant the user scrolls up to read earlier reasoning, and resumed
+// when they return to the bottom (same contract as the outer chat scroll).
+const thinkingInlineEls = new Map<string, HTMLElement>()
+let thinkingScrollLeft: Record<string, boolean> = {}
+const thinkingScrollTop = new Map<string, number>()
+
+function setThinkingInlineRef(key: string, el: any) {
+  if (el) {
+    thinkingInlineEls.set(key, el as HTMLElement)
+  } else {
+    thinkingInlineEls.delete(key)
+    delete thinkingScrollLeft[key]
+    thinkingScrollTop.delete(key)
+  }
+}
+
+/** User scrolled inside a thinking box: update the per-block "left the bottom" latch. */
+function handleThinkingInlineScroll(key: string, event: Event) {
+  const el = event.currentTarget as HTMLElement
+  const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+  const prevTop = thinkingScrollTop.get(key) ?? el.scrollTop
+  thinkingScrollLeft[key] = updateThinkingUserLeftBottom(
+    thinkingScrollLeft[key] ?? false,
+    { scrollingUp: el.scrollTop < prevTop, distFromBottom: dist },
+  )
+  thinkingScrollTop.set(key, el.scrollTop)
+}
+
+/** After a streaming content update, pin each live thinking box to its bottom
+ *  unless the user is reading earlier reasoning in that box. Only boxes still
+ *  mid-stream follow — finished boxes that merely remain in the DOM (collapsed
+ *  or user-expanded) must keep their manual position. */
+function followThinkingScrollToBottom() {
+  nextTick(() => {
+    for (const [key, el] of thinkingInlineEls) {
+      if (!el) continue
+      const isStreamingLive = !!el.closest('.chat-thinking')?.classList.contains('thinking-streaming')
+      if (!isStreamingLive) continue
+      if (thinkingScrollLeft[key]) continue
+      // Only follow boxes whose content is actually overflowing (a short box
+      // with no scrollbar must not be forced — scrollTop is 0 either way).
+      if (el.scrollHeight <= el.clientHeight) continue
+      el.scrollTop = el.scrollHeight
+      thinkingScrollTop.set(key, el.scrollTop)
+    }
+  })
+}
+
 /** Click inside expanded tool-detail: dispatch to tool action handlers first, then fall through to generic behavior. */
 function handleToolDetailClick(event: Event) {
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
@@ -804,6 +863,10 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
       delete expandingThinking.value[blockKey]
       delete collapsingThinking.value[blockKey]
     }
+    // Streaming ended: release the inner-scroll follow latches so the next
+    // streamed deep-think starts pinned to the bottom again.
+    thinkingScrollLeft = {}
+    thinkingScrollTop.clear()
     // Clear throttle cache and force a full re-render of thinking HTML
     blockHtmlCache.value = {}
   }
@@ -840,6 +903,17 @@ watch(() => props.active, (active) => {
     _throttlePending = false
   }
 })
+
+// Follow the live stream inside each thinking box. The thinking HTML is served
+// through v-html from blockHtmlCache; whenever the cache is rewritten during
+// streaming the browser keeps the box's old scrollTop, so re-pin any live box
+// to its bottom (unless the user scrolled up to read earlier reasoning there).
+// flush:'post' runs after the v-html DOM update lands, so scrollTop assignment
+// targets the freshly-rendered content.
+watch(blockHtmlCache, () => {
+  if (!props.streaming) return
+  followThinkingScrollToBottom()
+}, { flush: 'post' })
 
 onUnmounted(() => {
   stopElapsedTimer()
