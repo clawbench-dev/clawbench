@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -59,24 +60,80 @@ func codexTargetTriple() string {
 }
 
 // DiscoverCodexModels discovers Codex model IDs using multiple strategies:
-// 1. Run `strings` on the embedded Rust binary (works for unstripped binaries)
-// 2. Read model info from the Codex state SQLite database (~/.codex/state_*.sqlite)
-// 3. Fall back to hardcoded defaults based on the installed Codex version
+// 1. Read the model catalog cached by modern Codex CLI versions
+// 2. Run `strings` on the embedded Rust binary (works for unstripped binaries)
+// 3. Read model info from the Codex state SQLite database (~/.codex/state_*.sqlite)
+// 4. Fall back to hardcoded defaults based on the installed Codex version
 func DiscoverCodexModels() []model.AgentModel {
-	// Strategy 1: Try strings on the Rust binary
+	// Strategy 1: Read the complete model catalog cached by modern Codex versions
+	if platform.ResolveCLIPath("codex") != "" {
+		if models := discoverCodexModelsFromCache(); len(models) > 0 {
+			models[0].Default = true
+			return models
+		}
+	}
+
+	// Strategy 2: Try strings on the Rust binary
 	if models := discoverCodexModelsFromBinary(); len(models) > 0 {
 		return models
 	}
 
-	// Strategy 2: Read from Codex state SQLite database
+	// Strategy 3: Read from Codex state SQLite database
 	if models := discoverCodexModelsFromStateDB(); len(models) > 0 {
 		return models
 	}
 
-	// Strategy 3: Hardcoded defaults for the current generation of Codex models
+	// Strategy 4: Hardcoded defaults for the current generation of Codex models
 	// The Codex Rust binary is stripped, so strings extraction often fails.
 	// We provide known model IDs based on the Codex version.
 	return discoverCodexModelsDefaults()
+}
+
+// discoverCodexModelsFromCache reads the model catalog fetched by modern
+// Codex CLI versions. Unlike binary strings, this contains the complete list
+// currently available to the authenticated account.
+func discoverCodexModelsFromCache() []model.AgentModel {
+	codexHome, err := resolveCodexHome()
+	if err != nil {
+		return nil
+	}
+	cachePath := filepath.Join(codexHome, "models_cache.json")
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		slog.Debug("codex model discovery: read cache failed", "path", cachePath, "error", err)
+		return nil
+	}
+	var cache struct {
+		Models []struct {
+			Slug        string `json:"slug"`
+			DisplayName string `json:"display_name"`
+			Visibility  string `json:"visibility"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(data, &cache); err != nil {
+		slog.Debug("codex model discovery: parse cache failed", "path", cachePath, "error", err)
+		return nil
+	}
+	models := make([]model.AgentModel, 0, len(cache.Models))
+	seen := make(map[string]struct{}, len(cache.Models))
+	for _, item := range cache.Models {
+		if item.Slug == "" || (item.Visibility != "" && item.Visibility != "list") {
+			continue
+		}
+		if _, ok := seen[item.Slug]; ok {
+			continue
+		}
+		seen[item.Slug] = struct{}{}
+		name := item.DisplayName
+		if name == "" {
+			name = item.Slug
+		}
+		models = append(models, model.AgentModel{ID: item.Slug, Name: name})
+	}
+	if len(models) > 0 {
+		slog.Info("codex model discovery (cache) succeeded", "models", len(models))
+	}
+	return models
 }
 
 // discoverCodexModelsFromBinary tries to extract model IDs by scanning the
@@ -155,13 +212,12 @@ func discoverCodexModelsFromBinary() []model.AgentModel {
 // discoverCodexModelsFromStateDB reads model info from the Codex state SQLite database.
 // The state database stores the model catalog that Codex fetched from OpenAI's API.
 func discoverCodexModelsFromStateDB() []model.AgentModel {
-	homeDir, err := os.UserHomeDir()
+	codexDir, err := resolveCodexHome()
 	if err != nil {
 		return nil
 	}
 
 	// Find the state SQLite database (e.g., state_5.sqlite)
-	codexDir := filepath.Join(homeDir, ".codex")
 	entries, err := os.ReadDir(codexDir)
 	if err != nil {
 		return nil
