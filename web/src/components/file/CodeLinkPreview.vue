@@ -1207,15 +1207,28 @@ const codeLines = computed<FormattedCodeLine[]>(() => {
   return result
 })
 
+// When the slice has hit the hard line-count render cap (MAX_RENDER_LINES in
+// sliceCodeForPreview, truncateReason='lines'), the window width is pinned at
+// 200 lines — pressing expand below/above no longer grows the rendered slice
+// (direction-only shifts the window against the same cap). Showing the expand
+// bars in that state is misleading: the user clicks and nothing changes. So we
+// report zero remaining in both directions, which hides the expand bars.
+const atLineRenderCap = computed(() => {
+  const sliced = props.preview.slicedCode.value
+  return !!sliced && sliced.renderTruncated === true && sliced.truncateReason === 'lines'
+})
+
 const remainingAbove = computed(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return 0
+  if (atLineRenderCap.value) return 0
   return Math.max(0, sliced.startLine - 1)
 })
 
 const remainingBelow = computed(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return 0
+  if (atLineRenderCap.value) return 0
   return Math.max(0, sliced.totalLines - sliced.endLine)
 })
 

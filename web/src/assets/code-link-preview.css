@@ -597,7 +597,7 @@ body.code-preview-dragging * {
   align-items: center;
   justify-content: center;
   height: 36px;
-  border-radius: 8px;
+  border-radius: 999px;
   border: 1px solid var(--border-color, #dadce0);
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #202124);

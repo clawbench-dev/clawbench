@@ -446,6 +446,57 @@ describe('CodeLinkPreview.vue', () => {
     expect(preview.expandBelow).toHaveBeenCalledWith(10)
   })
 
+  it('hides expand bars once the slice hits the line-count render cap', async () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: '...',
+        startLine: 1,
+        endLine: 200,
+        totalLines: 500,
+        lineOutOfRange: false,
+        renderTruncated: true,
+        truncateReason: 'lines',
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    // At the 200-line cap further expansion cannot grow the slice, so the
+    // bars must be gone rather than present-but-inert.
+    expect(floating.querySelector('.code-preview-expand-bar.expand-above')).toBeNull()
+    expect(floating.querySelector('.code-preview-expand-bar.expand-below')).toBeNull()
+  })
+
+  it('keeps expand bars when truncation is byte-based, not line-cap based', async () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: '...',
+        startLine: 1,
+        endLine: 40,
+        totalLines: 500,
+        lineOutOfRange: false,
+        renderTruncated: true,
+        truncateReason: 'bytes',
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    // Byte-based truncation is not pinned to a window boundary — further
+    // expansion may still make progress, so the bar stays available.
+    expect(floating.querySelector('.code-preview-expand-bar.expand-below')).not.toBeNull()
+  })
+
   it('supports header dragging with pointer events', () => {
     const preview = createMockPreviewController()
 
