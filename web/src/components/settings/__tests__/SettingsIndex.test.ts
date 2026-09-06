@@ -17,9 +17,9 @@ const i18n = createI18n({
           terminal: '终端',
           tts: 'TTS语音',
           stt: '语音识别',
-          rag: 'RAG记忆',
+          rag: '会话搜索',
           portForward: '端口映射',
-          frp: 'FRP内网穿透',
+          frp: '内网穿透',
           notification: '消息通知',
           security: '安全',
           debug: '调试',
@@ -71,7 +71,7 @@ describe('SettingsIndex', () => {
     expect(labels).toContain('项目与文件')
     expect(labels).toContain('聊天')
     expect(labels).toContain('端口映射')
-    expect(labels).toContain('FRP内网穿透')
+    expect(labels).toContain('内网穿透')
     expect(labels).toContain('安全')
     expect(labels).toContain('调试')
     expect(labels).toContain('关于')
