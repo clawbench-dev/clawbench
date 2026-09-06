@@ -1301,6 +1301,8 @@ export default {
       workingTreeChanges: 'Working tree changes',
       author: 'Author',
       time: 'Time',
+      file: 'File',
+      path: 'Path',
       clickToCopy: 'Click to copy',
       copied: ' Copied',
     },

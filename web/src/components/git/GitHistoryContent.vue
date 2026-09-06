@@ -151,7 +151,7 @@
         </div>
       </div>
       <div class="drilldown-body">
-        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" />
+        <GitCommitMeta :commit="selectedCommit" :is-working-tree="isWorkingTree" :file-path="mode === 'file' ? file?.path : selectedFilePath" />
         <GitDiffView
           :loading="diffState.loading"
           :empty="diffState.empty"

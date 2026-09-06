@@ -1301,6 +1301,8 @@ export default {
       workingTreeChanges: '工作区变更',
       author: '作者',
       time: '时间',
+      file: '文件',
+      path: '路径',
       clickToCopy: '点击复制',
       copied: ' 已复制',
     },

@@ -1,5 +1,15 @@
 <template>
   <div v-if="commit || isWorkingTree" class="diff-meta-panel">
+    <template v-if="filePath">
+      <div class="diff-meta-row">
+        <span class="diff-meta-label">{{ t('git.commitMeta.file') }}</span>
+        <span class="diff-meta-value diff-meta-file-name">{{ fileName }}</span>
+      </div>
+      <div class="diff-meta-row">
+        <span class="diff-meta-label">{{ t('git.commitMeta.path') }}</span>
+        <span class="diff-meta-value diff-meta-file-path" :title="filePath">{{ filePath }}</span>
+      </div>
+    </template>
     <template v-if="isWorkingTree">
       <div class="diff-meta-row diff-meta-row-msg">
         <span class="diff-meta-label">{{ t('git.commitMeta.description') }}</span>
@@ -28,17 +38,25 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { copyText } from '@/utils/clipboard.ts'
+import { baseName } from '@/utils/path.ts'
 const { t, locale } = useI18n()
 
 const props = defineProps({
   commit: Object,
   isWorkingTree: Boolean,
+  filePath: String,
 })
 
 const shaCopied = ref(false)
+
+// Show file name only when the path is available — the meta row renders
+// whatever per-file info exists and hides the rest.
+const fileName = computed(() => {
+  return props.filePath ? baseName(props.filePath) : ''
+})
 
 function copySHA() {
   if (!props.commit?.sha) return
@@ -114,4 +132,21 @@ function formatDate(dateStr) {
 .diff-meta-row-msg .diff-meta-value {
   font-weight: 500;
 }
+
+.diff-meta-file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-meta-file-path {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-size: 12px;
+  color: var(--text-secondary, #555);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 </style>
