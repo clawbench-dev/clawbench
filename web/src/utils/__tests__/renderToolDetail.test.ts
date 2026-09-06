@@ -836,7 +836,7 @@ describe('AskUserQuestion action handler', () => {
   })
 
   describe('single-select mode', () => {
-    it('selecting an option marks it as selected and changes indicator to ◉', () => {
+    it('selecting an option marks it as selected and changes indicator to ●', () => {
       const { container, emit } = createAskDOM(false)
       const option = container.querySelector('.ask-question-option') as HTMLElement
 
@@ -846,7 +846,7 @@ describe('AskUserQuestion action handler', () => {
 
       expect(option.classList.contains('selected')).toBe(true)
       const indicator = option.querySelector('.ask-option-indicator')
-      expect(indicator?.textContent).toBe('◉')
+      expect(indicator?.textContent).toBe('●')
       cleanup(container)
     })
 

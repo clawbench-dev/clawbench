@@ -1657,7 +1657,9 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         }
         optionEl.classList.add('selected')
         const indicator = optionEl.querySelector('.ask-option-indicator')
-        if (indicator) indicator.textContent = '◉'
+        // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
+        // so the filled state does not render smaller than the hollow one.
+        if (indicator) indicator.textContent = '●'
       }
 
       updateAskSubmitState(view)
