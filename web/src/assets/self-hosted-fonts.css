@@ -1,15 +1,24 @@
 /**
- * Self-hosted open-source fonts (Latin subset, OFL).
+ * Self-hosted open-source fonts (OFL). Most faces are Latin subsets; the two
+ * CJK-capable monospace faces (Sarasa Mono SC / Maple Mono CN) carry a
+ * GB2312-level-1 Chinese subset so code comments in Chinese render self-hosted
+ * too.
  *
  * Font files live in ./fonts/ and are emitted by Vite into the production
  * bundle (hashed + immutable-cached). Each @font-face is declared but the
  * file is only downloaded by the browser when the family is actually used in
  * rendered text — i.e. when the user picks it in Settings → Appearance.
  *
- * Sources (v5, cdn.jsdelivr.net/npm/@fontsource...):
- *   - Variable single-weight-range faces below use font-weight: 100 900.
- *   - IBM Plex Mono has no variable build on fontsource → static 400 + 700.
- * Download script (re-run to refresh):
+ * Sources:
+ *   - Latin faces (v5, cdn.jsdelivr.net/npm/@fontsource...):
+ *     variable single-weight-range faces use font-weight: 100 900; IBM Plex
+ *     Mono has no variable build on fontsource → static 400 + 700.
+ *   - Sarasa Mono SC / Maple Mono CN: regenerated from the TTF kept in the
+ *     server custom-font directory (~/.clawbench/fonts) via fontTools
+ *     subset.Subsetter — target codepoints = ASCII + Latin-1 + Latin Ext-A +
+ *     general punctuation + CJK punctuation + GB2312 level-1 hanzi (3755),
+ *     flavor woff2, layout features '*'.
+ * Download script for the Latin faces (re-run to refresh):
  *   cd web/src/assets/fonts
  *   for f in jetbrains-mono fira-code cascadia-code source-code-pro \
  *            inter source-sans-3 ibm-plex-sans; do
@@ -89,5 +98,21 @@
   src: url('./fonts/ibm-plex-sans-latin-wght-normal.woff2') format('woff2');
   font-style: normal;
   font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Sarasa Mono SC';
+  src: url('./fonts/sarasa-mono-sc-gb2312-regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Maple Mono CN';
+  src: url('./fonts/maple-mono-cn-gb2312-regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
   font-display: swap;
 }

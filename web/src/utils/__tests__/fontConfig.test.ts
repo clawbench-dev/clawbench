@@ -230,7 +230,7 @@ describe('candidate tables', () => {
   it('contains expected mono candidates including default sentinel', () => {
     expect(MONO_FONT_CHOICES[0].id).toBe(DEFAULT_FONT_CHOICE)
     const ids = MONO_FONT_CHOICES.map(c => c.id)
-    for (const f of ['JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Source Code Pro', 'IBM Plex Mono']) {
+    for (const f of ['JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Source Code Pro', 'IBM Plex Mono', 'Sarasa Mono SC', 'Maple Mono CN']) {
       expect(ids).toContain(f)
     }
   })
@@ -249,7 +249,8 @@ describe('candidate tables', () => {
 
   it('does not list open-source fonts that require manual install', () => {
     const monoIds = MONO_FONT_CHOICES.map(c => c.id)
-    for (const f of ['Hack', 'Maple Mono', 'Iosevka', 'Sarasa Mono SC']) {
+    // Sarasa Mono SC is now bundled (CJK subset); Hack/Iosevka still aren't.
+    for (const f of ['Hack', 'Iosevka', 'FiraCode Nerd Font', 'Maple Mono']) {
       expect(monoIds).not.toContain(f)
     }
     const uiIds = UI_FONT_CHOICES.map(c => c.id)

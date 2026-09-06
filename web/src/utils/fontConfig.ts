@@ -47,13 +47,17 @@ export interface FontChoice {
   kind: FontKind
 }
 
-/** Well-known open-source monospace fonts self-hosted by the app (Latin). */
+/** Well-known open-source monospace fonts self-hosted by the app. Most are
+ *  Latin-only (English comments); Sarasa Mono SC and Maple Mono CN additionally
+ *  bundle a GB2312-level-1 Chinese subset so CJK comments render self-hosted. */
 const BUNDLED_MONO: string[] = [
   'JetBrains Mono',
   'Fira Code',
   'Cascadia Code',
   'Source Code Pro',
   'IBM Plex Mono',
+  'Sarasa Mono SC',
+  'Maple Mono CN',
 ]
 
 /** Monospace fonts built into common operating systems. */

@@ -1562,6 +1562,9 @@ export default {
         'Cascadia Code': 'Cascadia Code',
         'Source Code Pro': 'Source Code Pro',
         'IBM Plex Mono': 'IBM Plex Mono',
+        // Bundled CJK-capable monospace (GB2312 level-1 subset)
+        'Sarasa Mono SC': 'Sarasa Mono SC',
+        'Maple Mono CN': 'Maple Mono CN',
         Inter: 'Inter',
         'Source Sans 3': 'Source Sans 3',
         'IBM Plex Sans': 'IBM Plex Sans',

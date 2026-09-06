@@ -1562,6 +1562,9 @@ export default {
         'Cascadia Code': 'Cascadia Code',
         'Source Code Pro': 'Source Code Pro',
         'IBM Plex Mono': 'IBM Plex Mono',
+        // 内置中英等宽字体（GB2312 一级常用汉字子集）
+        'Sarasa Mono SC': '更纱等宽 (Sarasa Mono SC)',
+        'Maple Mono CN': 'Maple Mono CN',
         Inter: 'Inter',
         'Source Sans 3': 'Source Sans 3',
         'IBM Plex Sans': 'IBM Plex Sans',
