@@ -152,3 +152,41 @@ describe('GitHistoryContent dock badge refresh', () => {
     wrapper.unmount()
   })
 })
+
+describe('GitHistoryContent — files view rendering', () => {
+  async function showFilesView(files: Array<{ path: string; type: string; staged?: boolean }>) {
+    const wrapper = mount(GitHistoryContent, {
+      props: { mode: 'project', active: true },
+      global: {
+        stubs: { Teleport: { template: '<div><slot /></div>' } },
+      },
+    })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.error = ''
+    vm.loading = false
+    vm.selectedSHA = 'abc123'
+    vm.currentView = 'files'
+    vm.files = files
+    vm.mergeGroups = []
+    await flushPromises()
+    return wrapper
+  }
+
+  it('renders each change file as a two-line item: bare name + parent directory', async () => {
+    const wrapper = await showFilesView([{ path: 'web/src/foo.ts', type: 'M', staged: false }])
+    const item = wrapper.find('.drilldown-item')
+    expect(item.find('.git-file-name').text()).toBe('foo.ts')
+    expect(item.find('.git-file-dir').text()).toBe('web/src')
+    expect(item.text()).not.toContain('web/src/foo.ts')
+    wrapper.unmount()
+  })
+
+  it('omits the directory line for a root-level file', async () => {
+    const wrapper = await showFilesView([{ path: 'README.md', type: 'A', staged: false }])
+    const item = wrapper.find('.drilldown-item')
+    expect(item.find('.git-file-name').text()).toBe('README.md')
+    expect(item.find('.git-file-dir').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

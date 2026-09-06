@@ -72,7 +72,10 @@
                 <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, false) }}</span>
-              <span class="git-file-path" :title="f.path">{{ f.path }}</span>
+              <span class="git-file-info" :title="f.path">
+                <span class="git-file-name">{{ fileSplit(f).name }}</span>
+                <span v-if="fileSplit(f).dir" class="git-file-dir">{{ fileSplit(f).dir }}</span>
+              </span>
             </div>
           </div>
         </div>
@@ -92,7 +95,10 @@
                 <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, f.staged) }}</span>
-              <span class="git-file-path" :title="f.path">{{ f.path }}</span>
+              <span class="git-file-info" :title="f.path">
+                <span class="git-file-name">{{ fileSplit(f).name }}</span>
+                <span v-if="fileSplit(f).dir" class="git-file-dir">{{ fileSplit(f).dir }}</span>
+              </span>
             </div>
           </template>
           <template v-if="hasUnstaged">
@@ -109,7 +115,10 @@
                 <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, f.staged) }}</span>
-              <span class="git-file-path" :title="f.path">{{ f.path }}</span>
+              <span class="git-file-info" :title="f.path">
+                <span class="git-file-name">{{ fileSplit(f).name }}</span>
+                <span v-if="fileSplit(f).dir" class="git-file-dir">{{ fileSplit(f).dir }}</span>
+              </span>
             </div>
           </template>
         </div>
@@ -155,7 +164,7 @@ import GitCommitMeta from './GitCommitMeta.vue'
 import GitDiffView from './GitDiffView.vue'
 import GitBreadcrumb from './GitBreadcrumb.vue'
 import { renderDiff } from '@/utils/diff.ts'
-import { buildFileHistoryCommits, shouldShowFullLoading } from '@/utils/gitFileHistory.ts'
+import { buildFileHistoryCommits, shouldShowFullLoading, splitGitFilePath } from '@/utils/gitFileHistory.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
 import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
@@ -247,6 +256,10 @@ function fileTypeLabel(type, staged) {
   const keys = { A: 'git.fileType.added', M: 'git.fileType.modified', D: 'git.fileType.deleted', R: 'git.fileType.renamed', '?': 'git.fileType.untracked' }
   const base = t(keys[type] || type)
   return staged ? t('git.fileType.stagedPrefix') + base : base
+}
+
+function fileSplit(f) {
+  return splitGitFilePath(f?.path || '')
 }
 
 function badgeClass(f) {
@@ -764,8 +777,26 @@ watch(() => props.open, async (val) => {
 .badge-U { background: var(--bg-tertiary, #f0f0f0); color: var(--text-muted, #999); }
 .badge-staged { border: 1px solid var(--accent-color, #4a90d9); }
 
-.git-file-path {
+.git-file-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.git-file-name {
   color: var(--text-primary, #212529);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-dir {
+  color: var(--text-muted, #999);
+  font-size: 11px;
+  opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
