@@ -88,6 +88,48 @@ describe('CompletionPopover', () => {
         expect(styles.whiteSpace).toBe('nowrap')
     })
 
+    it('shows an attachment chip alongside the user message text when the message has files', () => {
+        mockState.active = ref(makeItem({ userMessage: '看图', userHasFiles: true }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        const quote = row.querySelector('.completion-popover-user-quote')!
+        const chip = row.querySelector('.completion-popover-attachment-chip')!
+        expect(quote).toBeTruthy()
+        expect(chip).toBeTruthy()
+        // chip 文案 + 图标（当前测试环境默认 en：Attachment）
+        expect(chip.textContent).toContain('Attachment')
+        expect(chip.querySelector('svg')).toBeTruthy()
+    })
+
+    it('shows the attachment chip alone for an attachment-only user message (no text)', () => {
+        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: true }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        const chip = row.querySelector('.completion-popover-attachment-chip')!
+        expect(chip).toBeTruthy()
+        // 无文字时不渲染引用块，只保留附件 chip
+        expect(row.querySelector('.completion-popover-user-quote')).toBeFalsy()
+        expect(chip.textContent).toContain('Attachment')
+    })
+
+    it('hides the attachment chip when the user message has no files', () => {
+        mockState.active = ref(makeItem({ userMessage: '没有附件', userHasFiles: false }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        expect(row.querySelector('.completion-popover-user-quote')).toBeTruthy()
+        expect(row.querySelector('.completion-popover-attachment-chip')).toBeFalsy()
+    })
+
+    it('does not render the user message row when neither text nor files present', () => {
+        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: false }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-meta-user')).toBeFalsy()
+    })
+
     it('styles the user message as a quote block (left accent border, no radius, tinted bg)', () => {
         mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
         mountPopover()
@@ -420,6 +462,27 @@ describe('CompletionPopover', () => {
         expect(expanded.classList.contains('is-collapsed')).toBe(false)
     })
 
+    it('auto-expands the user message quote block when the panel expands', async () => {
+        mockState.active = ref(makeItem({ summary: '正文', userMessage: '一个非常长的用户消息'.repeat(10) }))
+        mountPopover()
+
+        // 初始折叠：用户消息单行省略、未展开
+        const quote = document.querySelector('.completion-popover-user-quote')!
+        expect(quote.classList.contains('is-expanded')).toBe(false)
+        const text = quote.querySelector('.completion-popover-user-quote-text')!
+        expect(window.getComputedStyle(text).whiteSpace).toBe('nowrap')
+
+        // 点击折叠摘要正文 → 展开面板
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        // 用户消息引用块随面板展开而展开，确保能看全问题
+        expect(quote.classList.contains('is-expanded')).toBe(true)
+        expect(quote.getAttribute('aria-expanded')).toBe('true')
+        expect(window.getComputedStyle(text).whiteSpace).toBe('pre-wrap')
+    })
+
     it('stays expanded once opened — clicking the expanded content does not collapse it', async () => {
         mockState.active = ref(makeItem({ summary: '很长'.repeat(200) }))
         mountPopover()
@@ -604,6 +667,9 @@ describe('CompletionPopover', () => {
         expect(actions.contains(open)).toBe(true)
         // mark-read 位于 open 左边
         expect(markRead.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        // 胶囊按钮：图标 + 文字标签（当前测试环境默认 en：Mark as read / Open session）
+        expect(markRead.querySelector('.completion-popover-action-label')!.textContent).toContain('Mark as read')
+        expect(open.querySelector('.completion-popover-action-label')!.textContent).toContain('Open session')
         // 动作行内容靠右对齐
         const cssText = Array.from(document.styleSheets)
             .map((s) => {
@@ -613,6 +679,10 @@ describe('CompletionPopover', () => {
             .join('\n')
         const actionsRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-actions')).join('\n')
         expect(actionsRule).toContain('justify-content: flex-end')
+        // 胶囊样式：圆角 999px（非圆形按钮），内边距容纳文字（jsdom 序列化为 0px 12px）
+        const btnRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-action-btn')).join('\n')
+        expect(btnRule).toContain('border-radius: 999px')
+        expect(btnRule).toContain('padding: 0px 12px')
 
         // 输入内容后 mark-read 依然存在（不随输入联动）
         const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement

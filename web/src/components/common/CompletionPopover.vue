@@ -12,8 +12,9 @@
             <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-popover-icon" />
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
           </div>
-          <div v-if="active.userMessage" class="completion-popover-meta completion-popover-meta-user">
+          <div v-if="active.userMessage || active.userHasFiles" class="completion-popover-meta completion-popover-meta-user">
             <div
+              v-if="active.userMessage"
               class="completion-popover-user-quote"
               :class="{ 'is-expanded': userMessageExpanded }"
               role="button"
@@ -23,6 +24,10 @@
               <MessageSquare :size="12" class="completion-popover-user-quote-icon" />
               <span class="completion-popover-user-quote-text">{{ active.userMessage }}</span>
             </div>
+            <span v-if="active.userHasFiles" class="completion-popover-attachment-chip">
+              <Paperclip :size="11" />
+              {{ gt('chat.popover.attachment') }}
+            </span>
           </div>
           <div
             class="completion-popover-summary markdown-body"
@@ -46,12 +51,14 @@
             </button>
           </div>
           <div class="completion-popover-actions">
-            <span class="completion-popover-mark-read" role="button" :aria-label="gt('chat.popover.markRead')" :title="gt('chat.popover.markRead')" @click="handleMarkRead">
+            <button class="completion-popover-action-btn completion-popover-mark-read" type="button" :aria-label="gt('chat.popover.markRead')" @click="handleMarkRead">
               <Check :size="14" />
-            </span>
-            <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">
+              <span class="completion-popover-action-label">{{ gt('chat.popover.markRead') }}</span>
+            </button>
+            <button class="completion-popover-action-btn completion-popover-open" type="button" :aria-label="openLabel" @click="openSession">
               <Search :size="15" />
-            </span>
+              <span class="completion-popover-action-label">{{ openLabel }}</span>
+            </button>
           </div>
           <div v-if="active.projectName" class="completion-popover-footer">
             <span class="completion-popover-project" :title="active.projectPath || active.projectName">
@@ -71,7 +78,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Search, Send, Check, ExternalLink, MessageSquare } from 'lucide-vue-next'
+import { Search, Send, Check, ExternalLink, MessageSquare, Paperclip } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
@@ -95,6 +102,8 @@ const { isPC } = usePlatformDetect()
 const expanded = ref(false)
 function expand(): void {
     expanded.value = true
+    // 展开为全屏阅读态时同时展开用户消息引用块，确保用户能看全问题
+    userMessageExpanded.value = true
 }
 
 const agentBackend = computed(() => {
@@ -437,6 +446,30 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-meta-user {
     justify-content: flex-start;
     padding-left: 0;
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+/* 附件胶囊 chip：表示用户消息带附件，不泄漏具体文件。与文字引用块同行并存 */
+.completion-popover-attachment-chip {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    padding: 2px 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 500;
+    color: var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
+    border-radius: 999px;
+    user-select: none;
+}
+
+.completion-popover-meta-user .completion-popover-attachment-chip:first-child {
+    margin-left: 0;
 }
 
 .completion-popover-user-quote {
@@ -657,26 +690,45 @@ function handleSummaryClick(event: MouseEvent): void {
     cursor: not-allowed;
 }
 
-/* 标记已读按钮 — 与发送按钮同尺寸圆形，但用描边弱化，区别于主操作 */
-.completion-popover-mark-read {
+/* ── 底部动作按钮：标记已读 / 打开 —— 胶囊形（图标 + 文字） ──
+   标记已读：描边弱化次级样式；打开：accent 实底主操作 */
+.completion-popover-action-btn {
     flex-shrink: 0;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 28px;
+    gap: 5px;
     height: 28px;
-    padding: 0;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.completion-popover-mark-read {
     background: transparent;
     color: var(--accent-color);
     border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
-    border-radius: 50%;
-    cursor: pointer;
-    transition: opacity 0.15s, background 0.15s;
 }
 
 @media (hover: hover) {
     .completion-popover-mark-read:hover {
         background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    }
+}
+
+.completion-popover-open {
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+}
+
+@media (hover: hover) {
+    .completion-popover-open:hover {
+        opacity: 0.88;
     }
 }
 

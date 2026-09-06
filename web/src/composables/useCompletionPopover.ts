@@ -13,6 +13,8 @@ export interface CompletionPopoverItem {
     summary: string
     /** 最近一条用户消息纯文本（单行省略号展示） */
     userMessage?: string
+    /** 最近一条用户消息是否携带文件附件（展示附件胶囊 chip，不泄漏具体文件） */
+    userHasFiles?: boolean
     /** 项目显示名（仅跨项目弹窗提供，本项目为空） */
     projectName?: string
     /** 运行会话/任务的 agent id（渲染后端图标用） */

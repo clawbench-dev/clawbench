@@ -84,3 +84,94 @@ func TestGetLastUserMessagePlain_EmptyWhenNoUserMessage(t *testing.T) {
 	got := GetLastUserMessagePlain(context.Background(), sessionID)
 	require.Equal(t, "", got)
 }
+
+func TestGetLastUserMessageMeta_ReturnsPlainAndNoFiles(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m1"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, '', 'claude', 0, 0)",
+		sessionID, "没有附件的消息",
+	)
+	require.NoError(t, err)
+
+	plain, hasFiles := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "没有附件的消息", plain)
+	require.False(t, hasFiles)
+}
+
+func TestGetLastUserMessageMeta_ReportsFilesWhenPresent(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m2"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 0)",
+		sessionID, "带附件的问题", `[{"path":"/proj/src/main.go","isDir":false}]`,
+	)
+	require.NoError(t, err)
+
+	plain, hasFiles := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "带附件的问题", plain)
+	require.True(t, hasFiles)
+}
+
+func TestGetLastUserMessageMeta_AttachmentOnlyMessage(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m3"
+	// 纯附件消息：content 为空、files 非空
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 0)",
+		sessionID, "", `[{"path":"/proj/img/logo.png","isDir":false},{"path":"/proj/docs/a.md","isDir":false}]`,
+	)
+	require.NoError(t, err)
+
+	plain, hasFiles := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "", plain)
+	require.True(t, hasFiles)
+}
+
+func TestGetLastUserMessageMeta_EmptyFilesArrayMeansNoAttachments(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m4"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, '[]', 'claude', 0, 0)",
+		sessionID, "空数组",
+	)
+	require.NoError(t, err)
+
+	plain, hasFiles := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "空数组", plain)
+	require.False(t, hasFiles)
+}
+
+func TestGetLastUserMessageMeta_SkipsStreamingAndQueued(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m5"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 1, 0)",
+		sessionID, "流式中", `[{"path":"/proj/a.go","isDir":false}]`,
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 1)",
+		sessionID, "排队中", `[{"path":"/proj/b.go","isDir":false}]`,
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		sessionID, "最终消息",
+	)
+	require.NoError(t, err)
+
+	plain, hasFiles := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "最终消息", plain)
+	require.False(t, hasFiles)
+}

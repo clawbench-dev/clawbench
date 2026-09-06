@@ -521,6 +521,7 @@ export default {
       sentToast: 'Message sent',
       markedReadToast: 'Marked as read',
       expand: 'Expand to see full content',
+      attachment: 'Attachment',
     },
     session: {
       aiDialog: 'AI Chat',

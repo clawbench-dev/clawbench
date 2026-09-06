@@ -521,6 +521,7 @@ export default {
       sentToast: '消息已发送',
       markedReadToast: '已标记为已读',
       expand: '展开查看完整内容',
+      attachment: '附件',
     },
     session: {
       aiDialog: 'AI 对话',
