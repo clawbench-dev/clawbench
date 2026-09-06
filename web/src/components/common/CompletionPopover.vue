@@ -344,26 +344,6 @@ function handleSummaryClick(event: MouseEvent): void {
     text-overflow: ellipsis;
 }
 
-.completion-popover-open {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    color: #fff;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.completion-popover-open:hover {
-    opacity: 0.85;
-    transform: scale(1.05);
-}
-
 /* 元信息行（项目、用户消息）：小号、弱化，与正文形成层次 */
 .completion-popover-meta {
     display: flex;
@@ -703,6 +683,7 @@ function handleSummaryClick(event: MouseEvent): void {
     font-size: 12px;
     line-height: 1;
     font-weight: 500;
+    white-space: nowrap;
     cursor: pointer;
     transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
     -webkit-tap-highlight-color: transparent;
