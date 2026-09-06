@@ -904,6 +904,8 @@ export default {
       noMatches: '无匹配项',
       matchIndex: '{current} / {total}',
       linesCount: '共 {n} 行',
+      renderedView: '渲染预览',
+      sourceView: '源码',
     },
     manager: '文件管理器',
     sortByName: '按名称排序',

@@ -904,6 +904,8 @@ export default {
       noMatches: 'No matches',
       matchIndex: '{current} of {total}',
       linesCount: '{n} lines',
+      renderedView: 'Rendered preview',
+      sourceView: 'Source code',
     },
     manager: 'File Manager',
     sortByName: 'Sort by name',

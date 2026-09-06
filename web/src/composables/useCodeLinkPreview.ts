@@ -16,6 +16,7 @@ import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
+import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import {
@@ -32,12 +33,24 @@ import {
 export type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type PreviewMode = 'transient' | 'pinned' | 'sheet'
 export type PreviewErrorCode = 'binary' | 'too-large' | 'not-file' | 'not-found' | 'access-denied' | 'network'
+export type PreviewRenderMode = 'rendered' | 'source'
 
 export interface PreviewTarget {
   filePath: string
   lineStart?: number
   lineEnd?: number
   anchorEl?: HTMLElement
+}
+
+/** Whether the preview target is a Markdown file (by extension). */
+export function isMarkdownTarget(target: PreviewTarget | null): boolean {
+  const filePath = target?.filePath || ''
+  return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+}
+
+/** Whether the preview target carries an explicit line annotation. */
+export function hasLineRange(target: PreviewTarget | null): boolean {
+  return !!(target && target.lineStart && Number.isInteger(target.lineStart) && target.lineStart > 0)
 }
 
 export interface UseCodeLinkPreviewOptions {
@@ -71,6 +84,33 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const extraBelowLines = ref(0)
   const placement = ref<CardPlacementResult | null>(null)
   const isPinned = computed(() => mode.value === 'pinned')
+
+  // ── Rendered-vs-source view ─────────────────────────────────────────────
+  // The preview has two body renderers: the line-based code slice (source)
+  // and — for Markdown files opened without a line range — a rendered
+  // .markdown-body read-only document view. Opening a Markdown path that
+  // carries line numbers keeps the code slice so the user can pinpoint the
+  // referenced lines; without a line range the whole document renders.
+  const renderMode = ref<PreviewRenderMode>('source')
+
+  const isMarkdown = computed(() => {
+    const filePath = target.value?.filePath || ''
+    return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+  })
+
+  const hasExplicitLineRange = computed(() => {
+    const t = target.value
+    return !!(t && t.lineStart && Number.isInteger(t.lineStart) && t.lineStart > 0)
+  })
+
+  /** Whether the current target is a Markdown file that may be rendered. */
+  const canRenderMarkdown = computed(() => isMarkdown.value && !hasExplicitLineRange.value)
+
+  // A Markdown file default-renders unless the annotation pinned a line range
+  // (source slice is the useful view then). Re-evaluate on each target change.
+  const effectiveRenderMode = computed<PreviewRenderMode>(() =>
+    canRenderMarkdown.value ? renderMode.value : 'source'
+  )
 
   // Timers & concurrency
   let leaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -223,6 +263,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraBelowLines.value = 0
     visible.value = true
 
+    // Markdown files without a pinned line range default to the rendered
+    // document view on every open; anything else (line-annotated paths, code)
+    // stays in the source slice view.
+    renderMode.value = isMarkdownTarget(newTarget) && !hasLineRange(newTarget) ? 'rendered' : 'source'
+
     // Once pinned (including after dragging), retain the current placement
     // while switching to another link. The card is reused in-place.
     if (mode.value !== 'sheet' && !wasPinned) {
@@ -257,6 +302,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraBelowLines.value = 0
     placement.value = null
     mode.value = 'transient'
+    renderMode.value = 'source'
 
     isPointerInTarget = false
     isPointerInCard = false
@@ -291,6 +337,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const togglePin = () => {
     if (mode.value === 'pinned') unpin()
     else pin()
+  }
+
+  /** Toggle between the rendered document and the source slice (Markdown only). */
+  const toggleRenderMode = () => {
+    if (!canRenderMarkdown.value) return
+    renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
   }
 
   const refresh = () => {
@@ -573,11 +625,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraAboveLines,
     extraBelowLines,
     placement,
+    renderMode,
+    isMarkdown,
+    hasExplicitLineRange,
+    canRenderMarkdown,
+    effectiveRenderMode,
     showPreview,
     close,
     pin,
     unpin,
     togglePin,
+    toggleRenderMode,
     refresh,
     expandContext,
     shrinkContext,

@@ -52,6 +52,9 @@ vi.mock('@/composables/useFilePathAnnotation', () => ({
   openFilePath: (...args: any[]) => mockOpenFilePath(...args),
 }))
 
+// Real file-type lookup drives the markdown detection in the composable.
+// getFileType is pure (reads the built-in extension table) so no mock needed.
+
 describe('useCodeLinkPreview', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -72,6 +75,120 @@ describe('useCodeLinkPreview', () => {
     reactiveLocalConfig.markdownCodeLinkPreview = false
     await nextTick()
     expect(preview.enabled.value).toBe(false)
+  })
+
+  it('defaults a line-less Markdown file to the rendered document view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title\n\nSome **markdown**.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(true)
+    expect(preview.hasExplicitLineRange.value).toBe(false)
+    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('keeps a line-annotated Markdown file on the source slice view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md', lineStart: 3, lineEnd: 5 })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(true)
+    expect(preview.hasExplicitLineRange.value).toBe(true)
+    expect(preview.canRenderMarkdown.value).toBe(false)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('keeps non-Markdown files on the source slice view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'const x = 1',
+      name: 'main.ts',
+      path: 'main.ts',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'main.ts' })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(false)
+    expect(preview.canRenderMarkdown.value).toBe(false)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('toggleRenderMode switches a renderable Markdown target between views', async () => {
+    mockApiGet.mockResolvedValue({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    preview.toggleRenderMode()
+    expect(preview.renderMode.value).toBe('source')
+    expect(preview.effectiveRenderMode.value).toBe('source')
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('toggleRenderMode is a no-op when the target cannot render Markdown', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'code',
+      name: 'main.ts',
+      path: 'main.ts',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'main.ts', lineStart: 1 })
+    await vi.runAllTicks()
+
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('resets renderMode to source when the preview closes', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+
+    preview.close()
+    expect(preview.visible.value).toBe(false)
+    expect(preview.renderMode.value).toBe('source')
+    expect(preview.effectiveRenderMode.value).toBe('source')
   })
 
   it('opens preview on desktop click without hover delay', async () => {
