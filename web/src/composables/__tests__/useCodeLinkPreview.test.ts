@@ -96,7 +96,7 @@ describe('useCodeLinkPreview', () => {
     expect(preview.effectiveRenderMode.value).toBe('rendered')
   })
 
-  it('keeps a line-annotated Markdown file on the source slice view', async () => {
+  it('keeps a line-annotated Markdown file on the source slice view by default', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: '# Title\n\nBody.',
       name: 'README.md',
@@ -111,7 +111,29 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.isMarkdown.value).toBe(true)
     expect(preview.hasExplicitLineRange.value).toBe(true)
-    expect(preview.canRenderMarkdown.value).toBe(false)
+    // A Markdown file stays render-capable even with a line annotation — only
+    // the DEFAULT view is the code slice so the user can pinpoint the lines.
+    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('lets a line-annotated Markdown file switch to the rendered view', async () => {
+    mockApiGet.mockResolvedValue({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md', lineStart: 3, lineEnd: 5 })
+    await vi.runAllTicks()
+
+    expect(preview.effectiveRenderMode.value).toBe('source')
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    preview.toggleRenderMode()
     expect(preview.effectiveRenderMode.value).toBe('source')
   })
 

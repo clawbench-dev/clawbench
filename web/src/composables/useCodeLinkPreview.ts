@@ -87,10 +87,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   // ── Rendered-vs-source view ─────────────────────────────────────────────
   // The preview has two body renderers: the line-based code slice (source)
-  // and — for Markdown files opened without a line range — a rendered
-  // .markdown-body read-only document view. Opening a Markdown path that
-  // carries line numbers keeps the code slice so the user can pinpoint the
-  // referenced lines; without a line range the whole document renders.
+  // and a rendered .markdown-body read-only document view (Markdown only).
+  // A Markdown file WITHOUT a line range defaults to the rendered view; with a
+  // line range it opens as the code slice so the user can pinpoint the
+  // referenced lines — but the rendered view is still reachable via the eye
+  // toggle (it renders the same line-slice window the code view shows).
   const renderMode = ref<PreviewRenderMode>('source')
 
   const isMarkdown = computed(() => {
@@ -103,8 +104,8 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     return !!(t && t.lineStart && Number.isInteger(t.lineStart) && t.lineStart > 0)
   })
 
-  /** Whether the current target is a Markdown file that may be rendered. */
-  const canRenderMarkdown = computed(() => isMarkdown.value && !hasExplicitLineRange.value)
+  /** Whether the current target is a Markdown file (renderable in the doc view). */
+  const canRenderMarkdown = computed(() => isMarkdown.value)
 
   // A Markdown file default-renders unless the annotation pinned a line range
   // (source slice is the useful view then). Re-evaluate on each target change.

@@ -163,10 +163,12 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   // ── Rendered Markdown view state ──
   // The mock mirrors the real composable: renderMode is per-open defaulted to
   // 'rendered' for a Markdown file WITHOUT a line range, otherwise 'source'.
+  // canRenderMarkdown reflects the FILE's renderability (any Markdown file,
+  // with or without a line annotation), so the eye toggle stays available.
   const renderMode = ref<'rendered' | 'source'>('source')
   const isMarkdown = ref(false)
   const hasExplicitLineRange = ref(false)
-  const canRenderMarkdown = computed(() => isMarkdown.value && !hasExplicitLineRange.value)
+  const canRenderMarkdown = computed(() => isMarkdown.value)
   const effectiveRenderMode = computed<'rendered' | 'source'>(() =>
     canRenderMarkdown.value ? renderMode.value : 'source'
   )
@@ -1712,10 +1714,11 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
   })
 
   it('keeps line-annotated Markdown and non-Markdown on the source slice view', async () => {
-    // Markdown with line range -> source slice
+    // Markdown with line range -> source slice by default (eye toggle still
+    // available since the file is renderable)
     const mdWithLine = createMockPreviewController({
       target: ref(makeMdTarget({ lineStart: 12, lineEnd: 14 })),
-      canRenderMarkdown: ref(false),
+      canRenderMarkdown: ref(true),
       effectiveRenderMode: ref('source'),
     })
     const wrapperMd = mount(CodeLinkPreview, {
@@ -1792,11 +1795,23 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     wrapper.unmount()
   })
 
-  it('does not render the eye toggle when Markdown has a line range', async () => {
+  it('shows the eye toggle for line-annotated Markdown and can switch to the rendered view', async () => {
+    const effectiveRenderMode = ref<'rendered' | 'source'>('source')
     const mdWithLine = createMockPreviewController({
       target: ref(makeMdTarget({ lineStart: 3 })),
-      canRenderMarkdown: ref(false),
-      effectiveRenderMode: ref('source'),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode,
+      toggleRenderMode: vi.fn(() => {
+        effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
+      }),
+      slicedCode: ref({
+        code: '# Doc\n\nbody line',
+        startLine: 3,
+        endLine: 4,
+        totalLines: 20,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
     })
     const wrapper = mount(CodeLinkPreview, {
       props: { preview: mdWithLine },
@@ -1804,11 +1819,22 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     })
     await nextTick()
 
-    expect(document.querySelector('.code-preview-actions .code-preview-btn')).not.toBeNull()
-    // First button must not be the render toggle for source-only previews
-    const firstAction = document.querySelector('.code-preview-actions button') as HTMLElement
-    expect(firstAction.getAttribute('aria-label')).not.toBe('Rendered preview')
-    expect(firstAction.getAttribute('aria-label')).not.toBe('Source code')
+    // Line-annotated Markdown opens in the code slice view…
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('.md-preview-body')).toBeNull()
+
+    // …but the eye toggle is present (renderable Markdown), labeled for the
+    // view it would switch to ('Rendered preview').
+    const eyeBtn = document.querySelector('.code-preview-actions button[aria-pressed]') as HTMLElement
+    expect(eyeBtn).not.toBeNull()
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
+
+    // Clicking switches to the rendered document view of the same slice.
+    eyeBtn.click()
+    await nextTick()
+    await nextTick()
+    expect(document.querySelector('.code-preview-line-row')).toBeNull()
+    expect(document.querySelector('.md-preview-body')).not.toBeNull()
 
     wrapper.unmount()
   })
