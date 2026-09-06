@@ -292,6 +292,11 @@ func GetLastUserMessagePlain(ctx context.Context, sessionID string) string {
 // that message carried file attachments (chat_history.files non-empty).
 // Used to render an "attachment" chip next to the quoted user message in
 // completion popovers without leaking which files were attached.
+//
+// The returned text is a single-line preview: newlines from multi-block
+// content (ExtractPlainText joins text blocks with "\n\n") and runs of
+// whitespace are collapsed into single spaces, so the quoted message reads
+// as flowing text instead of unexpectedly breaking into multiple lines.
 func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string, hasFiles bool) {
 	if dbRead == nil || sessionID == "" {
 		return "", false
@@ -310,11 +315,18 @@ func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string
 	// holds a JSON array ("[...]") when attachments exist, so a bare "[]" / ""
 	// both count as no attachments.
 	hasFiles = files != "" && files != "[]" && files != "null"
-	plain = ExtractPlainText(content)
+	plain = collapseToSingleLine(ExtractPlainText(content))
 	if plain != "" {
 		plain = truncatePreview(plain)
 	}
 	return plain, hasFiles
+}
+
+// collapseToSingleLine normalizes any run of whitespace (including newlines
+// inserted by multi-block joins, tabs, and double spaces) into a single space,
+// returning a single flowing line.
+func collapseToSingleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // IsSessionRunning checks if a session is currently running.

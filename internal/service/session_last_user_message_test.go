@@ -175,3 +175,37 @@ func TestGetLastUserMessageMeta_SkipsStreamingAndQueued(t *testing.T) {
 	require.Equal(t, "最终消息", plain)
 	require.False(t, hasFiles)
 }
+
+func TestGetLastUserMessageMeta_CollapsesMultiBlockToSingleLine(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m6"
+	// 用户消息实际是两段话（两个 text block），ExtractPlainText 以 \n\n 连接；
+	// 通知引用块应折叠为单行流动文本（两个段落变"段一 段二"），而不是变成两行。
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		sessionID, `{"blocks":[{"type":"text","text":"帮我看看这个报错"},{"type":"text","text":"以及怎么处理"}]}`,
+	)
+	require.NoError(t, err)
+
+	plain, _ := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "帮我看看这个报错 以及怎么处理", plain)
+	require.NotContains(t, plain, "\n")
+}
+
+func TestGetLastUserMessageMeta_FlattensEmbeddedNewlinesToSpaces(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "sess-m7"
+	// 纯文本消息内含换行/制表/连续空格——通知预览应折叠为单个空格流
+	_, err := WriteExec(
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		sessionID, "请修复这个bug\t如果方便\n\n谢谢",
+	)
+	require.NoError(t, err)
+
+	plain, _ := GetLastUserMessageMeta(context.Background(), sessionID)
+	require.Equal(t, "请修复这个bug 如果方便 谢谢", plain)
+}
