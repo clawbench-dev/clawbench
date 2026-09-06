@@ -1535,6 +1535,7 @@ export default {
       fontSection: '字体',
       fontDir: '自定义字体目录',
       fontDirDesc: '存放字体文件的服务器目录，默认在数据目录下的 fonts。支持 .ttf、.otf、.woff、.woff2、.eot 格式，放入后自动扫描为可选的自定义字体',
+      fontDirScanError: '无法读取自定义字体目录，请检查路径设置',
       fontMono: '代码字体',
       fontMonoDesc: '代码块、终端、文件查看器等等宽文字',
       fontMonoFallback: '代码字体备选',

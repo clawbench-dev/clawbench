@@ -27,7 +27,9 @@ type fontListResponse struct {
 
 // ServeFontsList handles GET /api/fonts/list: it resolves the configured
 // custom font directory (creating it on first access so users can drop font
-// files in) and returns the scanned font files.
+// files in) and returns the scanned font files. A configured path that is not
+// a usable directory surfaces as an explicit 4xx (with the underlying cause in
+// detail) instead of a silent empty list, so misconfiguration is visible.
 func ServeFontsList(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -44,10 +46,18 @@ func ServeFontsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A configured path pointing at an existing non-directory (e.g. a file) is
+	// a configuration error the user must fix — report it explicitly rather
+	// than letting MkdirAll fail with a generic 500.
+	if info, err := os.Stat(dir); err == nil && !info.IsDir() {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotADirectory")
+		return
+	}
+
 	// Auto-create the directory so the very first "drop a font in" works
 	// without the user manually creating it.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeLocalizedError(w, r, model.Internal(fmt.Errorf("cannot create font dir: %w", err)))
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "DirectoryNotFound")
 		return
 	}
 
@@ -60,8 +70,10 @@ func ServeFontsList(w http.ResponseWriter, r *http.Request) {
 
 // ServeFontFile handles GET /api/fonts/file?name=<file>: streams a single font
 // file from the configured custom font directory. The name must be a bare file
-// name (no path separators / traversal), guaranteeing the response can never
-// escape the font directory.
+// name (no path separators / traversal), and the resolved path is additionally
+// checked to stay inside the font directory after symlink resolution (via the
+// shared isPathUnderBase guard), so a font file that is itself a symlink can
+// never escape the configured directory.
 func ServeFontFile(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -88,6 +100,12 @@ func ServeFontFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	absPath := filepath.Join(dir, name)
+	// Symlink-safe containment: reject when the resolved path escapes dir.
+	if !isPathUnderBase(absPath, dir) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
+		return
+	}
+
 	info, err := os.Stat(absPath)
 	if err != nil {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))

@@ -975,6 +975,15 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// fonts.dir — custom font directory. Empty is allowed (resolves to the
+	// default <DataDir>/fonts at request time); a non-empty value must be an
+	// absolute path so resolution is unambiguous regardless of server CWD.
+	if fontsVal, ok := patch["fonts"].(map[string]any); ok {
+		if v, ok := fontsVal["dir"].(string); ok && v != "" && !filepath.IsAbs(v) {
+			return fmt.Errorf("fonts.dir must be an absolute path or empty (default)")
+		}
+	}
+
 	return nil
 }
 

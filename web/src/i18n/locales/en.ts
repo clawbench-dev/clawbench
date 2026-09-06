@@ -1535,6 +1535,7 @@ export default {
       fontSection: 'Fonts',
       fontDir: 'Custom font directory',
       fontDirDesc: 'Server directory holding font files (default: fonts under the data directory). Supports .ttf/.otf/.woff/.woff2/.eot — files placed here are auto-scanned as selectable custom fonts',
+      fontDirScanError: 'Could not read the custom font directory — check the path setting',
       fontMono: 'Code font',
       fontMonoDesc: 'Monospace text — code blocks, terminal, file viewer, etc.',
       fontMonoFallback: 'Code font fallback',

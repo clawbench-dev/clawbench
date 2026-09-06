@@ -137,11 +137,18 @@ watch(() => props.categoryId, (id) => {
 // Re-scan the custom font directory every time the Appearance category opens
 // (and whenever its configured directory changes), so newly-dropped font files
 // become selectable without reloading the page. customFontTick bumps after each
-// scan to re-render the font option lists (the registry itself is not reactive).
+// fresh successful scan to re-render the font option lists (the registry itself
+// is not reactive). Failures surface a toast instead of failing silently; stale
+// responses (a newer scan won the race) bump nothing.
 const customFontTick = ref(0)
 async function refreshCustomFonts() {
-  await loadCustomFonts()
-  customFontTick.value++
+  const result = await loadCustomFonts()
+  if (result.stale) return
+  if (result.ok) {
+    customFontTick.value++
+  } else {
+    toast.show(t('settings.items.fontDirScanError'), { icon: '⚠️', type: 'error', duration: 4000 })
+  }
 }
 watch(() => props.categoryId, (id) => {
   if (id === 'appearance') void refreshCustomFonts()

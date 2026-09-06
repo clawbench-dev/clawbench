@@ -53,9 +53,16 @@ export interface CustomFontState {
   fonts: CustomFontInfo[]
   /** Whether the last list fetch succeeded (sticky per session). */
   loaded: boolean
+  /** Human-readable error from the most recent failed scan (null when OK). */
+  error: string | null
 }
 
-const state: CustomFontState = { dir: '', fonts: [], loaded: false }
+const state: CustomFontState = { dir: '', fonts: [], loaded: false, error: null }
+
+// Monotonic request id: only the most recently started scan may commit its
+// result. Concurrent scans (cold-start preload + opening the Appearance page)
+// therefore can never let a slow stale response overwrite a newer one.
+let latestScan = 0
 
 /** Currently known custom fonts (empty until the first successful scan). */
 export function getCustomFonts(): CustomFontState {
@@ -64,32 +71,50 @@ export function getCustomFonts(): CustomFontState {
 
 /** Reset the module state (mainly for tests). */
 export function _resetCustomFonts(): void {
+  latestScan++
   state.dir = ''
   state.fonts = []
   state.loaded = false
+  state.error = null
   setCustomFontChoices([])
   document.getElementById(STYLE_ID)?.remove()
+}
+
+export interface CustomFontLoadResult {
+  /** true when this scan won the race and committed fresh results. */
+  ok: boolean
+  /** true when a newer scan superseded this one before it finished. */
+  stale: boolean
 }
 
 /**
  * Fetch the custom font list and refresh injected @font-face + the fontConfig
  * registry. Safe to call repeatedly (idempotent): re-scans happen on entering
  * the Appearance settings page and whenever the configured directory changes.
- * Failures are silent — an unreadable/empty directory simply yields no custom
- * fonts and the pickers keep their static candidates.
+ * Concurrent invocations are serialized by a request id — a stale response is
+ * discarded. Failures do not clear a previously loaded set and are surfaced in
+ * state.error for the UI to report.
  */
-export async function loadCustomFonts(): Promise<void> {
+export async function loadCustomFonts(): Promise<CustomFontLoadResult> {
+  const scanId = ++latestScan
   let data: { dir: string; fonts: CustomFontInfo[] }
   try {
     data = await apiGet<{ dir: string; fonts: CustomFontInfo[] }>('/api/fonts/list')
   } catch (err) {
+    const stale = scanId !== latestScan
+    if (!stale) state.error = String(err instanceof Error ? err.message : err)
     appLog.w('CustomFonts', 'failed to list custom fonts', err)
-    return
+    return { ok: false, stale }
+  }
+  if (scanId !== latestScan) {
+    // A newer scan started while we were in flight — discard this response.
+    return { ok: false, stale: true }
   }
 
   state.dir = data.dir
   state.fonts = Array.isArray(data.fonts) ? data.fonts : []
   state.loaded = true
+  state.error = null
 
   injectFontFaces(state.fonts)
   setCustomFontChoices(toChoices(state.fonts))
@@ -101,6 +126,7 @@ export async function loadCustomFonts(): Promise<void> {
   applyFontConfig(document)
   await preloadSelectedCustomFonts()
   window.dispatchEvent(new CustomEvent('clawbench-font-change'))
+  return { ok: true, stale: false }
 }
 
 function toChoices(fonts: CustomFontInfo[]): FontChoice[] {

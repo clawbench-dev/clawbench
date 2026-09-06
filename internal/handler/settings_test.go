@@ -2526,3 +2526,22 @@ func TestServeConfig_Patch_FontsForbiddenNestedKey(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestServeConfig_Patch_FontsDirRelativeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = "/default/fonts"
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"dir":"relative/fonts"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// Patch must not have been applied.
+	assert.Equal(t, "/default/fonts", model.ConfigInstance.Fonts.Dir)
+}

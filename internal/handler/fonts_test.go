@@ -168,3 +168,38 @@ func TestServeFontFile_MethodNotAllowed(t *testing.T) {
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+func TestServeFontFile_SymlinkEscapeRejected(t *testing.T) {
+	fontsDir, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// A symlink inside the fonts dir pointing outside must not be servable.
+	outside := filepath.Join(filepath.Dir(fontsDir), "secret.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o644))
+	require.NoError(t, os.MkdirAll(fontsDir, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(fontsDir, "evil.ttf")))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/file?name=evil.ttf", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontFile, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code, "symlink escaping the fonts dir must be rejected")
+}
+
+func TestServeFontsList_DirIsAFile(t *testing.T) {
+	fontsDir, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// Configure the "directory" to point at an existing regular file.
+	require.NoError(t, os.WriteFile(fontsDir, []byte("not a dir"), 0o644))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/list", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontsList, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// Response carries the localized "not a directory" message.
+	var resp model.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "NotADirectory", resp.MsgKey)
+}
