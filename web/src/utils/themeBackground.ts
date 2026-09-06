@@ -1,19 +1,18 @@
 /**
  * Custom wallpaper runtime manager.
  *
- * Reads the active wallpaper file name + panel opacity from the server config
- * (`appearance.wallpaper_file` / `appearance.panel_opacity`) and applies them
- * to the document as CSS variables consumed by the .wallpaper-layer and the
- * wallpaper-active surface rules (see web/css/base.css):
+ * The rendered wallpaper is an <img> whose src the App root binds to
+ * resolveWallpaperUrl() — an <img> src swap reliably re-decodes in Android
+ * WebView, unlike a CSS-custom-property-driven background-image (see
+ * web/css/base.css .wallpaper-layer). This module additionally owns the
+ * document-level side effects that panel translucency needs:
  *
- *   --wallpaper-url   → url(/api/file/theme-background) or `none`
- *   --wallpaper-scrim → translucent black overlay, strength follows the
- *                       resolved theme's light/dark base
+ *   --wallpaper-scrim → translucent overlay color, follows light/dark base
  *   --panel-alpha     → opacity multiplier for main work-panel surfaces
+ *   wallpaper-active  → class on <html> toggling the translucent surface rules
  *
- * Applying also toggles the `wallpaper-active` class on <html> so surface
- * translucency is scoped to "a wallpaper is actually set" — without it every
- * surface renders byte-identical to pre-wallpaper.
+ * --wallpaper-url is still written for compatibility but is no longer the
+ * rendering source of truth (App.vue binds an <img> src instead).
  *
  * Wallpaper state is tri-state ('unknown' | 'set' | 'unset') because the
  * server config loads asynchronously after mount: until the config arrives we
@@ -57,6 +56,26 @@ export function wallpaperScrim(dark: boolean): string {
 }
 
 /**
+ * Resolve the served image URL for a wallpaper file name, reusing the cached
+ * URL while the file name is unchanged so unrelated updates (opacity-scrim
+ * ticks, theme changes) never re-download the image. `forceBust` regenerates
+ * the URL even for the same file name — pass after an upload/replace that
+ * reuses the same name (new bytes must bypass the immutable cache).
+ *
+ * Returns an empty string when `wallpaperFile` is empty.
+ */
+export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): string {
+  const active = !!wallpaperFile
+  if (wallpaperFile !== lastAppliedFile) {
+    lastImageUrl = active ? buildImageUrl() : null
+    lastAppliedFile = wallpaperFile
+  } else if (forceBust && active) {
+    lastImageUrl = buildImageUrl()
+  }
+  return lastImageUrl ?? ''
+}
+
+/**
  * Apply (or clear) the wallpaper effect for the given state.
  * `wallpaperFile` — active file name from server config ('' = none).
  * `panelOpacity`  — 0.7..1.0 opacity multiplier (clamped).
@@ -65,21 +84,18 @@ export function wallpaperScrim(dark: boolean): string {
  *                   unchanged. Pass after an upload/replace that reuses the same
  *                   file name (new bytes must bypass the immutable cache).
  *
- * The image URL is only rewritten when the file name changes (or forceBust is
- * set); alpha/scrim updates never re-download the wallpaper.
+ * Maintains the shared file→URL cache (see resolveWallpaperUrl) and writes the
+ * scrim/panel-alpha CSS variables + wallpaper-active class. Callers that bind
+ * an <img> src use resolveWallpaperUrl() for the URL; the --wallpaper-url CSS
+ * variable is kept written here for compatibility but is no longer the
+ * rendering source of truth.
  */
 export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark: boolean, forceBust = false): void {
   const el = document.documentElement
   const active = !!wallpaperFile
+  const url = resolveWallpaperUrl(wallpaperFile, forceBust)
 
-  if (wallpaperFile !== lastAppliedFile) {
-    lastImageUrl = active ? buildImageUrl() : null
-    lastAppliedFile = wallpaperFile
-  } else if (forceBust && active) {
-    lastImageUrl = buildImageUrl()
-  }
-
-  el.style.setProperty('--wallpaper-url', lastImageUrl ? `url("${lastImageUrl}")` : 'none')
+  el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
   el.style.setProperty('--wallpaper-scrim', active ? wallpaperScrim(dark) : 'transparent')
 
   const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.7, panelOpacity)) : 0.85
@@ -88,7 +104,7 @@ export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark
   el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)
 
   el.classList.toggle('wallpaper-active', active)
-  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} alpha=${alpha} dark=${dark} url=${lastImageUrl ?? 'none'}`)
+  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} alpha=${alpha} dark=${dark} url=${url || 'none'}`)
 }
 
 /** Reset the cached image URL/file state (used when the wallpaper is removed). */

@@ -4,6 +4,8 @@ import {
   applyWallpaperScrim,
   resolveWallpaperState,
   resolvePanelOpacity,
+  resolveWallpaperUrl,
+  resetWallpaperUrlCache,
   currentThemeIsDark,
   wallpaperImageUrl,
 } from '../themeBackground'
@@ -19,6 +21,7 @@ describe('themeBackground', () => {
     document.documentElement.style.removeProperty('--wallpaper-url')
     document.documentElement.style.removeProperty('--wallpaper-scrim')
     document.documentElement.style.removeProperty('--panel-alpha')
+    resetWallpaperUrlCache()
   })
 
   describe('resolveWallpaperState', () => {
@@ -144,6 +147,37 @@ describe('themeBackground', () => {
   describe('wallpaperImageUrl', () => {
     it('points at the theme-background endpoint', () => {
       expect(wallpaperImageUrl()).toContain('/api/file/theme-background?v=')
+    })
+  })
+
+  describe('resolveWallpaperUrl', () => {
+    it('returns an empty URL when no file is set', () => {
+      expect(resolveWallpaperUrl('')).toBe('')
+    })
+
+    it('reuses the cached URL for the same file', () => {
+      const a = resolveWallpaperUrl('background.png')
+      const b = resolveWallpaperUrl('background.png')
+      expect(a).toContain('/api/file/theme-background?v=')
+      expect(b).toBe(a)
+    })
+
+    it('regenerates the URL when the file changes', () => {
+      const png = resolveWallpaperUrl('background.png')
+      const jpg = resolveWallpaperUrl('background.jpg')
+      expect(jpg).not.toBe(png)
+    })
+
+    it('regenerates on forceBust even for the same file (same-name re-upload)', () => {
+      const a = resolveWallpaperUrl('background.png')
+      const b = resolveWallpaperUrl('background.png', true)
+      expect(b).not.toBe(a)
+    })
+
+    it('resets to empty when the file is cleared', () => {
+      const a = resolveWallpaperUrl('background.png')
+      expect(a).toBeTruthy()
+      expect(resolveWallpaperUrl('')).toBe('')
     })
   })
 })

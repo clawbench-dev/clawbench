@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref, nextTick } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import WallpaperSetting from '@/components/settings/WallpaperSetting.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 
@@ -12,9 +12,17 @@ vi.mock('@/utils/appLog', () => ({
 
 // Module-level state shared by the mocked useSettingsConfig and the tests.
 const serverConfig = ref<Record<string, unknown>>({ appearance: { wallpaper_file: '', panel_opacity: 0.85 } })
-const localConfig = ref<Record<string, string | number | boolean | null>>({ theme: 'auto' })
+// The component treats localConfig as the real module-level reactive singleton
+// (it writes localConfig.wallpaperBlur directly for live preview), so the mock
+// must be reactive — not a ref — for those direct writes to be observable.
+const localConfig = reactive<Record<string, string | number | boolean | null>>({
+  theme: 'auto',
+  wallpaperBlur: 0,
+  wallpaperEdgeFade: false,
+})
 const mockLoadConfig = vi.fn(async () => {})
 const mockPatchConfig = vi.fn(async () => ({ needsRestart: false, changedColdFields: [] }))
+const mockSetLocalConfig = vi.fn()
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
@@ -22,6 +30,12 @@ vi.mock('@/composables/useSettingsConfig', () => ({
     localConfig,
     loadConfig: mockLoadConfig,
     patchConfig: mockPatchConfig,
+    // Inline implementation (factory runs lazily at import, after top-level
+    // consts are initialized) mirrors the real setLocalConfig persistence.
+    setLocalConfig: (key: string, value: string | number | boolean | null) => {
+      localConfig[key] = value
+      mockSetLocalConfig(key, value)
+    },
   }),
   setLocalConfig: vi.fn(),
 }))
@@ -51,6 +65,10 @@ const i18n = createI18n({
           wallpaperSaveFailed: 'Save failed',
           wallpaperPanelOpacity: 'Panel opacity',
           wallpaperPanelOpacityDesc: 'Desc',
+          wallpaperBlur: 'Gaussian blur',
+          wallpaperBlurDesc: 'Desc',
+          wallpaperEdgeFade: 'Edge fade',
+          wallpaperEdgeFadeDesc: 'Desc',
           resetToDefault: 'Reset',
         },
       },
@@ -95,6 +113,9 @@ describe('WallpaperSetting', () => {
     stubMatchMedia()
     vi.stubGlobal('fetch', vi.fn())
     serverConfig.value = { appearance: { wallpaper_file: '', panel_opacity: 0.85 } }
+    localConfig.wallpaperBlur = 0
+    localConfig.wallpaperEdgeFade = false
+    localConfig.theme = 'auto'
     document.documentElement.classList.remove('wallpaper-active')
   })
 
@@ -199,5 +220,55 @@ describe('WallpaperSetting', () => {
     const urlAfter = html.style.getPropertyValue('--wallpaper-url')
     expect(urlAfter).toBe(urlBefore)
     expect(html.style.getPropertyValue('--panel-alpha')).toBe('78%')
+  })
+
+  describe('gaussian blur + edge fade', () => {
+    it('renders the blur slider and edge-fade switch when a wallpaper is set', async () => {
+      serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      const wrapper = mountSetting()
+      await nextTick()
+      const ranges = wrapper.findAll('input[type="range"]')
+      expect(ranges).toHaveLength(2)
+      // Second range = blur slider; both enabled when set.
+      expect(ranges[1].attributes('disabled')).toBeUndefined()
+      const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
+      expect(labels).toContain('Gaussian blur')
+      expect(labels).toContain('Edge fade')
+    })
+
+    it('disables blur slider + edge switch when no wallpaper is set', async () => {
+      serverConfig.value = { appearance: { wallpaper_file: '', panel_opacity: 0.85 } }
+      const wrapper = mountSetting()
+      await nextTick()
+      const ranges = wrapper.findAll('input[type="range"]')
+      expect(ranges[1].attributes('disabled')).toBeDefined()
+      const edgeSwitch = wrapper.find('input[type="checkbox"]')
+      expect(edgeSwitch.attributes('disabled')).toBeDefined()
+    })
+
+    it('updates the local config live while dragging blur and persists debounced', async () => {
+      serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      const wrapper = mountSetting()
+      await nextTick()
+      const blurSlider = wrapper.findAll('input[type="range"]')[1]
+      await blurSlider.setValue('30')
+      await blurSlider.trigger('input')
+      // Live preview: localConfig updated immediately, no network.
+      expect(localConfig.wallpaperBlur).toBe(30)
+      expect(mockPatchConfig).not.toHaveBeenCalled()
+      // Debounce persists via setLocalConfig after 250ms.
+      await new Promise(r => setTimeout(r, 300))
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperBlur', 30)
+    })
+
+    it('toggles edge fade through setLocalConfig', async () => {
+      serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      const wrapper = mountSetting()
+      await nextTick()
+      const edgeSwitch = wrapper.find('input[type="checkbox"]')
+      expect(edgeSwitch.attributes('disabled')).toBeUndefined()
+      await edgeSwitch.setValue(true)
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperEdgeFade', true)
+    })
   })
 })

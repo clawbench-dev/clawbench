@@ -331,6 +331,8 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
+  wallpaperBlur: 0,
+  wallpaperEdgeFade: false,
 }
 
 // Build reactive local config from legacy localStorage + defaults

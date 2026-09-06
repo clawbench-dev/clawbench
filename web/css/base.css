@@ -29,25 +29,59 @@ html, body {
    layer sits at z-index:0; .main-content is promoted to z-index:1 so every
    work panel renders above the wallpaper, while overlays/drawers/menus that
    Teleport to body keep their own stacking contexts. pointer-events:none so
-   the layer never intercepts clicks. */
+   the layer never intercepts clicks.
+
+   The wallpaper itself is an <img> (bound via :src) rather than a CSS
+   background-image: swapping an <img> src reliably re-decodes in Android
+   WebView, whereas a CSS-custom-property-driven background-image swap can
+   silently keep showing the old frame until the app restarts. The scrim and
+   optional edge fade are sibling layers ABOVE the image so the Gaussian blur
+   (applied to .wallpaper-image only) never double-filters them. */
 
 .wallpaper-layer {
     position: absolute;
     inset: 0;
     z-index: 0;
     background-color: var(--bg-primary);
-    background-image: var(--wallpaper-url);
-    background-size: cover;
-    background-position: center;
-    background-repeat: no-repeat;
+    overflow: hidden;
     pointer-events: none;
 }
 
-.wallpaper-layer::after {
-    content: '';
+/* Cover the container exactly like the old background-size:cover.
+   transform-origin center + inline transform scale(1.06) when blurred
+   compensates for the translucent feathering the blur pulls in at the edges. */
+.wallpaper-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.wallpaper-scrim {
     position: absolute;
     inset: 0;
     background: var(--wallpaper-scrim);
+}
+
+/* Soft edge fade: inset box-shadow (not a blur) gradients the four edges
+   toward the theme surface color so the wallpaper never ends in a hard line
+   against the translucent panels. Enabled per user preference. */
+.wallpaper-edge-fade {
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 160px 80px var(--bg-primary);
+}
+
+/* Gaussian blur class: applied by App.vue only when blur radius > 0 so we
+   never create a filter layer needlessly. The scale factor lives in the
+   inline style (it must track the live radius); this class only needs to
+   exist as a stable hook. */
+.wallpaper-image--blurred {
+    will-change: filter, transform;
 }
 
 /* Main content sits above the wallpaper layer. When no wallpaper is active

@@ -8,8 +8,23 @@
 
     <!-- Main app -->
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
-      <!-- Custom wallpaper layer (rendered when a wallpaper is active) -->
-      <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true"></div>
+      <!-- Custom wallpaper layer (rendered when a wallpaper is active). The image
+           is an <img> (not a CSS background-image) so swapping :src reliably
+           re-decodes in Android WebView — CSS-var-driven background-image swaps
+           sometimes need an app restart to repaint. -->
+      <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+        <img
+          v-if="wallpaperActive"
+          :src="wallpaperUrl"
+          class="wallpaper-image"
+          :class="{ 'wallpaper-image--blurred': wallpaperBlurPx > 0 }"
+          :style="wallpaperImageStyle"
+          alt=""
+          draggable="false"
+        />
+        <div class="wallpaper-scrim"></div>
+        <div v-if="wallpaperEdgeFade" class="wallpaper-edge-fade"></div>
+      </div>
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
@@ -421,7 +436,7 @@ import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, define
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -871,29 +886,43 @@ const sortField = ref(localConfig.sortField || null)
 const sortDir = ref(localConfig.sortDir || 'asc')
 
 // ── Custom wallpaper ────────────────────────────────────────────────
-// wallpaperActive drives the wallpaper-layer visibility; the CSS variables
-// (--wallpaper-url / --wallpaper-scrim / --panel-alpha) and the
-// wallpaper-active class are applied to <html> by applyWallpaper(). The
-// tri-state (unknown) is used by the settings panel's panel-opacity slider
-// disabled logic; here we only care whether a wallpaper is set.
+// wallpaperActive drives the wallpaper-layer visibility. wallpaperUrl is the
+// image URL bound to the <img> (rebuilt only when the file changes — see
+// resolveWallpaperUrl); wallpaperBlurPx / wallpaperEdgeFade are local display
+// preferences that take effect immediately (no server round-trip needed).
 const wallpaperActive = ref(false)
+const wallpaperUrl = ref('')
+const wallpaperBlurPx = ref(0)
+const wallpaperEdgeFade = ref(false)
+
+/** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
+const wallpaperImageStyle = computed(() =>
+  wallpaperBlurPx.value > 0
+    ? { filter: `blur(${wallpaperBlurPx.value}px)`, transform: 'scale(1.06)' }
+    : undefined
+)
 
 /** Apply the wallpaper effect from the latest server config + theme state. */
 function refreshWallpaper() {
   const appearance = serverConfig.value?.appearance ?? {}
   const state = resolveWallpaperState(serverConfig.value?.appearance)
+  const file = String(appearance.wallpaper_file ?? '')
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
+
   wallpaperActive.value = state === 'set'
-  applyWallpaper(
-    String(appearance.wallpaper_file ?? ''),
-    resolvePanelOpacity(appearance),
-    dark,
-  )
+  wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
+  wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
+  // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
+  // panel-alpha CSS variables + wallpaper-active class.
+  wallpaperUrl.value = resolveWallpaperUrl(file, false)
+  applyWallpaper(file, resolvePanelOpacity(appearance), dark, false)
 }
 
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
+// Local display prefs (blur / edge fade) change instantly without a round-trip.
+watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
