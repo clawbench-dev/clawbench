@@ -36,6 +36,7 @@ import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
+import { LINE_FLASH_MS } from '@/utils/domFlash'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 
@@ -318,10 +319,13 @@ function scrollToLine(line, lineEnd) {
     }
     const flashDeco = builder.finish()
     editor.dispatch({ effects: jumpFlashCompartment.reconfigure(EditorView.decorations.of(flashDeco)) })
+    // CodeMirror virtualizes its DOM, so there is no animationend to observe —
+    // the decoration must be cleared on a timer aligned with the CSS flash
+    // duration (LINE_FLASH_MS, mirroring --flash-duration in code-viewer.css).
     if (flashTimer) clearTimeout(flashTimer)
     flashTimer = setTimeout(() => {
         editor.dispatch({ effects: jumpFlashCompartment.reconfigure(EditorView.decorations.of(Decoration.none)) })
-    }, 1500)
+    }, LINE_FLASH_MS)
 }
 
 let pendingScrollRequestId = null
@@ -370,11 +374,6 @@ function onScrollToLine(e) {
     const d = e.detail
     if (!d || typeof d.line !== 'number') return
     if (d.path && d.path !== props.file?.path) return
-    if (!d.requestId) {
-        window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
-        scrollToLine(d.line, d.lineEnd)
-        return
-    }
     if (pendingScrollRequestId === d.requestId) return
     pendingScrollRequestId = d.requestId
 

@@ -26,6 +26,7 @@ import { useI18n } from 'vue-i18n'
 import { Rows3 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
+import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
@@ -55,10 +56,7 @@ function handleValueDblClick(event) {
   const text = valueEl.textContent?.trim() || ''
   if (!text) return
   copyText(text, () => {
-    valueEl.classList.add('copy-flash')
-    valueEl.addEventListener('animationend', () => {
-      valueEl.classList.remove('copy-flash')
-    }, { once: true })
+    flashElement(valueEl, { className: 'copy-flash' })
     if (toast) {
       toast.show(gt('common.copied'), { icon: '📋', duration: 1500 })
     }

@@ -279,8 +279,11 @@ describe('exportMarkdownToHtml', () => {
     // The click handler adds .line-flash to the heading after scrolling.
     expect(result.html).toContain(`el.classList.add('line-flash')`)
     expect(result.html).toContain(`el.addEventListener('animationend', function() { el.classList.remove('line-flash'); }`)
-    // The animation comes from the shared share-chrome.css (self-contained).
-    expect(result.html).toContain('@keyframes line-flash')
+    // The animation comes from the shared share-chrome.css (self-contained) —
+    // exactly once: serializeCss must NOT re-serialize the line-flash keyframes
+    // from the app stylesheets, or the export would carry a duplicated copy.
+    const keyframes = result.html.match(/@keyframes line-flash/g) ?? []
+    expect(keyframes).toHaveLength(1)
     expect(result.html).toContain('.line-flash {')
   })
 

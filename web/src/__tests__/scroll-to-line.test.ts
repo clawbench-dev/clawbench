@@ -62,16 +62,6 @@ describe('scroll-to-line event flow', () => {
     })
   })
 
-  describe('scroll-to-line global event', () => {
-    it('carries line and lineEnd in detail', () => {
-      const detail = { line: 42, lineEnd: 50 }
-      const event = new CustomEvent('scroll-to-line', { detail })
-
-      expect(event.type).toBe('scroll-to-line')
-      expect(event.detail).toEqual({ line: 42, lineEnd: 50 })
-    })
-  })
-
   describe('retry behavior', () => {
     it('retries querySelector until element appears', async () => {
       let callCount = 0

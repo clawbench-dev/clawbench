@@ -145,6 +145,7 @@ const CodeMirrorViewer = defineAsyncComponent(buildAsyncComponentOptions({ loade
 const OfficePreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/media/OfficePreview.vue') }))
 const OpenApiPreview = defineAsyncComponent(buildAsyncComponentOptions({ loader: () => import('@/components/file/OpenApiPreview.vue') }))
 import { getFileType } from '@/utils/fileType.ts'
+import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
 import { store } from '@/stores/app.ts'
@@ -275,10 +276,9 @@ function scrollToHeading(id: string) {
   const el = root.querySelector(`#${CSS.escape(id)}`)
   if (el) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    // Flash the jumped heading (reuses the canonical .line-flash animation from
-    // assets/code-viewer.css, same as the in-app markdown preview anchor jump).
-    el.classList.add('line-flash')
-    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+    // Flash the jumped heading (reuses the canonical .line-flash animation,
+    // same as the in-app markdown preview anchor jump).
+    flashElement(el)
   }
 }
 

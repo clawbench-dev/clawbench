@@ -257,9 +257,14 @@
    The flash animation reuses the canonical `line-flash` keyframes from
    assets/code-viewer.css so every jump highlight (TOC / file-annotation /
    search / message) blinks at the same frequency, count and accent tint.
+   The duration also mirrors code-viewer.css via --flash-duration (0.7s) —
+   keep in sync with LINE_FLASH_MS in web/src/utils/domFlash.ts.
 
    Note: `.cm-editor` prefix outranks @codemirror/search's baseTheme rules
    (`.ͼ2 .cm-searchMatch`), which would otherwise paint matches yellow/orange. */
+:root {
+  --flash-duration: 0.7s;
+}
 .cm-editor.cm-editor .cm-searchMatch {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 28%, transparent);
   border-radius: 2px;
@@ -268,10 +273,19 @@
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);
 }
 .cm-editor.cm-editor .cm-searchMatch-flash {
-  animation: line-flash 1.2s ease-out 1;
+  animation: line-flash var(--flash-duration, 0.7s) ease-out 1;
 }
 /* Markdown active-match <mark> reuses the same flash animation. */
 .search-match-flash {
-  animation: line-flash 1.2s ease-out 1;
+  animation: line-flash var(--flash-duration, 0.7s) ease-out 1;
+}
+
+/* Reduced motion: no animation — the active-match static background already
+   marks the current result (kept; only the extra blink is dropped). */
+@media (prefers-reduced-motion: reduce) {
+  .cm-editor.cm-editor .cm-searchMatch-flash,
+  .search-match-flash {
+    animation: none !important;
+  }
 }
 

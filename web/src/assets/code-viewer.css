@@ -3,57 +3,86 @@
    consumed by CodeMirrorViewer (char flash / line flash / clickable paths) and
    MarkdownPreview (diff marker positioning), so they must stay global. */
 
-/* Line flash animation for TOC jump and search jump */
+/* ── Shared flash timing ──────────────────────────────────────────────────────
+   The jump/localization flash duration. MUST stay in sync with
+   LINE_FLASH_MS in web/src/utils/domFlash.ts (the JS fallback-cleanup timer
+   and every inline cleanup references that constant). Change both together.
+   Reduced-motion consumers hold the class only briefly, so the media queries
+   below pair with REDUCED_FLASH_MS on the JS side. */
+:root {
+  --flash-duration: 0.7s;
+}
+
+/* Line flash animation for TOC jump and search jump.
+   One crisp accent pulse that fades out — a fast "here" without the
+   dragging double-blink of the old 1.2s two-diminishing-pulse version. */
 @keyframes line-flash {
-    0%, 100% { background: transparent; }
-    10%, 30%  { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
-    20%, 40%  { background: transparent; }
-    50%, 70%  { background: color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent); }
-    60%, 80%  { background: transparent; }
-    90%       { background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, transparent); }
+  0%, 100% { background: transparent; }
+  14%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
+  45%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent); }
 }
 .line-flash {
-    animation: line-flash 1.2s ease-out forwards;
+  animation: line-flash var(--flash-duration, 0.7s) ease-out forwards;
 }
 
 /* Copy flash animation for block elements — used by useDoubleClickCopy */
 @keyframes copy-flash {
-    0%, 100% { background: transparent; }
-    50%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
+  0%, 100% { background: transparent; }
+  50%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
 }
 .copy-flash {
-    animation: copy-flash 0.4s ease-out forwards;
-    border-radius: 4px;
+  animation: copy-flash 0.4s ease-out forwards;
+  border-radius: 4px;
 }
 
 /* Red flash for deleted characters (CodeMirrorViewer char-flash) */
 @keyframes char-flash-delete-anim {
-    0%, 100% { background: transparent; }
-    8%, 28%  { background: rgba(255, 80, 80, 0.45); }
-    18%, 38% { background: transparent; }
-    48%, 68% { background: rgba(255, 80, 80, 0.3); }
-    58%, 78% { background: transparent; }
-    88%      { background: rgba(255, 80, 80, 0.15); }
+  0%, 100% { background: transparent; }
+  8%, 28%  { background: rgba(255, 80, 80, 0.45); }
+  18%, 38% { background: transparent; }
+  48%, 68% { background: rgba(255, 80, 80, 0.3); }
+  58%, 78% { background: transparent; }
+  88%      { background: rgba(255, 80, 80, 0.15); }
 }
 .char-flash-delete {
-    animation: char-flash-delete-anim 1.2s ease-out forwards;
-    border-radius: 2px;
-    text-decoration: line-through;
-    text-decoration-color: rgba(255, 80, 80, 0.6);
+  animation: char-flash-delete-anim 1.2s ease-out forwards;
+  border-radius: 2px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 80, 80, 0.6);
 }
 
 /* Blue flash for added characters (CodeMirrorViewer char-flash) */
 @keyframes char-flash-add-anim {
-    0%, 100% { background: transparent; }
-    8%, 28%  { background: rgba(100, 200, 255, 0.45); }
-    18%, 38% { background: transparent; }
-    48%, 68% { background: rgba(100, 200, 255, 0.3); }
-    58%, 78% { background: transparent; }
-    88%      { background: rgba(100, 200, 255, 0.15); }
+  0%, 100% { background: transparent; }
+  8%, 28%  { background: rgba(100, 200, 255, 0.45); }
+  18%, 38% { background: transparent; }
+  48%, 68% { background: rgba(100, 200, 255, 0.3); }
+  58%, 78% { background: transparent; }
+  88%      { background: rgba(100, 200, 255, 0.15); }
 }
 .char-flash-add {
-    animation: char-flash-add-anim 1.5s ease-out forwards;
-    border-radius: 2px;
+  animation: char-flash-add-anim 1.5s ease-out forwards;
+  border-radius: 2px;
+}
+
+/* Reduced motion: kill the animation but KEEP the color feedback as a static
+   accent tint (the tint persists only while the JS-held class is present —
+   flashElement removes it after REDUCED_FLASH_MS). Follows the project rule of
+   "keep functional feedback, drop decorative motion". */
+@media (prefers-reduced-motion: reduce) {
+  .line-flash,
+  .copy-flash {
+    animation: none !important;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
+  }
+  .char-flash-delete {
+    animation: none !important;
+    background: rgba(255, 80, 80, 0.3);
+  }
+  .char-flash-add {
+    animation: none !important;
+    background: rgba(100, 200, 255, 0.3);
+  }
 }
 
 /* Diff marker inline structural positioning (visual styles in diff-marker.css) */

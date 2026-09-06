@@ -48,6 +48,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
+import { flashElement } from '@/utils/domFlash'
 import { buildMarkdownPreviewDom } from '@/composables/useMarkdownRenderPipeline.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -204,8 +205,7 @@ function handleClick(event: MouseEvent) {
                 event.preventDefault()
                 event.stopPropagation()
                 targetEl.scrollIntoView({ behavior: 'auto', block: 'start' })
-                targetEl.classList.add('line-flash')
-                targetEl.addEventListener('animationend', () => targetEl.classList.remove('line-flash'), { once: true })
+                flashElement(targetEl)
                 return
             }
         }

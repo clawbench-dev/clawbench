@@ -507,6 +507,7 @@ import { openRecentFile, removeRecentFile, useRecentFiles } from './composables/
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
+import { flashElement } from './utils/domFlash'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
@@ -1321,7 +1322,6 @@ function registerAppEventListeners() {
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
   window.addEventListener('quote-sent', playQuoteEmitAnimation)
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
-  window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line, e.detail.lineEnd) })
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   document.addEventListener('click', handleOverflowOutsideClick)
@@ -2197,8 +2197,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
             for (let i = startLine; i <= endLine; i++) {
                 const el = document.querySelector(`.code-line[data-line="${i}"]`)
                 if (el) {
-                    el.classList.add('line-flash')
-                    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+                    flashElement(el)
                 }
             }
             cleanup()
@@ -2209,8 +2208,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
         if (anchorEl) {
             window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
             anchorEl.scrollIntoView({ behavior: 'auto', block: 'start' })
-            anchorEl.classList.add('line-flash')
-            anchorEl.addEventListener('animationend', () => anchorEl.classList.remove('line-flash'), { once: true })
+            flashElement(anchorEl)
             cleanup()
             return
         }

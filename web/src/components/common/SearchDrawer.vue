@@ -46,6 +46,7 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { getFileType } from '@/utils/fileType.ts'
 import { searchRawContent, highlightText, BLOCK_TAGS, shouldCorrectAfterSettle } from '@/utils/searchUtils.ts'
+import { flashElement, clearFlash } from '@/utils/domFlash'
 
 const { t } = useI18n()
 
@@ -207,14 +208,18 @@ function scrollToRenderedMatch(result) {
     // Instant scroll: a smooth scroll keeps animating toward a stale position
     // and fights the settle-correction below, so we jump directly.
     anchor.scrollIntoView({ behavior: 'auto', block: 'center' })
-    anchor.classList.add('line-flash')
+    // Flash the anchor. The anchor must STAY in the DOM until the layout
+    // settles so correctAfterSettle below can re-center against it — so the
+    // flash's own cleanup only drops the class; unwrapping is left to the
+    // settle callback (which can run later than the 0.7s flash).
+    flashElement(anchor)
 
     // Images render with `max-height: 60dvh` (dynamic viewport height) and load
     // asynchronously, so the document height — and the match's position — can
     // change after this scroll (images above the target push it down). Watch
     // until the layout settles, then re-center with a direct scrollTop set.
     correctAfterSettle(anchor, scroller, () => {
-      anchor.classList.remove('line-flash')
+      clearFlash(anchor)
       unwrapAnchor(anchor)
     })
   } catch {
@@ -222,8 +227,7 @@ function scrollToRenderedMatch(result) {
     // scroll to the text node's parent element
     const el = textNode.parentElement
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    el.classList.add('line-flash')
-    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+    flashElement(el)
   }
 }
 

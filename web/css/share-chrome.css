@@ -147,15 +147,27 @@
    export's inlined TOC JS). The canonical definition lives in
    assets/code-viewer.css for the main app; both share consumers carry the same
    animation here because the share SPA does not load code-viewer.css and the
-   offline export must be self-contained. */
+   offline export must be self-contained.
+   Duration mirrors code-viewer.css via --flash-duration (0.7s) — keep in sync
+   with LINE_FLASH_MS in web/src/utils/domFlash.ts. */
+:root {
+  --flash-duration: 0.7s;
+}
 @keyframes line-flash {
   0%, 100% { background: transparent; }
-  10%, 30% { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
-  20%, 40% { background: transparent; }
-  50%, 70% { background: color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent); }
-  60%, 80% { background: transparent; }
-  90%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 20%, transparent); }
+  14%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent); }
+  45%      { background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent); }
 }
 .line-flash {
-  animation: line-flash 1.2s ease-out forwards;
+  animation: line-flash var(--flash-duration, 0.7s) ease-out forwards;
+}
+
+/* Reduced motion: static accent tint instead of the blink (class removal is
+   driven by the inlined TOC JS fallback timer in the export, or by
+   flashElement in the share SPA). */
+@media (prefers-reduced-motion: reduce) {
+  .line-flash {
+    animation: none !important;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
+  }
 }
