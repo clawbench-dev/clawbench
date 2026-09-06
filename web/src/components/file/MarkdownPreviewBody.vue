@@ -20,38 +20,44 @@
       ref="scrollEl"
       class="md-preview-scroll"
     >
-      <!-- Top Expand Bar -->
+      <!-- Top Expand Bar: buttons hide once the slice is pinned at the render
+           cap, but the "N lines remaining" hint stays visible -->
       <div
         v-if="canExpandAbove"
         class="code-preview-expand-bar expand-above"
         role="region"
         :aria-label="t('file.codePreview.expandAbove', { n: stepAbove })"
       >
-        <button
-          type="button"
-          class="code-preview-expand-btn"
-          :title="t('file.codePreview.expandAbove', { n: stepAbove })"
-          @click="expandAbove(stepAbove)"
-        >
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
-          <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
-          <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }})</span>
-        </button>
-        <button
-          v-if="remainingAbove > stepAbove"
-          type="button"
-          class="code-preview-expand-btn expand-all"
-          :title="t('file.codePreview.expandToTop')"
-          @click="expandAbove(remainingAbove)"
-        >
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="17 11 12 6 7 11" />
-            <polyline points="17 18 12 13 7 18" />
-          </svg>
-          <span>{{ t('file.codePreview.expandToTop') }}</span>
-        </button>
+        <span
+          v-if="remainingAbove > 0"
+          class="code-preview-expand-hint"
+        >{{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }}</span>
+        <span v-if="!hideExpandButtons" class="code-preview-expand-actions">
+          <button
+            type="button"
+            class="code-preview-expand-btn"
+            :title="t('file.codePreview.expandAbove', { n: stepAbove })"
+            @click="expandAbove(stepAbove)"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+            <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
+          </button>
+          <button
+            v-if="remainingAbove > stepAbove"
+            type="button"
+            class="code-preview-expand-btn expand-all"
+            :title="t('file.codePreview.expandToTop')"
+            @click="expandAbove(remainingAbove)"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="17 11 12 6 7 11" />
+              <polyline points="17 18 12 13 7 18" />
+            </svg>
+            <span>{{ t('file.codePreview.expandToTop') }}</span>
+          </button>
+        </span>
       </div>
 
       <div
@@ -61,38 +67,44 @@
         <div class="markdown-content" v-html="renderedHtml" />
       </div>
 
-      <!-- Bottom Expand Bar -->
+      <!-- Bottom Expand Bar: buttons hide once the slice is pinned at the render
+           cap, but the "N lines remaining" hint stays visible -->
       <div
         v-if="canExpandBelow"
         class="code-preview-expand-bar expand-below"
         role="region"
         :aria-label="t('file.codePreview.expandBelow', { n: stepBelow })"
       >
-        <button
-          type="button"
-          class="code-preview-expand-btn"
-          :title="t('file.codePreview.expandBelow', { n: stepBelow })"
-          @click="expandBelow(stepBelow)"
-        >
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-          <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
-          <span class="code-preview-expand-hint">({{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }})</span>
-        </button>
-        <button
-          v-if="remainingBelow > stepBelow"
-          type="button"
-          class="code-preview-expand-btn expand-all"
-          :title="t('file.codePreview.expandToBottom')"
-          @click="expandBelow(remainingBelow)"
-        >
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="7 13 12 18 17 13" />
-            <polyline points="7 6 12 11 17 6" />
-          </svg>
-          <span>{{ t('file.codePreview.expandToBottom') }}</span>
-        </button>
+        <span
+          v-if="remainingBelow > 0"
+          class="code-preview-expand-hint"
+        >{{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }}</span>
+        <span v-if="!hideExpandButtons" class="code-preview-expand-actions">
+          <button
+            type="button"
+            class="code-preview-expand-btn"
+            :title="t('file.codePreview.expandBelow', { n: stepBelow })"
+            @click="expandBelow(stepBelow)"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
+          </button>
+          <button
+            v-if="remainingBelow > stepBelow"
+            type="button"
+            class="code-preview-expand-btn expand-all"
+            :title="t('file.codePreview.expandToBottom')"
+            @click="expandBelow(remainingBelow)"
+          >
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="7 13 12 18 17 13" />
+              <polyline points="7 6 12 11 17 6" />
+            </svg>
+            <span>{{ t('file.codePreview.expandToBottom') }}</span>
+          </button>
+        </span>
       </div>
     </div>
   </div>
@@ -133,6 +145,9 @@ const props = defineProps<{
   remainingBelow: number
   stepAbove: number
   stepBelow: number
+  /** Hide the expand N lines / expand-all buttons but keep the remaining-lines
+      hint. Set when the slice is pinned at the line-count render cap. */
+  hideExpandButtons?: boolean
   /** Invoked to actually expand the slice; implemented by the parent. */
   expandAboveLines: (n: number) => Promise<void> | void
   expandBelowLines: (n: number) => Promise<void> | void

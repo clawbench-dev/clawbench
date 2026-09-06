@@ -140,6 +140,28 @@ describe('CodePreviewBody.vue', () => {
     expect(none.wrapper.find('.expand-below').exists()).toBe(false)
   })
 
+  it('keeps the remaining-lines hint but hides buttons when hideExpandButtons is set', () => {
+    const { wrapper } = mountBody({
+      remainingAbove: 9,
+      remainingBelow: 20,
+      stepAbove: 9,
+      stepBelow: 10,
+      hideExpandButtons: true,
+    })
+
+    // Bars still render with the hint…
+    const above = wrapper.find('.expand-above')
+    const below = wrapper.find('.expand-below')
+    expect(above.exists()).toBe(true)
+    expect(below.exists()).toBe(true)
+    expect(above.get('.code-preview-expand-hint').text()).toContain('9')
+    expect(below.get('.code-preview-expand-hint').text()).toContain('20')
+
+    // …but no expand buttons inside.
+    expect(above.find('button').exists()).toBe(false)
+    expect(below.find('button').exists()).toBe(false)
+  })
+
   it('renders "expand all" buttons only when more than one step remains', () => {
     const more = mountBody({ remainingAbove: 30, remainingBelow: 25, stepAbove: 10, stepBelow: 10 })
     expect(more.wrapper.findAll('.expand-all')).toHaveLength(2)

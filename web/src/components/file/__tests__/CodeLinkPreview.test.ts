@@ -93,6 +93,8 @@ const i18n = createI18n({
           loadError: 'Failed to load code',
           quoteToChat: 'Quote to chat',
           quotedToChat: 'Quoted code added to chat',
+          quoteShort: 'Quote',
+          openFileShort: 'Full file',
           copyPath: 'Copy path',
           pathCopied: 'File path copied',
           revealInTree: 'Open Directory',
@@ -446,7 +448,7 @@ describe('CodeLinkPreview.vue', () => {
     expect(preview.expandBelow).toHaveBeenCalledWith(10)
   })
 
-  it('hides expand bars once the slice hits the line-count render cap', async () => {
+  it('hides expand buttons but keeps the remaining-lines hint at the line-count render cap', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),
       slicedCode: ref({
@@ -467,12 +469,16 @@ describe('CodeLinkPreview.vue', () => {
 
     const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
     // At the 200-line cap further expansion cannot grow the slice, so the
-    // bars must be gone rather than present-but-inert.
-    expect(floating.querySelector('.code-preview-expand-bar.expand-above')).toBeNull()
-    expect(floating.querySelector('.code-preview-expand-bar.expand-below')).toBeNull()
+    // expand buttons must be gone…
+    const bottomBar = floating.querySelector('.code-preview-expand-bar.expand-below')
+    expect(bottomBar).not.toBeNull()
+    expect(bottomBar?.querySelector('.code-preview-expand-btn')).toBeNull()
+    expect(floating.querySelector('.code-preview-expand-bar.expand-above .code-preview-expand-btn')).toBeNull()
+    // …but the "(N lines remaining)" hint stays visible (500 − 200 = 300).
+    expect(bottomBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('300')
   })
 
-  it('keeps expand bars when truncation is byte-based, not line-cap based', async () => {
+  it('keeps expand buttons when truncation is byte-based, not line-cap based', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),
       slicedCode: ref({
@@ -493,8 +499,8 @@ describe('CodeLinkPreview.vue', () => {
 
     const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
     // Byte-based truncation is not pinned to a window boundary — further
-    // expansion may still make progress, so the bar stays available.
-    expect(floating.querySelector('.code-preview-expand-bar.expand-below')).not.toBeNull()
+    // expansion may still make progress, so the buttons stay available.
+    expect(floating.querySelector('.code-preview-expand-bar.expand-below .code-preview-expand-btn')).not.toBeNull()
   })
 
   it('supports header dragging with pointer events', () => {
@@ -1504,19 +1510,19 @@ describe('CodeLinkPreview.vue', () => {
     const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn')
     expect(copyBtn).not.toBeNull()
 
-    // Body toolbar: meta + tools (Copy Path, Search, Wrap, Line Numbers, Copy Code)
+    // Body toolbar: meta + tools (Copy Path, Wrap, Line Numbers, Copy Code).
+    // Search moved to the footer bar.
     const row2 = document.querySelector('.code-preview-sheet-row2')
     expect(row2).not.toBeNull()
     const metaInfo = row2?.querySelector('.code-preview-sheet-meta-info')
     expect(metaInfo?.textContent).toContain('804')
 
     const tools = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(tools?.length).toBe(5)
+    expect(tools?.length).toBe(4)
     expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toMatch(/copy/i)
-    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toContain('Find')
-    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toMatch(/wrap/i)
-    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toContain('Line Numbers')
-    expect(tools?.[4]?.getAttribute('aria-label') || tools?.[4]?.getAttribute('title')).toMatch(/copy/i)
+    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toMatch(/wrap/i)
+    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toContain('Line Numbers')
+    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toMatch(/copy/i)
 
     // Bottom Sheet Footer: Refresh icon first, then Reveal / Quote / Open Full
     const footer = document.querySelector('.code-preview-sheet-footer')
@@ -1606,36 +1612,29 @@ describe('CodeLinkPreview.vue', () => {
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('packages/agent/src/types.ts:415-420')
 
-    // 2. Body toolbar: Copy Path -> Search -> Wrap -> Line Numbers -> Copy Code
+    // 2. Body toolbar: Copy Path -> Wrap -> Line Numbers -> Copy Code
     const row2 = document.querySelector('.code-preview-sheet-row2')
     const toolBtns = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(toolBtns?.length).toBe(5)
+    expect(toolBtns?.length).toBe(4)
 
-    // Tool 1: Search opens the in-preview search bar
-    const searchBtn = toolBtns?.[1] as HTMLElement
-    expect(searchBtn.getAttribute('aria-label') || searchBtn.getAttribute('title')).toContain('Find')
-    searchBtn.click()
-    await nextTick()
-    expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
-
-    // Tool 2: Wrap toggle
-    const wrapBtn = toolBtns?.[2] as HTMLElement
+    // Tool 1: Wrap toggle
+    const wrapBtn = toolBtns?.[1] as HTMLElement
     expect(wrapBtn.getAttribute('aria-label') || wrapBtn.getAttribute('title')).toMatch(/wrap/i)
 
-    // Tool 3: Line numbers toggle (uses the shared global file-viewer setting)
-    const lineNumBtn = toolBtns?.[3] as HTMLElement
+    // Tool 2: Line numbers toggle (uses the shared global file-viewer setting)
+    const lineNumBtn = toolBtns?.[2] as HTMLElement
     expect(lineNumBtn.getAttribute('aria-label') || lineNumBtn.getAttribute('title')).toContain('Line Numbers')
     lineNumBtn.click()
     await nextTick()
     expect(document.querySelectorAll('.code-preview-line-row .code-preview-line-number').length).toBe(0)
 
-    // Tool 4: Copy Code
-    expect(toolBtns?.[4]?.getAttribute('aria-label') || toolBtns?.[4]?.getAttribute('title')).toMatch(/copy/i)
-    ;(toolBtns?.[4] as HTMLElement).click()
+    // Tool 3: Copy Code
+    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toMatch(/copy/i)
+    ;(toolBtns?.[3] as HTMLElement).click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('export interface AgentContext { ... }')
 
-    // 3. Footer: Refresh icon first, then Reveal in file tree, Quote to Chat, Open Full
+    // 3. Footer: Refresh icon first, then Search, Reveal, Open Full, Quote
     const footer = document.querySelector('.code-preview-sheet-footer')
     expect(footer).not.toBeNull()
     expect(footer?.querySelector('.collapse-btn')).toBeNull()
@@ -1645,6 +1644,13 @@ describe('CodeLinkPreview.vue', () => {
     expect(footer?.firstElementChild).toBe(refreshBtn)
     refreshBtn.click()
     expect(preview.refresh).toHaveBeenCalled()
+
+    // Search now lives in the footer (icon-only) and opens the search bar
+    const searchBtn = footer?.querySelector('.code-preview-footer-btn.is-active, .code-preview-footer-btn[title="Find"]') as HTMLElement
+    expect(searchBtn).not.toBeNull()
+    searchBtn.click()
+    await nextTick()
+    expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
 
     const revealBtn = footer?.querySelector('.reveal-btn') as HTMLElement
     expect(revealBtn).not.toBeNull()

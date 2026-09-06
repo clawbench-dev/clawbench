@@ -896,6 +896,8 @@ export default {
       copyPath: '复制路径',
       pathCopied: '已复制文件路径',
       revealInTree: '打开目录',
+      quoteShort: '引用',
+      openFileShort: '完整文件',
       findInPreview: '查找',
       findPlaceholder: '在预览中查找...',
       findPrev: '上一个匹配项 (Shift+Enter)',

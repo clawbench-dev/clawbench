@@ -896,6 +896,8 @@ export default {
       copyPath: 'Copy path',
       pathCopied: 'File path copied',
       revealInTree: 'Open Directory',
+      quoteShort: 'Quote',
+      openFileShort: 'Full file',
       findInPreview: 'Find',
       findPlaceholder: 'Find in preview...',
       findPrev: 'Previous match (Shift+Enter)',

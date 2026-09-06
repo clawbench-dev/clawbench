@@ -70,20 +70,6 @@
               <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
-          <!-- Search in Preview (code-slice view only) -->
-          <button
-            v-if="!isRenderedView"
-            class="code-preview-btn icon-only"
-            :class="{ 'is-active': isSearchOpen }"
-            :title="t('file.codePreview.findInPreview')"
-            :aria-label="t('file.codePreview.findInPreview')"
-            @click="toggleSearch"
-          >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-          </button>
           <!-- Word Wrap Toggle (code-slice view only) -->
           <button
             v-if="!isRenderedView"
@@ -182,6 +168,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -201,6 +188,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -210,7 +198,7 @@
     <!-- Bottom Action Bar (Thumb area - Left-hand optimized) -->
     <template #footer>
       <div class="code-preview-sheet-footer">
-        <!-- Refresh (leftmost icon button) -->
+        <!-- Refresh: icon-only round button -->
         <button
           class="code-preview-footer-btn icon-btn refresh-btn"
           :class="{ 'is-loading': preview.status.value === 'loading' }"
@@ -223,10 +211,24 @@
           </svg>
         </button>
 
-        <!-- Open directory: opens the containing dir in the file manager
-             and selects the file (same behavior as file-search results). -->
+        <!-- Search in preview: icon-only, code-slice view only -->
         <button
-          class="code-preview-footer-btn reveal-btn"
+          v-if="!isRenderedView"
+          class="code-preview-footer-btn icon-btn"
+          :class="{ 'is-active': isSearchOpen }"
+          :title="t('file.codePreview.findInPreview')"
+          :aria-label="t('file.codePreview.findInPreview')"
+          @click="toggleSearch"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+
+        <!-- Reveal in file tree: icon-only -->
+        <button
+          class="code-preview-footer-btn icon-btn reveal-btn"
           :title="t('file.codePreview.revealInTree')"
           :aria-label="t('file.codePreview.revealInTree')"
           @click="handleRevealInTree"
@@ -234,26 +236,28 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          <span class="reveal-btn-label">{{ t('file.codePreview.revealInTree') }}</span>
         </button>
 
-        <!-- Open Full / View Details — kept next to "Locate file" -->
+        <!-- Open Full / View Details — primary action -->
         <button
           v-if="preview.errorCode.value === 'too-large'"
           class="code-preview-footer-btn action-btn primary-btn"
           @click="handleViewDetails"
         >
-          {{ t('file.codePreview.viewDetails') }}
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+          </svg>
+          <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
         <button
           v-else
           class="code-preview-footer-btn action-btn primary-btn"
           @click="preview.openFull()"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
           </svg>
-          <span>{{ t('file.codePreview.openFull') }}</span>
+          <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
 
         <!-- Quote to Chat -->
@@ -262,10 +266,10 @@
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
-          <span>{{ t('file.codePreview.quoteToChat') }}</span>
+          <span>{{ t('file.codePreview.quoteShort') }}</span>
         </button>
       </div>
     </template>
@@ -623,6 +627,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -642,6 +647,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -1210,9 +1216,9 @@ const codeLines = computed<FormattedCodeLine[]>(() => {
 // When the slice has hit the hard line-count render cap (MAX_RENDER_LINES in
 // sliceCodeForPreview, truncateReason='lines'), the window width is pinned at
 // 200 lines — pressing expand below/above no longer grows the rendered slice
-// (direction-only shifts the window against the same cap). Showing the expand
-// bars in that state is misleading: the user clicks and nothing changes. So we
-// report zero remaining in both directions, which hides the expand bars.
+// (direction-only shifts the window against the same cap). We keep the
+// "N lines remaining" hint visible but suppress the expand buttons, which
+// would otherwise appear clickable while doing nothing.
 const atLineRenderCap = computed(() => {
   const sliced = props.preview.slicedCode.value
   return !!sliced && sliced.renderTruncated === true && sliced.truncateReason === 'lines'
@@ -1221,14 +1227,12 @@ const atLineRenderCap = computed(() => {
 const remainingAbove = computed(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return 0
-  if (atLineRenderCap.value) return 0
   return Math.max(0, sliced.startLine - 1)
 })
 
 const remainingBelow = computed(() => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return 0
-  if (atLineRenderCap.value) return 0
   return Math.max(0, sliced.totalLines - sliced.endLine)
 })
 
