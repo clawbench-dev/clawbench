@@ -519,14 +519,23 @@ function handleSummaryClick(event: MouseEvent): void {
 
 /* ── 折叠态摘要：富文本预览按固定高度裁剪（不滚动），底部淡出渐变，
    暗示下方还有更多内容。图片此态不展示（CSS 隐藏）。点击内容区展开。
-   底部留出 ~40px 淡出带，与下方按钮行重叠（负 margin）以省纵向空间。 ── */
+   底部留出淡出带，与下方按钮行重叠（负 margin）以省纵向空间。
+   关键：mask 用 mask-size 固定到 max-height（132px）的坐标空间并 top 对齐，
+   而非按内容实际高度百分比——否则短内容（一两行）时百分比渐变会把
+   大半内容也淡掉（表现为只露出半行）。 ── */
 .completion-popover-summary.markdown-body.is-collapsed {
     max-height: 132px;
     overflow-y: hidden;
     position: relative;
     cursor: pointer;
-    -webkit-mask-image: linear-gradient(to bottom, #000 32%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 32%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+    -webkit-mask-size: 100% 132px;
+    mask-size: 100% 132px;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: top center;
+    mask-position: top center;
 }
 
 .completion-popover-summary.is-collapsed img {

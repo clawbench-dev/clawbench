@@ -432,6 +432,13 @@ describe('CompletionPopover', () => {
         // jsdom 将 #000 序列化为 rgb(0, 0, 0)，此处只断言渐变 mask 的存在
         expect(cssText).toContain('-webkit-mask-image: linear-gradient(rgb')
         expect(cssText).toContain('transparent 100%)')
+        // 回归保护：mask 渐变坐标固定到 132px（mask-size）而非内容实际高度——
+        // 否则短内容（一两行）会被按百分比淡出，表现为只露出半行。
+        // mask top 对齐使短内容完全落在不透明区，仅接近占满 132px 时才淡出底部。
+        expect(cssText).toContain('-webkit-mask-size: 100% 132px')
+        expect(cssText).toContain('mask-size: 100% 132px')
+        expect(cssText).toContain('-webkit-mask-position: top center')
+        expect(cssText).toContain('mask-position: top center')
         // 图片在折叠态不展示（CSS display:none），避免裂图占位
         expect(cssText).toContain('.completion-popover-summary.is-collapsed img')
         const img = el.querySelector('img')!
