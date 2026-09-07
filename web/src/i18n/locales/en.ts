@@ -1474,6 +1474,7 @@ export default {
     },
     askUser: {
       noQuestions: '(No questions)',
+      invalidFormat: '(Malformed question data — cannot display the questions)',
       submit: 'Submit',
       submitted: 'Submitted',
       name: 'Ask Question',

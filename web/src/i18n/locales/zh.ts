@@ -1474,6 +1474,7 @@ export default {
     },
     askUser: {
       noQuestions: '（无问题）',
+      invalidFormat: '（提问数据格式异常，无法展示问题）',
       submit: '提交',
       submitted: '已提交',
       name: '提问',

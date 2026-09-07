@@ -4,6 +4,8 @@ import {
   formatToolInput,
   formatToolOutput,
   shouldAutoExpandTool,
+  hasRenderableAskQuestions,
+  classifyAskQuestionsInput,
   registerToolRenderer,
   registerToolActionHandler,
   handleToolAction,
@@ -714,6 +716,57 @@ describe('AskUserQuestion renderer (deep)', () => {
   it('renders empty state when questions is missing', () => {
     const html = formatToolInput({}, 'AskUserQuestion')
     expect(html).toContain('ask-question-empty')
+  })
+
+  it('renders malformed-data notice when questions missing but input carries raw content', () => {
+    // Model occasionally stuffs an <ask-question> XML fragment into input.ask
+    // instead of a schema-valid questions array (seen in msg 44577) — such a
+    // call can never be answered and must surface an explicit notice.
+    const html = formatToolInput({ ask: '<item>broken</tool>' }, 'AskUserQuestion')
+    expect(html).toContain('ask-invalid')
+    expect(html).toContain('ask-question-empty')
+    // The invalid-format notice text (not the neutral empty placeholder).
+    expect(html).not.toContain('No questions')
+  })
+
+  it('renders malformed-data notice when questions exists but is the wrong type', () => {
+    const html = formatToolInput({ questions: 'not-an-array' }, 'AskUserQuestion')
+    expect(html).toContain('ask-invalid')
+    expect(html).toContain('ask-question-empty')
+  })
+
+  it('treats questions: [] as missing (no raw content → neutral placeholder, not invalid)', () => {
+    const html = formatToolInput({ questions: [] }, 'AskUserQuestion')
+    expect(html).toContain('ask-question-empty')
+    expect(html).not.toContain('ask-invalid')
+    expect(html).toContain('No questions')
+  })
+
+  it('hasRenderableAskQuestions distinguishes valid vs malformed inputs', () => {
+    expect(hasRenderableAskQuestions({ questions: [{ question: 'Q', options: ['A'] }] })).toBe(true)
+    expect(hasRenderableAskQuestions({ questions: [] })).toBe(false)
+    expect(hasRenderableAskQuestions({ ask: '<item>x</tool>' })).toBe(false)
+    expect(hasRenderableAskQuestions(undefined)).toBe(false)
+    expect(hasRenderableAskQuestions(null)).toBe(false)
+    expect(hasRenderableAskQuestions('nope')).toBe(false)
+  })
+
+  it('renders malformed-data notice when questions entries are junk (no text, no options)', () => {
+    const html = formatToolInput({ questions: [{}] }, 'AskUserQuestion')
+    expect(html).toContain('ask-invalid')
+    expect(html).not.toContain('ask-question-option')
+  })
+
+  it('classifyAskQuestionsInput returns empty for {} / questions: [] and malformed for raw content', () => {
+    expect(classifyAskQuestionsInput({})).toBe('empty')
+    expect(classifyAskQuestionsInput({ questions: [] })).toBe('empty')
+    expect(classifyAskQuestionsInput({ questions: 'nope' })).toBe('malformed')
+    expect(classifyAskQuestionsInput({ ask: '<item>x</tool>' })).toBe('malformed')
+    expect(classifyAskQuestionsInput({ questions: [{}] })).toBe('malformed')
+    expect(classifyAskQuestionsInput({ questions: [{ question: 'Q', options: [] }] })).toBe('valid')
+    expect(classifyAskQuestionsInput({ questions: [{ question: 'Q' }] })).toBe('valid')
+    expect(classifyAskQuestionsInput({ questions: [{ options: ['A'] }] })).toBe('valid')
+    expect(classifyAskQuestionsInput(undefined)).toBe('empty')
   })
 
   it('renders options that are plain strings', () => {

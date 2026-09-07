@@ -5,7 +5,7 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
-import { updateAskSubmitState } from '@/utils/renderToolDetail.ts'
+import { updateAskSubmitState, handleToolAction } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
 
@@ -13,6 +13,18 @@ vi.mock('@/utils/renderToolDetail.ts', () => ({
   handleToolAction: vi.fn().mockReturnValue(false),
   shouldAutoExpandTool: (name: string) => name === 'AskUserQuestion' || name === 'PermissionApproval',
   updateAskSubmitState: vi.fn(),
+  classifyAskQuestionsInput: (input: any) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'empty'
+    const questions = input.questions
+    if (Array.isArray(questions)) {
+      if (questions.length === 0) return 'empty'
+      const renderable = questions.some((q: any) =>
+        (q && typeof q.question === 'string' && q.question.trim() !== '') || (Array.isArray(q?.options) && q.options.length > 0),
+      )
+      return renderable ? 'valid' : 'malformed'
+    }
+    return (Object.prototype.hasOwnProperty.call(input, 'questions') || Object.keys(input).length > 0) ? 'malformed' : 'empty'
+  },
 }))
 
 vi.mock('@/utils/icons', () => ({
@@ -238,16 +250,19 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: true, status: 'success', id: 'tool-2', input: {} }],
       })
 
-      await wrapper.find('.chat-tool-call').trigger('click')
+      await wrapper.find('.chat-card-strip').trigger('click')
 
       expect(wrapper.emitted('toggle-tool')).toBeTruthy()
     })
 
-    it('renders auto-expand detail for AskUserQuestion', () => {
+    it('renders auto-expand detail for AskUserQuestion as a unified inline card', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: true, status: 'success', id: 'tool-2', input: { question: 'Test?' } }],
       })
-      expect(wrapper.find('.tool-detail').exists()).toBe(true)
+      // AskUserQuestion renders as ONE card (header strip + body), not a detached pill bar + box
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-card-strip').exists()).toBe(true)
+      expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
     })
 
     it('sets data-category on tool call', () => {
@@ -255,6 +270,33 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'success' }],
       })
       expect(wrapper.find('.chat-tool-call').attributes('data-category')).toBe('file')
+    })
+
+    it('suppresses pending spinner for malformed AskUserQuestion input (done=false shows check, not endless spinner)', () => {
+      // A leftover/malformed AskUserQuestion call (no valid questions array) can
+      // never be answered — treat it as done so the user does not see an endless
+      // spinner over an empty card (regression: msg 44577).
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: false, status: '', id: 'ask-bad', input: { ask: '<item>broken</tool>' } }],
+      })
+      expect(wrapper.find('.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.find('.tool-spinner').exists()).toBe(false)
+      expect(wrapper.find('.tool-check').exists()).toBe(true)
+    })
+
+    it('keeps pending spinner while a valid AskUserQuestion is waiting for a user answer', () => {
+      const wrapper = mountBlocks({
+        blocks: [{
+          type: 'tool_use',
+          name: 'AskUserQuestion',
+          done: false,
+          status: '',
+          id: 'ask-good',
+          input: { questions: [{ header: 'Choose', options: [{ label: 'A' }] }] },
+        }],
+      })
+      expect(wrapper.find('.tool-spinner').exists()).toBe(true)
+      expect(wrapper.find('.tool-check').exists()).toBe(false)
     })
   })
 
@@ -710,6 +752,8 @@ describe('ContentBlocks', () => {
       })
       expect(wrapper.html()).toContain('sum text')
       expect(wrapper.html()).toContain('AskUserQuestion')
+      // Auto-expand tool from summary cards renders as a unified inline card
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
     })
 
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {
@@ -730,6 +774,8 @@ describe('ContentBlocks', () => {
         'AskUserQuestion',
       )
       expect(wrapper.html()).toContain('Continue?')
+      // summaryCards.askQuestions renders as a unified inline card
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
     })
 
     it('renders a scheduled-task card from summaryCards.taskIDs with fetched task data', async () => {
@@ -1157,5 +1203,67 @@ describe('handleToolDetailInput', () => {
       await nextTick()
       expect(updateAskSubmitState).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('AskUserQuestion card interactive dispatch', () => {
+  beforeEach(() => {
+    vi.mocked(handleToolAction).mockClear()
+    vi.mocked(handleToolAction).mockReturnValue(false)
+  })
+
+  it('dispatches option clicks to the action handler for a tool_use AskUserQuestion card (data-tool-name on the @click element)', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'ask-1',
+        input: { questions: [{ header: 'Approach', options: [{ label: 'A' }, { label: 'B' }] }] },
+        done: true,
+        status: 'success',
+      }],
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"><div class="ask-question-option" data-label="A">A</div></div></div>',
+    })
+    await nextTick()
+
+    const option = wrapper.find('.ask-question-option')
+    expect(option.exists()).toBe(true)
+    await option.trigger('click')
+
+    expect(handleToolAction).toHaveBeenCalled()
+    const [name, event] = handleToolAction.mock.calls[0]
+    expect(name).toBe('AskUserQuestion')
+    expect((event.target as HTMLElement).classList.contains('ask-question-option')).toBe(true)
+  })
+
+  it('dispatches option clicks for a text-mode <ask-question> card (body inside unified card still routes through the outer handler)', async () => {
+    // The text-mode ask card renders the body inside .chat-card-body. Option
+    // clicks must bubble to the outer .tool-detail (which carries both @click
+    // and data-tool-name) — regression guard for the card unification.
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'text',
+        text: 'Some text <ask-question><item><question>Continue?</question><option><label>Yes</label></option></item></ask-question>',
+      }],
+      // blockAskQuestions is keyed `${msgId}-${blockIdx}` (blockTaskKey)
+      blockAskQuestions: {
+        'msg-1-0': { questions: [{ header: '', multiSelect: false, question: 'Continue?', options: [{ label: 'Yes' }] }] },
+      },
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"><div class="ask-question-option" data-label="Yes">Yes</div></div></div>',
+    })
+    await nextTick()
+    await flushPromises()
+
+    const outer = wrapper.find('.tool-detail.chat-inline-card')
+    expect(outer.exists()).toBe(true)
+    // Outer must expose the tool name to handleToolDetailClick dispatch
+    expect(outer.attributes('data-tool-name')).toBe('AskUserQuestion')
+
+    const option = wrapper.find('.ask-question-option')
+    expect(option.exists()).toBe(true)
+    await option.trigger('click')
+
+    expect(handleToolAction).toHaveBeenCalled()
+    expect(handleToolAction.mock.calls[0][0]).toBe('AskUserQuestion')
   })
 })

@@ -47,16 +47,34 @@
           </button>
         </div>
       </template>
-      <!-- Tool cards from summaryCards.tools (auto-expand tools render inline detail) -->
+      <!-- Tool cards from summaryCards.tools -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
-        <div class="chat-tool-call done" :data-category="getToolIcon(tool.name).category" @click.stop="handleSummaryToolClick(tool, ti)">
-          <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
-          <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
+        <!-- AskUserQuestion: unified question card. PermissionApproval keeps pill + detail body. -->
+        <div v-if="shouldAutoExpandTool(tool.name || '') && isAskQuestion(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+          <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
+            <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
+            <span v-if="toolCallSummary(tool)" class="tool-summary">{{ toolCallSummary(tool) }}</span>
+            <!-- Pending spinner: only meaningful when the tool is actually answerable. -->
+            <LoadingIndicator v-if="showAskPending(tool)" class="tool-spinner" size="sm" inline />
+            <!-- Done: green check -->
+            <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+          </div>
+          <div class="chat-card-body">
+            <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
+          </div>
         </div>
-        <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick" @input="handleToolDetailInput">
-          <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
-        </div>
+        <template v-else>
+          <div class="chat-tool-call done" :data-category="getToolIcon(tool.name).category" @click.stop="handleSummaryToolClick(tool, ti)">
+            <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
+            <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
+          </div>
+          <!-- Inline detail body for auto-expand tools that are NOT unified cards -->
+          <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick" @input="handleToolDetailInput">
+            <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
+          </div>
+        </template>
       </template>
       <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->
       <template v-for="tid in summaryTaskIDs" :key="'sum-task-' + tid">
@@ -85,12 +103,16 @@
       </template>
       <!-- Ask-question cards from summaryCards.askQuestions (rendered via formatToolInput) -->
       <template v-if="summaryAskQuestions.length">
-        <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', 'summary-ask')">
-          <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-          <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+        <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+          <div class="chat-card-strip" @click.stop="$emit('toggle-tool', 'summary-ask')">
+            <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ t('tool.askUser.name') }}</span>
+            <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+          </div>
+          <div class="chat-card-body">
+            <div v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
+          </div>
         </div>
-        <div class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
       </template>
     </template>
     <!-- Original content mode -->
@@ -135,21 +157,44 @@
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
-        <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
-          <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
-          <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
-          <!-- Loading: spinner -->
-          <LoadingIndicator v-if="!block.done" class="tool-spinner" size="sm" inline />
-          <!-- Done with error: red X -->
-          <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
-          <!-- Done (success or unknown): green check -->
-          <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+        <!-- AskUserQuestion: unified question card (status strip + body in one box).
+             PermissionApproval keeps the pill bar + detached detail body. -->
+        <div v-if="shouldAutoExpand(block) && isAskQuestion(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+          <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), bi)">
+            <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
+            <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+            <!-- Pending spinner: only meaningful when the tool is actually answerable.
+                 Malformed AskUserQuestion input (no valid questions) can never be answered,
+                 so it renders as a done card with an invalid-format notice instead. -->
+            <LoadingIndicator v-if="showAskPending(block)" class="tool-spinner" size="sm" inline />
+            <!-- Done with error: red X -->
+            <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
+            <!-- Done (success or unknown): green check -->
+            <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+          </div>
+          <div class="chat-card-body">
+            <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+          </div>
         </div>
-        <!-- Inline detail for auto-expand tools (AskUserQuestion, PermissionApproval) -->
-        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
-          <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
-        </div>
+        <template v-else>
+          <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
+            <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
+            <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
+            <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
+            <!-- Loading: spinner -->
+            <LoadingIndicator v-if="!block.done" class="tool-spinner" size="sm" inline />
+            <!-- Done with error: red X -->
+            <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
+            <!-- Done (success or unknown): green check -->
+            <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
+          </div>
+          <!-- Inline detail body for auto-expand tools that are NOT unified cards
+               (PermissionApproval) — rendered under the pill bar. -->
+          <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+            <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+          </div>
+        </template>
       </template>
       <!-- Error block -->
       <div v-else-if="block.type === 'error'" class="chat-error-card">
@@ -214,13 +259,17 @@
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <template v-if="blockAskQuestions[blockTaskKey(bi)]">
-          <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
-            <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ t('tool.askUser.name') }}</span>
-            <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
-            <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+          <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
+            <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
+              <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
+              <span class="tool-name">{{ t('tool.askUser.name') }}</span>
+              <span class="tool-summary">{{ askQuestionSummary(blockAskQuestions[blockTaskKey(bi)]) }}</span>
+              <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
+            </div>
+            <div class="chat-card-body">
+              <div v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+            </div>
           </div>
-          <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
         </template>
       </template>
 
@@ -251,7 +300,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- defineProps runtime declarations require any for complex prop types */
 import { ref, watch, onUnmounted, computed, onMounted, reactive, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2, Clock, Archive } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -341,6 +390,27 @@ function askQuestionSummary(input: any) { return askQuestionSummaryUtil(input) }
 
 function shouldAutoExpand(block: any) {
   return shouldAutoExpandTool(block.name || '')
+}
+
+/** True when the tool is AskUserQuestion (case-insensitive) — the only auto-expand
+ *  tool rendered as a unified inline card. */
+function isAskQuestion(name: string) {
+  return (name || '').toLowerCase() === 'askuserquestion'
+}
+
+/**
+ * Whether an AskUserQuestion tool card should show its pending spinner.
+ * A not-done AskUserQuestion whose input is MALFORMED (no renderable question —
+ * e.g. a leftover XML fragment or junk entries) can never be answered, so it
+ * renders as a done card with an invalid-format notice instead of an endless
+ * spinner over an empty card. Input that is merely empty (slim/skeleton block,
+ * content not yet written) keeps the spinner.
+ */
+function showAskPending(block: any) {
+  if (!block || block.done) return false
+  const name = (block.name || '').toLowerCase()
+  if (name === 'askuserquestion' && classifyAskQuestionsInput(block.input) === 'malformed') return false
+  return true
 }
 
 /** Handle tool call bar click: open overlay for regular tools, toggle inline for AskUserQuestion. */
@@ -1919,6 +1989,86 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
+/* ── Unified AskUserQuestion card ──
+   Combines the old pill bar (.chat-tool-call) and the detached content box
+   (.tool-detail) into ONE bordered card: a header strip (icon + name + status)
+   sits directly above the question body inside the same container. */
+.content-blocks .tool-detail.chat-inline-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 6px 0 2px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--tool-accent) 25%, var(--border-color));
+  border-radius: 8px;
+  background: var(--bg-primary);
+  overflow: hidden;
+  max-height: none;
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
+  border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 12%, var(--border-color));
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+@media (hover: hover) {
+  .content-blocks .tool-detail.chat-inline-card .chat-card-strip:hover {
+    background: color-mix(in srgb, var(--tool-accent) 11%, var(--bg-secondary));
+  }
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-icon {
+  color: color-mix(in srgb, var(--tool-accent) 80%, transparent);
+  flex-shrink: 0;
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-name {
+  font-weight: 600;
+  color: var(--tool-accent);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-summary {
+  color: var(--text-tertiary, #888);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-check,
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-warn,
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-error-icon,
+.content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-spinner {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.content-blocks .tool-detail.chat-inline-card .chat-card-body {
+  padding: 8px 10px;
+  overflow-y: auto;
+  max-height: 500px;
+}
+
+.content-blocks .tool-detail.chat-inline-card.is-pending .chat-card-strip {
+  cursor: default;
+}
+
+.content-blocks .tool-detail.chat-inline-card[data-category="ask"] { --tool-accent: #f97316; }
+:root[data-theme-base="dark"] .content-blocks .tool-detail.chat-inline-card[data-category="ask"] { --tool-accent: #fb923c; }
+
 /* ── AskUserQuestion card ── */
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="ask"] { --tool-accent: #fb923c; }
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="permission"] { --tool-accent: #fbbf24; }
@@ -1933,6 +2083,19 @@ onUnmounted(() => {
   color: var(--text-muted, #999);
   font-style: italic;
   font-size: 11px;
+}
+
+.content-blocks .tool-detail .ask-question-view.ask-invalid {
+  padding: 2px 0;
+}
+
+.content-blocks .tool-detail .ask-question-view.ask-invalid .ask-question-empty {
+  color: #b45309;
+  font-style: normal;
+}
+
+:root[data-theme-base="dark"] .content-blocks .tool-detail .ask-question-view.ask-invalid .ask-question-empty {
+  color: #fbbf24;
 }
 
 .content-blocks .tool-detail .ask-question-item {
