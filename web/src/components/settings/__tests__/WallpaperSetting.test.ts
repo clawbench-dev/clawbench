@@ -199,6 +199,24 @@ describe('WallpaperSetting', () => {
     expect(mockPatchConfig).toHaveBeenCalledWith({ appearance: { panel_opacity: 0.75 } })
   })
 
+  it('accepts panel opacity below the old 0.7 floor (relaxed 0.5 lower bound)', async () => {
+    // Regression: the translucent-panel tuning range widened from 0.7–1.0 to
+    // 0.5–1.0. The slider must expose the relaxed floor and a 0.5x value must
+    // reach the server PATCH (settings.go validatePatchValues now allows it).
+    serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+    const wrapper = mountSetting()
+    await nextTick()
+    const slider = wrapper.find('input[type="range"]')
+    expect(slider.attributes('min')).toBe('0.5')
+    expect(slider.attributes('max')).toBe('1')
+    await slider.setValue('0.55')
+    await slider.trigger('input')
+    await new Promise(r => setTimeout(r, 400))
+    expect(mockPatchConfig).toHaveBeenCalledWith({ appearance: { panel_opacity: 0.55 } })
+    expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('55%')
+  })
+
+
   it('does not change the wallpaper image URL while dragging the opacity slider', async () => {
     serverConfig.value = { appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
     const wrapper = mountSetting()
