@@ -40,14 +40,14 @@ type UsageParams struct {
 	// so SQLite re-stamps it CURRENT_TIMESTAMP on every metadata save. The value
 	// is therefore the *final metadata write* (≈ assistant message completion),
 	// which is the intended window/bucket timebase for usage stats.
-	Start, End  time.Time // range filter on chat_metadata.created_at (UTC)
-	Dims        []UsageDim
-	Metrics     []UsageMetric
-	SortBy      UsageMetric
-	SortDesc    bool
-	Limit       int  // max rows returned; 0 → default 50, capped at 200
-	Trend       bool // group by day × dims instead of dims only
-	TopN        int  // trend: keep only top-N dim combos by total tokens; 0 → default 10
+	Start, End time.Time // range filter on chat_metadata.created_at (UTC)
+	Dims       []UsageDim
+	Metrics    []UsageMetric
+	SortBy     UsageMetric
+	SortDesc   bool
+	Limit      int  // max rows returned; 0 → default 50, capped at 200
+	Trend      bool // group by day × dims instead of dims only
+	TopN       int  // trend: keep only top-N dim combos by total tokens; 0 → default 10
 }
 
 // UsageRow aggregates one dimension combination (or one day × combination for
@@ -86,15 +86,18 @@ type UsageStatsResult struct {
 }
 
 // UsageStatsError identifies validation failures so the handler can map them
-// to HTTP 400 instead of 500.
+// to HTTP 400 instead of 500. Code is a stable machine-readable identifier the
+// client can act on; Error() carries a human-readable detail for server logs
+// only (never surfaced to the UI — the handler reports Code).
 type UsageStatsError struct {
-	msg string
+	Code string
+	msg  string
 }
 
 func (e *UsageStatsError) Error() string { return e.msg }
 
-func usageErr(format string, args ...any) error {
-	return &UsageStatsError{msg: fmt.Sprintf(format, args...)}
+func usageErr(code, format string, args ...any) error {
+	return &UsageStatsError{Code: code, msg: fmt.Sprintf(format, args...)}
 }
 
 const emptyGroupLabel = "(empty)"
@@ -148,46 +151,46 @@ const (
 
 func validateUsageParams(p *UsageParams) error {
 	if p == nil {
-		return usageErr("usage params required")
+		return usageErr("missing_params", "usage params required")
 	}
 	if p.ProjectPath == "" {
-		return usageErr("project path required")
+		return usageErr("missing_project", "project path required")
 	}
 	if !p.End.After(p.Start) {
-		return usageErr("end must be after start")
+		return usageErr("invalid_range", "end must be after start")
 	}
 	if p.End.Sub(p.Start) > maxRangeDays*24*time.Hour {
-		return usageErr("range exceeds %d days", maxRangeDays)
+		return usageErr("range_too_long", "range exceeds %d days", maxRangeDays)
 	}
 	if len(p.Dims) == 0 {
-		return usageErr("at least one dimension required")
+		return usageErr("missing_dims", "at least one dimension required")
 	}
 	if len(p.Dims) > 3 {
-		return usageErr("at most three dimensions")
+		return usageErr("too_many_dims", "at most three dimensions")
 	}
 	seen := map[UsageDim]bool{}
 	for _, d := range p.Dims {
 		if _, ok := dimExpr(d); !ok {
-			return usageErr("invalid dimension %q", d)
+			return usageErr("invalid_dim", "invalid dimension %q", d)
 		}
 		if seen[d] {
-			return usageErr("duplicate dimension %q", d)
+			return usageErr("duplicate_dim", "duplicate dimension %q", d)
 		}
 		seen[d] = true
 	}
 	if len(p.Metrics) == 0 {
-		return usageErr("at least one metric required")
+		return usageErr("missing_metrics", "at least one metric required")
 	}
 	for _, m := range p.Metrics {
 		if _, ok := sortExpr(m); !ok {
-			return usageErr("invalid metric %q", m)
+			return usageErr("invalid_metric", "invalid metric %q", m)
 		}
 	}
 	if p.SortBy == "" {
 		p.SortBy = MetricTotal
 	}
 	if _, ok := sortExpr(p.SortBy); !ok {
-		return usageErr("invalid sort metric %q", p.SortBy)
+		return usageErr("invalid_sort", "invalid sort metric %q", p.SortBy)
 	}
 	return nil
 }

@@ -96,6 +96,23 @@ func TestServeUsageStats_ValidationErrors(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		})
 	}
+
+	// Validation failures carry a stable machine-readable code in detail —
+	// never the server's English Error() text.
+	t.Run("bad dim detail is a code not English text", func(t *testing.T) {
+		req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+			"dims": "bogus", "metrics": "total",
+		}), nil), projectPath)
+		w := callHandler(ServeUsageStats, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var body struct {
+			Detail map[string]any `json:"detail"`
+		}
+		decodeRespJSON(t, w.Body, &body)
+		assert.Equal(t, "invalid_dim", body.Detail["reason"])
+	})
 }
 
 func TestServeUsageStats_TrendResponse(t *testing.T) {

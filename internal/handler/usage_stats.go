@@ -9,8 +9,8 @@ import (
 	"clawbench/internal/service"
 )
 
-// reasonKey is the JSON detail key identifying the rejected query parameter.
-const reasonKey = "reason"
+// detailKey is the JSON detail key identifying the rejected query parameter.
+const detailKey = "reason"
 
 // ServeUsageStats handles GET /api/usage/stats.
 // Aggregates token/credit/cost usage for the current project cookie within a
@@ -43,12 +43,12 @@ func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 	endStr := q.Get("end")
 	start, err := time.Parse(time.RFC3339, startStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{reasonKey: "start"})
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "start"})
 		return
 	}
 	end, err := time.Parse(time.RFC3339, endStr)
 	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{reasonKey: "end"})
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "end"})
 		return
 	}
 
@@ -89,7 +89,9 @@ func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var vErr *service.UsageStatsError
 		if errors.As(err, &vErr) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{reasonKey: vErr.Error()})
+			// Report a stable machine-readable code in detail; never surface the
+			// server's English Error() text to the UI.
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: vErr.Code})
 			return
 		}
 		writeLocalizedError(w, r, err)

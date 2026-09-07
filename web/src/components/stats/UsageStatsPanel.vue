@@ -1,84 +1,88 @@
 <template>
   <div class="usage-stats-panel" v-show="active">
-    <!-- Header: title + refresh -->
-    <div class="stats-header">
+    <!-- Compact header — matches settings/task panel header style -->
+    <header class="stats-header">
+      <BarChart3 :size="18" class="stats-header-icon" />
       <span class="stats-header-title">{{ t('nav.stats') }}</span>
-      <RefreshButton class="stats-refresh" :loading="loading" :disabled="loading" :title="t('nav.refresh')" @click="onRefresh" />
-    </div>
-
-    <div class="stats-scroll">
-      <!-- Time range -->
-      <div class="stats-section stats-range-row">
-        <button
-          v-for="r in rangePresets"
-          :key="r.key"
-          class="stats-chip"
-          :class="{ active: filter.range.rangeKey === r.key }"
-          @click="selectRangePreset(r.key)"
-        >
-          {{ t(r.labelKey) }}
-        </button>
-        <button class="stats-chip" :class="{ active: filter.range.rangeKey === 'custom' }" @click="selectRangePreset('custom')">
-          {{ t('stats.custom') }}
-        </button>
-        <template v-if="filter.range.rangeKey === 'custom'">
-          <input v-model="customStart" type="date" class="stats-date-input" @change="applyCustomRange" />
-          <span class="stats-date-sep">→</span>
-          <input v-model="customEnd" type="date" class="stats-date-input" @change="applyCustomRange" />
-        </template>
+      <div class="stats-header-actions">
+        <RefreshButton class="stats-refresh" :loading="loading" :disabled="loading" :title="t('nav.refresh')" @click="onRefresh" />
       </div>
+    </header>
 
-      <!-- Totals cards -->
-      <div v-if="visibleTotals.length > 0" class="stats-section stats-cards">
-        <div v-for="card in visibleTotals" :key="card.metric" class="stats-card">
-          <span class="stats-card-label">{{ t(metricLabelKey(card.metric)) }}</span>
-          <span class="stats-card-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+    <div class="stats-body">
+      <!-- Range card -->
+      <section class="stats-card-panel">
+        <div class="stats-card-title">
+          <Clock :size="13" class="stats-card-title-icon" />
+          <span>{{ t('stats.rangeTitle') }}</span>
         </div>
-      </div>
+        <div class="stats-range-row">
+          <button
+            v-for="r in rangePresets"
+            :key="r.key"
+            class="stats-chip"
+            :class="{ active: filter.range.rangeKey === r.key }"
+            @click="selectRangePreset(r.key)"
+          >
+            {{ t(r.labelKey) }}
+          </button>
+          <button class="stats-chip" :class="{ active: filter.range.rangeKey === 'custom' }" @click="selectRangePreset('custom')">
+            {{ t('stats.custom') }}
+          </button>
+          <template v-if="filter.range.rangeKey === 'custom'">
+            <span class="stats-date-sep">·</span>
+            <input v-model="customStart" type="date" class="stats-date-input" @change="applyCustomRange" />
+            <span class="stats-date-sep">→</span>
+            <input v-model="customEnd" type="date" class="stats-date-input" @change="applyCustomRange" />
+          </template>
+        </div>
+      </section>
 
-      <!-- Dims -->
-      <div class="stats-section stats-filter-row">
-        <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
-        <button
-          v-for="d in dimOptions"
-          :key="d.id"
-          class="stats-chip"
-          :class="{ active: filter.dims.includes(d.id) }"
-          @click="toggleDim(d.id)"
-        >
-          {{ t(d.labelKey) }}
-        </button>
-      </div>
+      <!-- Filters card -->
+      <section class="stats-card-panel">
+        <div class="stats-card-title">
+          <SlidersHorizontal :size="13" class="stats-card-title-icon" />
+          <span>{{ t('stats.filterTitle') }}</span>
+        </div>
+        <div class="stats-filter-row">
+          <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
+          <button
+            v-for="d in dimOptions"
+            :key="d.id"
+            class="stats-chip"
+            :class="{ active: filter.dims.includes(d.id) }"
+            @click="toggleDim(d.id)"
+          >
+            {{ t(d.labelKey) }}
+          </button>
+        </div>
+        <div class="stats-filter-row">
+          <span class="stats-filter-label">{{ t('stats.metricTitle') }}</span>
+          <button
+            v-for="m in metricOptions"
+            :key="m.id"
+            class="stats-chip"
+            :class="{ active: filter.metrics.includes(m.id) }"
+            @click="toggleMetric(m.id)"
+          >
+            {{ t(m.labelKey) }}
+          </button>
+        </div>
+        <div class="stats-filter-row">
+          <span class="stats-filter-label">{{ t('stats.chartTitle') }}</span>
+          <button
+            v-for="c in chartTypeOptions"
+            :key="c.id"
+            class="stats-chip"
+            :class="{ active: filter.chartType === c.id }"
+            @click="selectChartType(c.id)"
+          >
+            {{ t(c.labelKey) }}
+          </button>
+        </div>
+      </section>
 
-      <!-- Metrics (columns) -->
-      <div class="stats-section stats-filter-row">
-        <span class="stats-filter-label">{{ t('stats.metricTitle') }}</span>
-        <button
-          v-for="m in metricOptions"
-          :key="m.id"
-          class="stats-chip"
-          :class="{ active: filter.metrics.includes(m.id) }"
-          @click="toggleMetric(m.id)"
-        >
-          {{ t(m.labelKey) }}
-        </button>
-      </div>
-
-      <!-- Chart type -->
-      <div class="stats-section stats-filter-row">
-        <span class="stats-filter-label">{{ t('stats.chartTitle') }}</span>
-        <button
-          v-for="c in chartTypeOptions"
-          :key="c.id"
-          class="stats-chip"
-          :class="{ active: filter.chartType === c.id }"
-          @click="selectChartType(c.id)"
-        >
-          {{ t(c.labelKey) }}
-        </button>
-      </div>
-
-      <!-- Error -->
+      <!-- Error banner -->
       <div v-if="error" class="stats-error">{{ errorText }}</div>
 
       <!-- Loading -->
@@ -88,64 +92,80 @@
       </div>
 
       <template v-else>
-        <!-- In trend mode the backend returns trend series (no grouped rows), so
-             "has content" = rows exist OR trend data exists. -->
+        <!-- Empty state -->
         <div
           v-if="tableRows.length === 0 && rawTrend.length === 0 && !error"
           class="stats-empty"
-        >{{ t('stats.noData') }}</div>
+        >
+          <BarChart3 :size="34" class="stats-empty-icon" />
+          <span>{{ t('stats.noData') }}</span>
+        </div>
 
         <template v-else-if="tableRows.length > 0 || rawTrend.length > 0">
-          <!-- Table: only in non-trend grouping (rows present) -->
-          <div v-if="tableRows.length > 0" class="stats-section stats-table-wrap">
-            <table class="stats-table">
-              <thead>
-                <tr>
-                  <th
-                    v-for="d in filter.dims"
-                    :key="d"
-                    class="stats-th-dim"
-                  >
-                    {{ t(dimLabelKey(d)) }}
-                  </th>
-                  <th
-                    v-for="m in filter.metrics"
-                    :key="m"
-                    class="stats-th-num"
-                    :class="{ 'sorted': filter.sortBy === m }"
-                    @click="sortByMetric(m)"
-                  >
-                    <span class="stats-th-inner">
-                      {{ t(metricLabelKey(m)) }}
-                      <span v-if="filter.sortBy === m" class="stats-sort-arrow">{{ filter.sortDesc ? '↓' : '↑' }}</span>
-                    </span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, i) in tableRows" :key="i">
-                  <td v-for="d in filter.dims" :key="d" class="stats-td-dim">
-                    {{ row.key[d] === EMPTY_GROUP_LABEL ? t('stats.emptyLabel') : (row.key[d] || t('stats.emptyLabel')) }}
-                  </td>
-                  <td
-                    v-for="m in filter.metrics"
-                    :key="m"
-                    class="stats-td-num"
-                  >
-                    {{ formatMetricCellValue(m, row) }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Charts: one per selected metric (bar/pie from rows, trend from trend) -->
-          <div class="stats-section stats-charts">
-            <div v-for="m in filter.metrics" :key="m" class="stats-chart-block">
-              <div class="stats-chart-title">{{ t(metricLabelKey(m)) }}</div>
-              <UsageChart :option="chartOptionFor(m)" class="stats-chart" />
+          <!-- Totals overview -->
+          <section v-if="visibleTotals.length > 0" class="stats-card-panel">
+            <div class="stats-card-title">
+              <Gauge :size="13" class="stats-card-title-icon" />
+              <span>{{ t('stats.summaryTitle') }}</span>
             </div>
-          </div>
+            <div class="stats-totals">
+              <div v-for="card in visibleTotals" :key="card.metric" class="stats-total">
+                <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
+                <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- Detail table (only in non-trend grouping; trend responses carry no rows) -->
+          <section v-if="tableRows.length > 0" class="stats-card-panel">
+            <div class="stats-card-title">
+              <Table :size="13" class="stats-card-title-icon" />
+              <span>{{ t('stats.detailTitle') }}</span>
+              <span class="stats-count-chip">{{ tableRows.length }}</span>
+            </div>
+            <div class="stats-table-wrap">
+              <table class="stats-table">
+                <thead>
+                  <tr>
+                    <th v-for="d in filter.dims" :key="d" class="stats-th-dim">
+                      {{ t(dimLabelKey(d)) }}
+                    </th>
+                    <th
+                      v-for="m in filter.metrics"
+                      :key="m"
+                      class="stats-th-num"
+                      :class="{ 'sorted': filter.sortBy === m }"
+                      @click="sortByMetric(m)"
+                    >
+                      <span class="stats-th-inner">
+                        {{ t(metricLabelKey(m)) }}
+                        <span v-if="filter.sortBy === m" class="stats-sort-arrow">{{ filter.sortDesc ? '↓' : '↑' }}</span>
+                      </span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, i) in tableRows" :key="i">
+                    <td v-for="d in filter.dims" :key="d" class="stats-td-dim">
+                      {{ row.key[d] === EMPTY_GROUP_LABEL ? t('stats.emptyLabel') : (row.key[d] || t('stats.emptyLabel')) }}
+                    </td>
+                    <td v-for="m in filter.metrics" :key="m" class="stats-td-num">
+                      {{ formatMetricCellValue(m, row) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <!-- Charts: one card per selected metric (bar/pie from rows, trend from trend) -->
+          <section v-for="m in filter.metrics" :key="m" class="stats-card-panel stats-chart-panel">
+            <div class="stats-card-title">
+              <ChartPie :size="13" class="stats-card-title-icon" />
+              <span>{{ t(metricLabelKey(m)) }}</span>
+            </div>
+            <UsageChart :option="chartOptionFor(m)" class="stats-chart" />
+          </section>
         </template>
       </template>
     </div>
@@ -155,6 +175,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
@@ -298,6 +319,9 @@ function formatMetricCardValue(m: UsageMetricId, value: number): string {
 }
 
 function formatMetricCellValue(m: UsageMetricId, row: UsageRowLike): string {
+  // A hit-rate cell for a group with no cache activity has a zero denominator —
+  // "0.0%" would mislead. Show a dash instead.
+  if (m === 'hitRate' && row.cacheHit + row.cacheMiss === 0) return '—'
   return formatMetricValue(m, rowValueOf(row as never, m))
 }
 
@@ -385,30 +409,105 @@ function onRefresh() {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ── Compact header (36px, matches settings/task panels) ── */
 .stats-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px 6px;
+  gap: 8px;
+  height: var(--header-height, 36px);
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+}
+.stats-header-icon {
+  color: var(--accent-color);
   flex-shrink: 0;
 }
 .stats-header-title {
+  flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.stats-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+/* Round header icon button — same family as .header-btn in other panels */
 .stats-refresh {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
-.stats-scroll {
+@media (hover: hover) {
+  .stats-refresh:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
+}
+
+.stats-body {
   flex: 1;
   overflow-y: auto;
-  padding: 0 12px 24px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.stats-section {
-  margin-top: 12px;
+
+/* ── Outlined grouping card (aligns with overview-card) ── */
+.stats-card-panel {
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm, 6px);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.stats-range-row {
+.stats-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+.stats-card-title-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.stats-count-chip {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  padding: 1px 7px;
+  line-height: 16px;
+}
+
+/* ── Chips / toggles ── */
+.stats-range-row,
+.stats-filter-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -416,88 +515,105 @@ function onRefresh() {
 }
 .stats-chip {
   border: 1px solid var(--border-color);
-  background: var(--bg-elevated, var(--bg-secondary));
+  background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-secondary);
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 3px 11px;
   font-size: 12px;
+  line-height: 18px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .stats-chip:hover {
+    border-color: var(--accent-color);
+    color: var(--text-primary);
+  }
 }
 .stats-chip.active {
   background: var(--accent-color, #4f8cff);
   border-color: var(--accent-color, #4f8cff);
   color: #fff;
 }
-.stats-date-input {
-  background: var(--bg-elevated, var(--bg-secondary));
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 3px 6px;
-  font-size: 12px;
-}
-.stats-date-sep {
-  color: var(--text-secondary);
-}
-.stats-cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.stats-card {
-  flex: 1 1 auto;
-  min-width: 110px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-elevated, var(--bg-secondary));
-}
-.stats-card-label {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.stats-card-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  word-break: break-all;
-}
-.stats-filter-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .stats-filter-label {
   font-size: 12px;
   color: var(--text-secondary);
-  margin-right: 2px;
   flex-shrink: 0;
+  min-width: 3.6em;
 }
+.stats-date-input {
+  background: var(--bg-elevated, var(--bg-primary));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.stats-date-sep {
+  color: var(--text-muted);
+}
+
+/* ── Totals overview ── */
+.stats-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.stats-total {
+  background: var(--bg-elevated, var(--bg-primary));
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.stats-total-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stats-total-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+/* ── Error / loading / empty ── */
 .stats-error {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
   font-size: 13px;
 }
 .stats-loading,
 .stats-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 40px 0;
-  color: var(--text-secondary);
+  gap: 10px;
+  padding: 48px 0;
+  color: var(--text-muted, #999);
   font-size: 13px;
 }
+.stats-empty-icon {
+  opacity: 0.5;
+}
+
+/* ── Detail table ── */
 .stats-table-wrap {
   overflow-x: auto;
+  margin: 0 -10px;
+  padding: 0 10px;
 }
 .stats-table {
   width: 100%;
@@ -506,7 +622,7 @@ function onRefresh() {
 }
 .stats-table th,
 .stats-table td {
-  padding: 6px 8px;
+  padding: 7px 8px;
   border-bottom: 1px solid var(--border-color);
   text-align: right;
   white-space: nowrap;
@@ -518,11 +634,17 @@ function onRefresh() {
 .stats-table th {
   color: var(--text-secondary);
   font-weight: 500;
-  position: sticky;
-  top: 0;
   background: var(--bg-secondary, var(--bg-primary));
   cursor: pointer;
   user-select: none;
+}
+.stats-table tbody tr:last-child td {
+  border-bottom: none;
+}
+@media (hover: hover) {
+  .stats-table tbody tr:hover td {
+    background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
+  }
 }
 .stats-th-inner {
   display: inline-flex;
@@ -539,21 +661,10 @@ function onRefresh() {
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
-.stats-charts {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.stats-chart-block {
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  padding: 8px 8px 4px;
-  background: var(--bg-elevated, var(--bg-secondary));
-}
-.stats-chart-title {
-  font-size: 12px;
-  color: var(--text-secondary);
-  padding: 2px 6px 6px;
+
+/* ── Charts ── */
+.stats-chart-panel {
+  background: var(--bg-primary);
 }
 .stats-chart {
   width: 100%;

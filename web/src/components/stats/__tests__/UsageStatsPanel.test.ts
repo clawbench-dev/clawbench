@@ -160,7 +160,7 @@ describe('UsageStatsPanel', () => {
       rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
     }))
     const wrapper = await mountPanel()
-    const cards = wrapper.findAll('.stats-card')
+    const cards = wrapper.findAll('.stats-total')
     const cardText = cards.map(c => c.text()).join(' | ')
     expect(cardText).toContain('输入 Tokens')
     expect(cardText).toContain('总 Tokens')
@@ -219,6 +219,21 @@ describe('UsageStatsPanel', () => {
     const text = wrapper.text()
     expect(text).not.toContain('所选时间段内暂无用量数据')
     expect(wrapper.findAll('.usage-chart-stub').length).toBeGreaterThan(0)
+  })
+
+  it('shows a dash for a hit-rate cell with no cache activity', async () => {
+    // hitRate column selected; row has zero cache hit+miss → "—" not "0.0%".
+    const stats = useUsageStats()
+    stats.setMetrics(['hitRate'])
+    await flushPromises()
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 5, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 5, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('—')
+    expect(wrapper.text()).not.toContain('0.0%')
+    await new Promise(r => setTimeout(r, 350))
   })
 
   it('renders custom date inputs when the custom range chip is clicked', async () => {
