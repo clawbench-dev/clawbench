@@ -661,3 +661,50 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     unbindEvents,
   }
 }
+
+/**
+ * Minimal surface of useCodeLinkPreview() consumed by the shared click
+ * interceptor. Kept as a structural interface so containers (chat, markdown
+ * preview, task prompt / execution detail) do not need to name the full
+ * composable return type.
+ */
+export interface CodeLinkPreviewController {
+  enabled: { value: boolean }
+  isTouchDevice: () => boolean
+  handleClick: (event: MouseEvent) => void
+}
+
+/**
+ * Shared interceptor for clicks on verified file-path annotations
+ * (`.chat-file-path[data-file-path]` with `data-path-type="file"`).
+ *
+ * The composable binds a capture-phase click listener once its container ref is
+ * mounted; until that binding is in place this helper is the fallback used by
+ * container-level click handlers (chat / markdown preview / task views), so
+ * every surface shares one decision instead of four copies.
+ *
+ * Only verified *file* paths are intercepted — directories and not-yet-verified
+ * paths return false and fall through to the container's original handlers.
+ * Returns true when the event was handled by the preview (open it).
+ */
+export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLinkPreviewController): boolean {
+  if (!preview.enabled.value) return false
+  const isTouch = preview.isTouchDevice()
+  const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
+  const target = event.target as HTMLElement | null
+  const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]') ?? null
+  const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]') ?? null
+  const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+  // Desktop: modifier-click on either the path text or the open button pins the
+  // preview; plain click on the path text opens a transient preview.
+  if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
+    preview.handleClick(event)
+    return true
+  }
+  // Touch: tapping the path text opens the bottom-sheet preview.
+  if (isVerifiedFile && isTouch && pathEl) {
+    preview.handleClick(event)
+    return true
+  }
+  return false
+}

@@ -79,6 +79,9 @@
       @prev="tableRowPrev"
       @next="tableRowNext"
     />
+
+    <!-- Code link preview for annotated file paths in the execution content -->
+    <CodeLinkPreview v-if="codeLinkPreview.enabled.value" :preview="codeLinkPreview" />
   </div>
 </template>
 
@@ -95,6 +98,7 @@ import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
@@ -108,6 +112,7 @@ import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import { terminateExecution } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 
 const props = defineProps({
   execDetail: Object,
@@ -445,6 +450,9 @@ function showMetadata() {
 // ── Delegated click handler for .chat-file-open-btn ──
 const contentRef = ref(null)
 
+// Code link preview for annotated file paths in the execution content.
+const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef })
+
 // ── Auto-follow scroll (mirrors chat streaming UX) ──
 // When live streaming output, keep pinned to the bottom unless the user
 // manually scrolls elsewhere. Scrolling back to the bottom resumes following.
@@ -502,6 +510,11 @@ function handleContentClick(event) {
   // 2. Handle table row click — open row-form modal
   if (handleTableRowClick(event)) return
 
+  // 2.5. Annotated *verified* file paths open the code link preview (same
+  // behaviour as chat messages). Only data-path-type="file" elements are
+  // intercepted — directories / unverified paths fall through below.
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
   // 3. Handle commit-hash clicks (span or button)
   const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
   if (commitEl) {
@@ -519,6 +532,7 @@ function handleContentClick(event) {
   if (wtBtn) {
     event.preventDefault()
     event.stopPropagation()
+    codeLinkPreview.close()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
     if (wtPath) {
       appStore.setProject(wtPath)
@@ -531,6 +545,7 @@ function handleContentClick(event) {
   if (!btn) return
   event.preventDefault()
   event.stopPropagation()
+  codeLinkPreview.close()
   const filePath = btn.getAttribute('data-file-path')
   const lineStart = btn.getAttribute('data-line-start')
   const lineEnd = btn.getAttribute('data-line-end')
@@ -573,6 +588,13 @@ watch(() => props.execDetail, (newVal, oldVal) => {
         .filter(Boolean)
       if (paths.length > 0) verifyFilePaths([...new Set(paths)], contentRef.value)
     }
+    // The execution content may have been re-rendered while a code link
+    // preview was open; if its anchor element was detached, close it so the
+    // floating card does not linger over stale content. Only auto-close the
+    // transient card — pinned / sheet previews are dismissed by the user
+    // (mirrors checkAndClose's mode exemption).
+    const anchor = codeLinkPreview.target?.value?.anchorEl
+    if (anchor && !anchor.isConnected && codeLinkPreview.mode?.value === 'transient') codeLinkPreview.close()
   })
 }, { immediate: true })
 

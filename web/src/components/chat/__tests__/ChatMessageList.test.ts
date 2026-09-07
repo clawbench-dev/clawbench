@@ -553,7 +553,7 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     expect(source).toContain("import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'")
-    expect(source).toContain("import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'")
+    expect(source).toContain('import { useCodeLinkPreview, handleVerifiedFilePathClick } from')
   })
 
   it('instantiates useCodeLinkPreview with containerRef bound to messagesRef', async () => {
@@ -570,21 +570,10 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     expect(source).toContain(':preview="codeLinkPreview"')
   })
 
-  it('handles modifier click or touch tap for in-place code preview in handleChatClick', async () => {
+  it('delegates verified file-path clicks to the shared interceptor in handleChatClick', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain('if (codeLinkPreview.enabled.value)')
-    expect(source).toContain('codeLinkPreview.handleClick(event)')
-  })
-
-  it('only intercepts verified file paths so dirs/unverified fall through to original handlers', async () => {
-    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
-    const source = typeof mod.default === 'string' ? mod.default : ''
-    // Guard must exist so directories and not-yet-verified paths are NOT
-    // swallowed by the preview interceptor (they keep navigating as before).
-    expect(source).toContain("const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'")
-    expect(source).toContain('isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))')
-    expect(source).toContain('isVerifiedFile && isTouch && pathEl')
+    expect(source).toContain('if (handleVerifiedFilePathClick(event, codeLinkPreview)) return')
   })
 
   it('closes preview when clicking file-open button or double clicking', async () => {

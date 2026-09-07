@@ -61,7 +61,7 @@ import {
   type BlockInfo,
 } from '@/composables/useMarkdownDiff.ts'
 import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
-import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
 
@@ -153,21 +153,7 @@ function handleClick(event: MouseEvent) {
     // have not yet been verified (data-path-type unset) fall through to the
     // handlers below (anchor navigation / open button / dbl-click), preserving
     // the pre-feature behavior for those cases.
-    if (codeLinkPreview.enabled.value) {
-        const isTouch = codeLinkPreview.isTouchDevice()
-        const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
-        const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
-        const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]')
-        const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
-        if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
-            codeLinkPreview.handleClick(event)
-            return
-        }
-        if (isVerifiedFile && isTouch && pathEl) {
-            codeLinkPreview.handleClick(event)
-            return
-        }
-    }
+    if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
 
     // Check for commit-hash click
     const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')

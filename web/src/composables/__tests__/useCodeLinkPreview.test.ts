@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
 import { previewCache } from '@/utils/codeLinkPreview'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
@@ -728,5 +728,78 @@ describe('useCodeLinkPreview', () => {
       expect(preview.mode.value).toBe('sheet')
       expect(preview.visible.value).toBe(true)
     })
+  })
+})
+
+describe('handleVerifiedFilePathClick (shared container interceptor)', () => {
+  function makePreview(overrides: Partial<{ enabled: boolean; touch: boolean; handleClick: ReturnType<typeof vi.fn> }> = {}) {
+    const handleClick = overrides.handleClick ?? vi.fn()
+    const preview = {
+      enabled: { value: overrides.enabled ?? true },
+      isTouchDevice: () => overrides.touch ?? false,
+      handleClick,
+    }
+    return { preview, handleClick }
+  }
+
+  function makeElement(pathType: string | null, extraClass = ''): HTMLElement {
+    const el = document.createElement(extraClass.includes('open-btn') ? 'button' : 'span')
+    el.className = extraClass || (pathType ? 'chat-file-path' : '')
+    if (pathType !== null) el.setAttribute('data-file-path', '/repo/src/main.ts')
+    if (pathType !== null) el.setAttribute('data-path-type', pathType)
+    return el
+  }
+
+  function makeEvent(target: HTMLElement, ctrl = false) {
+    return {
+      target,
+      ctrlKey: ctrl,
+      metaKey: false,
+    } as unknown as MouseEvent
+  }
+
+  it('returns false when the preview is disabled', () => {
+    const { preview, handleClick } = makePreview({ enabled: false })
+    expect(handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)).toBe(false)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('desktop click on verified file path text opens a transient preview', () => {
+    const { preview, handleClick } = makePreview()
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('desktop modifier-click on the open button opens the preview', () => {
+    const { preview, handleClick } = makePreview()
+    const el = makeElement('file', 'chat-file-open-btn')
+    const handled = handleVerifiedFilePathClick(makeEvent(el, true), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('plain desktop click on the open button falls through (returns false)', () => {
+    const { preview, handleClick } = makePreview()
+    const el = makeElement('file', 'chat-file-open-btn')
+    const handled = handleVerifiedFilePathClick(makeEvent(el), preview as never)
+    expect(handled).toBe(false)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('touch tap on verified file path text opens the sheet preview', () => {
+    const { preview, handleClick } = makePreview({ touch: true })
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('directories and unverified paths fall through (return false)', () => {
+    for (const pathType of ['dir', null]) {
+      const { preview, handleClick } = makePreview()
+      const handled = handleVerifiedFilePathClick(makeEvent(makeElement(pathType)), preview as never)
+      expect(handled).toBe(false)
+      expect(handleClick).not.toHaveBeenCalled()
+    }
   })
 })

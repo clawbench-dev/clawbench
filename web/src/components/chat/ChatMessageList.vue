@@ -156,7 +156,7 @@ import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
-import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader.ts'
@@ -316,21 +316,7 @@ async function handleChatClick(event) {
   // not yet been verified (data-path-type unset) fall through to the original
   // handlers below (anchor navigation / open button), preserving the pre-feature
   // behavior for those cases.
-  if (codeLinkPreview.enabled.value) {
-    const isTouch = codeLinkPreview.isTouchDevice()
-    const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
-    const linkOrBtn = (event.target).closest('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
-    const pathEl = (event.target).closest('.chat-file-path[data-file-path]')
-    const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
-    if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
-      codeLinkPreview.handleClick(event)
-      return
-    }
-    if (isVerifiedFile && isTouch && pathEl) {
-      codeLinkPreview.handleClick(event)
-      return
-    }
-  }
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
 
   // 3. Worktree action button — show modal with "Switch" or "Open directory"
   const wtBtn = (event.target).closest('.chat-worktree-btn')
