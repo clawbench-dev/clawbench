@@ -24,11 +24,22 @@ func TestIsRunningUnderSupervisor_CLAWBENCH_NO_SUPERVISOR(t *testing.T) {
 	assert.False(t, IsRunningUnderSupervisor(), "CLAWBENCH_NO_SUPERVISOR=1 should return false")
 }
 
+// INVOCATION_ID alone must NOT imply supervision: a process started from a
+// systemd agent shell (e.g. tat_agent) inherits INVOCATION_ID but is not the
+// unit's MainPID, so systemd will not restart it. Regression test for the
+// upgrade "fake death" bug.
 func TestIsRunningUnderSupervisor_INVOCATION_ID(t *testing.T) {
+	systemdCgroupPath = "testdata/cgroup-empty" // not inside any .service unit
+	systemctlShowFunc = func(string) string { return "" }
+	defer func() {
+		systemdCgroupPath = "/proc/self/cgroup"
+		systemctlShowFunc = systemctlShowMainPID
+	}()
 	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("INVOCATION_ID", "test-id")
+	t.Setenv("container", "")
 
-	assert.True(t, IsRunningUnderSupervisor(), "INVOCATION_ID set should return true")
+	assert.False(t, IsRunningUnderSupervisor(), "INVOCATION_ID alone must not imply supervision")
 }
 
 func TestIsRunningUnderSupervisor_ContainerEnv(t *testing.T) {
