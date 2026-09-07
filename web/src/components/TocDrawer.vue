@@ -14,6 +14,7 @@
       :pdf-outline="pdfOutline"
       @jump="handleJump"
       @jump-page="handleJumpPage"
+      @activated="emit('close')"
     />
   </BottomSheet>
 </template>

@@ -49,6 +49,19 @@ vi.mock('@/composables/useCodeBlockHeader', () => ({
   handleTableBlockClick: () => false,
 }))
 
+vi.mock('@/composables/useCodeLinkPreview', () => ({
+  useCodeLinkPreview: () => ({
+    enabled: { value: false },
+    isTouchDevice: () => false,
+    handleClick: vi.fn(),
+    close: vi.fn(),
+  }),
+}))
+
+vi.mock('@/components/file/CodeLinkPreview.vue', () => ({
+  default: { name: 'CodeLinkPreview', template: '<div class="code-link-preview-stub" />' },
+}))
+
 vi.mock('@/stores/app', () => ({
   store: {
     state: { projectRoot: '/home/user/project', homeDir: '/home/user' },

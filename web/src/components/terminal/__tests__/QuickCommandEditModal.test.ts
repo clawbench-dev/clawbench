@@ -271,7 +271,7 @@ describe('QuickCommandEditModal', () => {
       await nextTick()
 
       // Click the cancel button in the DOM
-      const cancelBtn = $('.modal-btn:not(.primary)') as HTMLElement
+      const cancelBtn = $('.fbtn:not(.fbtn-primary)') as HTMLElement
       cancelBtn.click()
       await nextTick()
 

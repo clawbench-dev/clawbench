@@ -70,9 +70,9 @@
           </div>
           <p class="modal-msg">{{ t('git.manage.dirty', { count: dirtyCount }) }}</p>
           <div class="modal-actions">
-            <button class="modal-btn modal-stash-btn" @click="doDirtyCheckout('stash')">{{ t('git.manage.stashSwitch') }}</button>
-            <button class="modal-btn modal-force-btn" @click="doDirtyCheckout('force')">{{ t('git.manage.forceSwitch') }}</button>
-            <button class="modal-btn modal-cancel-btn" @click="showDirtyModal = false">{{ t('common.cancel') }}</button>
+            <button class="modal-btn fbtn fbtn-primary" @click="doDirtyCheckout('stash')">{{ t('git.manage.stashSwitch') }}</button>
+            <button class="modal-btn fbtn fbtn-danger" @click="doDirtyCheckout('force')">{{ t('git.manage.forceSwitch') }}</button>
+            <button class="modal-btn fbtn" @click="showDirtyModal = false">{{ t('common.cancel') }}</button>
           </div>
         </div>
       </div>
@@ -92,6 +92,7 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 import GitWorktreeList from './GitWorktreeList.vue'
 import GitBranchList from './GitBranchList.vue'
 import GitTagList from './GitTagList.vue'
+import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -572,35 +573,8 @@ defineExpose({
   gap: 8px;
 }
 
+/* Layout only — visuals come from the shared .fbtn pills. */
 .modal-btn {
   width: 100%;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-  background: transparent;
-  transition: opacity 0.15s;
-}
-
-.modal-btn:active {
-  opacity: 0.7;
-}
-
-.modal-stash-btn {
-  border-color: var(--accent-color, #4a90d9);
-  color: var(--accent-color, #4a90d9);
-}
-
-.modal-force-btn {
-  border-color: var(--danger-color, #dc3545);
-  color: var(--danger-color, #dc3545);
-}
-
-.modal-cancel-btn {
-  border-color: var(--border-color, #dee2e6);
-  color: var(--text-secondary, #666);
 }
 </style>

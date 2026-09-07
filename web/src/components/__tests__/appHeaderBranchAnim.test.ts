@@ -1,127 +1,38 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { ref, computed, watch, nextTick } from 'vue'
+import { useBadgeHighlight, HIGHLIGHT_MS, REDUCED_HIGHLIGHT_MS } from '@/composables/useBadgeHighlight'
 
 // ────────────────────────────────────────────────────────────
-// Badge capsule highlight animation logic test
+// Badge capsule highlight animation — tests the REAL
+// useBadgeHighlight composable used by AppHeader.vue.
 //
-// Mirrors the implementation in AppHeader.vue. Staged timeline on a badge
-// segment content change (branch / file name / project name):
-//   1. HIGHLIGHT_PRE_MS  — changed segment highlights (accent background),
-//      ALWAYS.
-//   2. Only when the capsule is space-constrained (content overflows, i.e.
-//      text truncated) does the segment FILL the capsule (others slide shut).
-//   3. FILL_MS / HIGHLIGHT_POST_MS — everything expands back.
-//   4. finally the highlight fades out.
+// A badge segment content change (branch / file name / project name) flashes
+// the changed segment's accent highlight for HIGHLIGHT_MS (or
+// REDUCED_HIGHLIGHT_MS under reduced motion), then fades it off. There is no
+// fill/collapse geometry anymore — the full text is shown by the AppHeader
+// reveal card, which is the component's concern, not this composable's.
 // ────────────────────────────────────────────────────────────
-
-const HIGHLIGHT_PRE_MS = 200
-const FILL_MS = 1000
-const HIGHLIGHT_POST_MS = 200
-const HIGHLIGHT_NO_FILL_MS = 400
-const TOTAL_MS = HIGHLIGHT_PRE_MS + FILL_MS + HIGHLIGHT_POST_MS
-
-function makeController(
-  spans: Record<string, { scrollWidth: number; clientWidth: number }> | null = null,
-  positions: Record<string, { left: number; width: number }> | null = null,
-  capsuleWidth = 200,
-) {
-  const highlightBadge = ref<'project' | 'branch' | 'file' | null>(null)
-  const fillBadge = ref<'project' | 'branch' | 'file' | null>(null)
-  const highlightRadius = ref<'left' | 'right' | 'none' | null>(null)
-  let highlightTimer: ReturnType<typeof setTimeout> | null = null
-  let fillTimer: ReturnType<typeof setTimeout> | null = null
-  let clearTimer: ReturnType<typeof setTimeout> | null = null
-  let animSeq = 0
-
-  function clearTimers() {
-    if (highlightTimer) { clearTimeout(highlightTimer); highlightTimer = null }
-    if (fillTimer) { clearTimeout(fillTimer); fillTimer = null }
-    if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
-  }
-
-  function capsuleOverflowing(source: 'project' | 'branch' | 'file'): boolean {
-    const s = spans?.[source]
-    if (!s) return false
-    return s.scrollWidth > s.clientWidth + 1
-  }
-
-  function measureHighlightShape(source: 'project' | 'branch' | 'file') {
-    const pos = positions?.[source]
-    if (!pos) return
-    const right = pos.left + pos.width
-    if (pos.left <= 2) highlightRadius.value = 'left'
-    else if (right >= capsuleWidth - 2) highlightRadius.value = 'right'
-    else highlightRadius.value = 'none'
-  }
-
-  function pulseBadge(source: 'project' | 'branch' | 'file') {
-    clearTimers()
-    const seq = ++animSeq
-
-    // Reset any previous fill/highlight state (mid-fill change).
-    fillBadge.value = null
-    highlightRadius.value = null
-
-    highlightBadge.value = source
-
-    nextTick(() => {
-      if (seq !== animSeq) return // superseded
-      measureHighlightShape(source)
-      if (capsuleOverflowing(source)) {
-        fillTimer = setTimeout(() => {
-          if (seq !== animSeq) return
-          fillBadge.value = source
-          fillTimer = null
-
-          clearTimer = setTimeout(() => {
-            fillBadge.value = null
-            clearTimer = null
-            // Post-window: drop the highlight after HIGHLIGHT_POST_MS.
-            const postTimer = setTimeout(() => {
-              if (seq !== animSeq) return
-              highlightBadge.value = null
-              highlightRadius.value = null
-            }, HIGHLIGHT_POST_MS)
-            if (highlightTimer) clearTimeout(highlightTimer)
-            highlightTimer = postTimer
-          }, FILL_MS)
-        }, HIGHLIGHT_PRE_MS)
-      } else {
-        // No fill: short highlight window.
-        if (highlightTimer) clearTimeout(highlightTimer)
-        highlightTimer = setTimeout(() => {
-          if (seq !== animSeq) return
-          highlightBadge.value = null
-          highlightRadius.value = null
-          highlightTimer = null
-        }, HIGHLIGHT_NO_FILL_MS)
-      }
-    })
-
-    // Safety net: longest possible window; branch-specific timers override.
-    highlightTimer = setTimeout(() => {
-      if (seq !== animSeq) return
-      fillBadge.value = null
-      highlightBadge.value = null
-      highlightRadius.value = null
-      highlightTimer = null
-    }, TOTAL_MS)
-  }
-
-  function cleanup() {
-    clearTimers()
-  }
-
-  return { highlightBadge, fillBadge, highlightRadius, pulseBadge, cleanup }
-}
 
 const controllers: ReturnType<typeof makeController>[] = []
-function newController(
-  spans?: { scrollWidth: number; clientWidth: number }[] | null,
-  positions?: Record<string, { left: number; width: number }> | null,
-  capsuleWidth?: number,
-) {
-  const c = makeController(spans, positions, capsuleWidth)
+
+function makeController(opts: { reducedMotion?: boolean } = {}) {
+  const prefersReducedMotion = ref(opts.reducedMotion ?? false)
+  const c = useBadgeHighlight({ prefersReducedMotion })
+
+  function cleanup() {
+    c.dispose()
+  }
+
+  return {
+    highlightBadge: c.highlightBadge,
+    pulseBadge: c.pulseBadge,
+    segmentClass: c.segmentClass,
+    cleanup,
+  }
+}
+
+function newController(opts?: { reducedMotion?: boolean }) {
+  const c = makeController(opts)
   controllers.push(c)
   return c
 }
@@ -133,158 +44,95 @@ describe('badge highlight animation', () => {
     vi.useRealTimers()
   })
 
-  it('should highlight ALWAYS and fill only when the capsule overflows', async () => {
+  it('should highlight immediately and clear after HIGHLIGHT_MS', async () => {
     vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    // Overflowing capsule
-    const { highlightBadge, fillBadge, pulseBadge } = newController({ branch: { scrollWidth: 300, clientWidth: 200 } })
+    const { highlightBadge, pulseBadge } = newController()
+    pulseBadge('branch')
 
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    await nextTick()
-    // Stage 1: highlighted immediately
-    expect(highlightBadge.value).toBe('branch')
-    expect(fillBadge.value).toBeNull()
-
-    // Stage 2: fills after the pre-delay (because overflowing)
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS)
-    expect(fillBadge.value).toBe('branch')
-
-    // Stage 3: expands back after the fill window...
-    vi.advanceTimersByTime(FILL_MS)
-    expect(fillBadge.value).toBeNull()
-    // ...highlight still on for HIGHLIGHT_POST_MS
     expect(highlightBadge.value).toBe('branch')
 
-    // Stage 4: highlight finally drops
-    vi.advanceTimersByTime(HIGHLIGHT_POST_MS)
+    vi.advanceTimersByTime(HIGHLIGHT_MS)
     expect(highlightBadge.value).toBeNull()
   })
 
-  it('should round the left side when the highlighted segment touches the capsule left edge', async () => {
-    const fileName = ref('a.ts')
-    // Segment at the left edge of a 200px capsule
-    const { highlightBadge, highlightRadius, pulseBadge } = newController(
-      null,
-      { file: { left: 0, width: 60 } },
-      200,
-    )
-
-    watch(fileName, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('file')
-    })
-
-    fileName.value = 'b.ts'
-    await nextTick()
-    await nextTick()
-    expect(highlightRadius.value).toBe('left')
-  })
-
-  it('should round the right side when the highlighted segment touches the capsule right edge', async () => {
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    // Segment flush against the right edge of a 200px capsule
-    const { highlightBadge, highlightRadius, pulseBadge } = newController(
-      null,
-      { branch: { left: 140, width: 60 } },
-      200,
-    )
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    await nextTick()
-    expect(highlightRadius.value).toBe('right')
-  })
-
-  it('should stay rectangular when the highlighted segment is in the middle', async () => {
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    // Segment centered between both edges of a 200px capsule
-    const { highlightBadge, highlightRadius, pulseBadge } = newController(
-      null,
-      { branch: { left: 70, width: 60 } },
-      200,
-    )
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    await nextTick()
-    expect(highlightRadius.value).toBe('none')
-  })
-
-  it('should reset the highlight radius when the highlight ends', async () => {
+  it('should keep the highlight when a new pulse restarts the window', async () => {
     vi.useFakeTimers()
-    const fileName = ref('a.ts')
-    const { highlightBadge, highlightRadius, pulseBadge } = newController(
-      null,
-      { file: { left: 0, width: 60 } },
-      200,
-    )
+    const { highlightBadge, pulseBadge } = newController()
+    pulseBadge('branch')
+    vi.advanceTimersByTime(HIGHLIGHT_MS - 100)
 
-    watch(fileName, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('file')
-    })
-
-    fileName.value = 'b.ts'
-    await nextTick()
-    await nextTick()
-    expect(highlightRadius.value).toBe('left')
-
-    vi.advanceTimersByTime(TOTAL_MS)
-    expect(highlightRadius.value).toBeNull()
-  })
-
-  it('should highlight but NOT fill when the capsule has free space', async () => {
-    vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    // No overflow → never fills
-    const { highlightBadge, fillBadge, pulseBadge } = newController({ branch: { scrollWidth: 100, clientWidth: 200 } })
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    await nextTick()
+    // A second change in the same segment restarts the full window.
+    pulseBadge('branch')
     expect(highlightBadge.value).toBe('branch')
-    expect(fillBadge.value).toBeNull()
 
-    // Even after the pre-delay + fill window, no fill happens
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS + FILL_MS)
-    expect(fillBadge.value).toBeNull()
+    // Old timer (which would have fired at this point) must NOT clear it.
+    vi.advanceTimersByTime(150)
+    expect(highlightBadge.value).toBe('branch')
 
-    // Highlight clears via the short no-fill window (already elapsed above)
+    // New window ends on schedule.
+    vi.advanceTimersByTime(HIGHLIGHT_MS - 50)
     expect(highlightBadge.value).toBeNull()
   })
 
-  it('should highlight without capsule measurement when no capsule is provided (jsdom)', async () => {
-    const fileName = ref('a.ts')
-    const { highlightBadge, fillBadge, pulseBadge } = newController()
+  it('should let a different source take over the highlight mid-window', async () => {
+    vi.useFakeTimers()
+    const { highlightBadge, pulseBadge } = newController()
+    pulseBadge('branch')
+    expect(highlightBadge.value).toBe('branch')
 
-    watch(fileName, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('file')
-    })
-
-    fileName.value = 'b.ts'
-    await nextTick()
-    await nextTick()
+    pulseBadge('file')
     expect(highlightBadge.value).toBe('file')
-    expect(fillBadge.value).toBeNull()
+
+    vi.advanceTimersByTime(HIGHLIGHT_MS)
+    expect(highlightBadge.value).toBeNull()
+  })
+
+  it('should clear after the previous highlight ends and re-highlight on a new pulse', async () => {
+    vi.useFakeTimers()
+    const { highlightBadge, pulseBadge } = newController()
+    pulseBadge('branch')
+    vi.advanceTimersByTime(HIGHLIGHT_MS)
+    expect(highlightBadge.value).toBeNull()
+
+    pulseBadge('branch')
+    expect(highlightBadge.value).toBe('branch')
+  })
+
+  it('should clear pending timers on dispose', async () => {
+    vi.useFakeTimers()
+    const { highlightBadge, pulseBadge, cleanup } = newController()
+    pulseBadge('branch')
+    cleanup()
+    vi.advanceTimersByTime(HIGHLIGHT_MS * 2)
+    expect(highlightBadge.value).toBe('branch') // still highlighted (timer cancelled)
+  })
+
+  it('should use the shorter window under reduced motion', async () => {
+    vi.useFakeTimers()
+    const { highlightBadge, pulseBadge } = newController({ reducedMotion: true })
+    pulseBadge('branch')
+    expect(highlightBadge.value).toBe('branch')
+
+    // Clears after the short window, before the full window would end.
+    vi.advanceTimersByTime(REDUCED_HIGHLIGHT_MS)
+    expect(highlightBadge.value).toBeNull()
+  })
+
+  it('should expose badge-highlight class only for the active segment', async () => {
+    const { highlightBadge, pulseBadge, segmentClass } = newController()
+    expect(segmentClass('branch', true)['badge-highlight']).toBe(false)
+
+    pulseBadge('branch')
+    expect(segmentClass('branch', true)['badge-highlight']).toBe(true)
+    expect(segmentClass('file', true)['badge-highlight']).toBe(false)
+    highlightBadge.value = null
+  })
+
+  it('should expose no-file state probe on the file segment when no file is open', async () => {
+    const { segmentClass } = newController()
+    expect(segmentClass('file', false)['no-file']).toBe(true)
+    expect(segmentClass('file', true)['no-file']).toBe(false)
+    expect(segmentClass('branch', true)['no-file']).toBe(false)
   })
 
   it('should highlight the file segment when the current file name changes', async () => {
@@ -326,73 +174,16 @@ describe('badge highlight animation', () => {
     expect(highlightBadge.value).toBe('project')
   })
 
-  it('should not highlight on initial value', async () => {
+  it('should highlight the branch segment when the branch changes', async () => {
     const branchRef = ref('main')
     const gitBranch = computed(() => branchRef.value)
-    const { highlightBadge, fillBadge, pulseBadge } = newController({ branch: { scrollWidth: 300, clientWidth: 200 } })
+    const { highlightBadge, pulseBadge } = newController()
 
     watch(gitBranch, (newVal, oldVal) => {
       if (newVal !== oldVal) pulseBadge('branch')
     })
 
-    await nextTick()
-    expect(highlightBadge.value).toBeNull()
-    expect(fillBadge.value).toBeNull()
-  })
-
-  it('should reset the staged timeline when a new change arrives mid-window', async () => {
-    vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    const { highlightBadge, fillBadge, pulseBadge } = newController({ branch: { scrollWidth: 300, clientWidth: 200 } })
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'develop'
-    await nextTick()
-    await nextTick()
-    expect(highlightBadge.value).toBe('branch')
-
-    // Mid-fill a new change arrives — timeline restarts; the old fill clears
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS + 300)
-    branchRef.value = 'feature/abc'
-    await nextTick()
-    await nextTick()
-    expect(highlightBadge.value).toBe('branch')
-    // Old fill was reset; new animation hasn't reached its fill stage yet
-    expect(fillBadge.value).toBeNull()
-
-    // New animation fills after its own pre-delay
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS)
-    expect(fillBadge.value).toBe('branch')
-
-    vi.advanceTimersByTime(FILL_MS + HIGHLIGHT_POST_MS)
-    expect(highlightBadge.value).toBeNull()
-    expect(fillBadge.value).toBeNull()
-  })
-
-  it('should re-highlight after the previous highlight ends', async () => {
-    vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    const { highlightBadge, pulseBadge } = newController({ branch: { scrollWidth: 300, clientWidth: 200 } })
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-
-    branchRef.value = 'develop'
-    await nextTick()
-    await nextTick()
-    expect(highlightBadge.value).toBe('branch')
-
-    vi.advanceTimersByTime(TOTAL_MS)
-    expect(highlightBadge.value).toBeNull()
-
-    branchRef.value = 'feature/abc'
-    await nextTick()
+    branchRef.value = 'feature/xyz'
     await nextTick()
     expect(highlightBadge.value).toBe('branch')
   })
@@ -408,10 +199,10 @@ describe('badge highlight animation', () => {
 
     branchRef.value = 'develop'
     await nextTick()
+    expect(highlightBadge.value).toBe('branch')
     highlightBadge.value = null
-    await nextTick()
 
-    branchRef.value = 'develop'
+    branchRef.value = 'develop' // same value → watcher does not fire
     await nextTick()
     expect(highlightBadge.value).toBeNull()
   })
@@ -427,73 +218,11 @@ describe('badge highlight animation', () => {
 
     branchRef.value = 'develop'
     await nextTick()
+    expect(highlightBadge.value).toBe('branch')
     highlightBadge.value = null
-    await nextTick()
 
     branchRef.value = ''
     await nextTick()
     expect(highlightBadge.value).toBe('branch')
-  })
-
-  it('should clear a stale fill when a DIFFERENT source changes mid-fill', async () => {
-    vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    const fileName = ref('a.ts')
-    const { highlightBadge, fillBadge, pulseBadge } = newController({ branch: { scrollWidth: 300, clientWidth: 200 } })
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-    watch(fileName, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('file')
-    })
-
-    // branch fills the capsule
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    await nextTick()
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS)
-    expect(fillBadge.value).toBe('branch')
-
-    // file changes mid-fill → the old branch fill must clear immediately
-    fileName.value = 'b.ts'
-    await nextTick()
-    await nextTick()
-    expect(highlightBadge.value).toBe('file')
-    expect(fillBadge.value).toBeNull()
-  })
-
-  it('should not schedule a stale fill when a later change supersedes a pending measurement', async () => {
-    vi.useFakeTimers()
-    const branchRef = ref('main')
-    const gitBranch = computed(() => branchRef.value)
-    const fileName = ref('a.ts')
-    // branch overflows → would fill; file has free space → must not fill
-    const { highlightBadge, fillBadge, pulseBadge } = newController({
-      branch: { scrollWidth: 300, clientWidth: 200 },
-      file: { scrollWidth: 100, clientWidth: 200 },
-    })
-
-    watch(gitBranch, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('branch')
-    })
-    watch(fileName, (newVal, oldVal) => {
-      if (newVal !== oldVal) pulseBadge('file')
-    })
-
-    // Both change in the same flush: branch (would fill) then file (won't).
-    branchRef.value = 'feature/xyz'
-    await nextTick()
-    fileName.value = 'b.ts' // supersedes the branch change before nextTick
-    await nextTick()
-    await nextTick()
-
-    expect(highlightBadge.value).toBe('file')
-    // The stale branch fill must NOT appear
-    vi.advanceTimersByTime(HIGHLIGHT_PRE_MS)
-    expect(fillBadge.value).toBeNull()
-    vi.advanceTimersByTime(HIGHLIGHT_NO_FILL_MS)
-    expect(highlightBadge.value).toBeNull()
   })
 })

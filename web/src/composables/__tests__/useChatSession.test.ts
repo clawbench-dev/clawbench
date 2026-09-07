@@ -1476,13 +1476,54 @@ describe('foreground return marks current session read', () => {
 
     handlers[handlers.length - 1](true)
 
-    // handleWsReconnect → syncSessionOnReconnect(false) → loadHistory, which
-    // fetches /api/ai/chat?session_id=current-s1 with view=summary.
+    // Foreground return now uses the manual-refresh path
+    // (handleManualRefresh → syncSessionOnReconnect(true)): an authoritative
+    // forced loadHistory, so it fetches /api/ai/chat?session_id=current-s1.
     await vi.waitFor(() => {
       const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
         (c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')
       )
       expect(chatFetches.length).toBeGreaterThan(0)
+    })
+  })
+
+  it('foreground return forces a history reload even when the snapshot is unchanged', async () => {
+    // A foreground return must behave like the refresh button (forceReload=true,
+    // skipIfUnchanged=false) — NOT like the lightweight WS-reconnect path
+    // (skipIfUnchanged=true) which would skip the reload when the message
+    // snapshot is unchanged. Regression: with the old handleWsReconnect the
+    // resume left DB-flushed streaming content missing from the UI whenever the
+    // snapshot fingerprint did not change; only a manual refresh or a cold
+    // restart recovered it.
+    mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-a')
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [{ id: 'm1', role: 'assistant', content: 'x', createdAt: '2026-01-01T00:00:00Z' }], total: 1, running: false,
+      }),
+    })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'current-s1'
+    options.loading.value = false // idle session
+    const handlers = captureForegroundHandlers()
+
+    // Baseline loadHistory establishes the snapshot so the foreground call sees
+    // newSnapshot === lastMessageSnapshot ('snap-a').
+    await session.loadHistory(true, false, false)
+
+    const fetchCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    // App returns to foreground.
+    handlers[handlers.length - 1](true)
+
+    // Even with an unchanged snapshot the forced reload must fetch history —
+    // the lightweight WS-reconnect path (skipIfUnchanged=true) would have
+    // returned early without fetching.
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .slice(fetchCountBefore)
+        .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1'))
+      expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
   })
 })
@@ -5800,6 +5841,129 @@ describe('forkSession', () => {
         body: JSON.stringify({ sessionId: 'source-s1', beforeMessageId: 42, agentId: 'claude' }),
       })
     )
+  })
+})
+
+// ───────────────────────────────────────────────────────────
+// rewindSession
+// ───────────────────────────────────────────────────────────
+
+describe('rewindSession', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  /** URL-aware fetch mock: rewinds the POST and lets loadHistory / mark-read /
+   *  loadSessionsOnce succeed with empty responses. */
+  function urlAwareFetch(rewindBody: Record<string, unknown>) {
+    return vi.fn((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/ai/session/rewind')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ok: true, sessionId: 'rewound-s1', restoredText: 'editable Q2', deletedCount: 2 }),
+        })
+      }
+      if (typeof url === 'string' && url.includes('/api/ai/chat')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessionId: 'rewound-s1', sessionTitle: 'T', messages: [], total: 0, running: false }),
+        })
+      }
+      // mark-read, sessions list, agents etc.
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], agents: [] }) })
+    })
+  }
+
+  it('calls rewind API and returns restored text', async () => {
+    const fetchMock = urlAwareFetch({ sessionId: 's1', beforeMessageId: 42 })
+    globalThis.fetch = fetchMock
+    mockState.currentSessionId = 's1'
+
+    const session = createSession()
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('editable Q2')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/ai/session/rewind',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 's1', beforeMessageId: 42 }),
+      })
+    )
+  })
+
+  it('returns empty string on non-ok response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'Internal error' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('shows info toast for NothingToRewind and returns empty string', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ msgKey: 'NothingToRewind' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 999)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'info' })
+    )
+  })
+
+  it('returns empty string on network failure', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('returns empty string when response has no restoredText', async () => {
+    const fetchMock = urlAwareFetch({})
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'rewound-s1', deletedCount: 1 }),
+    }))
+    globalThis.fetch = fetchMock
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
   })
 })
 

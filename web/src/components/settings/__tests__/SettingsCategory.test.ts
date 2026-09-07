@@ -121,6 +121,7 @@ vi.mock('@/composables/usePwaInstall', () => ({
 
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ needs_restart: true }),
+  apiGet: vi.fn().mockResolvedValue({ dir: '', fonts: [] }),
 }))
 
 const mockToastShow = vi.fn()
@@ -287,6 +288,21 @@ const i18n = createI18n({
           recommendSectionHeader: '推荐回复',
           appearanceDisplaySection: '显示',
           appearanceHeaderSection: '顶栏',
+          wallpaperSection: '背景图',
+          wallpaper: '背景图',
+          wallpaperDesc: '上传背景图',
+          wallpaperUpload: '上传背景图',
+          wallpaperReplace: '更换',
+          wallpaperRemove: '移除',
+          wallpaperSetOk: '已设置',
+          wallpaperRemoved: '已移除',
+          wallpaperUploadFailed: '上传失败',
+          wallpaperRemoveFailed: '移除失败',
+          wallpaperSaveFailed: '保存失败',
+          wallpaperLoading: '加载中…',
+          wallpaperPreview: '预览',
+          wallpaperPanelOpacity: '面板不透明度',
+          wallpaperPanelOpacityDesc: '描述',
           projectSectionHeader: '项目',
           searchSectionHeader: '搜索',
           fileDisplaySection: '文件显示',
@@ -503,6 +519,32 @@ describe('SettingsCategory', () => {
 
       expect(mockSetLocalConfig).toHaveBeenCalledWith('locale', 'en')
     })
+
+    it('renders the wallpaper setting card', () => {
+      const wrapper = mountCategory('appearance')
+      expect(wrapper.findAllComponents({ name: 'WallpaperSetting' })).toHaveLength(1)
+    })
+
+    it('renders the panel-opacity slider disabled before config loads (unknown state)', async () => {
+      serverConfig.value = { ...serverConfig.value, appearance: undefined }
+      const wrapper = mountCategory('appearance')
+      await wrapper.vm.$nextTick()
+      // WallpaperSetting owns the slider; disabled while wallpaper state is unknown.
+      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+      const slider = wallpaper.find('input[type="range"]')
+      expect(slider.attributes('disabled')).toBeDefined()
+    })
+
+    it('enables the panel-opacity slider when a wallpaper is set', async () => {
+      serverConfig.value = { ...serverConfig.value, appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      const wrapper = mountCategory('appearance')
+      await wrapper.vm.$nextTick()
+      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+      const slider = wallpaper.find('input[type="range"]')
+      expect(slider.attributes('disabled')).toBeUndefined()
+      // Wallpaper thumbnail shows for a set wallpaper.
+      expect(wallpaper.find('img.wallpaper-thumb').exists()).toBe(true)
+    })
   })
 
   // ─── About category ──────────────────────────────
@@ -562,7 +604,7 @@ describe('SettingsCategory', () => {
       // Click the cancel button — PasswordChangeDialog handleClose emits close,
       // SettingsCategory flips showPasswordDialog to false, and ModalDialog
       // v-show-hides the overlay.
-      const cancelBtn = document.body.querySelector('.modal-btn') as HTMLElement | null
+      const cancelBtn = document.body.querySelector('.fbtn') as HTMLElement | null
       if (cancelBtn) {
         cancelBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
         await nextTick()

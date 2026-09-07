@@ -5,7 +5,7 @@ import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 import { apiGet } from '@/utils/api'
 import { store } from '@/stores/app.ts'
-import { updateAskSubmitState } from '@/utils/renderToolDetail.ts'
+import { updateAskSubmitState, handleToolAction } from '@/utils/renderToolDetail.ts'
 
 // ── Mocks ──
 
@@ -13,6 +13,18 @@ vi.mock('@/utils/renderToolDetail.ts', () => ({
   handleToolAction: vi.fn().mockReturnValue(false),
   shouldAutoExpandTool: (name: string) => name === 'AskUserQuestion' || name === 'PermissionApproval',
   updateAskSubmitState: vi.fn(),
+  classifyAskQuestionsInput: (input: any) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'empty'
+    const questions = input.questions
+    if (Array.isArray(questions)) {
+      if (questions.length === 0) return 'empty'
+      const renderable = questions.some((q: any) =>
+        (q && typeof q.question === 'string' && q.question.trim() !== '') || (Array.isArray(q?.options) && q.options.length > 0),
+      )
+      return renderable ? 'valid' : 'malformed'
+    }
+    return (Object.prototype.hasOwnProperty.call(input, 'questions') || Object.keys(input).length > 0) ? 'malformed' : 'empty'
+  },
 }))
 
 vi.mock('@/utils/icons', () => ({
@@ -238,16 +250,19 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: true, status: 'success', id: 'tool-2', input: {} }],
       })
 
-      await wrapper.find('.chat-tool-call').trigger('click')
+      await wrapper.find('.chat-card-strip').trigger('click')
 
       expect(wrapper.emitted('toggle-tool')).toBeTruthy()
     })
 
-    it('renders auto-expand detail for AskUserQuestion', () => {
+    it('renders auto-expand detail for AskUserQuestion as a unified inline card', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: true, status: 'success', id: 'tool-2', input: { question: 'Test?' } }],
       })
-      expect(wrapper.find('.tool-detail').exists()).toBe(true)
+      // AskUserQuestion renders as ONE card (header strip + body), not a detached pill bar + box
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-card-strip').exists()).toBe(true)
+      expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
     })
 
     it('sets data-category on tool call', () => {
@@ -255,6 +270,33 @@ describe('ContentBlocks', () => {
         blocks: [{ type: 'tool_use', name: 'Read', done: true, status: 'success' }],
       })
       expect(wrapper.find('.chat-tool-call').attributes('data-category')).toBe('file')
+    })
+
+    it('suppresses pending spinner for malformed AskUserQuestion input (done=false shows check, not endless spinner)', () => {
+      // A leftover/malformed AskUserQuestion call (no valid questions array) can
+      // never be answered — treat it as done so the user does not see an endless
+      // spinner over an empty card (regression: msg 44577).
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'tool_use', name: 'AskUserQuestion', done: false, status: '', id: 'ask-bad', input: { ask: '<item>broken</tool>' } }],
+      })
+      expect(wrapper.find('.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.find('.tool-spinner').exists()).toBe(false)
+      expect(wrapper.find('.tool-check').exists()).toBe(true)
+    })
+
+    it('keeps pending spinner while a valid AskUserQuestion is waiting for a user answer', () => {
+      const wrapper = mountBlocks({
+        blocks: [{
+          type: 'tool_use',
+          name: 'AskUserQuestion',
+          done: false,
+          status: '',
+          id: 'ask-good',
+          input: { questions: [{ header: 'Choose', options: [{ label: 'A' }] }] },
+        }],
+      })
+      expect(wrapper.find('.tool-spinner').exists()).toBe(true)
+      expect(wrapper.find('.tool-check').exists()).toBe(false)
     })
   })
 
@@ -274,6 +316,29 @@ describe('ContentBlocks', () => {
         streaming: true,
       })
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
+    })
+
+    // CSS-only contract for height governance: which state classes pair with the
+    // wrapper "open" class decides whether the CSS applies a small fixed-height
+    // box (streaming — content grows inside a ~10-line viewport) or the large
+    // max-height cap (expanded done). jsdom cannot measure heights, so we assert
+    // the class contract that the CSS rules hang off.
+    it('applies the streaming class contract so the CSS can fix the viewport height', () => {
+      // Streaming: block is open (no collapse) → .thinking-streaming present.
+      const streaming = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Running analysis', done: false }],
+        streaming: true,
+      })
+      expect(streaming.find('.chat-thinking').classes()).toContain('thinking-streaming')
+      expect(streaming.find('.thinking-content-wrapper').classes()).toContain('thinking-content-open')
+
+      // Streaming finished → block auto-collapses (existing auto-collapse behavior).
+      const done = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Running analysis', done: true }],
+        streaming: false,
+      })
+      expect(done.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+      expect(done.find('.thinking-content-wrapper').classes()).not.toContain('thinking-content-open')
     })
 
     it('adds thinking-collapsed class when done', () => {
@@ -326,6 +391,75 @@ describe('ContentBlocks', () => {
         streaming: true,
       })
       expect(wrapper.find('.thinking-spinner').exists()).toBe(false)
+    })
+  })
+
+  // ── Thinking inline-content scroll follow ──
+  // The streaming thinking box is a capped-height scroll container. Each content
+  // flush rewrites innerHTML and the browser keeps the old scrollTop, so the box
+  // must be re-pinned to its bottom — unless the user scrolled up to read
+  // earlier reasoning (latch). jsdom cannot lay out the box, so the geometry is
+  // faked with Object.defineProperty and the scrollTop effect is asserted.
+
+  describe('thinking inline scroll follow', () => {
+    function fakeOverflow(el: HTMLElement, scrollHeight: number, clientHeight: number) {
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: scrollHeight })
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
+    }
+
+    it('pins the streaming thinking box to the bottom after a content flush', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep reasoning', done: false, _key: 'th-stream' }],
+        streaming: true,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220) // content overflows the capped box
+      box.scrollTop = 0
+
+      // A content flush rewrites blockHtmlCache → follow re-pins to bottom.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning more', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(800)
+    })
+
+    it('stops following once the user scrolls up to read earlier reasoning', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep reasoning', done: false, _key: 'th-stream' }],
+        streaming: true,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220)
+      // Follow pins to the bottom, recording scrollTop for direction detection
+      // (reality: the streamed content must overflow before the user can scroll).
+      Object.defineProperty(box, 'scrollTop', { configurable: true, value: 800, writable: true })
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning…', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(800)
+
+      // User scrolls up to read past reasoning: scrollTop decreases → latch.
+      box.scrollTop = 400
+      await wrapper.find('.thinking-inline-content').trigger('scroll')
+      await nextTick()
+
+      // Further content flush must NOT yank the box back to the bottom.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Deep reasoning more', done: false, _key: 'th-stream' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(400)
+    })
+
+    it('does not pin a finished (non-streaming) thinking box', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Final reasoning', done: true, _key: 'th-done' }],
+        streaming: false,
+      })
+      const box = wrapper.find('.thinking-inline-content').element as HTMLElement
+      fakeOverflow(box, 800, 220)
+      box.scrollTop = 150
+
+      // Any cache rewrite while not streaming must leave the box position alone.
+      await wrapper.setProps({ blocks: [{ type: 'thinking', text: 'Final reasoning updated', done: true, _key: 'th-done' }] })
+      await nextTick()
+      expect(box.scrollTop).toBe(150)
     })
   })
 
@@ -618,6 +752,8 @@ describe('ContentBlocks', () => {
       })
       expect(wrapper.html()).toContain('sum text')
       expect(wrapper.html()).toContain('AskUserQuestion')
+      // Auto-expand tool from summary cards renders as a unified inline card
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
     })
 
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {
@@ -638,6 +774,8 @@ describe('ContentBlocks', () => {
         'AskUserQuestion',
       )
       expect(wrapper.html()).toContain('Continue?')
+      // summaryCards.askQuestions renders as a unified inline card
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
     })
 
     it('renders a scheduled-task card from summaryCards.taskIDs with fetched task data', async () => {
@@ -1065,5 +1203,67 @@ describe('handleToolDetailInput', () => {
       await nextTick()
       expect(updateAskSubmitState).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('AskUserQuestion card interactive dispatch', () => {
+  beforeEach(() => {
+    vi.mocked(handleToolAction).mockClear()
+    vi.mocked(handleToolAction).mockReturnValue(false)
+  })
+
+  it('dispatches option clicks to the action handler for a tool_use AskUserQuestion card (data-tool-name on the @click element)', async () => {
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'tool_use',
+        name: 'AskUserQuestion',
+        id: 'ask-1',
+        input: { questions: [{ header: 'Approach', options: [{ label: 'A' }, { label: 'B' }] }] },
+        done: true,
+        status: 'success',
+      }],
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"><div class="ask-question-option" data-label="A">A</div></div></div>',
+    })
+    await nextTick()
+
+    const option = wrapper.find('.ask-question-option')
+    expect(option.exists()).toBe(true)
+    await option.trigger('click')
+
+    expect(handleToolAction).toHaveBeenCalled()
+    const [name, event] = handleToolAction.mock.calls[0]
+    expect(name).toBe('AskUserQuestion')
+    expect((event.target as HTMLElement).classList.contains('ask-question-option')).toBe(true)
+  })
+
+  it('dispatches option clicks for a text-mode <ask-question> card (body inside unified card still routes through the outer handler)', async () => {
+    // The text-mode ask card renders the body inside .chat-card-body. Option
+    // clicks must bubble to the outer .tool-detail (which carries both @click
+    // and data-tool-name) — regression guard for the card unification.
+    const wrapper = mountBlocks({
+      blocks: [{
+        type: 'text',
+        text: 'Some text <ask-question><item><question>Continue?</question><option><label>Yes</label></option></item></ask-question>',
+      }],
+      // blockAskQuestions is keyed `${msgId}-${blockIdx}` (blockTaskKey)
+      blockAskQuestions: {
+        'msg-1-0': { questions: [{ header: '', multiSelect: false, question: 'Continue?', options: [{ label: 'Yes' }] }] },
+      },
+      formatToolInput: () => '<div class="ask-question-view"><div class="ask-question-item"><div class="ask-question-option" data-label="Yes">Yes</div></div></div>',
+    })
+    await nextTick()
+    await flushPromises()
+
+    const outer = wrapper.find('.tool-detail.chat-inline-card')
+    expect(outer.exists()).toBe(true)
+    // Outer must expose the tool name to handleToolDetailClick dispatch
+    expect(outer.attributes('data-tool-name')).toBe('AskUserQuestion')
+
+    const option = wrapper.find('.ask-question-option')
+    expect(option.exists()).toBe(true)
+    await option.trigger('click')
+
+    expect(handleToolAction).toHaveBeenCalled()
+    expect(handleToolAction.mock.calls[0][0]).toBe('AskUserQuestion')
   })
 })

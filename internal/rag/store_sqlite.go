@@ -1149,6 +1149,64 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return affected, nil
 }
 
+// DeleteChunksBySessionAfterMessage deletes all chunks belonging to the given
+// session whose message_id is strictly greater than anchorID. Used by the
+// rewind/truncate path so orphan chunks never surface as stale search hits
+// after the underlying messages (and any messages after them) are deleted in
+// place.
+//
+// The range predicate (session_id = ? AND message_id > ?) is intentionally used
+// instead of a pre-captured message-id list: the RAG indexer may insert chunks
+// for not-yet-indexed messages concurrently between the chat_history truncation
+// and this cleanup, and a range delete covers those too. FTS and vec0 entries
+// are deleted in the same transaction for consistency.
+func (s *Store) DeleteChunksBySessionAfterMessage(sessionID string, anchorID int64) (int64, error) {
+	// Check vec0 table existence before starting transaction (avoids deadlock with in-memory DBs)
+	hasVecTable := s.vecTableExists()
+
+	s.writeMu.Lock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("begin delete transaction: %w", err)
+	}
+
+	// Delete vec0 entries (table may not exist if dimension is unknown)
+	if hasVecTable {
+		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id = ? AND message_id > ?)", sessionID, anchorID)
+		if err != nil {
+			_ = tx.Rollback()
+			s.writeMu.Unlock()
+			return 0, fmt.Errorf("delete vec entries: %w", err)
+		}
+	}
+
+	// Delete FTS entries
+	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id = ? AND message_id > ?)", sessionID, anchorID)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete fts entries: %w", err)
+	}
+
+	// Delete main table
+	result, err := tx.Exec("DELETE FROM rag_chunks WHERE session_id = ? AND message_id > ?", sessionID, anchorID)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete chunks: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("commit delete: %w", err)
+	}
+	s.writeMu.Unlock()
+
+	return affected, nil
+}
+
 // FTSIntegrityCheck verifies FTS5 index consistency.
 func (s *Store) FTSIntegrityCheck() error {
 	s.writeMu.Lock()

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractPlainText, formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { extractPlainText, formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 describe('extractPlainText', () => {
   it('returns empty string for empty content', () => {
@@ -169,5 +169,81 @@ describe('formatUserMsg', () => {
 
   it('shows empty string for empty content without files', () => {
     expect(formatUserMsg({ content: '' }, attachmentLabel)).toBe('')
+  })
+})
+
+describe('matchUserMsg', () => {
+  it('matches everything for an empty or whitespace query', () => {
+    expect(matchUserMsg({ content: 'anything' }, '')).toBe(true)
+    expect(matchUserMsg({ content: 'anything' }, '   ')).toBe(true)
+  })
+
+  it('matches content case-insensitively', () => {
+    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'bug')).toBe(true)
+    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'fix')).toBe(true)
+    expect(matchUserMsg({ content: 'Fix BUG in Parser' }, 'parser')).toBe(true)
+  })
+
+  it('matches against text inside JSON block content', () => {
+    const content = JSON.stringify({ blocks: [{ type: 'text', text: 'Hello from blocks' }] })
+    expect(matchUserMsg({ content }, 'blocks')).toBe(true)
+  })
+
+  it('matches attachment-only message by object file path basename', () => {
+    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
+    expect(matchUserMsg(msg, 'bar.ts')).toBe(true)
+  })
+
+  it('matches attachment full path (not just basename)', () => {
+    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
+    expect(matchUserMsg(msg, 'src/foo')).toBe(true)
+  })
+
+  it('matches legacy string attachment entries', () => {
+    expect(matchUserMsg({ content: '', files: ['notes.txt'] }, 'notes')).toBe(true)
+  })
+
+  it('matches basename of a nested path', () => {
+    expect(matchUserMsg({ files: [{ path: '/a/b/main.go' }] }, 'main')).toBe(true)
+  })
+
+  it('matches file path case-insensitively', () => {
+    expect(matchUserMsg({ files: [{ path: '/SRC/Main.go' }] }, 'main.go')).toBe(true)
+  })
+
+  it('handles mixed string and object attachment shapes', () => {
+    const msg = { files: ['a.txt', { path: 'b/c.go' }] }
+    expect(matchUserMsg(msg, 'c.go')).toBe(true)
+  })
+
+  it('matches a message with both text and attachments via its content', () => {
+    expect(matchUserMsg({ content: 'Has text', files: [{ path: 'x.ts' }] }, 'text')).toBe(true)
+  })
+
+  it('matches the attachment label for attachment-only messages when provided', () => {
+    const msg = { content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }] }
+    expect(matchUserMsg(msg, '附件', '附件')).toBe(true)
+    expect(matchUserMsg(msg, 'attachment', 'Attachment')).toBe(true)
+    // Label not matched case-insensitively when no label is passed.
+    expect(matchUserMsg(msg, '附件')).toBe(false)
+  })
+
+  it('does not match the attachment label when the message has no attachments', () => {
+    expect(matchUserMsg({ content: 'plain text' }, '附件', '附件')).toBe(false)
+  })
+
+  it('returns false when nothing matches', () => {
+    expect(matchUserMsg({ content: 'plain', files: [{ path: 'a/b.ts' }] }, 'zzz')).toBe(false)
+    expect(matchUserMsg({ content: '', files: [] }, 'zzz')).toBe(false)
+  })
+
+  it('returns false for missing/empty message with a non-empty query', () => {
+    expect(matchUserMsg(undefined as never, 'x')).toBe(false)
+    expect(matchUserMsg(null as never, 'x')).toBe(false)
+    expect(matchUserMsg({}, 'x')).toBe(false)
+  })
+
+  it('handles Windows backslash paths', () => {
+    expect(matchUserMsg({ files: [{ path: 'C:\\src\\Main.go' }] }, 'src/Main')).toBe(true)
   })
 })

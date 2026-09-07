@@ -126,7 +126,7 @@ describe('QuickSendEditModal', () => {
       // Simulate the watch pre-filling the form
       await setFormVm(wrapper, '继续', '请继续')
 
-      const saveBtn = document.querySelector('.modal-btn.primary') as HTMLElement
+      const saveBtn = document.querySelector('.fbtn-primary') as HTMLElement
       saveBtn!.click()
       await nextTick()
 
@@ -164,7 +164,7 @@ describe('QuickSendEditModal', () => {
 
       await setFormVm(wrapper, '继续', '请继续执行')
 
-      const saveBtn = q('.modal-btn.primary') as HTMLElement
+      const saveBtn = q('.fbtn-primary') as HTMLElement
       saveBtn!.click()
       await nextTick()
 
@@ -178,7 +178,7 @@ describe('QuickSendEditModal', () => {
       ;(wrapper.vm as any).form.project_only = true
       await nextTick()
 
-      const saveBtn = q('.modal-btn.primary') as HTMLElement
+      const saveBtn = q('.fbtn-primary') as HTMLElement
       saveBtn!.click()
       await nextTick()
 
@@ -197,7 +197,7 @@ describe('QuickSendEditModal', () => {
 
       await setFormVm(wrapper, '继续', '请继续')
 
-      const saveBtn = q('.modal-btn.primary') as HTMLElement
+      const saveBtn = q('.fbtn-primary') as HTMLElement
       saveBtn!.click()
       await nextTick()
 
@@ -210,7 +210,7 @@ describe('QuickSendEditModal', () => {
 
       await setFormVm(wrapper, '继续', '继续')
 
-      const saveBtn = q('.modal-btn.primary') as HTMLElement
+      const saveBtn = q('.fbtn-primary') as HTMLElement
       saveBtn!.click()
       await nextTick()
 
@@ -234,7 +234,7 @@ describe('QuickSendEditModal', () => {
     it('emits close when cancel button is clicked', async () => {
       const wrapper = mountModal()
 
-      const cancelBtn = q('.modal-btn:not(.primary)') as HTMLElement
+      const cancelBtn = q('.fbtn:not(.fbtn-primary)') as HTMLElement
       cancelBtn!.click()
       // ModalDialog has a 250ms leave animation before emitting close
       await new Promise(r => setTimeout(r, 300))

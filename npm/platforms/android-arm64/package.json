@@ -1,7 +1,7 @@
 {
   "name": "@xulongzhe/clawbench-android-arm64",
   "version": "0.1.0",
-  "description": "ClawBench binary for Android arm64 (Termux, PIE)",
+  "description": "ClawBench — AI Workbench, United Across Devices. Android arm64 binary (Termux, PIE)",
   "os": ["android"],
   "cpu": ["arm64"],
   "preferUnplugged": true,

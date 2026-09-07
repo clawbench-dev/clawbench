@@ -29,6 +29,7 @@
       @share-link="emit('shareLink')"
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
+      @set-as-background="(path) => emit('setAsBackground', path)"
     />
 
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
@@ -194,6 +195,7 @@
           v-if="markdownViewMode === 'rendered'"
           :file="file"
           :view-mode="markdownViewMode"
+          :chat-quote="true"
         />
         <div v-else class="raw-content-viewer">
           <CodeMirrorViewer
@@ -340,7 +342,7 @@ const props = defineProps({
     /** Wide-screen layout — renders the inline TOC dock vs narrow drawer. */
     docked: { type: Boolean, default: false },
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground'])
 
 const fileNav = useFileNavStack()
 const { active: textSelecting } = useTextSelectionActive()

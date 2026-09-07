@@ -13,8 +13,13 @@ import i18n from './i18n'
 import { LongPressDirective } from './directives/longPress.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
+import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
 
 configureMarkedRenderer()
+
+// Observe every /api/* response for a 401 (expired session cookie). When armed
+// by App.vue after auth succeeds, a 401 redirects to /login.
+installAuthRedirectInterceptor()
 
 const app = createApp(App)
 app.use(i18n)

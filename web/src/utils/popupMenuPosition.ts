@@ -5,7 +5,7 @@
  * Extracted from PopupMenu.vue for testability.
  *
  * Positioning strategy (simplified):
- * - Menu always appears above the anchor (mobile-first: bottom bar).
+ * - Menu always appears above the anchor (mobile-adapted: bottom bar).
  * - Flips below only when there isn't enough space above.
  * - Horizontal alignment is **auto-detected** based on the anchor's
  *   position in the viewport: right side → right-aligned, left side → left-aligned.

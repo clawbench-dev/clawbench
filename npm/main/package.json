@@ -1,7 +1,7 @@
 {
   "name": "@xulongzhe/clawbench",
   "version": "0.1.0",
-  "description": "Mobile-first AI workstation — Go backend + Vue3 frontend",
+  "description": "ClawBench — AI Workbench, United Across Devices. Go backend + Vue3 frontend, runs on PC, Android, and Termux",
   "type": "module",
   "bin": {
     "clawbench": "bin/clawbench.js"

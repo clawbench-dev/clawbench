@@ -4,24 +4,23 @@
     <!-- Logo: hidden in APP mode -->
     <img class="header-logo" src="/logo-64.png" alt="ClawBench">
 
-    <div class="badge-capsule" ref="capsuleRef">
-      <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project')" :style="segmentStyle('project')">
+    <div class="badge-capsule">
+      <div class="project-dropdown-wrapper" ref="dropdownRef" :class="segmentClass('project', true)">
         <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
           <Projector :size="12" />
           <span class="project-name">{{ projectName }}</span>
         </button>
       </div>
-      <div v-if="gitBranch" class="badge-capsule-divider" :class="{ 'badge-segment-hidden': fillBadge !== null }"></div>
-      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch')" :style="segmentStyle('branch')">
+      <div v-if="gitBranch" class="badge-capsule-divider"></div>
+      <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="toggleBranchDropdown" :class="segmentClass('branch', true)">
         <GitBranch :size="12" class="branch-icon" />
         <span class="branch-name">{{ gitBranch }}</span>
       </div>
-      <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider" :class="{ 'badge-segment-hidden': fillBadge !== null }"></div>
+      <div v-if="currentFileName || recentFilesAvailable > 0" class="badge-capsule-divider"></div>
       <button
         v-if="currentFileName || recentFilesAvailable > 0"
         class="current-file-badge"
-        :class="segmentClass('file')"
-        :style="segmentStyle('file')"
+        :class="segmentClass('file', !!currentFileName)"
         :title="currentFileName || t('appHeader.noFileOpen')"
         :disabled="recentFilesAvailable === 0"
         @click="toggleFileDropdown"
@@ -31,6 +30,30 @@
         <span v-else class="current-file-name no-file-name">{{ t('appHeader.noFileOpen') }}</span>
       </button>
     </div>
+
+    <!-- Reveal card: shows the FULL text of a badge segment that just changed
+         (the capsule only has room for a truncated name on phones). Teleported
+         to body + position:fixed so it isn't clipped by the capsule/header.
+         Appears under the changed segment and auto-dismisses. -->
+    <Teleport to="body">
+      <Transition name="reveal">
+        <div
+          v-if="reveal"
+          class="badge-reveal"
+          :style="{ left: reveal.left + 'px', top: reveal.top + 'px' }"
+        >
+          <span class="badge-reveal-title">
+            <span class="badge-reveal-icon">
+              <Projector v-if="reveal.source === 'project'" :size="13" />
+              <GitBranch v-else-if="reveal.source === 'branch'" :size="13" />
+              <FileText v-else :size="13" />
+            </span>
+            <span class="badge-reveal-name">{{ reveal.title }}</span>
+          </span>
+          <span v-if="reveal.subtitle" class="badge-reveal-subtitle">{{ reveal.subtitle }}</span>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
     <ShortcutTipTicker
@@ -42,114 +65,102 @@
     />
     <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
 
-    <Teleport to="body">
-      <Transition name="dropdown">
-        <div v-if="dropdownOpen" class="app-menu" :style="dropdownStyle" ref="dropdownPanelRef">
-          <div class="app-menu-title">{{ t('appHeader.projects') }}</div>
-          <div v-if="loadingRecent" class="app-menu-message">{{ t('common.loading') }}</div>
-          <template v-else>
-            <div v-if="recentItems.length === 0" class="app-menu-message">{{ t('appHeader.noRecentProjects') }}</div>
-            <div v-else class="app-menu-scroll">
-              <div
-                v-for="item in recentItems"
-                :key="item.path"
-                class="app-menu-item app-menu-item--stacked"
-                :class="{ active: item.path === projectRoot }"
-                @click="selectRecent(item)"
-              >
-                <Projector :size="14" class="item-icon" />
-                <span class="item-body">
-                  <span class="item-name">{{ item.name }}</span>
-                  <span class="item-path">{{ item.displayPath }}</span>
-                </span>
-                <HintTooltip :content="item.path" />
-                <button
-                  class="item-remove-btn"
-                  type="button"
-                  :title="t('appHeader.removeProject')"
-                  :aria-label="t('appHeader.removeProject')"
-                  @click.stop="removeRecent(item)"
-                >
-                  <X :size="14" />
-                </button>
-              </div>
-            </div>
-            <div class="menu-divider"></div>
-            <div class="app-menu-item other-item" @click="openBrowse">
-              <Search :size="14" class="item-icon" />
-              <span class="item-label">{{ t('appHeader.browse') }}</span>
-            </div>
-          </template>
+    <AppMenuPanel :open="dropdownOpen" :panel-style="dropdownStyle" :register-panel="setProjectPanelRef">
+      <div class="app-menu-title">{{ t('appHeader.projects') }}</div>
+      <div v-if="loadingRecent" class="app-menu-message">{{ t('common.loading') }}</div>
+      <template v-else>
+        <div v-if="recentItems.length === 0" class="app-menu-message">{{ t('appHeader.noRecentProjects') }}</div>
+        <div v-else class="app-menu-scroll">
+          <div
+            v-for="item in recentItems"
+            :key="item.path"
+            class="app-menu-item app-menu-item--stacked"
+            :class="{ active: item.path === projectRoot }"
+            @click="selectRecent(item)"
+          >
+            <Projector :size="14" class="item-icon" />
+            <span class="item-body">
+              <span class="item-name">{{ item.name }}</span>
+              <span class="item-path">{{ item.displayPath }}</span>
+            </span>
+            <HintTooltip :content="item.path" />
+            <button
+              class="item-remove-btn"
+              type="button"
+              :title="t('appHeader.removeProject')"
+              :aria-label="t('appHeader.removeProject')"
+              @click.stop="removeRecent(item)"
+            >
+              <X :size="14" />
+            </button>
+          </div>
         </div>
-      </Transition>
-    </Teleport>
+        <div class="menu-divider"></div>
+        <div class="app-menu-item other-item" @click="openBrowse">
+          <Search :size="14" class="item-icon" />
+          <span class="item-label">{{ t('appHeader.browse') }}</span>
+        </div>
+      </template>
+    </AppMenuPanel>
 
     <!-- Recent files quick-index dropdown -->
-    <Teleport to="body">
-      <Transition name="dropdown">
-        <div v-if="fileDropdownOpen" class="app-menu" :style="fileDropdownStyle" ref="fileDropdownPanelRef">
-          <div class="app-menu-title">{{ t('appHeader.recentFiles') }}</div>
-          <div v-if="recentFileEntries.length === 0" class="app-menu-message">{{ t('appHeader.noRecentFiles') }}</div>
-          <div v-else class="app-menu-scroll">
-            <div
-              v-for="entry in recentFileEntries"
-              :key="entry.path"
-              class="app-menu-item app-menu-item--stacked"
-              :class="{ active: entry.path === currentFilePath }"
-              @click="selectRecentFile(entry)"
-            >
-              <FileIcon :path="entry.path" :size="16" class="item-icon" />
-              <span class="item-body">
-                <span class="item-name">{{ baseName(entry.path) }}</span>
-                <span class="item-path">{{ dirName(entry.path) }}</span>
-              </span>
-              <HintTooltip :content="entry.path" />
-              <button
-                class="item-remove-btn"
-                type="button"
-                :title="t('appHeader.removeRecentFile')"
-                :aria-label="t('appHeader.removeRecentFile')"
-                @click.stop="removeRecentFile(entry.path)"
-              >
-                <X :size="12" />
-              </button>
-            </div>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="app-menu-item other-item" @click="openFileManager">
-            <FolderOpen :size="14" class="item-icon" />
-            <span class="item-label">{{ t('appHeader.openFileManager') }}</span>
-          </div>
+    <AppMenuPanel :open="fileDropdownOpen" :panel-style="fileDropdownStyle" :register-panel="setFilePanelRef">
+      <div class="app-menu-title">{{ t('appHeader.recentFiles') }}</div>
+      <div v-if="recentFileEntries.length === 0" class="app-menu-message">{{ t('appHeader.noRecentFiles') }}</div>
+      <div v-else class="app-menu-scroll">
+        <div
+          v-for="entry in recentFileEntries"
+          :key="entry.path"
+          class="app-menu-item app-menu-item--stacked"
+          :class="{ active: entry.path === currentFilePath }"
+          @click="selectRecentFile(entry)"
+        >
+          <FileIcon :path="entry.path" :size="16" class="item-icon" />
+          <span class="item-body">
+            <span class="item-name">{{ baseName(entry.path) }}</span>
+            <span class="item-path">{{ dirName(entry.path) }}</span>
+          </span>
+          <HintTooltip :content="entry.path" />
+          <button
+            class="item-remove-btn"
+            type="button"
+            :title="t('appHeader.removeRecentFile')"
+            :aria-label="t('appHeader.removeRecentFile')"
+            @click.stop="removeRecentFile(entry.path)"
+          >
+            <X :size="12" />
+          </button>
         </div>
-      </Transition>
-    </Teleport>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="app-menu-item other-item" @click="openFileManager">
+        <FolderOpen :size="14" class="item-icon" />
+        <span class="item-label">{{ t('appHeader.openFileManager') }}</span>
+      </div>
+    </AppMenuPanel>
 
     <!-- Branch quick-index dropdown -->
-    <Teleport to="body">
-      <Transition name="dropdown">
-        <div v-if="branchDropdownOpen" class="app-menu" :style="branchDropdownStyle" ref="branchDropdownPanelRef">
-          <div class="app-menu-title">{{ t('appHeader.branches') }}</div>
-          <div v-if="branchDropdownLoading" class="app-menu-message">{{ t('common.loading') }}</div>
-          <div v-else class="app-menu-scroll">
-            <div
-              v-for="b in branchList"
-              :key="b.name"
-              class="app-menu-item"
-              :class="{ active: b.name === gitBranch }"
-              @click="selectBranch(b)"
-            >
-              <GitBranch :size="14" class="item-icon" />
-              <span class="item-label">{{ b.name }}</span>
-            </div>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="app-menu-item other-item" @click="openHistory">
-            <Settings2 :size="14" class="item-icon" />
-            <span class="item-label">{{ t('appHeader.moreBranches') }}</span>
-          </div>
+    <AppMenuPanel :open="branchDropdownOpen" :panel-style="branchDropdownStyle" :register-panel="setBranchPanelRef">
+      <div class="app-menu-title">{{ t('appHeader.branches') }}</div>
+      <div v-if="branchDropdownLoading" class="app-menu-message">{{ t('common.loading') }}</div>
+      <div v-else class="app-menu-scroll">
+        <div
+          v-for="b in branchList"
+          :key="b.name"
+          class="app-menu-item"
+          :class="{ active: b.name === gitBranch }"
+          @click="selectBranch(b)"
+        >
+          <GitBranch :size="14" class="item-icon" />
+          <span class="item-label">{{ b.name }}</span>
         </div>
-      </Transition>
-    </Teleport>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="app-menu-item other-item" @click="openHistory">
+        <Settings2 :size="14" class="item-icon" />
+        <span class="item-label">{{ t('appHeader.moreBranches') }}</span>
+      </div>
+    </AppMenuPanel>
 
     <!-- Dirty worktree checkout modal -->
     <Teleport to="body">
@@ -217,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, Cpu, Activity, MemoryStick, Database, X, Palette, Sun, Moon } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, X, Palette, Sun, Moon } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -235,14 +246,18 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
-import { toFixedCSS } from '@/composables/useSettingsConfig'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
+import { useSystemPressure } from '@/composables/useSystemPressure'
+import { useBadgeHighlight, type BadgeSegment } from '@/composables/useBadgeHighlight'
+import { deferPosition, estimatePanelWidth as estimatePanelWidthFn, positionDropdown as positionDropdownPure } from '@/utils/dropdownPosition'
+import { recentProjectDisplayPath } from '@/utils/recentProjects'
 import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
+import AppMenuPanel from '@/components/common/AppMenuPanel.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
 import { resolveShortcutContext } from '@/config/shortcutTips'
 import type { Ref } from 'vue'
@@ -326,6 +341,10 @@ const { entries: recentFileEntries, removeRecentFile } = useRecentFiles()
 // Recent files quick-index dropdown state
 const fileDropdownOpen = ref(false)
 const fileDropdownPanelRef = ref<HTMLElement | null>(null)
+/** Receives the rendered recent-files panel element (from AppMenuPanel). */
+function setFilePanelRef(el: HTMLElement | null) {
+    fileDropdownPanelRef.value = el
+}
 const fileDropdownStyle = ref<Record<string, string>>({})
 
 function toggleFileDropdown() {
@@ -364,6 +383,10 @@ const branchDropdownOpen = ref(false)
 const branchDropdownLoading = ref(false)
 const branchList = ref<BranchEntry[]>([])
 const branchDropdownPanelRef = ref<HTMLElement | null>(null)
+/** Receives the rendered branch panel element (from AppMenuPanel). */
+function setBranchPanelRef(el: HTMLElement | null) {
+    branchDropdownPanelRef.value = el
+}
 const branchDropdownStyle = ref<Record<string, string>>({})
 
 function toggleBranchDropdown() {
@@ -466,71 +489,32 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
 }
 
 /**
- * Position a dropdown after the current render + a double rAF so that
- * the panel's content width/layout is stable before measuring it. Without
- * this, the panel width read on first open (e.g. while branch/project lists
- * are still loading) differs from the settled width, causing the horizontally
- * centered position to jump between opens.
- */
-function deferPosition(update: () => void) {
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            update()
-        })
-    })
-}
-
-/**
  * Position a dropdown centered under its anchor button. Called twice:
  *  1. Synchronously on open, with an estimated width, so the panel never
  *     renders at the browser's default (far-left) position — this is what
  *     caused the visible flash.
  *  2. After a double rAF, with the measured real width, for a precise fit.
+ * Shared pure geometry lives in @/utils/dropdownPosition.
  */
 function positionDropdown(anchorEl: Element | null, panelRef: { value: HTMLElement | null }, styleRef: { value: Record<string, string> }, estimatedWidth?: number) {
     if (!anchorEl) return
-    const anchorRect = anchorEl.getBoundingClientRect()
-    const margin = 8
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-
-    // Panel width must never exceed the viewport (accounting for margins).
-    const maxPanelWidth = Math.min(320, vw - 2 * margin)
-    // Measured width (fall back to an estimate when the panel isn't laid out yet).
-    const measured = panelRef?.value?.offsetWidth || 0
-    const panelWidth = Math.min(measured || estimatedWidth || maxPanelWidth, maxPanelWidth)
-    const panelHeight = panelRef?.value?.offsetHeight || 320
-
-    // Center horizontally on the anchor, then clamp so the panel stays in view
-    let left = anchorRect.left + anchorRect.width / 2 - panelWidth / 2
-    left = Math.max(margin, Math.min(vw - panelWidth - margin, left))
-
-    let top = anchorRect.bottom + 4
-    // Flip upward if there isn't room below
-    if (top + panelHeight > vh - margin) {
-        top = Math.max(margin, anchorRect.top - panelHeight - 4)
-    }
-    top = Math.max(margin, Math.min(vh - margin - panelHeight, top))
-
-    styleRef.value = {
-        position: 'fixed',
-        top: `${toFixedCSS(top)}px`,
-        left: `${toFixedCSS(left)}px`,
-        minWidth: `${Math.min(Math.max(180, anchorRect.width), maxPanelWidth)}px`,
-        maxWidth: `${toFixedCSS(maxPanelWidth)}px`,
-    }
+    const rect = anchorEl.getBoundingClientRect()
+    const panel = panelRef?.value
+    positionDropdownPure(
+        { left: rect.left, right: rect.right, bottom: rect.bottom, top: rect.top, width: rect.width },
+        panel ? { offsetWidth: panel.offsetWidth, offsetHeight: panel.offsetHeight } : undefined,
+        styleRef,
+        estimatedWidth,
+    )
 }
 
 /** Estimated initial width — matches the minWidth set in positionDropdown. */
 function estimatePanelWidth(anchorEl: Element | null) {
     if (!anchorEl) return 200
-    const vw = window.innerWidth
-    const maxPanelWidth = Math.min(320, vw - 16)
-    return Math.min(Math.max(180, anchorEl.getBoundingClientRect().width), maxPanelWidth)
+    return estimatePanelWidthFn(anchorEl.getBoundingClientRect(), window.innerWidth)
 }
 
 const dialog = useDialog()
-
 const toast = inject<{ show: (msg: string, opts?: Record<string, unknown>) => void }>('toast')
 const hotSwitchProject = inject<(path: string) => Promise<void>>('hotSwitchProject')
 
@@ -541,74 +525,14 @@ const statusDotClass = computed(() => {
     return 'status-dot-connected'
 })
 
-// --- System pressure alert ---
-const CRITICAL_THRESHOLD = 90
-
-type MetricKey = 'cpu' | 'memory' | 'disk' | 'load'
-
-const metricIcons: Record<MetricKey, typeof Cpu> = { cpu: Cpu, memory: MemoryStick, disk: Database, load: Activity }
-
-const criticalMetric = computed<MetricKey | null>(() => {
-    const r = resources.value
-    const cores = r.cpu.core_count || 1
-    const loadPercent = (r.load.load1 / cores) * 100
-    const metrics: { key: MetricKey; percent: number }[] = [
-        { key: 'cpu', percent: r.cpu.percent },
-        { key: 'memory', percent: r.memory.percent },
-        { key: 'disk', percent: r.disk.percent },
-        { key: 'load', percent: Math.min(loadPercent, 100) },
-    ]
-    // Filter to metrics at or above threshold
-    const critical = metrics.filter(m => m.percent >= CRITICAL_THRESHOLD)
-    if (critical.length === 0) return null
-    // Pick the one with highest excess ratio (denominator is same, just sort by raw excess)
-    critical.sort((a, b) => (b.percent - CRITICAL_THRESHOLD) - (a.percent - CRITICAL_THRESHOLD))
-    return critical[0].key
-})
-
-const isUnderPressure = computed(() => criticalMetric.value !== null)
-
-// Blinking state: toggles between Server icon and the critical metric icon
-const showMetricIcon = ref(false)
-let blinkTimer: ReturnType<typeof setInterval> | null = null
-
-function startBlinking() {
-    if (blinkTimer) return
-    showMetricIcon.value = false
-    blinkTimer = setInterval(() => {
-        showMetricIcon.value = !showMetricIcon.value
-    }, 1000)
-}
-
-function stopBlinking() {
-    if (blinkTimer) {
-        clearInterval(blinkTimer)
-        blinkTimer = null
-    }
-    showMetricIcon.value = false
-}
-
-watch(isUnderPressure, (under) => {
-    if (under) {
-        startBlinking()
-    } else {
-        stopBlinking()
-    }
-}, { immediate: true })
-
-// Pause blinking when tab is hidden, resume when visible
-function onBlinkVisibilityChange() {
-    if (document.hidden) {
-        stopBlinking()
-    } else if (isUnderPressure.value) {
-        startBlinking()
-    }
-}
-
-const PressureIcon = computed(() => {
-    const key = criticalMetric.value
-    return key ? metricIcons[key] : null
-})
+// System pressure alert — derived from the shared resources snapshot; blinks
+// the metric icon while under pressure (see useSystemPressure).
+const {
+    isUnderPressure,
+    showMetricIcon,
+    PressureIcon,
+    onVisibilityChange: onBlinkVisibilityChange,
+} = useSystemPressure({ resources })
 
 const projectName = computed(() => {
     if (!props.projectRoot) return t('appHeader.selectProject')
@@ -618,201 +542,121 @@ const projectName = computed(() => {
 // Git branch
 const gitBranch = computed(() => store.state.gitBranch)
 
-// Badge capsule feedback — staged timeline on a badge segment content change
-// (project name, current file, branch):
-//   1. HIGHLIGHT_PRE_MS  the changed segment highlights (accent background)
-//   2. only when the capsule is space-constrained (its natural content width
-//      overflows the available capsule width, i.e. text would be truncated)
-//      does the segment then FILL the capsule — other segments slide shut
-//   3. FILL_MS / HIGHLIGHT_POST_MS everything expands back
-//   4. finally the highlight fades out
-// `highlightBadge` drives the accent background (always); `fillBadge` drives
-// the collapse/expand of the other segments (only on truncation).
-const capsuleRef = ref<HTMLElement | null>(null)
-const highlightBadge = ref<'project' | 'branch' | 'file' | null>(null)
-const fillBadge = ref<'project' | 'branch' | 'file' | null>(null)
-// Shape of the highlighted segment when NOT filling: 'left' → capsule-left
-// edge (round on the left), 'right' → capsule-right edge, 'none' → middle.
-const highlightRadius = ref<'left' | 'right' | 'none' | null>(null)
-let highlightTimer: ReturnType<typeof setTimeout> | null = null
-let fillTimer: ReturnType<typeof setTimeout> | null = null
-let clearTimer: ReturnType<typeof setTimeout> | null = null
-
-const HIGHLIGHT_PRE_MS = 200
-const FILL_MS = 1000
-const HIGHLIGHT_POST_MS = 200
-const HIGHLIGHT_NO_FILL_MS = 400
-const EDGE_THRESHOLD_PX = 2
-
-/** Non-fill highlight shape → border-radius: left edge → round-left pill,
-    right edge → round-right pill, middle → rectangle. Ignored when the segment
-    fills the capsule (`.badge-highlight--fill` overrides with full pill). */
-const highlightShapeStyle = computed(() => {
-    switch (highlightRadius.value) {
-        case 'left': return { borderRadius: '999px 0 0 999px' }
-        case 'right': return { borderRadius: '0 999px 999px 0' }
-        default: return { borderRadius: '0' }
-    }
-})
-
-/** Reactive class object for a badge segment (project / branch / file).
-    NOTE: reads refs via .value — inside a plain function (not the template)
-    refs are NOT auto-unwrapped. */
-function segmentClass(source: 'project' | 'branch' | 'file') {
-    return {
-        'no-file': source === 'file' && !props.currentFileName,
-        'badge-segment-hidden': fillBadge.value !== null && fillBadge.value !== source,
-        'badge-highlight': highlightBadge.value === source,
-        'badge-highlight--fill': fillBadge.value === source,
-    }
+// Badge capsule feedback — when a segment's content changes (project name,
+// current file, branch) it flashes the accent highlight AND shows a floating
+// "reveal card" under that segment with the complete text (the capsule itself
+// is width-constrained on phones, so it can only show a truncated name).
+// The highlight timing lives in useBadgeHighlight; the reveal card state is
+// assembled here and consumed by the template (see BadgeReveal in template).
+const prefersReducedMotion = ref(
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
+)
+let motionQuery: MediaQueryList | null = null
+const onMotionPreferenceChange = () => {
+    prefersReducedMotion.value = motionQuery?.matches === true
 }
 
-/** Inline style for a highlighted segment: the position-dependent half-pill
-    shape when highlighted but not filling. */
-function segmentStyle(source: 'project' | 'branch' | 'file') {
-    return highlightBadge.value === source && fillBadge.value !== source ? highlightShapeStyle.value : undefined
+const {
+    highlightBadge,
+    pulseBadge,
+    segmentClass,
+    dispose: disposeBadgeHighlight,
+} = useBadgeHighlight({ prefersReducedMotion })
+
+// ── Reveal card state ──
+// A small fixed card shown under the changed badge segment with the full text.
+// `source` distinguishes the segment type (drives the icon/colors/labels);
+// `title`/`subtitle` carry the complete display text; `left`/`top` position
+// the card under the segment rect. Auto-dismiss after REVEAL_MS; a newer
+// pulse replaces the card and restarts the timer.
+const reveal = ref<{
+    source: BadgeSegment
+    title: string
+    subtitle?: string
+    left: number
+    top: number
+} | null>(null)
+let revealTimer: ReturnType<typeof setTimeout> | null = null
+const REVEAL_MS = 1500
+const REVEAL_OFFSET_Y = 6
+
+/** DOM node of the currently-highlighted badge segment (for card anchoring). */
+function badgeSegmentEl(source: BadgeSegment): HTMLElement | null {
+    return document.querySelector(
+        source === 'project' ? '.project-switch-btn'
+            : source === 'branch' ? '.branch-badge' : '.current-file-badge',
+    )
 }
 
-function clearTimers() {
-    if (highlightTimer) { clearTimeout(highlightTimer); highlightTimer = null }
-    if (fillTimer) { clearTimeout(fillTimer); fillTimer = null }
-    if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
-}
-
-/** True when any badge segment's text is truncated (ellipsis) in the capsule.
-    Detected via the text spans that have overflow:hidden + text-overflow:
-    ellipsis — a truncated span has scrollWidth > clientWidth. The capsule
-    itself is a flex container without overflow:hidden, so its own
-    scrollWidth equals clientWidth even when children are clipped. */
-function capsuleOverflowing(): boolean {
-    const el = capsuleRef.value
-    if (!el) return false
-    const textSpans = el.querySelectorAll('.project-name, .branch-name, .current-file-name')
-    for (const span of textSpans) {
-        const s = span as HTMLElement
-        if (s.scrollWidth > s.clientWidth + 1) return true // +1 for rounding
-    }
-    return false
-}
-
-/** Segment DOM node for the highlighted badge (works for all three segment
-    wrappers: project-dropdown-wrapper / branch-badge / current-file-badge). */
-function highlightSegmentEl(source: 'project' | 'branch' | 'file'): HTMLElement | null {
-    const el = capsuleRef.value
-    if (!el) return null
-    const sel = source === 'project' ? '.project-dropdown-wrapper'
-        : source === 'branch' ? '.branch-badge' : '.current-file-badge'
-    return el.querySelector(sel)
-}
-
-/** Decide the highlighted segment's shape when it is NOT filling the capsule:
-    touching the capsule's left edge → round left side; right edge → round
-    right side; in the middle → rectangle. Positions are measured via
-    getBoundingClientRect and normalized into the capsule's coordinate space —
-    offsetLeft is relative to the offsetParent (the fixed <header>), which is a
-    different coordinate system than the capsule width. */
-function decideHighlightShape(left: number, right: number, capsuleW: number): 'left' | 'right' | 'none' {
-    if (left <= EDGE_THRESHOLD_PX) return 'left'
-    if (right >= capsuleW - EDGE_THRESHOLD_PX) return 'right'
-    return 'none'
-}
-
-function measureHighlightShape(source: 'project' | 'branch' | 'file') {
-    const capsule = capsuleRef.value
-    const seg = highlightSegmentEl(source)
-    if (!capsule || !seg) return
-    const cRect = capsule.getBoundingClientRect()
-    const sRect = seg.getBoundingClientRect()
-    // Normalize into the capsule coordinate space (capsule left edge = 0).
-    const left = sRect.left - cRect.left
-    const right = sRect.right - cRect.left
-    highlightRadius.value = decideHighlightShape(left, right, cRect.width)
-}
-
-// Animation generation guard: each pulseBadge bumps the sequence; async
-// callbacks (nextTick / timers) capture their own seq and bail out if a newer
-// change already superseded them. This prevents orphan fill timers and stale
-// measurements when two badge sources change within the same tick.
-let animSeq = 0
-
-function pulseBadge(source: 'project' | 'branch' | 'file') {
-    clearTimers()
-    const seq = ++animSeq
-
-    // Reset any previous fill/highlight state so a mid-fill change doesn't
-    // leave the old segment filling while the new one is highlighted.
-    fillBadge.value = null
-    highlightRadius.value = null
-
-    // 1. Highlight first (accent background on the changed segment) — always.
-    highlightBadge.value = source
-
-    // 2. Then, only if the capsule is space-constrained, fill it (collapse the
-    //    other segments). Measured after the new content has rendered. Also
-    //    decide the non-fill highlight shape from the segment's position.
-    nextTick(() => {
-        if (seq !== animSeq) return // superseded by a newer change
-        measureHighlightShape(source)
-        if (capsuleOverflowing()) {
-            fillTimer = setTimeout(() => {
-                if (seq !== animSeq) return // superseded while waiting
-                fillBadge.value = source
-                fillTimer = null
-
-                // 3. Expand back after the fill window...
-                clearTimer = setTimeout(() => {
-                    fillBadge.value = null
-                    clearTimer = null
-                    // 4. ...then, after HIGHLIGHT_POST_MS, drop the highlight.
-                    const postTimer = setTimeout(() => {
-                        if (seq !== animSeq) return
-                        highlightBadge.value = null
-                        highlightRadius.value = null
-                    }, HIGHLIGHT_POST_MS)
-                    // Track for cleanup (reuse the highlightTimer slot).
-                    if (highlightTimer) clearTimeout(highlightTimer)
-                    highlightTimer = postTimer
-                }, FILL_MS)
-            }, HIGHLIGHT_PRE_MS)
-        } else {
-            // No fill: keep the highlight briefly, then drop it. Short window
-            // so a plain highlight doesn't feel stuck for the full fill length.
-            if (highlightTimer) clearTimeout(highlightTimer)
-            highlightTimer = setTimeout(() => {
-                if (seq !== animSeq) return
-                highlightBadge.value = null
-                highlightRadius.value = null
-                highlightTimer = null
-            }, HIGHLIGHT_NO_FILL_MS)
+/** Show the reveal card under `source`'s badge with the given text. */
+function showReveal(source: BadgeSegment, title: string, subtitle?: string) {
+    if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
+    const place = () => {
+        const el = badgeSegmentEl(source)
+        if (!el) return
+        const r = el.getBoundingClientRect()
+        // Anchor under the segment's left edge; the card is width-capped in
+        // CSS, so clamp against the right viewport edge to avoid overflow.
+        const maxLeft = Math.max(4, window.innerWidth - 20)
+        reveal.value = {
+            source,
+            title,
+            subtitle,
+            left: Math.max(4, Math.min(r.left, maxLeft)),
+            top: r.bottom + REVEAL_OFFSET_Y,
         }
-    })
-
-    // Safety net: ensure the highlight always resets, filled or not. Longest
-    // possible window; overwritten by the branch-specific timer above when it
-    // fires first.
-    highlightTimer = setTimeout(() => {
-        if (seq !== animSeq) return
-        fillBadge.value = null
-        highlightBadge.value = null
-        highlightRadius.value = null
-        highlightTimer = null
-    }, HIGHLIGHT_PRE_MS + FILL_MS + HIGHLIGHT_POST_MS)
+    }
+    // The changed segment is usually already in the DOM (file/project/branch
+    // existed before the content swap) — place it synchronously. When the
+    // change itself v-if's the segment into existence (e.g. the branch badge
+    // appears only once a branch is set), it is NOT queryable during the watch
+    // callback (flush: 'pre', before the render) → defer one tick.
+    if (!badgeSegmentEl(source)) {
+        void nextTick(place)
+    } else {
+        place()
+    }
+    // Dismiss after the card has been readable; matches the visual rhythm of
+    // the accent highlight flash.
+    revealTimer = setTimeout(() => {
+        reveal.value = null
+        revealTimer = null
+    }, REVEAL_MS)
 }
 
 watch(gitBranch, (newVal, oldVal) => {
-    if (newVal !== oldVal) pulseBadge('branch')
+    if (newVal !== oldVal) {
+        pulseBadge('branch')
+        if (newVal) showReveal('branch', newVal)
+    }
 })
 
 watch(() => props.currentFileName, (newVal, oldVal) => {
     // Covers both file swaps AND opening a file when none was open
     // (oldVal undefined → a real name), while the non-immediate watch never
     // fires on the initial value.
-    if (newVal !== oldVal) pulseBadge('file')
+    if (newVal !== oldVal) {
+        pulseBadge('file')
+        if (newVal) showReveal('file', newVal, props.currentFilePath ? dirName(props.currentFilePath) : undefined)
+    }
 })
 
 watch(projectName, (newVal, oldVal) => {
-    if (newVal !== oldVal) pulseBadge('project')
+    if (newVal !== oldVal) {
+        pulseBadge('project')
+        if (props.projectRoot) showReveal('project', newVal, props.projectRoot)
+    }
 })
+
+function dismissReveal() {
+    if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
+    reveal.value = null
+}
+
+// Expose the reactive highlight state for programmatic access (used by tests
+// and debugging); the template reads `segmentClass` for the per-segment
+// highlight classes.
+defineExpose({ highlightBadge, reveal })
 
 function openHistory() {
     branchDropdownOpen.value = false
@@ -829,6 +673,10 @@ watch(() => props.projectRoot, (newRoot) => {
 const dropdownOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const dropdownPanelRef = ref<HTMLElement | null>(null)
+/** Receives the rendered project-dropdown panel element (from AppMenuPanel). */
+function setProjectPanelRef(el: HTMLElement | null) {
+    dropdownPanelRef.value = el
+}
 const loadingRecent = ref(false)
 interface RecentItem {
   name: string
@@ -849,7 +697,6 @@ function updateDropdownPosition(useEstimate = false) {
     const el = document.querySelector('.project-switch-btn')
     positionDropdown(el, dropdownPanelRef, dropdownStyle, useEstimate ? estimatePanelWidth(el) : undefined)
 }
-
 function toggleDropdown() {
     if (dropdownOpen.value) {
         dropdownOpen.value = false
@@ -871,14 +718,9 @@ async function loadRecentProjects() {
         const paths = await resp.json()
         recentItems.value = paths.map((p: string) => {
             const name = baseName(p)
-            // Display relative to home directory for cleaner paths
-            // Normalize separators for comparison (Windows uses backslashes)
-            const homeDir = props.homeDir || ''
-            const normHome = homeDir.replace(/\\/g, '/')
-            const normP = p.replace(/\\/g, '/')
-            const displayPath = (normHome && normP.startsWith(normHome + '/'))
-                ? p.slice(homeDir.length + 1)
-                : p
+            // Display relative to home directory for cleaner paths (shared pure
+            // helper handles separator normalization + prefix matching).
+            const displayPath = recentProjectDisplayPath(p, props.homeDir || '')
             return { name, path: p, displayPath }
         })
     } catch {
@@ -1017,14 +859,23 @@ onMounted(() => {
     document.addEventListener('click', onClickOutside)
     document.addEventListener('visibilitychange', onBlinkVisibilityChange)
     startBackgroundPolling()
+    motionQuery = typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null
+    prefersReducedMotion.value = motionQuery?.matches === true
+    if (motionQuery?.addEventListener) {
+        motionQuery.addEventListener('change', onMotionPreferenceChange)
+    }
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', onClickOutside)
     document.removeEventListener('visibilitychange', onBlinkVisibilityChange)
     stopBackgroundPolling()
-    stopBlinking()
-    clearTimers()
+    motionQuery?.removeEventListener?.('change', onMotionPreferenceChange)
+    motionQuery = null
+    dismissReveal()
+    disposeBadgeHighlight()
 })
 
 // Keyboard navigation (↑/↓ select, Enter confirm, Esc close) for the three
@@ -1036,13 +887,18 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 <style scoped>
 .header-logo {
-    width: 28px;
-    height: 28px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     flex-shrink: 0;
 }
 
-/* Badge capsule: combines project + branch into one pill shape */
+/* Badge capsule: combines project + branch into one pill shape.
+   overflow:hidden clips the segments (and their highlight/hover accent
+   backgrounds) to the pill's rounded ends — without it, a highlighted
+   end segment (border-radius:0) would show a square corner sticking out of
+   the semicircular right/left edge. Dropdown/menu/reveal surfaces are all
+   teleported to <body>, so nothing inside needs to overflow this box. */
 .badge-capsule {
     display: flex;
     align-items: center;
@@ -1052,6 +908,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex: 0 1 auto;
     min-width: 0;
     max-width: calc(100% - 50px); /* leave room for logo + server button */
+    overflow: hidden;
     transition: background 0.15s, border-color 0.15s;
 }
 
@@ -1094,7 +951,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.25s ease;
     line-height: 1;
 }
 
@@ -1137,7 +994,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     max-width: 100%;
     overflow: hidden;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.25s ease;
     line-height: 1;
 }
 
@@ -1203,50 +1060,17 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-weight: 400;
 }
 
-/* Badge segment collapse — when a segment's content changes it becomes the only
-   visible one: the other segments slide shut (max-width → 0, fade out) and
-   expand back when the highlight window ends. Runs unconditionally. */
-.badge-capsule .project-dropdown-wrapper,
-.badge-capsule .branch-badge,
-.badge-capsule .current-file-badge,
-.badge-capsule .badge-capsule-divider {
-    transition: max-width 0.3s ease, opacity 0.25s ease,
-                padding-left 0.3s ease, padding-right 0.3s ease,
-                background-color 0.3s ease, color 0.3s ease,
-                border-radius 0.3s ease;
-    overflow: hidden;
-}
-
-/* Hidden segment — collapses to zero width. !important on max-width/padding:
-   must beat each segment's own explicit max-width (e.g. .branch-badge
-   max-width:100%, .project-dropdown-wrapper max-width:220px). */
-.badge-capsule .badge-segment-hidden {
-    max-width: 0 !important;
-    opacity: 0;
-    padding-left: 0 !important;
-    padding-right: 0 !important;
-    pointer-events: none;
-}
-
-/* Highlight — the changed segment gets an accent background with white
-   foreground (text + icon), fading in while it fills the capsule and fading
-   out when it restores. Without the fill the segment keeps its original
-   (right-angle) shape inside the capsule; only when it fills the capsule
-   (badge-highlight--fill, other segments collapsed) does it take the capsule
-   pill shape. */
+/* Highlight — the changed segment briefly flashes the accent background with
+   white foreground (text + icon), then fades back. Pure background/color
+   animation: no layout churn (the old fill/collapse collapsed sibling
+   segments via max-width and re-ran flex layout every frame). The complete
+   text is shown in the floating reveal card (see .badge-reveal). */
 .badge-capsule .badge-highlight {
     /* !important: must beat the segment's own hover background rule
        (e.g. .project-switch-btn:hover) which would otherwise win. */
     background: var(--accent-color) !important;
     color: #fff;
     border-radius: 0;
-}
-
-/* ORDER-SENSITIVE: .badge-highlight--fill is declared after .badge-highlight
-   and has the same specificity — if these are reordered the pill shape would
-   silently stop applying. */
-.badge-capsule .badge-highlight--fill {
-    border-radius: 999px;
 }
 
 .badge-capsule .badge-highlight .project-name,
@@ -1571,6 +1395,85 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .dropdown-leave-to {
     opacity: 0;
     transform: translateY(-4px);
+}
+
+/* Reveal card — a small fixed popover shown under a badge segment that just
+   changed (project / branch / file), carrying the segment's FULL text since
+   the capsule itself truncates long names. Compositor-friendly animation:
+   only opacity + transform (no layout properties). pointer-events: none so it
+   never blocks taps on whatever sits beneath. */
+.badge-reveal {
+    position: fixed;
+    z-index: 10000;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: min(78vw, 320px);
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+    transform-origin: top center;
+}
+
+.badge-reveal-title {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text-primary);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.badge-reveal-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    color: var(--accent-color);
+}
+
+.badge-reveal-subtitle {
+    padding-left: 22px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--text-muted);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    direction: rtl; /* keep the visible tail of long paths, like .item-path */
+    text-align: left;
+}
+
+/* Pop in / fade out (only transform + opacity). */
+.reveal-enter-active,
+.reveal-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.reveal-enter-from,
+.reveal-leave-to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reveal-enter-active,
+    .reveal-leave-active {
+        transition: opacity 0.1s ease;
+    }
+    .reveal-enter-from,
+    .reveal-leave-to {
+        transform: none;
+    }
 }
 
 /* ─── Dirty worktree checkout modal ──────────────────────────────── */

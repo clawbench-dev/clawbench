@@ -135,8 +135,9 @@ describe('MarkdownSearchBar', () => {
     expect(active[0].classList.contains('search-match-flash')).toBe(true)
     // No whole-block flash remains.
     expect(document.querySelectorAll('.line-flash')).toHaveLength(0)
-    // The flash class is removed after the 1.2s timeout.
-    await sleep(1400)
+    // The flash class is removed after the flash window (domFlash fallback
+    // timer: LINE_FLASH_MS + pad).
+    await sleep(1000)
     expect(document.querySelectorAll('.search-match-flash')).toHaveLength(0)
     // Active highlight persists after the flash.
     expect(document.querySelectorAll('.markdown-body mark.md-search-match-active')).toHaveLength(1)

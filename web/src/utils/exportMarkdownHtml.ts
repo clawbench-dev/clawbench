@@ -346,7 +346,11 @@ function serializeCss(container: HTMLElement, themeId: string): string {
                 continue
             } else if (rule instanceof CSSKeyframesRule) {
                 const name = rule.name
-                if (name.includes('line-flash') || name.includes('copy-flash') || name.includes('char-flash') || name.includes('url-btn-spin') || name.includes('mermaid')) {
+                // `line-flash` / `copy-flash` keyframes are NOT copied here: the
+                // share chrome (share-chrome.css, inlined verbatim below) already
+                // carries its own self-contained definitions, so re-serializing
+                // them from the app stylesheets would duplicate them in the export.
+                if (name.includes('char-flash') || name.includes('url-btn-spin') || name.includes('mermaid')) {
                     rules.push(rule.cssText)
                 }
             } else if (rule instanceof CSSMediaRule) {
@@ -363,7 +367,10 @@ function serializeCss(container: HTMLElement, themeId: string): string {
                         }
                     } else if (inner instanceof CSSKeyframesRule) {
                         const name = inner.name
-                        if (name.includes('line-flash') || name.includes('copy-flash') || name.includes('char-flash') || name.includes('diff-marker') || name.includes('url-btn-spin') || name.includes('mermaid')) {
+                        // `line-flash` / `copy-flash` come from the inlined
+                        // share-chrome.css; only diff / spin / mermaid keyframes
+                        // (which live solely in app stylesheets) are re-serialized.
+                        if (name.includes('char-flash') || name.includes('diff-marker') || name.includes('url-btn-spin') || name.includes('mermaid')) {
                             innerRules.push(inner.cssText)
                         }
                     }

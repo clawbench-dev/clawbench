@@ -110,6 +110,20 @@ describe('settingsFieldMap', () => {
     }
   })
 
+  it('fonts.dir is a hot-reload server text field in the appearance font section', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['fonts.dir']).toBe('settings.items.fontDir')
+
+    const appearanceEntries = categoryItems['appearance']
+    const entry = appearanceEntries.find(e => e.type === 'item' && e.spec.key === 'fonts.dir')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item entry for fonts.dir')
+    expect(entry!.spec.source).toBe('server')
+    expect(entry!.spec.type).toBe('text')
+    expect(entry!.spec.needsRestart).toBeFalsy() // backend hot-reloads fonts.dir
+    expect(entry!.spec.sectionHeader).toBe('settings.items.fontSection')
+  })
+
   it('includes recent_projects.max_count', () => {
     const map = getServerFieldToLabelKey()
     expect(map['recent_projects.max_count']).toBeTruthy()

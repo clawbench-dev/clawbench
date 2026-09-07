@@ -703,6 +703,17 @@ watch(() => [localConfig.fontMono, localConfig.fontMonoFallback], () => {
   void applyMonoFontChange()
 })
 
+// Late-registered webfonts (custom fonts scanned after cold start) never
+// re-measure inside xterm — re-apply the family on the global font-change
+// event the custom-font loader dispatches after injecting @font-face.
+function onGlobalFontChange() {
+  void applyMonoFontChange()
+}
+window.addEventListener('clawbench-font-change', onGlobalFontChange)
+onBeforeUnmount(() => {
+  window.removeEventListener('clawbench-font-change', onGlobalFontChange)
+})
+
 // Cold-start case: the user already picked a bundled font before opening the
 // terminal (e.g. after a reload). Existing instances were created with a stack
 // that may still be loading — re-run the ensure+set+fit sequence on mount.

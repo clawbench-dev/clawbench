@@ -205,6 +205,30 @@ func PurgeRAGChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return 0, nil
 }
 
+// purgeRAGChunksAfterMessageFn is the callback for deleting RAG chunks of a
+// session whose message_id is greater than an anchor. Set by main.go during
+// startup. Defaults to nil (no-op).
+var purgeRAGChunksAfterMessageFn func(sessionID string, anchorID int64) (int64, error)
+
+// SetPurgeRAGChunksAfterMessageFn sets the callback for deleting RAG chunks
+// whose message_id is greater than an anchor within a session. Used by the
+// rewind/truncate path to remove chunks whose chat_history rows were deleted in
+// place.
+func SetPurgeRAGChunksAfterMessageFn(fn func(sessionID string, anchorID int64) (int64, error)) {
+	purgeRAGChunksAfterMessageFn = fn
+}
+
+// PurgeRAGChunksAfterMessage deletes RAG chunks for the given session whose
+// message_id is strictly greater than anchorID. Best-effort wrapper around the
+// injected callback — returns 0, nil when no callback was registered (RAG not
+// initialized).
+func PurgeRAGChunksAfterMessage(sessionID string, anchorID int64) (int64, error) {
+	if purgeRAGChunksAfterMessageFn != nil {
+		return purgeRAGChunksAfterMessageFn(sessionID, anchorID)
+	}
+	return 0, nil
+}
+
 // StartSessionCleanupWorker starts the global session cleanup worker.
 func StartSessionCleanupWorker(cfg model.Config) {
 	sessionCleanupMu.Lock()

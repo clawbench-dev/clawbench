@@ -72,10 +72,10 @@
 
         <!-- Actions -->
         <div class="ug-footer">
-          <button v-if="hasUpgrade && !isInProgress && !isCompleted" class="ug-start" @click="startUpgrade">
+          <button v-if="hasUpgrade && !isInProgress && !isCompleted" class="fbtn fbtn-primary ug-start" @click="startUpgrade">
             {{ isFailed ? t('upgrade.retry') : t('upgrade.start') }}
           </button>
-          <button v-if="canClose" class="ug-cancel" @click="close">
+          <button v-if="canClose" class="fbtn ug-cancel" @click="close">
             {{ isCompleted ? t('upgrade.close') : t('upgrade.cancel') }}
           </button>
         </div>
@@ -91,6 +91,7 @@ import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useUpgrade } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import '@/assets/modal-footer-btn.css'
 
 const visible = ref(false)
 let unregisterBack: (() => void) | null = null
@@ -300,40 +301,9 @@ watch(visible, (v) => {
   gap: 8px;
 }
 
+/* Layout only — visual styles come from the shared .fbtn pills. */
 .ug-start {
   flex: 1;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent-color);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-@media (hover: hover) {
-  .ug-start:hover { opacity: 0.9; }
-}
-
-.ug-cancel {
-  padding: 8px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-@media (hover: hover) {
-  .ug-cancel:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-  }
 }
 
 .ug-fade-enter-active { transition: opacity 0.2s ease; }

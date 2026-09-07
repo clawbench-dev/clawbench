@@ -1705,7 +1705,9 @@ func TestBuildImageBlock_OversizedFile(t *testing.T) {
 
 // TestEmitPromptResponseUsage_NilCachedState verifies that emitting a
 // PromptResponse.Usage before any UsageUpdate notification (so cachedUsageState
-// is still nil) does not panic — the regression for issue #363.
+// is still nil) does not panic — the regression for issue #363. With no window
+// info and no usageByCategory, used stays 0 and InputTokens is NOT promoted to
+// used (it is the session-cumulative input, not the current context occupancy).
 func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	agent := &model.Agent{ID: "test-usage-nil", Backend: "acp-stdio", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-usage-nil")
@@ -1743,9 +1745,10 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	require.NotNil(t, usageUpdate, "usage_update event should be emitted")
 	u := usageUpdate.Usage
 	require.NotNil(t, u)
-	// cachedUsageState was nil → fall back to zero values, no panic
+	// cachedUsageState was nil → no panic. No window info and no
+	// usageByCategory, so used stays 0; InputTokens is not promoted to used.
 	assert.Equal(t, 0, u.Used)
-	assert.Equal(t, 0, u.Size)
+	assert.Equal(t, 0, u.Size, "no window size known yet — size stays 0 until a notification reports it")
 	assert.Equal(t, 0.0, u.Cost)
 	assert.Equal(t, "", u.Currency)
 	assert.Equal(t, 10, u.InputTokens)
@@ -1761,7 +1764,9 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 
 // TestEmitPromptResponseUsage_WithCachedState verifies that when a
 // cachedUsageState is already present (from a prior UsageUpdate), the
-// Used/Size/Cost/Currency are preserved from it.
+// Used/Size/Cost/Currency are preserved from it. It also asserts the cost
+// reaches the metadata event's CostUSD (claude reports cost on the final
+// usage_update; without this the chat_metadata.cost_usd column stays 0).
 func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	agent := &model.Agent{ID: "test-usage-cached", Backend: "acp-stdio", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-usage-cached")
@@ -1772,12 +1777,19 @@ func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	conn.emitPromptResponseUsage(usage, nil, "", streamCh)
 	close(streamCh)
 
-	var usageUpdate *StreamEvent
+	var metadataEvt, usageUpdate *StreamEvent
 	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			metadataEvt = &ev
+		}
 		if ev.Type == "usage_update" {
 			usageUpdate = &ev
 		}
 	}
+	require.NotNil(t, metadataEvt)
+	assert.Equal(t, 1.5, metadataEvt.Meta.CostUSD, "usage_update cost must persist into message metadata CostUSD")
+	assert.Equal(t, 10, metadataEvt.Meta.InputTokens)
+
 	require.NotNil(t, usageUpdate)
 	u := usageUpdate.Usage
 	require.NotNil(t, u)
@@ -1785,6 +1797,29 @@ func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	assert.Equal(t, 1000, u.Size)
 	assert.Equal(t, 1.5, u.Cost)
 	assert.Equal(t, "USD", u.Currency)
+}
+
+// TestEmitPromptResponseUsage_CachedCostZero verifies that when the cached
+// usage state carries no cost (CodeBuddy has no USD cost; opencode reports 0),
+// CostUSD stays at its existing value and no spurious cost is invented.
+func TestEmitPromptResponseUsage_CachedCostZero(t *testing.T) {
+	agent := &model.Agent{ID: "test-usage-costzero", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-usage-costzero")
+	conn.SetCachedUsageState(&UsageState{Used: 50, Size: 200000, Cost: 0, Currency: "USD"})
+
+	streamCh := make(chan StreamEvent, 8)
+	usage := &acp.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
+	conn.emitPromptResponseUsage(usage, nil, "", streamCh)
+	close(streamCh)
+
+	var metadataEvt *StreamEvent
+	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			metadataEvt = &ev
+		}
+	}
+	require.NotNil(t, metadataEvt)
+	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "zero cached cost must not set CostUSD")
 }
 
 // TestEmitPromptResponseUsage_NilUsage verifies that a nil PromptResponse.Usage

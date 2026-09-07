@@ -1,7 +1,7 @@
 {
   "name": "@xulongzhe/clawbench-win32-x64",
   "version": "0.1.0",
-  "description": "ClawBench binary for Windows x64",
+  "description": "ClawBench — AI Workbench, United Across Devices. Windows x64 binary",
   "os": ["win32"],
   "cpu": ["x64"],
   "preferUnplugged": true,

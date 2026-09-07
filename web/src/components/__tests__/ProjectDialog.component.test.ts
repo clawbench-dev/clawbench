@@ -185,7 +185,7 @@ describe('ProjectDialog — mount', () => {
 
   it('emits close on cancel button click', async () => {
     const wrapper = mountDialog()
-    await wrapper.find('.cancel-btn').trigger('click')
+    await wrapper.find('.fbtn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 })

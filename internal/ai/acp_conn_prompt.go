@@ -290,6 +290,19 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 		meta.InputTokens = usage.InputTokens
 		meta.OutputTokens = usage.OutputTokens
 	}
+
+	// The PromptResponse carries no cost, but agents like Claude report it on
+	// the final usage_update of the turn (e.g. cost=0.1568 USD) which reached
+	// cachedUsageState. Persist that to the message metadata so
+	// chat_metadata.cost_usd is populated for ACP agents too — otherwise only
+	// CLI stream parsers ever set CostUSD and ACP rows stay 0.
+	c.mu.Lock()
+	cachedUsage := c.cachedUsageState
+	c.mu.Unlock()
+	if cachedUsage != nil && cachedUsage.Cost > 0 {
+		meta.CostUSD = cachedUsage.Cost
+	}
+
 	// Persist the ACP-standard stop reason (Claude/Codex report it here, not in
 	// _meta) so the message record reflects why the turn ended.
 	if stopReason != "" {
@@ -327,10 +340,9 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// Also update UsageState so the context chip shows input/output tokens.
 	// cachedUsageState may be nil on the first prompt that returns a Usage
 	// before any UsageUpdate notification (UNSTABLE feature) — fall back to
-	// zero values to avoid a nil pointer dereference.
-	c.mu.Lock()
-	cached := c.cachedUsageState
-	c.mu.Unlock()
+	// zero values to avoid a nil pointer dereference. cachedUsage was already
+	// read above when building the metadata event; reuse it here.
+	cached := cachedUsage
 	var used, size int
 	var cost float64
 	var currency string
@@ -362,8 +374,25 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	if acc != nil {
 		applyMetaExtractionToUsageState(usageState, acc)
 	}
+	// Fallback for the context chip: when no usable window numbers are cached
+	// (cachedUsageState nil on the first prompt), backfill used from this turn's
+	// usageByCategory breakdown — CodeBuddy's authoritative context occupancy —
+	// before forwarding. InputTokens is deliberately NOT used as a fallback: it
+	// is the session-cumulative input (per ACP spec), not the current context
+	// occupancy, so it can exceed the window and would corrupt the used/size
+	// ratio the frontend renders. A size stays 0 until a real notification
+	// reports the window (the frontend drops size=0 events, so a fresh session
+	// simply shows no context chip until then).
+	if usageState.Used <= 0 {
+		if sum := sumCategory(usageState.UsageByCategory); sum > 0 {
+			usageState.Used = int(sum)
+		}
+	}
 	forwardACPEvent(streamCh, StreamEvent{Type: "usage_update", Usage: usageState})
-	c.SetCachedUsageState(usageState)
+	// Merge, don't overwrite (same rationale as mapACPSessionUpdate): a turn
+	// whose cached window was regressed to 0 must not wipe a previously-known
+	// non-zero window still held by the connection.
+	c.SetCachedUsageState(MergeUsageState(c.GetCachedUsageState(), usageState))
 }
 
 // ptrIntVal dereferences a *int, returning 0 for nil.

@@ -23,6 +23,170 @@ html, body {
     transition: background 0.2s, color 0.2s;
 }
 
+/* ── Custom wallpaper layer ──────────────────────────────────────────
+   Mounted inside .app-container (fixed) so it only covers the authenticated
+   main app — the login view (separate SPA subtree) is never behind it. The
+   layer sits at z-index:0; .main-content is promoted to z-index:1 so every
+   work panel renders above the wallpaper, while overlays/drawers/menus that
+   Teleport to body keep their own stacking contexts. pointer-events:none so
+   the layer never intercepts clicks.
+
+   The wallpaper itself is an <img> (bound via :src) rather than a CSS
+   background-image: swapping an <img> src reliably re-decodes in Android
+   WebView, whereas a CSS-custom-property-driven background-image swap can
+   silently keep showing the old frame until the app restarts. The scrim and
+   optional edge fade are sibling layers ABOVE the image so the Gaussian blur
+   (applied to .wallpaper-image only) never double-filters them. */
+
+.wallpaper-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background-color: var(--bg-primary);
+    overflow: hidden;
+    pointer-events: none;
+}
+
+/* Cover the container exactly like the old background-size:cover.
+   transform-origin center + inline transform scale(1.06) when blurred
+   compensates for the translucent feathering the blur pulls in at the edges. */
+.wallpaper-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.wallpaper-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--wallpaper-scrim);
+}
+
+/* Gaussian blur class: applied by App.vue only when blur radius > 0 so we
+   never create a filter layer needlessly. The scale factor lives in the
+   inline style (it must track the live radius); this class only needs to
+   exist as a stable hook. */
+.wallpaper-image--blurred {
+    will-change: filter, transform;
+}
+
+/* Edge fade via an alpha MASK on the image itself (not a colored overlay).
+   Fading the image's own alpha toward 0 lets the .wallpaper-layer's
+   --bg-primary base show through — the transition lives entirely in the alpha
+   channel, which GPUs render as a single smooth ramp. A colored gradient
+   overlay instead blends two colors over the photo and can still show faint
+   contour lines where the gradient's 8-bit steps land on photo detail. The
+   60%→100% outer band leaves the center untouched. */
+.wallpaper-image--edge-fade {
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 60%, transparent 100%);
+    mask-image: radial-gradient(ellipse at center, #000 60%, transparent 100%);
+}
+
+/* Main content sits above the wallpaper layer. When no wallpaper is active
+   this is harmless (layer is inert/absent). */
+.app-container > .main-content,
+.app-container > .bottom-dock-wrapper {
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Wallpaper-active panel translucency ────────────────────────────
+   With a wallpaper set, main work surfaces (the per-tab panels, app header,
+   session sidebar, file overlay) become translucent through --panel-alpha.
+   Overlays/drawers/menus/editors/terminals keep their own solid backgrounds
+   (they are not listed here), so dense content stays readable. Without
+   .wallpaper-active none of these rules apply → byte-identical to before. */
+
+html.wallpaper-active .header,
+html.wallpaper-active .tab-panel,
+html.wallpaper-active .chat-title-bar,
+html.wallpaper-active .session-sidebar,
+html.wallpaper-active .file-header-bar {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* The file overlay fills its whole view TabPanel. If both were translucent the
+   wallpaper would show through TWO scrim layers (nearly invisible); instead the
+   overlay goes fully transparent so the panel beneath it (already at
+   --panel-alpha) is the single visible surface. */
+html.wallpaper-active .file-overlay {
+    background: transparent;
+}
+
+html.wallpaper-active .bottom-dock,
+html.wallpaper-active .wide-dock {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* ── Extended page surfaces (wallpaper-active) ──────────────────────
+   Full-page roots and page-level bars across the task, port-forward,
+   settings, file-browser and media-preview panels. Their components declare
+   opaque var(--bg-*) backgrounds in scoped CSS; these rules (higher
+   specificity via the html.wallpaper-active prefix) make them translucent so
+   the wallpaper shows through. Content canvases stay opaque by design:
+   video player (#000), code editor (--code-bg), Excalidraw iframe, PDF page
+   canvas (#525659) and the terminal xterm surface. Cards/rows inside these
+   pages (task items, proxy port cards, settings card bodies, form sections)
+   deliberately keep their own opaque backgrounds (conservative depth). */
+
+/* bg-primary full-page roots + page-level action bars */
+html.wallpaper-active .task-list-page,
+html.wallpaper-active .task-detail-page,
+html.wallpaper-active .task-form-page,
+html.wallpaper-active .exec-detail-page,
+html.wallpaper-active .task-overview,
+html.wallpaper-active .detail-actions,
+html.wallpaper-active .form-footer,
+html.wallpaper-active .exec-detail-actions,
+html.wallpaper-active .proxy-panel-content,
+html.wallpaper-active .settings-page__header,
+html.wallpaper-active .image-preview-body,
+html.wallpaper-active .audio-preview-body,
+html.wallpaper-active .pdf-preview-container,
+html.wallpaper-active .pdf-error,
+html.wallpaper-active .office-preview-container,
+html.wallpaper-active .usage-stats-panel,
+html.wallpaper-active .stats-header {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* bg-secondary page-level bars / page roots (settings list surfaces) */
+html.wallpaper-active .proxy-header,
+html.wallpaper-active .settings-index,
+html.wallpaper-active .settings-category,
+html.wallpaper-active .settings-agents-index,
+html.wallpaper-active .settings-agent-detail,
+html.wallpaper-active .terminal-tab-bar,
+html.wallpaper-active .drilldown-header,
+html.wallpaper-active .manage-tabs,
+html.wallpaper-active .toc-dock {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* bg-tertiary file-manager toolbar */
+html.wallpaper-active .dir-toolbar {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+
+/* file-browser bottom nav bar uses bg-primary */
+html.wallpaper-active .dir-nav-bottom {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* OfficePreview re-encodes its wrappers with !important deep overrides —
+   must match with !important inside the active scope. The wrappers live in
+   the DOM under .office-preview-body (any depth), so a plain descendant
+   selector covers them. */
+html.wallpaper-active .office-preview-body .docx-wrapper,
+html.wallpaper-active .office-preview-body .pptx-preview-wrapper {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent) !important;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 4px;

@@ -61,6 +61,26 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.TLS.CertDir = DefaultTLSCertDir()
 	}
 
+	// --- Fonts ---
+	// Custom font directory defaults to <DataDir>/fonts when unset.
+	if cfg.Fonts.Dir == "" {
+		cfg.Fonts.Dir = DefaultFontsDir()
+	}
+
+	// --- Appearance (custom wallpaper) ---
+	// PanelOpacity: default 0.85 (85% opacity for main work panels when a
+	// wallpaper is set). An explicit user value (including 0 = fully opaque is
+	// NOT a valid target here; range 0.7–1.0 is enforced by PATCH validation)
+	// must survive zero-value handling, so only fill when truly unset and the
+	// key was not explicitly present in the config file. Treat any missing or
+	// zero value as "use default". PanelOpacity intentionally has no presence
+	// edge: 0 is outside the valid PATCH range, so a hand-edited 0 can only
+	// mean "unset".
+	if cfg.Appearance.PanelOpacity <= 0 {
+		cfg.Appearance.PanelOpacity = 0.85
+	}
+	// WallpaperFile empty is the intentional default (no wallpaper set).
+
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)
 	if cfg.DevPort == 0 {

@@ -210,6 +210,59 @@ func TestExtractClaudeMeta_ModelUsage(t *testing.T) {
 	assert.Equal(t, "deepseek-v4-flash", ext.Trace.ResponseModelID)
 }
 
+func TestExtractClaudeMeta_AggregateWinsOverModelUsage(t *testing.T) {
+	// When both top-level aggregate token_count AND per-model entries are
+	// present but disagree, the aggregate is authoritative (per-model counters
+	// must never be merged in — that is what produced total==10x input rows).
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model": "claude-opus-4-6",
+					"token_count": map[string]any{
+						"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352,
+					},
+				},
+			},
+			"token_count": map[string]any{
+				"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627,
+			},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 45575, ext.Usage.InputTokens, "aggregate wins over per-model")
+	assert.Equal(t, 52, ext.Usage.OutputTokens)
+	assert.Equal(t, 45627, ext.Usage.TotalTokens)
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "claude-opus-4-6", ext.Trace.ResponseModelID)
+}
+
+func TestExtractClaudeMeta_ZeroAggregateFallsBackToModelUsage(t *testing.T) {
+	// Top-level token_count present but all-zero (a zeroed final snapshot):
+	// must still fall back to the per-model entry that carries real counters.
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model": "claude-sonnet-4-6",
+					"token_count": map[string]any{
+						"inputTokens": 142, "outputTokens": 44, "totalTokens": 40904,
+					},
+				},
+			},
+			"token_count": map[string]any{},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 142, ext.Usage.InputTokens, "per-model counters used when aggregate is all-zero")
+	assert.Equal(t, 44, ext.Usage.OutputTokens)
+	assert.Equal(t, 40904, ext.Usage.TotalTokens)
+}
+
 func TestExtractClaudeMeta_ModelUsage_NoAggregate(t *testing.T) {
 	// model_usage present but no top-level token_count: usage still extracted
 	// from the per-model entries, model name still surfaced.
@@ -478,4 +531,272 @@ func TestMapACPSessionUpdate_UsageUpdate_NoMeta(t *testing.T) {
 	default:
 		t.Fatal("expected usage_update event")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// MergeUsageState — partial-update merge semantics (context panel zeros bug)
+// ---------------------------------------------------------------------------
+
+// TestMergeUsageState_NakedZeroDoesNotRegressExisting verifies the core
+// regression: a naked usage_update (used=0, size=0, cost only) must NOT wipe a
+// previously-known context window. This is the "context panel shows all zeros
+// after many turns" bug — CodeBuddy sends such naked notifications between the
+// informative ones, and unconditional overwrite let a trailing naked one wipe
+// {used:300k, size:1e6} to {0,0}.
+func TestMergeUsageState_NakedZeroDoesNotRegressExisting(t *testing.T) {
+	existing := &UsageState{
+		Used:            300000,
+		Size:            1000000,
+		InputTokens:     301000,
+		OutputTokens:    5000,
+		Cost:            5.0,
+		CacheHitTokens:  290000,
+		UsageByCategory: map[string]int64{"conversation": 250000, "tools": 50000},
+	}
+	// Naked notification: only cost, used=0, size=0, no _meta.
+	naked := &UsageState{Used: 0, Size: 0, Cost: 6.08}
+
+	merged := MergeUsageState(existing, naked)
+
+	// Known window is a session invariant — never regressed by absent values.
+	assert.Equal(t, 1000000, merged.Size, "size must stay sticky")
+	assert.Equal(t, 300000, merged.Used, "used must not regress to 0")
+	// Token/cache/category fields keep existing values (partial notification omitted them).
+	assert.Equal(t, 301000, merged.InputTokens)
+	assert.Equal(t, 5000, merged.OutputTokens)
+	assert.Equal(t, 290000, merged.CacheHitTokens)
+	assert.Equal(t, int64(250000), merged.UsageByCategory["conversation"])
+	// Cost is monotonic cumulative — the naked notification's higher cost applies.
+	assert.Equal(t, 6.08, merged.Cost)
+}
+
+// TestMergeUsageState_UsedZeroButCategoryFallback verifies that when a
+// notification carries used=0 but provides the usageByCategory breakdown
+// (CodeBuddy's authoritative context occupancy), used is derived from the
+// category sum instead of staying 0.
+func TestMergeUsageState_UsedZeroButCategoryFallback(t *testing.T) {
+	existing := &UsageState{Used: 1000, Size: 200000, Cost: 1.0}
+	incoming := &UsageState{
+		Used:            0,
+		Size:            200000,
+		UsageByCategory: map[string]int64{"conversation": 8000, "tools": 2000, "systemPrompt": 500},
+	}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 10500, merged.Used, "used should fall back to the usageByCategory sum")
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 1.0, merged.Cost, "cost must not regress when incoming cost is 0")
+	assert.Equal(t, int64(8000), merged.UsageByCategory["conversation"])
+}
+
+// TestMergeUsageState_RealUpdateApplies verifies that a genuinely informative
+// notification (non-zero used/size) still updates the state normally.
+func TestMergeUsageState_RealUpdateApplies(t *testing.T) {
+	existing := &UsageState{Used: 1000, Size: 200000, Cost: 1.0}
+	incoming := &UsageState{Used: 15000, Size: 200000, Cost: 1.2}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 15000, merged.Used)
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 1.2, merged.Cost)
+}
+
+// TestMergeUsageState_ExistingNil verifies the first-observation path: an
+// incoming notification is adopted as-is when there is no prior state.
+func TestMergeUsageState_ExistingNil(t *testing.T) {
+	incoming := &UsageState{
+		Used: 0, Size: 0, Cost: 0.5,
+		UsageByCategory: map[string]int64{"conversation": 100},
+	}
+
+	merged := MergeUsageState(nil, incoming)
+
+	require.NotNil(t, merged)
+	assert.Equal(t, 0, merged.Used, "no existing state — nothing to protect, incoming used as-is")
+	assert.Equal(t, int64(100), merged.UsageByCategory["conversation"])
+
+	// The result must not alias the input map (later mutations must not leak).
+	merged.UsageByCategory["conversation"] = 999
+	assert.Equal(t, int64(100), incoming.UsageByCategory["conversation"])
+}
+
+// TestMergeUsageState_ZeroCategoryKeepsExisting verifies an incoming empty
+// (absent) category breakdown keeps the existing one rather than clearing it.
+func TestMergeUsageState_ZeroCategoryKeepsExisting(t *testing.T) {
+	existing := &UsageState{
+		Used:            100,
+		Size:            200000,
+		UsageByCategory: map[string]int64{"conversation": 80},
+	}
+	incoming := &UsageState{Used: 100, Size: 200000} // no category
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, int64(80), merged.UsageByCategory["conversation"])
+}
+
+// TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState verifies the
+// notification-path guard: a naked used=0/size=0 usage_update must not wipe a
+// previously-cached non-zero window on the connection.
+func TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+	// First: a real usage_update establishes the window.
+	conn.SetCachedUsageState(&UsageState{Used: 300000, Size: 1000000, InputTokens: 301000, Cost: 5.0})
+
+	// Then a naked notification arrives (used=0, size=0, cost only).
+	naked := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Used: 0, Size: 0, Cost: &acp.Cost{Amount: 6.08}},
+	}
+	mapACPSessionUpdate(naked, ch, context.Background(), conn, nil)
+
+	// The forwarded event reflects what the agent actually said.
+	select {
+	case evt := <-ch:
+		require.NotNil(t, evt.Usage)
+		assert.Equal(t, 0, evt.Usage.Used, "forwarded event keeps the agent's raw values")
+		assert.Equal(t, 0, evt.Usage.Size)
+	default:
+		t.Fatal("expected usage_update event")
+	}
+
+	// But the cached state must retain the previously-known window.
+	cached := conn.GetCachedUsageState()
+	require.NotNil(t, cached)
+	assert.Equal(t, 1000000, cached.Size, "cached window must survive a naked notification")
+	assert.Equal(t, 300000, cached.Used, "cached used must survive a naked notification")
+	assert.Equal(t, 6.08, cached.Cost, "cost is monotonic — the naked notification's higher cost applies")
+}
+
+// TestMergeUsageState_AuthoritativeWindowWithZeroUsed verifies the distinction
+// between a real empty/compacted context (used=0 with a reported window
+// size>0 — trust it) and a naked notification (size=0 — must not regress).
+func TestMergeUsageState_AuthoritativeWindowWithZeroUsed(t *testing.T) {
+	existing := &UsageState{Used: 300000, Size: 1000000, Cost: 5.0}
+	// Agent reports a real window with empty context (new session/compaction).
+	incoming := &UsageState{Used: 0, Size: 200000, Cost: 5.5}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 200000, merged.Size, "a reported window replaces the stale one")
+	assert.Equal(t, 0, merged.Used, "a genuine 0 used within a reported window is trusted — not sticky")
+	assert.Equal(t, 5.5, merged.Cost)
+}
+
+// TestMergeUsageState_NonZeroDropIsAccepted verifies that a genuine non-zero
+// used drop (turn-to-turn fluctuation) is applied, not mistakenly sticky.
+func TestMergeUsageState_NonZeroDropIsAccepted(t *testing.T) {
+	existing := &UsageState{Used: 50000, Size: 200000, Cost: 3.0}
+	incoming := &UsageState{Used: 30000, Size: 200000, Cost: 3.2}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 30000, merged.Used, "a genuine non-zero drop within a reported window is accepted")
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 3.2, merged.Cost)
+}
+
+// TestMergeUsageState_NakedZeroWithWindowBackfill verifies that a naked
+// (size=0, used=0) notification keeps the known window, while a notification
+// with a window plus a populated usageByCategory (but used omitted) backfills
+// used from the category sum.
+func TestMergeUsageState_NakedZeroWithWindowBackfill(t *testing.T) {
+	// Naked (size=0, used=0) — keep existing.
+	existing := &UsageState{Used: 300000, Size: 1000000, Cost: 5.0}
+	merged := MergeUsageState(existing, &UsageState{Used: 0, Size: 0, Cost: 5.5})
+	assert.Equal(t, 300000, merged.Used)
+	assert.Equal(t, 1000000, merged.Size)
+
+	// Window + populated category but used omitted — backfill from the sum.
+	existing2 := &UsageState{Used: 1000, Size: 200000, Cost: 5.0}
+	incoming2 := &UsageState{
+		Size:            200000,
+		Used:            0,
+		UsageByCategory: map[string]int64{"conversation": 8000, "tools": 2000},
+	}
+	merged2 := MergeUsageState(existing2, incoming2)
+	assert.Equal(t, 10000, merged2.Used, "used backfilled from the usageByCategory sum")
+	assert.Equal(t, 200000, merged2.Size)
+}
+
+// ---------------------------------------------------------------------------
+// metaMergeExtraction — latest-informative-snapshot semantics
+// ---------------------------------------------------------------------------
+
+func usageExt(i, o, t int) *metaExtraction {
+	return &metaExtraction{Usage: &metaTokenUsage{Present: true, InputTokens: i, OutputTokens: o, TotalTokens: t}}
+}
+
+func TestMetaMergeExtraction_LatestInformativeSnapshotReplaces(t *testing.T) {
+	// A later informative notification is a full re-report of current usage and
+	// must REPLACE the accumulator wholesale — even when an earlier one carried
+	// a larger input (the pre-change max-stitch kept the bigger value and
+	// produced internally inconsistent input/output/total).
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	metaMergeExtraction(&acc, usageExt(32752, 30, 32782))
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32752, acc.Usage.InputTokens, "latest input wins, not the max")
+	assert.Equal(t, 30, acc.Usage.OutputTokens)
+	assert.Equal(t, 32782, acc.Usage.TotalTokens)
+	assert.Equal(t, 32782, acc.Usage.InputTokens+acc.Usage.OutputTokens, "row stays internally consistent")
+}
+
+func TestMetaMergeExtraction_NakedNotificationDoesNotRegress(t *testing.T) {
+	// A cost-only "naked" notification (all token counters zero) must not wipe
+	// the adopted token snapshot.
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	naked := &metaExtraction{Usage: &metaTokenUsage{Present: true, Credit: 1.64}}
+	metaMergeExtraction(&acc, naked)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32635, acc.Usage.InputTokens, "naked notification must not regress input")
+	assert.Equal(t, 84, acc.Usage.OutputTokens)
+	assert.Equal(t, 32719, acc.Usage.TotalTokens)
+}
+
+func TestMetaMergeExtraction_CategoryIndependentOfTokenSnapshot(t *testing.T) {
+	// CodeBuddy may deliver usageByCategory on a notification whose token
+	// counters are zero; the category block must still be adopted.
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	catOnly := &metaExtraction{Category: &metaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 24108, "conversation": 5447}}}
+	metaMergeExtraction(&acc, catOnly)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32635, acc.Usage.InputTokens, "token snapshot kept")
+	require.NotNil(t, acc.Category)
+	assert.Equal(t, int64(24108), acc.Category.Categories["tools"])
+	assert.Equal(t, int64(5447), acc.Category.Categories["conversation"])
+}
+
+func TestExtractClaudeMeta_MultiModelUsageNoStitching(t *testing.T) {
+	// Two per-model entries each with their own cumulative-ish total: without a
+	// top-level aggregate the FIRST informative entry is adopted as the
+	// snapshot — never max-stitched across entries (the old code produced
+	// total == 10x input outliers here).
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model":       "claude-sonnet-4-6",
+					"token_count": map[string]any{"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627},
+				},
+				map[string]any{
+					"model":       "claude-opus-4-6",
+					"token_count": map[string]any{"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352},
+				},
+			},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 45575, ext.Usage.InputTokens)
+	assert.Equal(t, 52, ext.Usage.OutputTokens)
+	assert.Equal(t, 45627, ext.Usage.TotalTokens)
+	assert.Equal(t, 45627, ext.Usage.InputTokens+ext.Usage.OutputTokens, "single entry snapshot stays consistent")
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "claude-sonnet-4-6", ext.Trace.ResponseModelID)
 }

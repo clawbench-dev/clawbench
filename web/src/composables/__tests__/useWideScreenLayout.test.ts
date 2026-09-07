@@ -266,8 +266,8 @@ describe('activePane focus tracking', () => {
 
 describe('wideDockTabOrder', () => {
   it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
-    const all = wideDockTabOrder(['tasks', 'terminal', 'proxy', 'settings'])
-    expect(all).toEqual(['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'settings'])
+    const all = wideDockTabOrder(['tasks', 'terminal', 'proxy', 'stats', 'settings'])
+    expect(all).toEqual(['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
     expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
   })
 

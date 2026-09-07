@@ -680,6 +680,108 @@ func TestSQLiteStore_DeleteChunksBySessionIDs_EmptyList(t *testing.T) {
 	assert.Equal(t, int64(0), deleted)
 }
 
+// ---------- DeleteChunksBySessionAfterMessage (rewind truncation cleanup) ----------
+
+func TestSQLiteStore_DeleteChunksBySessionAfterMessage(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		makeTestChunk("sess-a", 1, 0, "content a1"),
+		makeTestChunk("sess-a", 2, 1, "content a2"),
+		makeTestChunk("sess-a", 3, 0, "content a3"),
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Anchor at message 1 — chunks of messages 2 and 3 must be removed.
+	deleted, err := store.DeleteChunksBySessionAfterMessage("sess-a", 1)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 1, count)
+}
+
+func TestSQLiteStore_DeleteChunksBySessionAfterMessage_ScopedToSession(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		makeTestChunk("sess-a", 1, 0, "content a1"),
+		makeTestChunk("sess-a", 2, 0, "content a2"),
+		makeTestChunk("sess-b", 1, 0, "content b1"),
+		makeTestChunk("sess-b", 2, 0, "content b2"),
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Deleting sess-a after message 1 must NOT touch sess-b's chunks.
+	deleted, err := store.DeleteChunksBySessionAfterMessage("sess-a", 1)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 3, count)
+
+	// sess-b chunks all survive.
+	var sessBCount int
+	err = store.db.QueryRow("SELECT COUNT(*) FROM rag_chunks WHERE session_id = ?", "sess-b").Scan(&sessBCount)
+	require.NoError(t, err)
+	assert.Equal(t, 2, sessBCount)
+}
+
+func TestSQLiteStore_DeleteChunksBySessionAfterMessage_NoTrailingChunks(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		makeTestChunk("sess-a", 1, 0, "content a1"),
+		makeTestChunk("sess-a", 2, 0, "content a2"),
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Anchor at the last message (2) — nothing after it, nothing deleted.
+	deleted, err := store.DeleteChunksBySessionAfterMessage("sess-a", 2)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 2, count)
+}
+
+func TestSQLiteStore_DeleteChunksBySessionAfterMessage_SyncsFTS(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		{
+			SessionID: "sess-a", MessageID: 1, ChunkText: "database query",
+			ChunkTextSegmented: "database query", ChunkIndex: 0,
+			TokenCount: 2, Embedding: makeTestEmbedding(), HasEmbedding: true,
+			ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+			CreatedAt: time.Now().Truncate(time.Millisecond),
+		},
+		{
+			SessionID: "sess-a", MessageID: 2, ChunkText: "database search",
+			ChunkTextSegmented: "database search", ChunkIndex: 0,
+			TokenCount: 2, Embedding: makeTestEmbedding(), HasEmbedding: true,
+			ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+			CreatedAt: time.Now().Truncate(time.Millisecond),
+		},
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Delete after message 1 — only message 2's chunk is removed; message 1
+	// (the preserved anchor) must remain searchable.
+	deleted, err := store.DeleteChunksBySessionAfterMessage("sess-a", 1)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	hits, err := store.SearchFTS("database", 5, "", "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(1), hits[0].MessageID)
+}
+
 // ---------- ChunkCount ----------
 
 func TestSQLiteStore_ChunkCount_Empty(t *testing.T) {

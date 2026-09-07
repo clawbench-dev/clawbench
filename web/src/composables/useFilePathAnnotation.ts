@@ -781,7 +781,6 @@ export function useFilePathAnnotation() {
         stripCodeString,
         openFilePath,
         navToFileInManager,
-        dispatchScrollToLine,
         clearVerifiedCache,
     }
 }
@@ -987,13 +986,4 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
     }, 50)
 
     return true
-}
-
-/**
- * Dispatch a scroll-to-line event after a file has been opened.
- */
-export function dispatchScrollToLine(line: number, lineEnd?: number): void {
-    setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line, lineEnd } }))
-    }, 100)
 }

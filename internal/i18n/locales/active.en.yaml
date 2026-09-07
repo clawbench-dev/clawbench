@@ -46,6 +46,9 @@ DirectoryNotFound: Directory not found
 InvalidFilePath: Invalid file path
 FileTooLargeOrInvalid: File too large or invalid form
 NoFileProvided: No file provided
+FileTooLargeShort: File too large
+InvalidImage: "Unsupported image: {{.Error}}"
+WriteFailed: "Failed to save: {{.Error}}"
 UploadSaveFailed: "Unable to save file: {{.Error}}"
 FileMustHaveExtension: File must have an extension
 FileTypeNotAllowed: "File type not allowed: {{.Ext}}"
@@ -103,6 +106,8 @@ PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
 ForkPrefix: "🔀 "
 InvalidForkPoint: Invalid fork point — message not found, not a user or assistant message, or still streaming
+InvalidRewindPoint: Invalid rewind point — message not found, not an assistant message, or still streaming
+NothingToRewind: Nothing to rewind — this is the last message in the session
 InvalidAgentID: Invalid agent ID
 Session: Untitled Session
 SearchQueryRequired: Search query is required

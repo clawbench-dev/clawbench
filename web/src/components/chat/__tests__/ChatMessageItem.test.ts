@@ -804,6 +804,30 @@ describe('ChatMessageItem', () => {
       expect(wrapper.emitted('fork-from-message')![0]).toEqual([msg])
     })
 
+    it('emits rewind-from-message when rewind button is clicked', async () => {
+      const msg = { id: 'rw1', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg })
+      await wrapper.find('button[title="chat.actions.rewindSession"]').trigger('click')
+      expect(wrapper.emitted('rewind-from-message')).toBeTruthy()
+      expect(wrapper.emitted('rewind-from-message')![0]).toEqual([msg])
+    })
+
+    it('disables rewind button for the last message (nothing to truncate)', async () => {
+      const msg = { id: 'rw-last', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg, isLastMessage: true })
+      const btn = wrapper.find('button[title="chat.session.nothingToRewind"]')
+      expect(btn.exists()).toBe(true)
+      expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('rewind-from-message')).toBeFalsy()
+    })
+
+    it('does not emit rewind-from-message for streaming assistant messages', () => {
+      const msg = { id: 'rw2', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: true }
+      const wrapper = createWrapper({ msg })
+      expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(false)
+    })
+
     it('emits show-metadata when info button is clicked', async () => {
       const msg = { id: 'mi1', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
       const wrapper = createWrapper({ msg })

@@ -816,7 +816,10 @@ onUnmounted(() => {
 .lightbox {
     position: fixed;
     inset: 0;
-    z-index: 3000;
+    /* Above all overlays/dialogs (CompletionPopover z 9998, etc.): the popover's
+       expanded markdown summary renders lightbox-able images, and the full-screen
+       viewer must sit on top when opened from there. */
+    z-index: 10000;
     display: flex;
     align-items: center;
     justify-content: center;

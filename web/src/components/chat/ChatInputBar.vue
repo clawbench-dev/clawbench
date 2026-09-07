@@ -1526,6 +1526,23 @@ function injectToInput(text) {
   })
 }
 
+/** Replace the input content with the given text and focus the textarea.
+ *  Used by the rewind/回溯 prefill: after truncating a session at an earlier
+ *  assistant message, the first removed user message is restored here for
+ *  re-editing (replace + focus, unlike injectToInput which appends). */
+function prefillInput(text) {
+  inputText.value = text ?? ''
+  if (props.currentSessionId && text) {
+    draftCache.set(props.currentSessionId, text)
+  } else if (props.currentSessionId) {
+    draftCache.delete(props.currentSessionId)
+  }
+  resetInputHistory()
+  nextTick(() => {
+    textareaRef.value?.focus()
+  })
+}
+
 function toggleQuickMenu() {
   showQuickMenu.value = !showQuickMenu.value
 }
@@ -1617,6 +1634,7 @@ defineExpose({
   hasDraft: (sessionId) => draftCache.has(sessionId),
   getDraft: (sessionId) => draftCache.get(sessionId) ?? null,
   injectToInput,
+  prefillInput,
   handleQuickSendClick,
   handleQuickSendInject,
   handleArchive,

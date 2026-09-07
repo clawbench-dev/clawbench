@@ -51,8 +51,8 @@
     <JumpDirDialog :open="jumpOpen" :placeholder="t('jump.placeholderBrowse')" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
 
     <template #footer>
-      <button class="cancel-btn" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="confirm-btn" @click="confirm">
+      <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
+      <button class="fbtn fbtn-primary" @click="confirm">
         <span>{{ t('common.confirm') }}</span>
       </button>
     </template>
@@ -409,40 +409,4 @@ onBeforeUnmount(() => {
   color: var(--text-muted, #999);
   font-size: 14px;
 }
-
-.cancel-btn {
-  padding: 7px 14px;
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #666);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .cancel-btn:hover { background: var(--bg-secondary); }
-}
-
-.confirm-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .confirm-btn:hover { background: #0055aa; }
-}
-.confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

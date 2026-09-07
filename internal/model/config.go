@@ -46,6 +46,13 @@ type Config struct {
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`
 	} `yaml:"tls"`
+	Fonts struct {
+		Dir string `yaml:"dir"` // Directory containing user-supplied font files (default: <DataDir>/fonts)
+	} `yaml:"fonts"`
+	Appearance struct {
+		WallpaperFile string  `yaml:"wallpaper_file"` // Active custom wallpaper file name (bare name in <DataDir>/theme); empty = not set
+		PanelOpacity  float64 `yaml:"panel_opacity"`  // Main work-panel opacity multiplier (0.7–1.0; default 0.85). Only meaningful when a wallpaper is set.
+	} `yaml:"appearance"`
 	DevPort int `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
 	Upload  struct {
 		MaxSizeMB int `yaml:"max_size_mb"` // Maximum file upload size in MB (default: 100)

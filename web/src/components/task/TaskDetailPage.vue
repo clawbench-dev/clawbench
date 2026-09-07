@@ -22,41 +22,41 @@
     </div>
     <!-- Fixed bottom action bar (moved up from TaskOverviewTab) -->
     <div class="detail-actions">
-      <button class="action-btn" @click="$emit('edit')" :title="t('common.edit')">
+      <button class="fbtn" @click="$emit('edit')" :title="t('common.edit')">
         <Pencil :size="14" />
         <span class="action-text">{{ t('common.edit') }}</span>
       </button>
 
       <template v-if="taskStatus === 'active'">
-        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
-        <button class="action-btn warn" :disabled="actionLoading" @click="pauseTask" :title="t('task.pause')">
+        <button class="fbtn fbtn-warn" :disabled="actionLoading" @click="pauseTask" :title="t('task.pause')">
           <Pause :size="14" />
           <span class="action-text">{{ t('task.pause') }}</span>
         </button>
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="fbtn fbtn-danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
           <span class="action-text">{{ t('task.delete') }}</span>
         </button>
       </template>
       <template v-else-if="taskStatus === 'paused'">
-        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
-        <button class="action-btn success" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
+        <button class="fbtn fbtn-success" :disabled="actionLoading" @click="resumeTask" :title="t('task.resume')">
           <Power :size="14" />
           <span class="action-text">{{ t('task.resume') }}</span>
         </button>
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="fbtn fbtn-danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
           <span class="action-text">{{ t('task.delete') }}</span>
         </button>
       </template>
       <template v-else-if="taskStatus === 'completed'">
-        <button class="action-btn danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
+        <button class="fbtn fbtn-danger" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
           <span class="action-text">{{ t('task.delete') }}</span>
         </button>
@@ -75,6 +75,7 @@ import TaskOverviewTab from '@/components/task/TaskOverviewTab.vue'
 import TaskHistoryTab from '@/components/task/TaskHistoryTab.vue'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
+import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
 const { loadTasks } = useTaskTab()
@@ -241,87 +242,7 @@ async function onRefresh() {
   overflow-x: auto;
 }
 
-.action-btn {
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-primary, #1a1a1a);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 10px;
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
 .action-text {
   line-height: 1;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .action-btn:hover:not(:disabled) {
-    background: var(--border-color, #e5e5e5);
-    transform: translateY(-1px);
-  }
-}
-
-.action-btn:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.action-btn.accent {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    color: #fff;
-  }
-}
-
-.action-btn.warn {
-  background: color-mix(in srgb, #ca8a04 15%, var(--bg-secondary, #f1f3f5));
-  color: #ca8a04;
-}
-
-@media (hover: hover) {
-  .action-btn.warn:hover:not(:disabled) {
-    background: color-mix(in srgb, #ca8a04 30%, var(--bg-secondary, #f1f3f5));
-  }
-}
-
-.action-btn.success {
-  background: color-mix(in srgb, #16a34a 15%, var(--bg-secondary, #f1f3f5));
-  color: #16a34a;
-}
-
-@media (hover: hover) {
-  .action-btn.success:hover:not(:disabled) {
-    background: color-mix(in srgb, #16a34a 30%, var(--bg-secondary, #f1f3f5));
-  }
-}
-
-.action-btn.danger {
-  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
-  color: #b91c1c;
-}
-
-@media (hover: hover) {
-  .action-btn.danger:hover:not(:disabled) {
-    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
-  }
 }
 </style>

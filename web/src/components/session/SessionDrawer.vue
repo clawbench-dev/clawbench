@@ -9,7 +9,7 @@
       >
         <template #actions>
           <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
-            <Pin :size="16" />
+            <PanelRight :size="16" />
           </button>
         </template>
       </SessionListHeader>
@@ -41,7 +41,7 @@
 <script setup>
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Pin } from 'lucide-vue-next'
+import { PanelRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'

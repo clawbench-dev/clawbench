@@ -16,6 +16,7 @@ import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
+import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import {
@@ -32,12 +33,24 @@ import {
 export type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error'
 export type PreviewMode = 'transient' | 'pinned' | 'sheet'
 export type PreviewErrorCode = 'binary' | 'too-large' | 'not-file' | 'not-found' | 'access-denied' | 'network'
+export type PreviewRenderMode = 'rendered' | 'source'
 
 export interface PreviewTarget {
   filePath: string
   lineStart?: number
   lineEnd?: number
   anchorEl?: HTMLElement
+}
+
+/** Whether the preview target is a Markdown file (by extension). */
+export function isMarkdownTarget(target: PreviewTarget | null): boolean {
+  const filePath = target?.filePath || ''
+  return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+}
+
+/** Whether the preview target carries an explicit line annotation. */
+export function hasLineRange(target: PreviewTarget | null): boolean {
+  return !!(target && target.lineStart && Number.isInteger(target.lineStart) && target.lineStart > 0)
 }
 
 export interface UseCodeLinkPreviewOptions {
@@ -71,6 +84,34 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const extraBelowLines = ref(0)
   const placement = ref<CardPlacementResult | null>(null)
   const isPinned = computed(() => mode.value === 'pinned')
+
+  // ── Rendered-vs-source view ─────────────────────────────────────────────
+  // The preview has two body renderers: the line-based code slice (source)
+  // and a rendered .markdown-body read-only document view (Markdown only).
+  // A Markdown file WITHOUT a line range defaults to the rendered view; with a
+  // line range it opens as the code slice so the user can pinpoint the
+  // referenced lines — but the rendered view is still reachable via the eye
+  // toggle (it renders the same line-slice window the code view shows).
+  const renderMode = ref<PreviewRenderMode>('source')
+
+  const isMarkdown = computed(() => {
+    const filePath = target.value?.filePath || ''
+    return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+  })
+
+  const hasExplicitLineRange = computed(() => {
+    const t = target.value
+    return !!(t && t.lineStart && Number.isInteger(t.lineStart) && t.lineStart > 0)
+  })
+
+  /** Whether the current target is a Markdown file (renderable in the doc view). */
+  const canRenderMarkdown = computed(() => isMarkdown.value)
+
+  // A Markdown file default-renders unless the annotation pinned a line range
+  // (source slice is the useful view then). Re-evaluate on each target change.
+  const effectiveRenderMode = computed<PreviewRenderMode>(() =>
+    canRenderMarkdown.value ? renderMode.value : 'source'
+  )
 
   // Timers & concurrency
   let leaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -223,6 +264,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraBelowLines.value = 0
     visible.value = true
 
+    // Markdown files without a pinned line range default to the rendered
+    // document view on every open; anything else (line-annotated paths, code)
+    // stays in the source slice view.
+    renderMode.value = isMarkdownTarget(newTarget) && !hasLineRange(newTarget) ? 'rendered' : 'source'
+
     // Once pinned (including after dragging), retain the current placement
     // while switching to another link. The card is reused in-place.
     if (mode.value !== 'sheet' && !wasPinned) {
@@ -257,6 +303,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraBelowLines.value = 0
     placement.value = null
     mode.value = 'transient'
+    renderMode.value = 'source'
 
     isPointerInTarget = false
     isPointerInCard = false
@@ -291,6 +338,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const togglePin = () => {
     if (mode.value === 'pinned') unpin()
     else pin()
+  }
+
+  /** Toggle between the rendered document and the source slice (Markdown only). */
+  const toggleRenderMode = () => {
+    if (!canRenderMarkdown.value) return
+    renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
   }
 
   const refresh = () => {
@@ -573,11 +626,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     extraAboveLines,
     extraBelowLines,
     placement,
+    renderMode,
+    isMarkdown,
+    hasExplicitLineRange,
+    canRenderMarkdown,
+    effectiveRenderMode,
     showPreview,
     close,
     pin,
     unpin,
     togglePin,
+    toggleRenderMode,
     refresh,
     expandContext,
     shrinkContext,
@@ -601,4 +660,51 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     bindEvents,
     unbindEvents,
   }
+}
+
+/**
+ * Minimal surface of useCodeLinkPreview() consumed by the shared click
+ * interceptor. Kept as a structural interface so containers (chat, markdown
+ * preview, task prompt / execution detail) do not need to name the full
+ * composable return type.
+ */
+export interface CodeLinkPreviewController {
+  enabled: { value: boolean }
+  isTouchDevice: () => boolean
+  handleClick: (event: MouseEvent) => void
+}
+
+/**
+ * Shared interceptor for clicks on verified file-path annotations
+ * (`.chat-file-path[data-file-path]` with `data-path-type="file"`).
+ *
+ * The composable binds a capture-phase click listener once its container ref is
+ * mounted; until that binding is in place this helper is the fallback used by
+ * container-level click handlers (chat / markdown preview / task views), so
+ * every surface shares one decision instead of four copies.
+ *
+ * Only verified *file* paths are intercepted — directories and not-yet-verified
+ * paths return false and fall through to the container's original handlers.
+ * Returns true when the event was handled by the preview (open it).
+ */
+export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLinkPreviewController): boolean {
+  if (!preview.enabled.value) return false
+  const isTouch = preview.isTouchDevice()
+  const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
+  const target = event.target as HTMLElement | null
+  const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]') ?? null
+  const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]') ?? null
+  const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+  // Desktop: modifier-click on either the path text or the open button pins the
+  // preview; plain click on the path text opens a transient preview.
+  if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
+    preview.handleClick(event)
+    return true
+  }
+  // Touch: tapping the path text opens the bottom-sheet preview.
+  if (isVerifiedFile && isTouch && pathEl) {
+    preview.handleClick(event)
+    return true
+  }
+  return false
 }

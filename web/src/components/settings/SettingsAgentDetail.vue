@@ -21,11 +21,11 @@
     </SettingsCard>
     <!-- Copy / delete on the same row -->
     <div class="settings-agent-detail__actions">
-      <button class="settings-agent-detail__action-btn" @click="startCopy">
+      <button class="fbtn settings-agent-detail__action-btn" @click="startCopy">
         <Copy :size="16" class="settings-agent-detail__action-icon" />
         <span>{{ t('settings.items.agentCopy') }}</span>
       </button>
-      <button class="settings-agent-detail__delete-btn" @click="handleDelete">
+      <button class="fbtn fbtn-danger settings-agent-detail__delete-btn" @click="handleDelete">
         <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
         <span>{{ t('settings.items.agentDelete') }}</span>
       </button>
@@ -51,6 +51,7 @@ import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { apiGet } from '@/utils/api'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{
   agentId: string
@@ -419,29 +420,6 @@ async function handleDelete() {
 .settings-agent-detail__action-btn,
 .settings-agent-detail__delete-btn {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-}
-
-.settings-agent-detail__delete-btn {
-  color: #e74c3c;
-}
-
-@media (hover: hover) {
-  .settings-agent-detail__action-btn:hover,
-  .settings-agent-detail__delete-btn:hover {
-    background: var(--bg-tertiary);
-  }
 }
 
 .settings-agent-detail__action-icon,

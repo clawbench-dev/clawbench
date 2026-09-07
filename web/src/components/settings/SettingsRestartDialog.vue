@@ -7,10 +7,10 @@
         <li v-for="field in displayFields" :key="field">{{ field }}</li>
       </ul>
       <div class="settings-restart-dialog__actions">
-        <button class="settings-restart-dialog__btn settings-restart-dialog__btn--later" @click="$emit('later')">
+        <button class="fbtn settings-restart-dialog__btn settings-restart-dialog__btn--later" @click="$emit('later')">
           {{ t('settings.restartLater') }}
         </button>
-        <button class="settings-restart-dialog__btn settings-restart-dialog__btn--restart" @click="$emit('restart')">
+        <button class="fbtn fbtn-primary settings-restart-dialog__btn settings-restart-dialog__btn--restart" @click="$emit('restart')">
           {{ t('settings.restartNow') }}
         </button>
       </div>
@@ -23,6 +23,7 @@ import { computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { serverFieldToLabelKey } from './settingsFieldMap'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{
   changedFields: string[]
@@ -113,44 +114,8 @@ const displayFields = computed(() =>
   gap: 8px;
 }
 
+/* Layout only — visuals come from the shared .fbtn pills. */
 .settings-restart-dialog__btn {
   width: 100%;
-  padding: 12px 16px;
-  border: none;
-  border-radius: 10px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-}
-
-.settings-restart-dialog__btn--later {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-@media (hover: hover) {
-  .settings-restart-dialog__btn--later:hover {
-    background: var(--bg-secondary);
-  }
-}
-
-.settings-restart-dialog__btn--later:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-restart-dialog__btn--restart {
-  background: var(--accent-color);
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .settings-restart-dialog__btn--restart:hover {
-    background: var(--accent-hover);
-  }
-}
-
-.settings-restart-dialog__btn--restart:active {
-  background: var(--accent-hover);
 }
 </style>

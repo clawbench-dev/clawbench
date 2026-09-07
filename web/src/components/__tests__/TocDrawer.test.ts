@@ -41,7 +41,7 @@ vi.mock('@/components/TocPanel.vue', () => ({
   default: defineComponent({
     name: 'TocPanel',
     props: { file: Object, pdfOutline: Array },
-    emits: ['jump', 'jumpPage'],
+    emits: ['jump', 'jumpPage', 'activated'],
     template: '<div class="toc-panel-stub" />',
   }),
 }))
@@ -99,6 +99,18 @@ describe('TocDrawer', () => {
     const panel = wrapper.findComponent({ name: 'TocPanel' })
     panel.vm.$emit('jumpPage', 3)
     expect(wrapper.emitted('jumpPage')).toEqual([[3]])
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('closes when TocPanel activates an item in-panel (rendered markdown has heading DOM)', () => {
+    // In the rendered markdown preview TocPanel scrolls the heading itself and
+    // never emits jump/jumpPage — it emits `activated` instead. The drawer must
+    // still dismiss on that signal (regression: drawer stayed open in md preview).
+    const wrapper = mountDrawer({ file: { name: 'a.md', path: '/a.md' } })
+    const panel = wrapper.findComponent({ name: 'TocPanel' })
+    panel.vm.$emit('activated', 'a-heading')
+    expect(wrapper.emitted('jump')).toBeFalsy()
+    expect(wrapper.emitted('jumpPage')).toBeFalsy()
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 })

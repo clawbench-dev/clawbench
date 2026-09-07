@@ -41,6 +41,7 @@
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps({
   open: Boolean,

@@ -29,6 +29,7 @@ export interface UseSessionManagerOptions {
   destroySessionCore: (sessionId: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   forkSessionCore: (sessionId: string, beforeMessageId?: number, agentId?: string) => Promise<boolean>
+  rewindSessionCore: (sessionId: string, beforeMessageId: number) => Promise<string>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
 
   // Stream operations (from useChatStream)
@@ -60,6 +61,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     destroySessionCore,
     continueFromExecutionCore,
     forkSessionCore,
+    rewindSessionCore,
     checkContinueSessionCore,
     disconnectStream,
     updateRenderedContents,
@@ -272,6 +274,16 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     return await forkSessionCore(sessionId, beforeMessageId, agentId)
   }
 
+  /** Rewind/回溯 the current session in place — truncate history after the
+   *  anchor assistant message and reset the AI-side session. Returns the plain
+   *  text of the first removed user message ('' when none) for input prefill.
+   *  No input clearing / pending removal: the panel keeps its state and the
+   *  caller replaces the input text with the restored message afterwards. */
+  async function rewindSession(sessionId: string, beforeMessageId: number): Promise<string> {
+    cleanupActiveStream()
+    return await rewindSessionCore(sessionId, beforeMessageId)
+  }
+
   /** Check whether a continued session already exists for a task execution. */
   async function checkContinueSession(taskId: number, execId: number): Promise<{ exists: boolean; sessionId: string }> {
     return await checkContinueSessionCore(taskId, execId)
@@ -311,6 +323,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     destroyCurrentSession,
     continueFromExecution,
     forkSession,
+    rewindSession,
     checkContinueSession,
     // Cleanup
     cleanupActiveStream,

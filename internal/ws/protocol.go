@@ -39,6 +39,7 @@ type SessionUpdateData struct {
 	ResponsePreview      string `json:"response_preview,omitempty"`       // preview of AI's final reply with Markdown (for DingTalk)
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 	LastUserMessage      string `json:"last_user_message,omitempty"`      // plain-text preview of the most recent user message (completed only)
+	LastUserHasFiles     bool   `json:"last_user_has_files,omitempty"`    // whether that user message carried file attachments (completed only)
 	SessionTitle         string `json:"session_title,omitempty"`
 	AgentID              string `json:"agent_id,omitempty"` // agent that ran the session (completed only)
 	ProjectPath          string `json:"project_path,omitempty"`
@@ -58,6 +59,7 @@ type TaskUpdateData struct {
 	ResponsePreview      string `json:"response_preview,omitempty"`       // preview with Markdown (for DingTalk)
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 	LastUserMessage      string `json:"last_user_message,omitempty"`      // plain-text preview of the most recent user message (completed only)
+	LastUserHasFiles     bool   `json:"last_user_has_files,omitempty"`    // whether that user message carried file attachments (completed only)
 }
 
 // ChatStreamData wraps a chat streaming event for WS delivery.
