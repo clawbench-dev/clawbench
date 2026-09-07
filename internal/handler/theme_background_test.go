@@ -325,12 +325,14 @@ func TestServeThemeBackground_PostPathCopyMissingPathField(t *testing.T) {
 }
 
 func TestServeThemeBackground_PostPathCopyNonexistentFile(t *testing.T) {
-	env, teardown := setupTestEnv(t)
+	themeDir, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
-	// A path under the watch dir (a permitted root) that does not exist must
-	// 404 — not be treated as a valid wallpaper source.
-	missing := filepath.Join(env.WatchDir, "nope", "wallpaper.png")
+	// An absolute path under a permitted root whose parent directory exists
+	// passes path validation, then os.Stat must 404 because the file itself is
+	// absent. The parent (the data dir next to themeDir) is created by setup,
+	// so EvalSymlinks resolution behaves identically on macOS and Linux.
+	missing := filepath.Join(filepath.Dir(themeDir), "nope", "wallpaper.png")
 	body := strings.NewReader(`{"path":"` + missing + `"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", "application/json")
