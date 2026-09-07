@@ -3,6 +3,7 @@ package service_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/service"
@@ -328,4 +329,50 @@ func TestRewindSession_KeepsSessionRecord(t *testing.T) {
 	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessID).Scan(&archived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, archived)
+}
+
+// ---------- Deadlock regression: RAG purge must run AFTER writeMu release ----------
+
+// TestRewindSession_RAGPurgeDoesNotDeadlock reproduces the self-deadlock where
+// TruncateSessionAfterMessage called the RAG purge callback while still holding
+// the global writeMu. The real rag.Store serializes on the SAME lock via
+// serviceWriteLocker (store_sqlite.go), so re-acquiring writeMu inside the
+// callback deadlocks on the non-reentrant mutex (froze the whole server for 37
+// minutes in production). The callback below mimics that: it re-takes the
+// service writeMu exactly like rag's serviceWriteLocker.Lock does.
+func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Q1", nil, false, "")
+	assert.NoError(t, err)
+	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "A1", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Q2", nil, false, "")
+	assert.NoError(t, err)
+
+	// Restore the previous callback after the test (package-global).
+	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
+		// Mimic rag.Store.DeleteChunksBySessionAfterMessage running under
+		// serviceWriteLocker: it takes the service-global writeMu.
+		service.WriteLock()
+		defer service.WriteUnlock()
+		return 0, nil
+	})
+	t.Cleanup(func() { service.SetPurgeRAGChunksAfterMessageFn(nil) })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		res, err := service.TruncateSessionAfterMessage(sessID, asstID)
+		assert.NoError(t, err)
+		assert.Equal(t, int64(1), res.DeletedCount)
+	}()
+
+	select {
+	case <-done:
+		// Success: truncation finished without deadlocking.
+	case <-time.After(2 * time.Second):
+		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge callback ran while writeMu was still held")
+	}
 }

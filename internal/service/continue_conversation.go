@@ -686,8 +686,17 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	if err != nil {
 		return res, err
 	}
-	defer writeMu.Unlock()
-	defer tx.Rollback()
+	// writeMu is held from WriteBegin until explicitly released below. The RAG
+	// cleanup (step 5) must run AFTER writeMu.Unlock(): rag.Store shares the
+	// service-global writeMu (serviceWriteLocker), so calling it while still
+	// holding the mutex would self-deadlock on a non-reentrant lock.
+	unlocked := false
+	defer func() {
+		_ = tx.Rollback() // no-op after Commit
+		if !unlocked {
+			writeMu.Unlock()
+		}
+	}()
 
 	childPred := "SELECT id FROM chat_history WHERE session_id = ? AND id > ?"
 	// ai_raw_responses: FK on message_id but NO cascade.
@@ -735,6 +744,11 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	if err := tx.Commit(); err != nil {
 		return res, err
 	}
+	// Release the global writeMu BEFORE the RAG cleanup (step 5): rag.Store
+	// serializes on the same lock via serviceWriteLocker, so holding it here
+	// would self-deadlock.
+	writeMu.Unlock()
+	unlocked = true
 
 	// 5. Best-effort RAG chunk cleanup (separate store, after the DB transaction
 	//    commits). Failures are logged, never fatal. A range predicate
