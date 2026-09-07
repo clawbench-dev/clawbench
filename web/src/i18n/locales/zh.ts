@@ -88,7 +88,7 @@ export default {
     colInput: '输入 Tokens',
     colOutput: '输出 Tokens',
     colTotal: '总 Tokens',
-    colCacheHit: '缓存命中',
+    colCacheHit: '缓存命中 Tokens',
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',

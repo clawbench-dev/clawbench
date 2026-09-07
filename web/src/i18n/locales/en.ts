@@ -88,7 +88,7 @@ export default {
     colInput: 'Input Tokens',
     colOutput: 'Output Tokens',
     colTotal: 'Total Tokens',
-    colCacheHit: 'Cache Hit',
+    colCacheHit: 'Cache Hit Tokens',
     colHitRate: 'Cache Hit Rate',
     colCredit: 'Credit',
     colCost: 'Cost (USD)',

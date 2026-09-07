@@ -54,7 +54,7 @@ const zhMessages = {
     colInput: '输入 Tokens',
     colOutput: '输出 Tokens',
     colTotal: '总 Tokens',
-    colCacheHit: '缓存命中',
+    colCacheHit: '缓存命中 Tokens',
     colHitRate: '缓存命中率',
     colCredit: 'Credit',
     colCost: '费用 (USD)',
@@ -175,7 +175,7 @@ describe('UsageStatsPanel', () => {
     const cardText = cards.map(c => c.text()).join(' | ')
     // Cache hit tokens are an overview card; the hit-rate percentage is a
     // derived card; cacheMiss itself is not a standalone card.
-    expect(labels).toContain('缓存命中')
+    expect(labels).toContain('缓存命中 Tokens')
     expect(labels).toContain('缓存命中率')
     expect(labels).not.toContain('缓存未命中')
     expect(cardText).toContain('输入 Tokens')
