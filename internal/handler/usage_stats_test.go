@@ -188,3 +188,60 @@ func TestServeUsageStats_DBFailureReturns500(t *testing.T) {
 	decodeRespJSON(t, w.Body, &body)
 	assert.Equal(t, "InternalError", body.MsgKey)
 }
+
+func TestServeUsageStats_MethodNotAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := withProjectCookie(newRequest(t, http.MethodPost, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "model", "metrics": "total",
+	}), nil), env.ProjectDir)
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeUsageStats_QueryParamPassthrough(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	projectPath := env.ProjectDir
+
+	seedUsageStatsData(t, projectPath, "sess-p1", "codebuddy", "codebuddy", "glm-5.1", "2026-01-10 10:00:00", 150)
+	seedUsageStatsData(t, projectPath, "sess-p2", "codebuddy", "codebuddy", "glm-5.2", "2026-01-11 09:00:00", 50)
+
+	// asc order + explicit limit/top parses — the request must still succeed
+	// and exercise the sort/limit/top parameter parsing branches.
+	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start":   "2026-01-01T00:00:00Z",
+		"end":     "2026-02-01T00:00:00Z",
+		"dims":    "model",
+		"metrics": "total",
+		"sort":    "total",
+		"order":   "asc",
+		"limit":   "5",
+		"trend":   "1",
+		"top":     "3",
+	}), nil), projectPath)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestServeUsageStats_InvalidLimitIgnored(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	projectPath := env.ProjectDir
+
+	// A non-numeric limit or top must be ignored (defaults used), not 400.
+	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start":   "2026-01-01T00:00:00Z",
+		"end":     "2026-02-01T00:00:00Z",
+		"dims":    "model",
+		"metrics": "total",
+		"limit":   "abc",
+		"top":     "-2",
+	}), nil), projectPath)
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}

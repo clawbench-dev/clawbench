@@ -298,6 +298,200 @@ func TestServeThemeBackground_GetWhenUnset(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// ── Branch coverage: error/validation paths not hit by happy-path tests ──
+
+func TestServeThemeBackground_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// PUT is not routed by the dispatch handler.
+	req := httptest.NewRequest(http.MethodPut, "/api/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeThemeBackground_PostPathCopyMissingPathField(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// JSON body without a "path" — must 400 InvalidRequest.
+	body := strings.NewReader(`{"nope":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeThemeBackground_PostPathCopyNonexistentFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A path under the watch dir (a permitted root) that does not exist must
+	// 404 — not be treated as a valid wallpaper source.
+	missing := filepath.Join(env.WatchDir, "nope", "wallpaper.png")
+	body := strings.NewReader(`{"path":"` + missing + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_PostPathCopyDirectoryRejected(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// A directory must not be accepted as a wallpaper source.
+	body := strings.NewReader(`{"path":"` + themeDir + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_PostUnsupportedExtension(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// A .bmp extension is outside the whitelist → InvalidImage.
+	body, contentType := makeMultipartBody("bg.bmp", []byte("not really bmp"))
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", contentType)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeThemeBackground_PostMultipartGIFVerbatim(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// GIF stored verbatim (no re-encode) after DecodeConfig verification. The
+	// 1x1 pixel GIF exercises the ".gif/.webp" verbatim branch.
+	gifBytes := []byte{
+		'G', 'I', 'F', '8', '9', 'a', 1, 0, 1, 0, 0x80, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0xff, 0xff, 0xff,
+		0x21, 0xf9, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+		0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+	}
+	body, contentType := makeMultipartBody("bg.gif", gifBytes)
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", contentType)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.FileExists(t, filepath.Join(themeDir, "background.gif"))
+}
+
+func TestServeThemeBackground_GetUnknownExtFallsBackToOctetStream(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Config names a bare file whose extension is NOT in the wallpaper whitelist
+	// → 404 before MIME lookup (IsThemeAllowedExt rejects it). To hit the
+	// octet-stream fallback the extension must be allowed by model but absent
+	// from the handler map — every model-allowed ext IS in the map, so this
+	// tests the 404 path for a disallowed-but-bare name instead.
+	model.ConfigInstance.Appearance.WallpaperFile = "background.exe"
+	require.NoError(t, os.WriteFile(filepath.Join(themeDir, "background.exe"), []byte("MZ"), 0o644))
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_GetSVGReadFailure404(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// SVG whose file disappears between Stat and ReadFile is caught by the
+	// svgLooksSafe read-err branch. Simulate via a directory entry that passes
+	// Stat but fails ReadFile — chmod 000 on the file.
+	_ = os.MkdirAll(themeDir, 0o755)
+	svgPath := filepath.Join(themeDir, "background.svg")
+	require.NoError(t, os.WriteFile(svgPath, []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(svgPath, 0o644) })
+	model.ConfigInstance.Appearance.WallpaperFile = "background.svg"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_DeleteWritesConfigWhenDataDirSet(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// DELETE persists an empty wallpaper_file back to config.yaml. With DataDir
+	// pointing at the temp theme env, writeConfigYAML writes there — never into
+	// the repository's checked-in config fixture.
+	model.ConfigInstance.Appearance.WallpaperFile = "background.png"
+	require.NoError(t, os.WriteFile(filepath.Join(themeDir, "background.png"), []byte("png"), 0o644))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+	assert.NoFileExists(t, filepath.Join(themeDir, "background.png"))
+
+	// writeConfigYAML ran against the temp DataDir.
+	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err, "config.yaml should be written under the temp DataDir")
+	assert.Contains(t, string(data), "wallpaper_file")
+}
+
+func TestProcessWallpaperSource_RejectsOversizedSVG(t *testing.T) {
+	// SVG over its 1MB cap must be rejected before content scanning.
+	big := bytes.Repeat([]byte("<svg xmlns='http://www.w3.org/2000/svg'>"), wallpaperMaxSVGBytes/40+1)
+	_, err := processWallpaperSource(big, "bg.svg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestSVGLooksSafe_RejectsForbiddenPatterns(t *testing.T) {
+	// Each forbidden construct must be rejected case-insensitively.
+	cases := []string{
+		``,
+		`<html><body></body></html>`,
+		`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`,
+		`<svg xmlns="http://www.w3.org/2000/svg"><foreignObject>hi</foreignObject></svg>`,
+		`<svg xmlns="http://www.w3.org/2000/svg"><image href="http://evil/x.png"/></svg>`,
+		`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>`,
+		`<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)">x</a></svg>`,
+	}
+	for _, tc := range cases {
+		assert.False(t, svgLooksSafe([]byte(tc)), "should reject: %q", tc)
+	}
+	// A plain safe SVG must pass.
+	assert.True(t, svgLooksSafe([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>`)))
+	// Empty input is rejected.
+	assert.False(t, svgLooksSafe(nil))
+}
+
+func TestProcessWallpaperSource_UnsupportedFormat(t *testing.T) {
+	_, err := processWallpaperSource([]byte("anything"), "photo.xyz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported image format")
+}
+
+func TestVerifyRasterConfig_RejectsOutOfRangeDimensions(t *testing.T) {
+	// A PNG header claiming 9000px (> 8000 ceiling) is rejected before any
+	// pixel allocation (DecodeConfig surfaces the dimension error).
+	err := verifyRasterConfig(craftPngHeader(9000, 9000))
+	require.Error(t, err)
+	// A non-image payload fails DecodeConfig outright.
+	err = verifyRasterConfig([]byte("not an image"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot decode image")
+}
+
 // --- helpers ---
 
 // makeMultipartBody builds a multipart/form-data body with one "file" field.

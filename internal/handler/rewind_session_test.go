@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,4 +256,78 @@ func TestServeSessionRewind_InvalidAnchorDoesNotCancelRunning(t *testing.T) {
 
 	assert.True(t, service.IsSessionRunning(sessionID),
 		"an invalid rewind request must not cancel the running session")
+}
+
+func TestServeSessionRewind_SuccessCancelsRunningSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q2", nil, false, "")
+	require.NoError(t, err)
+
+	// A running session must be cancelled and drained before truncation.
+	service.SetSessionRunning(sessionID, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false) })
+
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asstID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assertOK(t, w)
+
+	assert.False(t, service.IsSessionRunning(sessionID),
+		"a valid rewind of a running session must cancel it")
+}
+
+func TestServeSessionRewind_TruncateErrorIsMappedTo400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Session exists but the anchor row was deleted between validation and
+	// truncation (concurrent rewind race). TruncateSessionAfterMessage then
+	// returns ErrRewindAnchorNotFound, which the handler maps to 400.
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+
+	// Directly exercising the handler path that maps a truncation error to 400:
+	// validate passes, but a prior no-op rewind deleted the row.
+	_, err = service.TruncateSessionAfterMessage(sessionID, asstID)
+	require.NoError(t, err)
+
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asstID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeSessionRewind_MalformedJSON(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/session/rewind", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeSessionRewind_MethodNotAllowedForGet(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ai/session/rewind", nil)
+	req = withProjectCookie(req, "proj")
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

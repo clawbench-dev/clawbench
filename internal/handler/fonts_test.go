@@ -203,3 +203,51 @@ func TestServeFontsList_DirIsAFile(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "NotADirectory", resp.MsgKey)
 }
+
+func TestServeFontsList_UnresolvableDir(t *testing.T) {
+	_, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// Point the fonts dir at a path whose parent cannot be created under it —
+	// simulate DataDir being unusable so ResolveFontsDir returns a path whose
+	// MkdirAll fails. A path under a regular file cannot be created.
+	parent := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(parent, []byte("x"), 0o644))
+	cfg := model.ConfigInstance
+	cfg.Fonts.Dir = filepath.Join(parent, "fonts")
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/list", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontsList, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFontFile_RejectsBackslashInName(t *testing.T) {
+	_, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// A name containing a backslash separator (Windows-style traversal) must be
+	// rejected before any filesystem access.
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/file?name="+url.QueryEscape(`..\secret.ttf`), http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFontFile_UnreadableFile(t *testing.T) {
+	fontsDir, teardown := setupFontsTestEnv(t)
+	defer teardown()
+	require.NoError(t, os.MkdirAll(fontsDir, 0o755))
+
+	// Stat succeeds (so containment/path checks pass) but os.Open fails on the
+	// file itself → the handler must surface a 500 "cannot open" error.
+	content := []byte("fake-glyphs")
+	require.NoError(t, os.WriteFile(filepath.Join(fontsDir, "lock.ttf"), content, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(fontsDir, "lock.ttf"), 0o644) })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/file?name=lock.ttf", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontFile, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
