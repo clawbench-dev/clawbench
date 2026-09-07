@@ -240,7 +240,8 @@ clawbench
 - **思维流内联显示**：思考过程流式内联展示，完成后自动折叠为可点击芯片；思考内容惰性加载，流结束后仅保存缩略信息，展开时按需加载全文
 - **会话进度指示**：会话抽屉显示胶囊进度条，颜色随用量变化（蓝/橙/红）
 - **ACP 上下文状态持久化**：模式、思考档位、上下文用量自动持久化到数据库，服务器重启后状态不丢失
-- **Token 用量明细**：上下文用量面板与消息详情展示输入/输出/缓存读、缓存命中（命中率 hit/(hit+miss)）、thinking token 与信用额度等分项，流式过程中稳定显示不闪烁；点击助手消息可查看消息级元数据（后端会话 ID、模型、耗时、追踪标识），用量来源为各 Agent ACP `_meta` 扩展的归一化解析
+- **Token 用量明细**：上下文用量面板与消息详情展示输入/输出/缓存读、缓存命中（命中率 hit/(hit+miss)）、thinking token 与信用额度等分项，流式过程中稳定显示不闪烁（ACP usage 采用「最新完整快照」整体采用语义——每轮内多次 usage_update 通知，带 token 计数的完整快照整体替换，纯 cost 裸通知永不覆盖，保证面板稳定）；点击助手消息可查看消息级元数据（后端会话 ID、模型、耗时、追踪标识），用量来源为各 Agent ACP `_meta` 扩展的归一化解析
+- **用量数据统计**：Dock 新增「数据统计」页签——按项目聚合 `chat_metadata` 用量行，用量总览（input vs output 环形饼图，点击 input 扇区下钻缓存命中构成 + 命中率卡）、按天趋势图与各维度直方图；支持 24h/7d/30d/自定义时间范围与 model/backend/agent 维度筛选，移动端窄容器自动纵向堆叠
 - **CodeBuddy ACP 模式本地技能**：自动扫描 `~/.codebuddy/skills/` 的 `SKILL.md`（name + description），技能以 `/` 斜杠命令形式出现在 Web 会话中，同时技能摘要注入系统提示词——与 TUI 模式行为一致
 
 ### 🤖 AI 对话
@@ -262,6 +263,9 @@ clawbench
 - **完成弹窗**：会话或定时任务完成且聊天界面不在前台时（在看其他 Tab 或当前会话不是目标会话），顶部滑入 Android 通知风格的完成卡片——展示摘要全文、项目名/路径、最近一条用户消息和智能体图标，内置快捷输入框可直接追问，带标记已读按钮和跳转按钮（跳转会话/任务执行详情）；发送追问或点标记已读会调用 `/api/ai/chat/read` 清空该会话未读（独立端点、支持外部项目路径，跨项目弹窗也能标记已读），发送成功弹确认气泡，点击空白处关闭弹窗（展示不足 1 秒防误触）；用户消息以引用式样块展示，可点击展开；外部项目弹窗显示项目名/路径 Footer 区隔。多个完成事件排队依次展示，取代了旧的会话结束 Toast 气泡
 - **滚动保持机制**：向上翻旧内容时滚动位置保留（同会话中途加载旧消息不跳屏），会话/项目切换永远滚到底部；Tab 切换靠浏览器原生保留位置。发送消息后停止滚动则无条件拉回底部
 - **按项目恢复上次会话**：每个项目独立记住最近打开的会话，进入项目自动恢复；会话失效时自动回退默认逻辑
+- **消息回溯（Rewind）**：助手消息上的回溯按钮（位于 Fork 旁）可将会话原址截断到该消息——删除其后所有消息（含摘要/RAG 索引）并重启 AI 会话，被删除的最近一条用户问题自动回填输入框供重新编辑发送。最后一条消息禁用、流式中不显示；操作前有确认对话框，适合从 AI 走偏处重来且保留此前上下文
+- **对话索引搜索**：用户消息索引抽屉顶部带搜索框——纯前端即时过滤已全量加载的消息列表，匹配消息正文与附件名（Windows 反斜杠归一），命中字符以 `<mark>` 高亮，计数徽章显示「命中/总数」，无匹配显示空态
+- **登录过期自动跳转**：会话 cookie（7 天）过期后所有 `/api/*` 请求被 401 拒绝——前端统一包装 `fetch`，凡响应体恰为 `{ error: "unauthorized" }` 即整页跳转 `/login` 重新走挂载鉴权流（Web 显示登录页，Android App 模式沿用已存密码自动重登）
 - **未读自动清除**：当前会话执行结束或切回前台时自动标记已读——未读徽标只为"用户没在看"的会话保留，回到会话即消失
 
 ### 🖼️ 媒体预览
@@ -348,6 +352,7 @@ clawbench
 ### 🎨 主题
 - **36 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 16 个（GitHub Light、One Light、Ayu Light、Light Modern、Light Plus、Quiet Light、Vitesse Light、Bluloco Light、Material Lighter、Alabaster、Everforest Light、High Contrast Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 20 个（Solarized Dark/Deep、Monokai、Material Darker、Dark Plus、Bluloco Dark、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
 - **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark
+- **自定义壁纸背景**：支持上传图片或从服务器本地路径设置为主题背景图（`.wallpaper-layer` 渲染，全局跨项目共享，`POST/DELETE /api/theme-background` 写、`GET /api/file/theme-background` 读），配套滑块调节面板不透明度（下限 0.5 保证可读性）与高斯模糊；壁纸开启后 header/Tab/面板/卡片/CodeMirror 等界面层半透明透出底层背景，CodeMirror 等编辑区保持不透明保证可读
 - **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览；下拉面板风格与项目选择界面统一，底部固定"更多外观选项"入口，点击深链到设置 → 外观（完整主题网格/字体/界面缩放）
 - **自定义字体**：支持选择常用开源字体作为代码字体（等宽）与界面字体（比例）主通道，可另配备选字体——纯 CSS 字体栈切换，设备未安装自动回退默认栈；导出 HTML 与 xterm/CodeMirror/Mermaid 等 JS 渲染器均跟随所选字体
 - **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题
