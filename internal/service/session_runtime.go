@@ -314,7 +314,7 @@ func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string
 	// Any non-empty files column value means attachments were present. The column
 	// holds a JSON array ("[...]") when attachments exist, so a bare "[]" / ""
 	// both count as no attachments.
-	hasFiles = files != "" && files != "[]" && files != "null"
+	hasFiles = files != "" && files != "[]" && files != jsonNull
 	plain = collapseToSingleLine(ExtractPlainText(content))
 	if plain != "" {
 		plain = truncatePreview(plain)

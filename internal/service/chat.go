@@ -448,6 +448,11 @@ func isKnownContentWrapper(v any) bool {
 // JSON gracefully instead of recursing unboundedly.
 const maxUnwrapDepth = 8
 
+// jsonNull is the string form of the JSON null literal. Columns holding a JSON
+// blob written by json.Marshal of a nil slice render as "null"; callers compare
+// against this constant to treat that as an absent/empty value.
+const jsonNull = "null"
+
 // extractTextFromValue recursively walks decoded JSON and pulls out the first
 // meaningful text it can find, unwrapping known wrapper shapes:
 //
@@ -1870,7 +1875,7 @@ func mergeUsagePatchIntoDB(sessionID string, patches map[string]string, rawUsage
 		slog.Warn("mergeUsagePatch: read stored usage failed", "err", err, "sid", sessionID)
 		return patches
 	}
-	if storedRaw == "" || storedRaw == "null" {
+	if storedRaw == "" || storedRaw == jsonNull {
 		// No prior state — nothing to protect, write the incoming patch as-is.
 		return patches
 	}
@@ -2439,7 +2444,7 @@ func summarizeContentForView(content string) string {
 		return ""
 	}
 	out := map[string]any{"blocks": []any{}}
-	if len(parsed.Metadata) > 0 && string(parsed.Metadata) != "null" {
+	if len(parsed.Metadata) > 0 && string(parsed.Metadata) != jsonNull {
 		out["metadata"] = parsed.Metadata
 	}
 	if parsed.Cancelled {
