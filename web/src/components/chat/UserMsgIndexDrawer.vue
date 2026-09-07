@@ -48,7 +48,7 @@
               <span class="msg-index">{{ msgIndex(msg) }}</span>
             </span>
             <div class="msg-body">
-              <span class="msg-text">{{ truncateText(msg) }}</span>
+              <span class="msg-text" v-html="rowHighlight(msg)"></span>
               <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
             </div>
             <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
@@ -69,6 +69,7 @@
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare, Split, MousePointerClick } from 'lucide-vue-next'
 import { formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { highlightText } from '@/utils/searchUtils'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -117,6 +118,11 @@ function msgIndex(msg) {
 
 function truncateText(msg) {
   return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
+}
+
+/** Row display text with the active query's matches wrapped in <mark>. */
+function rowHighlight(msg) {
+  return highlightText(truncateText(msg), searchQuery.value)
 }
 
 // ── Keyboard ↑/↓ + Enter navigation over the message index ──
@@ -396,6 +402,13 @@ onUnmounted(() => {
   white-space: pre-wrap;
 }
 
+.msg-text :deep(mark) {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .msg-time {
   display: inline-flex;
   align-items: center;
@@ -467,5 +480,14 @@ onUnmounted(() => {
 
 .panel-hint svg {
   opacity: 0.7;
+}
+</style>
+
+<style>
+/* Dark theme override — non-scoped for the [data-theme] selector. Softer mark
+   fill keeps highlighted query text readable on dark backgrounds. */
+[data-theme-base="dark"] .msg-text mark {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
+  color: inherit;
 }
 </style>

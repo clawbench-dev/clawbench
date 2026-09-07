@@ -256,6 +256,34 @@ describe('UserMsgIndexDrawer', () => {
       expect(items[1].find('.msg-text').text()).toContain('Fix the build')
     })
 
+    it('wraps the matched text in <mark> highlights', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('parser')
+      const item = wrapper.find('.msg-item')
+      const marks = item.findAll('.msg-text mark')
+      expect(marks).toHaveLength(1)
+      expect(marks[0].text()).toBe('parser')
+      // Non-matching rows are filtered out entirely; text outside <mark> is plain.
+      expect(item.find('.msg-text').html()).toContain('<mark>parser</mark>')
+    })
+
+    it('highlights matches case-insensitively across the whole row text', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('fix')
+      const marks = wrapper.findAll('.msg-text mark')
+      expect(marks.length).toBeGreaterThan(0)
+      for (const m of marks) {
+        expect(m.text().toLowerCase()).toContain('fix')
+      }
+    })
+
+    it('renders no <mark> when the query is cleared', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('fix')
+      await wrapper.find('.search-stub').setValue('')
+      expect(wrapper.findAll('.msg-text mark')).toHaveLength(0)
+    })
+
     it('keeps original message numbering while filtered', async () => {
       const wrapper = mountSheet({ messages })
       await wrapper.find('.search-stub').setValue('refactor')
