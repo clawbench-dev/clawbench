@@ -29,12 +29,12 @@
 
     <!-- Fixed bottom action bar -->
     <div class="exec-detail-actions">
-      <button v-if="showContinueBtn" class="action-btn accent" :disabled="continueLoading || isRunning" @click="onContinueConversation" :title="t('task.exec.continueConversation')">
+      <button v-if="showContinueBtn" class="fbtn fbtn-primary accent" :disabled="continueLoading || isRunning" @click="onContinueConversation" :title="t('task.exec.continueConversation')">
         <MessageSquare :size="14" />
         <span class="action-text">{{ continueLoading ? t('task.exec.continueConversationLoading') : t('task.exec.continueConversation') }}</span>
       </button>
       <span class="actions-spacer"></span>
-      <button v-if="isRunning" class="action-btn danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
+      <button v-if="isRunning" class="fbtn fbtn-danger danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
         <Square :size="14" />
         <span class="action-text">{{ cancelling ? t('common.loading') : t('task.exec.cancel') }}</span>
       </button>
@@ -102,6 +102,7 @@ import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
+import '@/assets/modal-footer-btn.css'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import { terminateExecution } from '@/utils/taskExecUtils.ts'
@@ -649,62 +650,6 @@ onUnmounted(() => {
 
 .actions-spacer {
   flex: 1;
-}
-
-.action-btn {
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-secondary, #666);
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  transition: all 0.15s ease;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .action-btn:hover:not(:disabled) {
-    background: var(--border-color, #e5e5e5);
-    transform: translateY(-1px);
-  }
-}
-
-.action-btn:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.action-btn.accent {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    color: #fff;
-  }
-}
-
-.action-btn.danger {
-  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
-  color: #b91c1c;
-}
-
-@media (hover: hover) {
-  .action-btn.danger:hover:not(:disabled) {
-    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
-  }
 }
 
 .action-text {

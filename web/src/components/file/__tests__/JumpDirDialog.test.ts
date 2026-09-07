@@ -41,7 +41,7 @@ describe('JumpDirDialog', () => {
   it('emits confirm with trimmed value on confirm click', async () => {
     const wrapper = mountDialog({ open: true })
     await wrapper.find('input').setValue('  src/utils  ')
-    await wrapper.find('.jump-confirm-btn').trigger('click')
+    await wrapper.find('.fbtn-primary').trigger('click')
     expect(wrapper.emitted('confirm')![0]).toEqual(['src/utils'])
   })
 
@@ -55,13 +55,13 @@ describe('JumpDirDialog', () => {
   it('does not emit confirm when input is empty', async () => {
     const wrapper = mountDialog({ open: true })
     await wrapper.find('input').setValue('   ')
-    await wrapper.find('.jump-confirm-btn').trigger('click')
+    await wrapper.find('.fbtn-primary').trigger('click')
     expect(wrapper.emitted('confirm')).toBeUndefined()
   })
 
   it('emits close on cancel click', async () => {
     const wrapper = mountDialog({ open: true })
-    await wrapper.find('.jump-cancel-btn').trigger('click')
+    await wrapper.find('.fbtn').trigger('click')
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 

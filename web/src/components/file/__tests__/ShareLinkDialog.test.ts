@@ -146,8 +146,8 @@ describe('ShareLinkDialog', () => {
       await nextTick()
       expect(wrapper.find('.share-notice-info').exists()).toBe(true)
       // Generate action lives in the footer now.
-      expect(wrapper.find('.modal-footer .share-dialog-primary').exists()).toBe(true)
-      expect(wrapper.find('.share-dialog-primary').text()).toContain('Generate link')
+      expect(wrapper.find('.modal-footer .fbtn-primary').exists()).toBe(true)
+      expect(wrapper.find('.fbtn-primary').text()).toContain('Generate link')
     })
   })
 
@@ -181,11 +181,11 @@ describe('ShareLinkDialog', () => {
       await flushPromises()
       await nextTick()
       const footer = wrapper.find('.modal-footer')
-      expect(footer.find('a.share-dialog-btn').exists()).toBe(true)
-      expect(footer.find('a.share-dialog-btn').attributes('href')).toBe('https://host.example/share/tok1')
-      expect(footer.find('a.share-dialog-btn').attributes('target')).toBe('_blank')
-      expect(footer.find('a.share-dialog-btn').attributes('rel')).toBe('noopener noreferrer')
-      expect(footer.find('.share-dialog-secondary.danger').exists()).toBe(true)
+      expect(footer.find('a.fbtn').exists()).toBe(true)
+      expect(footer.find('a.fbtn').attributes('href')).toBe('https://host.example/share/tok1')
+      expect(footer.find('a.fbtn').attributes('target')).toBe('_blank')
+      expect(footer.find('a.fbtn').attributes('rel')).toBe('noopener noreferrer')
+      expect(footer.find('.fbtn-danger').exists()).toBe(true)
       // No footer close button anymore.
       expect(footer.find('.share-dialog-cancel').exists()).toBe(false)
     })
@@ -207,7 +207,7 @@ describe('ShareLinkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.share-dialog-primary').trigger('click')
+    await wrapper.find('.fbtn-primary').trigger('click')
     await flushPromises()
     await nextTick()
 
@@ -226,7 +226,7 @@ describe('ShareLinkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.modal-footer .share-dialog-secondary.danger').trigger('click')
+    await wrapper.find('.modal-footer .fbtn-danger').trigger('click')
     await flushPromises()
     await nextTick()
 
@@ -244,7 +244,7 @@ describe('ShareLinkDialog', () => {
     const wrapper = mountDialog()
     await flushPromises()
 
-    await wrapper.find('.modal-footer .share-dialog-secondary.danger').trigger('click')
+    await wrapper.find('.modal-footer .fbtn-danger').trigger('click')
     await flushPromises()
 
     const delCall = fetchMock.mock.calls.find((c: unknown[]) => c[1]?.method === 'DELETE')

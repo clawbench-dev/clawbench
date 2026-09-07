@@ -25,8 +25,8 @@
     </div>
 
     <template #footer>
-      <button class="modal-btn" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="modal-btn primary" :disabled="saving" @click="saveItem"><LoadingIndicator v-if="saving" size="sm" inline /><span v-else>{{ t('common.save') }}</span></button>
+      <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
+      <button class="fbtn fbtn-primary" :disabled="saving" @click="saveItem"><LoadingIndicator v-if="saving" size="sm" inline /><span v-else>{{ t('common.save') }}</span></button>
     </template>
   </ModalDialog>
 </template>
@@ -168,39 +168,5 @@ async function saveItem() {
   width: 16px;
   height: 16px;
   accent-color: var(--accent-color, #0066cc);
-}
-
-.modal-btn {
-  padding: 6px 16px;
-  border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-@media (hover: hover) {
-  .modal-btn:hover {
-    background: var(--bg-tertiary, #f5f5f5);
-  }
-}
-
-.modal-btn.primary {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  border-color: var(--accent-color, #0066cc);
-}
-
-@media (hover: hover) {
-  .modal-btn.primary:hover {
-    opacity: 0.9;
-  }
-}
-
-.modal-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

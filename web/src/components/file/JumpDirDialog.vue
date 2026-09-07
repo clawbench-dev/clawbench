@@ -12,8 +12,8 @@
       />
     </div>
     <template #footer>
-      <button class="jump-cancel-btn" @click="$emit('close')">{{ t('jump.cancel') }}</button>
-      <button class="jump-confirm-btn" @click="doConfirm">{{ t('jump.confirm') }}</button>
+      <button class="fbtn" @click="$emit('close')">{{ t('jump.cancel') }}</button>
+      <button class="fbtn fbtn-primary" @click="doConfirm">{{ t('jump.confirm') }}</button>
     </template>
   </ModalDialog>
 </template>
@@ -65,33 +65,5 @@ function doConfirm() {
 }
 .jump-path-input:focus {
   border-color: var(--accent-color, #4a90d9);
-}
-.jump-cancel-btn {
-  padding: 7px 14px;
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #666);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .jump-cancel-btn:hover { background: var(--bg-secondary); }
-}
-.jump-confirm-btn {
-  padding: 7px 14px;
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .jump-confirm-btn:hover { background: #0055aa; }
 }
 </style>

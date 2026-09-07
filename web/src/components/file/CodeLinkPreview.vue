@@ -200,7 +200,7 @@
       <div class="code-preview-sheet-footer">
         <!-- Refresh: icon-only round button -->
         <button
-          class="code-preview-footer-btn icon-btn refresh-btn"
+          class="code-preview-footer-btn icon-btn fbtn refresh-btn"
           :class="{ 'is-loading': preview.status.value === 'loading' }"
           :title="t('file.codePreview.refresh')"
           :aria-label="t('file.codePreview.refresh')"
@@ -214,7 +214,7 @@
         <!-- Search in preview: icon-only, code-slice view only -->
         <button
           v-if="!isRenderedView"
-          class="code-preview-footer-btn icon-btn"
+          class="code-preview-footer-btn icon-btn fbtn"
           :class="{ 'is-active': isSearchOpen }"
           :title="t('file.codePreview.findInPreview')"
           :aria-label="t('file.codePreview.findInPreview')"
@@ -228,7 +228,7 @@
 
         <!-- Reveal in file tree: icon-only -->
         <button
-          class="code-preview-footer-btn icon-btn reveal-btn"
+          class="code-preview-footer-btn icon-btn fbtn reveal-btn"
           :title="t('file.codePreview.revealInTree')"
           :aria-label="t('file.codePreview.revealInTree')"
           @click="handleRevealInTree"
@@ -241,7 +241,7 @@
         <!-- Open Full / View Details — primary action -->
         <button
           v-if="preview.errorCode.value === 'too-large'"
-          class="code-preview-footer-btn action-btn primary-btn"
+          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="handleViewDetails"
         >
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
@@ -251,7 +251,7 @@
         </button>
         <button
           v-else
-          class="code-preview-footer-btn action-btn primary-btn"
+          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
@@ -262,7 +262,7 @@
 
         <!-- Quote to Chat -->
         <button
-          class="code-preview-footer-btn action-btn quote-btn"
+          class="code-preview-footer-btn action-btn fbtn quote-btn"
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
         >

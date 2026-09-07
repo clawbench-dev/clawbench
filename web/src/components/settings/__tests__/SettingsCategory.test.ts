@@ -604,7 +604,7 @@ describe('SettingsCategory', () => {
       // Click the cancel button — PasswordChangeDialog handleClose emits close,
       // SettingsCategory flips showPasswordDialog to false, and ModalDialog
       // v-show-hides the overlay.
-      const cancelBtn = document.body.querySelector('.modal-btn') as HTMLElement | null
+      const cancelBtn = document.body.querySelector('.fbtn') as HTMLElement | null
       if (cancelBtn) {
         cancelBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
         await nextTick()

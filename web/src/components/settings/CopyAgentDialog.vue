@@ -27,11 +27,11 @@
     </div>
 
     <template #footer>
-      <button class="modal-btn" @click="handleClose">
+      <button class="fbtn" @click="handleClose">
         {{ t('common.cancel') }}
       </button>
       <button
-        class="modal-btn primary"
+        class="fbtn fbtn-primary"
         :disabled="!newName.trim()"
         @click="submit"
       >
@@ -143,47 +143,5 @@ function handleClose() {
   padding: 8px 12px;
   background: rgba(231, 76, 60, 0.1);
   border-radius: 8px;
-}
-
-/* Footer buttons — same visual language as the other ModalDialog consumers
-   (QuickSendEditModal, QuickCommandEditModal, …): a bordered neutral cancel
-   and an accent primary action. */
-.modal-btn {
-  padding: 6px 16px;
-  border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: background 0.12s, opacity 0.12s;
-}
-
-@media (hover: hover) {
-  .modal-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary, #f5f5f5);
-  }
-}
-
-.modal-btn.primary {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  border-color: var(--accent-color, #0066cc);
-}
-
-@media (hover: hover) {
-  .modal-btn.primary:hover:not(:disabled) {
-    background: var(--accent-hover, #0055aa);
-  }
-}
-
-.modal-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

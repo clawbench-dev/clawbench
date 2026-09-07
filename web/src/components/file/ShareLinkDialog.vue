@@ -72,14 +72,14 @@
         <span />
       </template>
       <template v-else-if="!linkUrl">
-        <button class="share-dialog-primary" :disabled="creating" @click="createLink">
+        <button class="fbtn fbtn-primary" :disabled="creating" @click="createLink">
           <Link2 :size="14" />
           {{ creating ? t('common.loading') : t('shareDialog.generate') }}
         </button>
       </template>
       <template v-else>
         <a
-          class="share-dialog-btn"
+          class="fbtn"
           :href="linkUrl"
           target="_blank"
           rel="noopener noreferrer"
@@ -88,7 +88,7 @@
           <ExternalLink :size="14" />
           {{ t('shareDialog.openPage') }}
         </a>
-        <button class="share-dialog-secondary danger" @click="revokeLink">
+        <button class="fbtn fbtn-danger" @click="revokeLink">
           <Trash2 :size="14" />
           {{ t('shareDialog.revoke') }}
         </button>
@@ -354,58 +354,7 @@ async function revokeLink() {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
-
-/* ── Buttons (live in the footer now) ── */
-.share-dialog-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 8px 18px;
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.share-dialog-primary:disabled { opacity: 0.6; cursor: default; }
-.share-dialog-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 7px 14px;
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #666);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  text-decoration: none;
-}
-.share-dialog-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 7px 14px;
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #666);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.share-dialog-secondary.danger { color: #cf222e; }
 @media (hover: hover) {
-  .share-dialog-primary:hover { filter: brightness(1.1); }
-  .share-dialog-btn:hover, .share-dialog-secondary:hover { background: var(--bg-secondary); }
   .share-dialog-link-btn:hover { background: var(--bg-tertiary, #f0f0f0); color: var(--accent-color, #0066cc); }
-  .share-dialog-secondary.danger:hover { background: #fef2f2; }
 }
 </style>

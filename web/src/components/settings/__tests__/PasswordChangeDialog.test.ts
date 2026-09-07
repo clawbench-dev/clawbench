@@ -116,7 +116,7 @@ describe('PasswordChangeDialog', () => {
 
   it('submit button is disabled initially', () => {
     mountDialog()
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -125,7 +125,7 @@ describe('PasswordChangeDialog', () => {
     fillValidFields(w)
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(false)
   })
 
@@ -137,7 +137,7 @@ describe('PasswordChangeDialog', () => {
     s.confirmPassword = 'different1'
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -149,7 +149,7 @@ describe('PasswordChangeDialog', () => {
     s.confirmPassword = 'abc12'
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -161,7 +161,7 @@ describe('PasswordChangeDialog', () => {
     s.confirmPassword = '12345678'
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -173,7 +173,7 @@ describe('PasswordChangeDialog', () => {
     s.confirmPassword = 'abcdefgh'
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -185,7 +185,7 @@ describe('PasswordChangeDialog', () => {
     s.confirmPassword = 'a1'.repeat(17)
     await refresh(w)
 
-    const submitBtn = $('.modal-btn.primary')!
+    const submitBtn = $('.fbtn-primary')!
     expect(submitBtn.hasAttribute('disabled')).toBe(true)
   })
 
@@ -489,7 +489,7 @@ describe('PasswordChangeDialog', () => {
     const w = mountDialog()!
     await nextTick()
 
-    const cancelBtn = $('.modal-btn')!
+    const cancelBtn = $('.fbtn')!
     cancelBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
 

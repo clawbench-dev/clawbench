@@ -622,66 +622,18 @@ body.code-preview-dragging * {
   box-sizing: border-box;
 }
 
-/* Footer actions mirror the task-form footer buttons (30px, radius 15) but
-   carry a border so they read clearly against the sheet background in wide /
-   modal layouts. */
-.code-preview-footer-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 30px;
-  /* A visible-but-subtle border derived from the text colour: the plain
-     --border-color sits too close to --bg-tertiary in the light theme and the
-     buttons would melt into the panel background in wide/modal layouts. */
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 26%, transparent);
-  border-radius: 15px;
-  background: var(--bg-tertiary, #f1f3f5);
-  color: var(--text-secondary, #4b5563);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  padding: 0 16px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
-  user-select: none;
-}
+/* Footer buttons now use the shared `.fbtn` pill styles (modal-footer-btn.css,
+   loaded by BottomSheet). These rules keep only the CodeLinkPreview-specific
+   states/variants that the shared classes don't cover. */
 
-.code-preview-footer-btn svg {
-  flex-shrink: 0;
-}
-
-.code-preview-footer-btn:hover {
-  background: #e5e7eb;
-  color: var(--text-primary, #1a1a1a);
-}
-
-.code-preview-footer-btn:active {
-  transform: scale(0.96);
-}
-
-/* Active state (e.g. search bar open) mirrors the small preview buttons. */
+/* Active state (e.g. search bar open) — tint the neutral pill. */
 .code-preview-footer-btn.is-active {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, var(--bg-tertiary, #f1f3f5));
   color: var(--primary-color, #1a73e8);
 }
 
-/* Primary action (open file / view details) — solid accent pill. */
-.code-preview-footer-btn.primary-btn {
-  background: var(--accent-color, #0066cc);
-  border-color: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-.code-preview-footer-btn.primary-btn:hover {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-  border-color: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-  color: #fff;
-}
-
-/* Refresh stays icon-only: a small round button with no label. */
+/* Icon-only footer buttons: collapse the shared pill padding to a 30px round
+   button (refresh / search / reveal). */
 .code-preview-footer-btn.icon-btn {
   width: 30px;
   height: 30px;

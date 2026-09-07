@@ -244,7 +244,7 @@ describe('SessionSearchDrawer', () => {
     // Should show detail view
     expect(wrapper.find('.detail-page').exists()).toBe(true)
     expect(wrapper.find('.detail-chunk').exists()).toBe(true)
-    expect(wrapper.find('.detail-resume-btn').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-primary').exists()).toBe(true)
     // Search results list should be hidden
     expect(wrapper.find('.session-search-body').exists()).toBe(false)
   })
@@ -281,7 +281,7 @@ describe('SessionSearchDrawer', () => {
     await flushPromises()
 
     // Click open button (non-archived session)
-    await wrapper.find('.detail-resume-btn').trigger('click')
+    await wrapper.find('.fbtn-primary').trigger('click')
     expect(wrapper.emitted('open')).toBeTruthy()
     expect(wrapper.emitted('resume')).toBeFalsy()
   })
@@ -298,7 +298,7 @@ describe('SessionSearchDrawer', () => {
     await flushPromises()
 
     // Click resume button (archived session)
-    await wrapper.find('.detail-resume-btn').trigger('click')
+    await wrapper.find('.fbtn-primary').trigger('click')
     expect(wrapper.emitted('resume')).toBeTruthy()
     expect(wrapper.emitted('open')).toBeFalsy()
   })
@@ -313,8 +313,8 @@ describe('SessionSearchDrawer', () => {
     instance.update()
     await flushPromises()
 
-    expect(wrapper.find('.detail-destroy-btn').exists()).toBe(true)
-    expect(wrapper.find('.detail-destroy-btn').text()).toBe('Remove')
+    expect(wrapper.find('.fbtn-danger').exists()).toBe(true)
+    expect(wrapper.find('.fbtn-danger').text()).toBe('Remove')
   })
 
   it('does not show destroy button for non-archived session in detail view', async () => {
@@ -326,7 +326,7 @@ describe('SessionSearchDrawer', () => {
     instance.update()
     await flushPromises()
 
-    expect(wrapper.find('.detail-destroy-btn').exists()).toBe(false)
+    expect(wrapper.find('.fbtn-danger').exists()).toBe(false)
   })
 
   it('emits destroy when destroy button is clicked on archived session', async () => {
@@ -339,7 +339,7 @@ describe('SessionSearchDrawer', () => {
     instance.update()
     await flushPromises()
 
-    await wrapper.find('.detail-destroy-btn').trigger('click')
+    await wrapper.find('.fbtn-danger').trigger('click')
     expect(wrapper.emitted('destroy')).toBeTruthy()
     expect(wrapper.emitted('destroy')![0][0]).toStrictEqual(archivedResult)
   })
