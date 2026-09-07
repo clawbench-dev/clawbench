@@ -76,7 +76,14 @@ function mockResponse(partial: Record<string, unknown>) {
   }
 }
 
+// Records every option prop pushed to a UsageChart stub so tests can assert a
+// chart rebuild (e.g. on theme change) happened without needing echarts DOM.
+const chartOptions: unknown[] = []
+let currentChartProps: Record<string, unknown> | null = null
+
 async function mountPanel() {
+  chartOptions.length = 0
+  currentChartProps = null
   const wrapper = shallowMount(UsageStatsPanel, {
     props: { active: true },
     global: {
@@ -84,7 +91,17 @@ async function mountPanel() {
       stubs: {
         RefreshButton: { template: '<button class="refresh-btn" @click="$emit(\'click\')" />' },
         LoadingIndicator: { template: '<span class="loading-stub" />' },
-        UsageChart: { template: '<div class="usage-chart-stub" />' },
+        UsageChart: {
+          template: '<div class="usage-chart-stub" />',
+          props: ['option'],
+          watch: {
+            option: {
+              handler(v: unknown) { chartOptions.push(v) },
+              immediate: true,
+            },
+          },
+          setup(props: Record<string, unknown>) { currentChartProps = props },
+        },
       },
     },
   })
@@ -116,6 +133,25 @@ describe('UsageStatsPanel', () => {
     mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('所选时间段内暂无用量数据')
+  })
+
+  it('rebuilds the chart option when the theme changes', async () => {
+    // Charts read their palette from CSS variables at option-build time, so a
+    // theme switch must recompute and re-push the option (themeTick bump).
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 0, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 0, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    await mountPanel()
+    expect(chartOptions.length).toBeGreaterThan(0)
+    const optionsBefore = chartOptions.length
+
+    window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: 'dark' }))
+    await nextTick()
+
+    // The option prop must be rebuilt (new object pushed to the chart) with the
+    // new theme's palette.
+    expect(chartOptions.length).toBeGreaterThan(optionsBefore)
   })
 
   it('renders totals cards only for non-zero metrics', async () => {

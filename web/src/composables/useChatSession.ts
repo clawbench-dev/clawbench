@@ -762,22 +762,30 @@ export function useChatSession(options: UseChatSessionOptions) {
   // unread state so the session list badge clears without waiting for a WS
   // event round-trip.
   //
-  // handleWsReconnect() resyncs the current session's messages. This is the
-  // belt-and-suspenders path for Android: document.visibilityState is
-  // unreliable in the WebView (onPause doesn't reliably flip it to 'hidden'),
-  // so the WS may NOT have been disconnected while backgrounded and no
-  // clawbench-reconnect event fires on return. Messages produced in the
-  // background would then never appear. The native __setAppForeground bridge
-  // (authoritative on Android) drives this callback regardless, so the session
-  // is always re-synced here. skipIfUnchanged inside loadHistory makes the
-  // refresh a no-op when nothing changed.
+  // handleManualRefresh() resyncs the current session's messages on foreground
+  // return. This is the belt-and-suspenders path for Android: document.
+  // visibilityState is unreliable in the WebView (onPause doesn't reliably
+  // flip it to 'hidden'), so the WS may NOT have been disconnected while
+  // backgrounded and no clawbench-reconnect event fires on return. Messages
+  // produced in the background would then never appear. The native
+  // __setAppForeground bridge (authoritative on Android) drives this callback
+  // regardless, so the session is always re-synced here.
+  //
+  // It deliberately uses handleManualRefresh (forceReload=true, the same
+  // semantics as the chat refresh button / a cold restart) instead of the
+  // lightweight handleWsReconnect (forceReload=false): when the WS stayed
+  // connected through the background period the lightweight path can skip the
+  // reload (skipIfUnchanged) or race the reconnect, leaving DB-flushed
+  // streaming content missing from the UI until the user manually refreshes or
+  // cold-restarts the app. A forced authoritative loadHistory always converges
+  // the streaming placeholder (rebuildFromDb) to what the server has.
   const removeForegroundReadListener = onAppForeground((fg) => {
     if (!fg) return
     const sid = currentSessionId.value
     if (!sid) return
     markSessionRead(sid).catch(() => {})
     loadSessionsOnce()
-    handleWsReconnect().catch(() => {})
+    handleManualRefresh().catch(() => {})
   })
 
   async function switchSession(sessionId: string) {

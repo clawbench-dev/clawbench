@@ -15,6 +15,12 @@ export type UsageChartType = 'bar' | 'pie' | 'trend'
 
 export interface UsageRange {
   rangeKey: UsageRangeKey
+  // Custom calendar days are picked as local dates then converted to UTC
+  // instants (see rangeToISO). The backend filters and day-buckets by
+  // date(m.created_at) on UTC text, so for non-UTC users the effective window
+  // shifts by the local UTC offset relative to the dates shown in the picker.
+  // Kept as-is for consistency with the preset ranges (24h/7d/30d are also
+  // now-based UTC instants); the backend timebase is UTC.
   customStart?: string // yyyy-mm-dd, when rangeKey === 'custom'
   customEnd?: string
 }
@@ -91,7 +97,11 @@ function rangeToISO(range: UsageRange): { start: string; end: string } {
   } else if (range.rangeKey === '30d') {
     start.setDate(start.getDate() - 30)
   } else {
-    // custom: inclusive calendar days, treat end as end-of-day.
+    // custom: inclusive calendar days, treat end as end-of-day. The date-only
+    // string parses as LOCAL midnight (no zone suffix) and toISOString() then
+    // converts to a UTC instant. The backend filters and day-buckets on UTC
+    // text (date(m.created_at)), so this is the established convention — see
+    // the UsageRange.customStart comment.
     const s = range.customStart ? new Date(`${range.customStart}T00:00:00`) : new Date()
     const e = range.customEnd ? new Date(`${range.customEnd}T23:59:59`) : new Date()
     return { start: s.toISOString(), end: e.toISOString() }
@@ -154,6 +164,28 @@ function reloadStats(): void {
 async function resetStatsFilter(): Promise<void> {
   filter.value = { ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
   await loadStats()
+}
+
+/**
+ * Reset module-level singleton state — called on SPA project switch (App.vue
+ * hotSwitchProject). Cancels any in-flight request and pending debounced reload
+ * so a stale request for the previous project never fires against the new one,
+ * and clears cached data/filter so the stats panel for the new project starts
+ * fresh (its project-root watch reloads on activation).
+ */
+export function resetUsageStats(): void {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (abortController) {
+    abortController.abort()
+    abortController = null
+  }
+  filter.value = { ...DEFAULT_FILTER, range: { ...DEFAULT_FILTER.range }, dims: [...DEFAULT_FILTER.dims], metrics: [...DEFAULT_FILTER.metrics] }
+  raw.value = null
+  error.value = null
+  loading.value = false
 }
 
 // --- Derived getters ---
@@ -231,6 +263,7 @@ export function useUsageStats() {
     loadStats,
     reloadStats,
     resetStatsFilter,
+    resetUsageStats,
     setDims,
     setMetrics,
     setSort,

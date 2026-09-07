@@ -34,6 +34,12 @@ const (
 // UsageParams configures a single usage statistics query.
 type UsageParams struct {
 	ProjectPath string
+	// Start/End bound the usage window on chat_metadata.created_at.
+	// NOTE: chat_metadata.created_at is NOT the user message time — SaveMetadata
+	// (service/chat.go) upserts via INSERT OR REPLACE without writing created_at,
+	// so SQLite re-stamps it CURRENT_TIMESTAMP on every metadata save. The value
+	// is therefore the *final metadata write* (≈ assistant message completion),
+	// which is the intended window/bucket timebase for usage stats.
 	Start, End  time.Time // range filter on chat_metadata.created_at (UTC)
 	Dims        []UsageDim
 	Metrics     []UsageMetric

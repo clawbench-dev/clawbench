@@ -125,7 +125,7 @@
               <tbody>
                 <tr v-for="(row, i) in tableRows" :key="i">
                   <td v-for="d in filter.dims" :key="d" class="stats-td-dim">
-                    {{ row.key[d] === '(empty)' ? t('stats.emptyLabel') : (row.key[d] || t('stats.emptyLabel')) }}
+                    {{ row.key[d] === EMPTY_GROUP_LABEL ? t('stats.emptyLabel') : (row.key[d] || t('stats.emptyLabel')) }}
                   </td>
                   <td
                     v-for="m in filter.metrics"
@@ -153,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -174,6 +174,7 @@ import {
   buildTrendOption,
   formatMetricValue,
   rowValueOf,
+  EMPTY_GROUP_LABEL,
 } from '@/components/stats/statsChart'
 
 const props = defineProps<{
@@ -201,6 +202,24 @@ const chartTypeOptions: { id: UsageChartType; labelKey: string }[] = [
 
 const customStart = ref<string>('')
 const customEnd = ref<string>('')
+
+// Theme tick — bumped on every clawbench-theme-change so the chart options
+// (built from CSS variables via resolveStatsPalette) are recomputed and pushed
+// to UsageChart as a fresh `option` prop. Without this the palette captured at
+// build time would stay on the previous theme until a filter/data change.
+const themeTick = ref(0)
+
+function onThemeChange() {
+  themeTick.value++
+}
+
+onMounted(() => {
+  window.addEventListener('clawbench-theme-change', onThemeChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('clawbench-theme-change', onThemeChange)
+})
 
 function dimLabelKey(d: UsageDimId): string {
   switch (d) {
@@ -286,6 +305,9 @@ function formatMetricCellValue(m: UsageMetricId, row: UsageRowLike): string {
 type UsageRowLike = { key: Partial<Record<UsageDimId, string>>; input: number; output: number; total: number; cacheHit: number; cacheMiss: number; credit: number; costUsd: number }
 
 function chartOptionFor(m: UsageMetricId) {
+  // Read themeTick so a clawbench-theme-change rebuilds the option with the
+  // new palette (CSS vars are read live inside build*Option).
+  void themeTick.value
   const dims = filter.value.dims
   const rows = tableRows.value
   const labelOf = (r: { key: Partial<Record<UsageDimId, string>> }): string =>

@@ -144,3 +144,30 @@ func TestServeUsageStats_MissingProjectCookie(t *testing.T) {
 	w := callHandler(ServeUsageStats, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
+
+func TestServeUsageStats_DBFailureReturns500(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+	projectPath := env.ProjectDir
+
+	// Force the read pool (used by UsageStats) to fail so the aggregates query
+	// errors instead of returning data.
+	closedDB, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	_ = closedDB.Close()
+	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	defer cleanup()
+
+	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "model", "metrics": "total",
+	}), nil), projectPath)
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var body struct {
+		MsgKey string `json:"msgKey"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, "InternalError", body.MsgKey)
+}

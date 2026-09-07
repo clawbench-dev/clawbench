@@ -498,6 +498,7 @@ import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
+import { resetUsageStats } from '@/composables/useUsageStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
@@ -606,6 +607,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   resetIdentity()
   resetAgents()
   resetChatSessionState()
+  resetUsageStats()
   clearPlanState()
   resetTaskTabState()
   resetTabDrawerState()

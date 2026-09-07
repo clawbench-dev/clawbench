@@ -2,6 +2,11 @@ import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
 import type { UsageMetricId, UsageRow } from '@/composables/useUsageStats'
 
+// Sentinel the backend uses for a missing group label
+// (internal/service/usage_stats.go emptyGroupLabel). Keep in sync on both
+// sides — a change there silently breaks the empty-cell rendering below.
+export const EMPTY_GROUP_LABEL = '(empty)'
+
 /** Read theme colors live from CSS variables so charts match the UI theme. */
 export function resolveStatsPalette() {
   const read = (name: string, fallback: string): string => {

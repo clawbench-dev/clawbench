@@ -1476,13 +1476,54 @@ describe('foreground return marks current session read', () => {
 
     handlers[handlers.length - 1](true)
 
-    // handleWsReconnect → syncSessionOnReconnect(false) → loadHistory, which
-    // fetches /api/ai/chat?session_id=current-s1 with view=summary.
+    // Foreground return now uses the manual-refresh path
+    // (handleManualRefresh → syncSessionOnReconnect(true)): an authoritative
+    // forced loadHistory, so it fetches /api/ai/chat?session_id=current-s1.
     await vi.waitFor(() => {
       const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
         (c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')
       )
       expect(chatFetches.length).toBeGreaterThan(0)
+    })
+  })
+
+  it('foreground return forces a history reload even when the snapshot is unchanged', async () => {
+    // A foreground return must behave like the refresh button (forceReload=true,
+    // skipIfUnchanged=false) — NOT like the lightweight WS-reconnect path
+    // (skipIfUnchanged=true) which would skip the reload when the message
+    // snapshot is unchanged. Regression: with the old handleWsReconnect the
+    // resume left DB-flushed streaming content missing from the UI whenever the
+    // snapshot fingerprint did not change; only a manual refresh or a cold
+    // restart recovered it.
+    mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-a')
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [{ id: 'm1', role: 'assistant', content: 'x', createdAt: '2026-01-01T00:00:00Z' }], total: 1, running: false,
+      }),
+    })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'current-s1'
+    options.loading.value = false // idle session
+    const handlers = captureForegroundHandlers()
+
+    // Baseline loadHistory establishes the snapshot so the foreground call sees
+    // newSnapshot === lastMessageSnapshot ('snap-a').
+    await session.loadHistory(true, false, false)
+
+    const fetchCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+
+    // App returns to foreground.
+    handlers[handlers.length - 1](true)
+
+    // Even with an unchanged snapshot the forced reload must fetch history —
+    // the lightweight WS-reconnect path (skipIfUnchanged=true) would have
+    // returned early without fetching.
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .slice(fetchCountBefore)
+        .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1'))
+      expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
   })
 })
