@@ -375,3 +375,136 @@ func mergeMetaExtractionToConn(conn *ACPConn, backendID string, meta map[string]
 	}
 	conn.mergeMetaExtraction(ext)
 }
+
+// MergeUsageState merges an incoming partial usage_update onto the existing
+// session usage state, returning the resulting state.
+//
+// ACP agents do NOT send usage_update notifications as full snapshots.
+// CodeBuddy in particular distributes its extension detail (cache/credit,
+// usageByCategory, token counters) across multiple notifications within one
+// turn, and many notifications are "naked" — carrying only cost with
+// used=0, size=0 and no _meta at all. Treating every notification as a full
+// snapshot (unconditional overwrite) lets a naked trailing notification wipe a
+// previously-known context window to {used:0, size:0} — the "context panel
+// shows all zeros after many turns" bug. See the frontend's updateUsageState
+// in web/src/composables/useSessionIdentity.ts which already implements the
+// same partial-update semantics for the same reason.
+//
+// Merge rules (incoming is a partial update — non-informative values never
+// regress existing state):
+//
+//   - size: sticky. A known non-zero window is a session-level invariant (set
+//     by the model) and is never regressed by an incoming 0/absent size. A
+//     non-zero size change (e.g. model switch) is accepted.
+//   - used: the distinguishing signal is size. When incoming.Size > 0 the
+//     notification carries the authoritative window, so its used is trusted
+//     outright — including a genuine 0 (empty/compacted context). A 0 used is
+//     only backfilled from the usageByCategory sum in the anomalous case where
+//     the agent reported a window plus a populated breakdown but omitted used.
+//     When incoming.Size == 0 (a "naked" cost-only notification) an incoming
+//     used > 0 still applies, but a naked 0 keeps the existing used — this is
+//     the core regression guard: a naked trailing notification must never wipe
+//     a known window to {used:0, size:0}.
+//   - token/cache/credit extension fields: incoming non-zero → update;
+//     incoming zero/absent → keep existing (partial notifications omit them).
+//   - cost: monotonic cumulative. An incoming cost lower than the existing one
+//     is treated as "no new cost info" and does not regress the total.
+//   - currency: filled when incoming carries one.
+//
+// existing may be nil (first observation) — incoming is then used as-is.
+// incoming must not be nil.
+func MergeUsageState(existing, incoming *UsageState) *UsageState {
+	if incoming == nil {
+		return existing
+	}
+	if existing == nil {
+		return cloneUsageState(incoming)
+	}
+	out := cloneUsageState(existing)
+
+	// Size is a session-level invariant: never regress a known window to 0.
+	if incoming.Size > 0 {
+		out.Size = incoming.Size
+	}
+	// Cost is monotonic cumulative: never regress the running total.
+	if incoming.Cost > existing.Cost {
+		out.Cost = incoming.Cost
+	}
+	if incoming.Currency != "" {
+		out.Currency = incoming.Currency
+	}
+
+	switch {
+	case incoming.Size > 0:
+		// Authoritative window snapshot — trust its used outright. A genuine 0
+		// (empty/compacted context) stays 0; only the anomalous "window plus
+		// populated breakdown but used omitted" case is backfilled.
+		out.Used = incoming.Used
+		if incoming.Used <= 0 {
+			if sum := sumCategory(incoming.UsageByCategory); sum > 0 {
+				out.Used = int(sum)
+			}
+		}
+	case incoming.Used > 0:
+		// Naked notification without window info but a real used — apply it.
+		out.Used = incoming.Used
+	default:
+		// Naked zero (used=0, size=0, cost-only): keep the existing used — the
+		// core regression guard against wiping a known window.
+	}
+
+	// Token/cache/credit extension fields: non-zero incoming values update;
+	// zero/absent keep the existing value (partial notifications omit them).
+	setIntIfNonZero(&out.InputTokens, incoming.InputTokens)
+	setIntIfNonZero(&out.OutputTokens, incoming.OutputTokens)
+	setIntIfNonZero(&out.TotalTokens, incoming.TotalTokens)
+	setIntIfNonZero(&out.CachedReadTokens, incoming.CachedReadTokens)
+	setIntIfNonZero(&out.CachedWriteTokens, incoming.CachedWriteTokens)
+	setIntIfNonZero(&out.ThoughtTokens, incoming.ThoughtTokens)
+	setIntIfNonZero(&out.CacheCreationTokens, incoming.CacheCreationTokens)
+	setIntIfNonZero(&out.CacheHitTokens, incoming.CacheHitTokens)
+	setIntIfNonZero(&out.CacheMissTokens, incoming.CacheMissTokens)
+	setFloatIfNonZero(&out.Credit, incoming.Credit)
+
+	// Category breakdown: an incoming meaningful breakdown replaces the stale
+	// one (it is the authoritative per-notification view); an empty/zero one is
+	// omitted by the agent and keeps the existing breakdown.
+	if sumCategory(incoming.UsageByCategory) > 0 {
+		out.UsageByCategory = cloneCategory(incoming.UsageByCategory)
+	}
+	return out
+}
+
+// sumCategory sums the token counts of a usageByCategory breakdown.
+func sumCategory(cat map[string]int64) int64 {
+	var total int64
+	for _, v := range cat {
+		total += v
+	}
+	return total
+}
+
+// cloneUsageState returns a deep-enough copy of a UsageState (category map is
+// cloned so later mutations of the source never leak into the cached state).
+func cloneUsageState(s *UsageState) *UsageState {
+	if s == nil {
+		return nil
+	}
+	c := *s
+	if s.UsageByCategory != nil {
+		c.UsageByCategory = cloneCategory(s.UsageByCategory)
+	}
+	return &c
+}
+
+// cloneCategory copies a usageByCategory breakdown map.
+func cloneCategory(cat map[string]int64) map[string]int64 {
+	if cat == nil {
+		return nil
+	}
+	out := make(map[string]int64, len(cat))
+	for k, v := range cat {
+		out[k] = v
+	}
+	return out
+}

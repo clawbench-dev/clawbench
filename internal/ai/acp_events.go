@@ -327,7 +327,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 		forwardACPEvent(ch, StreamEvent{Type: "usage_update", Usage: usageState})
 		if conn != nil {
-			conn.SetCachedUsageState(usageState)
+			// Merge, don't overwrite: a usage_update notification is a partial
+			// update, not a full snapshot (CodeBuddy sends naked used=0/size=0
+			// notifications between the informative ones). Unconditional
+			// SetCachedUsageState would let a trailing naked notification wipe a
+			// previously-known context window — the "context panel shows all
+			// zeros" bug. MergeUsageState keeps sticky size/used and only
+			// applies fields the notification actually carries.
+			merged := MergeUsageState(conn.GetCachedUsageState(), usageState)
+			conn.SetCachedUsageState(merged)
 		}
 	}
 }

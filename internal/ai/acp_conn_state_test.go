@@ -1705,7 +1705,9 @@ func TestBuildImageBlock_OversizedFile(t *testing.T) {
 
 // TestEmitPromptResponseUsage_NilCachedState verifies that emitting a
 // PromptResponse.Usage before any UsageUpdate notification (so cachedUsageState
-// is still nil) does not panic — the regression for issue #363.
+// is still nil) does not panic — the regression for issue #363. With no window
+// info and no usageByCategory, used stays 0 and InputTokens is NOT promoted to
+// used (it is the session-cumulative input, not the current context occupancy).
 func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	agent := &model.Agent{ID: "test-usage-nil", Backend: "acp-stdio", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-usage-nil")
@@ -1743,9 +1745,10 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 	require.NotNil(t, usageUpdate, "usage_update event should be emitted")
 	u := usageUpdate.Usage
 	require.NotNil(t, u)
-	// cachedUsageState was nil → fall back to zero values, no panic
+	// cachedUsageState was nil → no panic. No window info and no
+	// usageByCategory, so used stays 0; InputTokens is not promoted to used.
 	assert.Equal(t, 0, u.Used)
-	assert.Equal(t, 0, u.Size)
+	assert.Equal(t, 0, u.Size, "no window size known yet — size stays 0 until a notification reports it")
 	assert.Equal(t, 0.0, u.Cost)
 	assert.Equal(t, "", u.Currency)
 	assert.Equal(t, 10, u.InputTokens)
@@ -1818,7 +1821,6 @@ func TestEmitPromptResponseUsage_CachedCostZero(t *testing.T) {
 	require.NotNil(t, metadataEvt)
 	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "zero cached cost must not set CostUSD")
 }
-
 
 // TestEmitPromptResponseUsage_NilUsage verifies that a nil PromptResponse.Usage
 // with non-empty _meta (CodeBuddy pattern: no PromptResponse.Usage, but quota /

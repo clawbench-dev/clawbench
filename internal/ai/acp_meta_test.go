@@ -479,3 +479,191 @@ func TestMapACPSessionUpdate_UsageUpdate_NoMeta(t *testing.T) {
 		t.Fatal("expected usage_update event")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// MergeUsageState — partial-update merge semantics (context panel zeros bug)
+// ---------------------------------------------------------------------------
+
+// TestMergeUsageState_NakedZeroDoesNotRegressExisting verifies the core
+// regression: a naked usage_update (used=0, size=0, cost only) must NOT wipe a
+// previously-known context window. This is the "context panel shows all zeros
+// after many turns" bug — CodeBuddy sends such naked notifications between the
+// informative ones, and unconditional overwrite let a trailing naked one wipe
+// {used:300k, size:1e6} to {0,0}.
+func TestMergeUsageState_NakedZeroDoesNotRegressExisting(t *testing.T) {
+	existing := &UsageState{
+		Used:            300000,
+		Size:            1000000,
+		InputTokens:     301000,
+		OutputTokens:    5000,
+		Cost:            5.0,
+		CacheHitTokens:  290000,
+		UsageByCategory: map[string]int64{"conversation": 250000, "tools": 50000},
+	}
+	// Naked notification: only cost, used=0, size=0, no _meta.
+	naked := &UsageState{Used: 0, Size: 0, Cost: 6.08}
+
+	merged := MergeUsageState(existing, naked)
+
+	// Known window is a session invariant — never regressed by absent values.
+	assert.Equal(t, 1000000, merged.Size, "size must stay sticky")
+	assert.Equal(t, 300000, merged.Used, "used must not regress to 0")
+	// Token/cache/category fields keep existing values (partial notification omitted them).
+	assert.Equal(t, 301000, merged.InputTokens)
+	assert.Equal(t, 5000, merged.OutputTokens)
+	assert.Equal(t, 290000, merged.CacheHitTokens)
+	assert.Equal(t, int64(250000), merged.UsageByCategory["conversation"])
+	// Cost is monotonic cumulative — the naked notification's higher cost applies.
+	assert.Equal(t, 6.08, merged.Cost)
+}
+
+// TestMergeUsageState_UsedZeroButCategoryFallback verifies that when a
+// notification carries used=0 but provides the usageByCategory breakdown
+// (CodeBuddy's authoritative context occupancy), used is derived from the
+// category sum instead of staying 0.
+func TestMergeUsageState_UsedZeroButCategoryFallback(t *testing.T) {
+	existing := &UsageState{Used: 1000, Size: 200000, Cost: 1.0}
+	incoming := &UsageState{
+		Used:            0,
+		Size:            200000,
+		UsageByCategory: map[string]int64{"conversation": 8000, "tools": 2000, "systemPrompt": 500},
+	}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 10500, merged.Used, "used should fall back to the usageByCategory sum")
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 1.0, merged.Cost, "cost must not regress when incoming cost is 0")
+	assert.Equal(t, int64(8000), merged.UsageByCategory["conversation"])
+}
+
+// TestMergeUsageState_RealUpdateApplies verifies that a genuinely informative
+// notification (non-zero used/size) still updates the state normally.
+func TestMergeUsageState_RealUpdateApplies(t *testing.T) {
+	existing := &UsageState{Used: 1000, Size: 200000, Cost: 1.0}
+	incoming := &UsageState{Used: 15000, Size: 200000, Cost: 1.2}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 15000, merged.Used)
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 1.2, merged.Cost)
+}
+
+// TestMergeUsageState_ExistingNil verifies the first-observation path: an
+// incoming notification is adopted as-is when there is no prior state.
+func TestMergeUsageState_ExistingNil(t *testing.T) {
+	incoming := &UsageState{
+		Used: 0, Size: 0, Cost: 0.5,
+		UsageByCategory: map[string]int64{"conversation": 100},
+	}
+
+	merged := MergeUsageState(nil, incoming)
+
+	require.NotNil(t, merged)
+	assert.Equal(t, 0, merged.Used, "no existing state — nothing to protect, incoming used as-is")
+	assert.Equal(t, int64(100), merged.UsageByCategory["conversation"])
+
+	// The result must not alias the input map (later mutations must not leak).
+	merged.UsageByCategory["conversation"] = 999
+	assert.Equal(t, int64(100), incoming.UsageByCategory["conversation"])
+}
+
+// TestMergeUsageState_ZeroCategoryKeepsExisting verifies an incoming empty
+// (absent) category breakdown keeps the existing one rather than clearing it.
+func TestMergeUsageState_ZeroCategoryKeepsExisting(t *testing.T) {
+	existing := &UsageState{
+		Used:            100,
+		Size:            200000,
+		UsageByCategory: map[string]int64{"conversation": 80},
+	}
+	incoming := &UsageState{Used: 100, Size: 200000} // no category
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, int64(80), merged.UsageByCategory["conversation"])
+}
+
+// TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState verifies the
+// notification-path guard: a naked used=0/size=0 usage_update must not wipe a
+// previously-cached non-zero window on the connection.
+func TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+	// First: a real usage_update establishes the window.
+	conn.SetCachedUsageState(&UsageState{Used: 300000, Size: 1000000, InputTokens: 301000, Cost: 5.0})
+
+	// Then a naked notification arrives (used=0, size=0, cost only).
+	naked := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{Used: 0, Size: 0, Cost: &acp.Cost{Amount: 6.08}},
+	}
+	mapACPSessionUpdate(naked, ch, context.Background(), conn, nil)
+
+	// The forwarded event reflects what the agent actually said.
+	select {
+	case evt := <-ch:
+		require.NotNil(t, evt.Usage)
+		assert.Equal(t, 0, evt.Usage.Used, "forwarded event keeps the agent's raw values")
+		assert.Equal(t, 0, evt.Usage.Size)
+	default:
+		t.Fatal("expected usage_update event")
+	}
+
+	// But the cached state must retain the previously-known window.
+	cached := conn.GetCachedUsageState()
+	require.NotNil(t, cached)
+	assert.Equal(t, 1000000, cached.Size, "cached window must survive a naked notification")
+	assert.Equal(t, 300000, cached.Used, "cached used must survive a naked notification")
+	assert.Equal(t, 6.08, cached.Cost, "cost is monotonic — the naked notification's higher cost applies")
+}
+
+// TestMergeUsageState_AuthoritativeWindowWithZeroUsed verifies the distinction
+// between a real empty/compacted context (used=0 with a reported window
+// size>0 — trust it) and a naked notification (size=0 — must not regress).
+func TestMergeUsageState_AuthoritativeWindowWithZeroUsed(t *testing.T) {
+	existing := &UsageState{Used: 300000, Size: 1000000, Cost: 5.0}
+	// Agent reports a real window with empty context (new session/compaction).
+	incoming := &UsageState{Used: 0, Size: 200000, Cost: 5.5}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 200000, merged.Size, "a reported window replaces the stale one")
+	assert.Equal(t, 0, merged.Used, "a genuine 0 used within a reported window is trusted — not sticky")
+	assert.Equal(t, 5.5, merged.Cost)
+}
+
+// TestMergeUsageState_NonZeroDropIsAccepted verifies that a genuine non-zero
+// used drop (turn-to-turn fluctuation) is applied, not mistakenly sticky.
+func TestMergeUsageState_NonZeroDropIsAccepted(t *testing.T) {
+	existing := &UsageState{Used: 50000, Size: 200000, Cost: 3.0}
+	incoming := &UsageState{Used: 30000, Size: 200000, Cost: 3.2}
+
+	merged := MergeUsageState(existing, incoming)
+
+	assert.Equal(t, 30000, merged.Used, "a genuine non-zero drop within a reported window is accepted")
+	assert.Equal(t, 200000, merged.Size)
+	assert.Equal(t, 3.2, merged.Cost)
+}
+
+// TestMergeUsageState_NakedZeroWithWindowBackfill verifies that a naked
+// (size=0, used=0) notification keeps the known window, while a notification
+// with a window plus a populated usageByCategory (but used omitted) backfills
+// used from the category sum.
+func TestMergeUsageState_NakedZeroWithWindowBackfill(t *testing.T) {
+	// Naked (size=0, used=0) — keep existing.
+	existing := &UsageState{Used: 300000, Size: 1000000, Cost: 5.0}
+	merged := MergeUsageState(existing, &UsageState{Used: 0, Size: 0, Cost: 5.5})
+	assert.Equal(t, 300000, merged.Used)
+	assert.Equal(t, 1000000, merged.Size)
+
+	// Window + populated category but used omitted — backfill from the sum.
+	existing2 := &UsageState{Used: 1000, Size: 200000, Cost: 5.0}
+	incoming2 := &UsageState{
+		Size:            200000,
+		Used:            0,
+		UsageByCategory: map[string]int64{"conversation": 8000, "tools": 2000},
+	}
+	merged2 := MergeUsageState(existing2, incoming2)
+	assert.Equal(t, 10000, merged2.Used, "used backfilled from the usageByCategory sum")
+	assert.Equal(t, 200000, merged2.Size)
+}
