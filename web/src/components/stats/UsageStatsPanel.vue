@@ -59,9 +59,15 @@
             />
           </div>
           <div class="stats-totals">
-            <div v-for="card in totalCards" :key="card.metric" class="stats-total">
+            <div v-for="card in visibleTotals" :key="card.metric" class="stats-total">
               <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
               <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+            </div>
+            <!-- Cache hit rate is an overview-only derived metric (it is not an
+                 additive column) — shown here whenever the range has cache data. -->
+            <div v-if="overviewCachePresent" class="stats-total">
+              <span class="stats-total-label">{{ t('stats.colHitRate') }}</span>
+              <span class="stats-total-value">{{ overviewHitRateText }}</span>
             </div>
           </div>
         </div>
@@ -278,7 +284,6 @@ function metricLabelKey(m: UsageMetricId): string {
     case 'output': return 'stats.colOutput'
     case 'total': return 'stats.colTotal'
     case 'cacheHit': return 'stats.colCacheHit'
-    case 'hitRate': return 'stats.colHitRate'
     case 'credit': return 'stats.colCredit'
     case 'cost': return 'stats.colCost'
   }
@@ -342,9 +347,6 @@ function formatMetricCardValue(m: UsageMetricId, value: number): string {
 }
 
 function formatMetricCellValue(m: UsageMetricId, row: UsageRowLike): string {
-  // A hit-rate cell for a group with no cache activity has a zero denominator —
-  // "0.0%" would mislead. Show a dash instead.
-  if (m === 'hitRate' && row.cacheHit + row.cacheMiss === 0) return '—'
   return formatMetricValue(m, rowValueOf(row as never, m))
 }
 
@@ -404,16 +406,22 @@ const totalsPresent = computed(() => {
 })
 const hasContent = computed(() => totalsPresent.value || filteredRows.value.length > 0 || rawTrend.value.length > 0)
 
-// Summary value cards: cache hit/miss is shown as the input drill-down donut,
-// not as standalone totals (it is a portion of the input prompt), so drop the
-// cache-derived cards from the grid to avoid double counting confusion.
-const totalCards = computed(() =>
-  visibleTotals.value.filter(c => c.metric !== 'cacheHit' && c.metric !== 'hitRate'),
-)
-
 // Overview donut: input vs output share of the range totals. Clicking the
 // input slice drills into that input's cache composition (hit vs miss).
 const overviewDrill = ref<null | 'input'>(null)
+
+// Cache hit rate, shown as an overview-only derived card (it is not an
+// additive metric column). Present whenever the range totals carry cache data.
+const overviewCachePresent = computed(() => {
+  const t0 = totals.value
+  return !!t0 && t0.cacheHit + t0.cacheMiss > 0
+})
+const overviewHitRateText = computed(() => {
+  const t0 = totals.value
+  if (!t0 || t0.cacheHit + t0.cacheMiss <= 0) return '—'
+  return `${((t0.cacheHit / (t0.cacheHit + t0.cacheMiss)) * 100).toFixed(1)}%`
+})
+
 const overviewDonutOption = computed(() => {
   void themeTick.value
   const tt = totals.value

@@ -26,7 +26,6 @@ const (
 	MetricOutput   UsageMetric = "output"
 	MetricTotal    UsageMetric = "total"
 	MetricCacheHit UsageMetric = "cacheHit"
-	MetricHitRate  UsageMetric = "hitRate"
 	MetricCredit   UsageMetric = "credit"
 	MetricCost     UsageMetric = "cost"
 )
@@ -51,8 +50,9 @@ type UsageParams struct {
 }
 
 // UsageRow aggregates one dimension combination (or one day × combination for
-// trend queries). Hit rate is NOT precomputed here — CacheHit/CacheMiss sums
-// are returned so the client can compute hit/(hit+miss).
+// trend queries). CacheHit/CacheMiss sums are returned so the client can
+// compose the cache breakdown (hit rate is shown from range totals in the
+// overview, not as an additive metric column).
 type UsageRow struct {
 	Day        string            `json:"day,omitempty"` // "2006-01-02", trend only
 	Key        map[string]string `json:"key"`           // dim → group label, only requested dims
@@ -129,11 +129,6 @@ func sortExpr(m UsageMetric) (string, bool) {
 		return "SUM(m.total_tokens)", true
 	case MetricCacheHit:
 		return "SUM(m.cache_hit_tokens)", true
-	case MetricHitRate:
-		// Order by the hit ratio; rows with no cache data yield NULL (SQLite
-		// sorts NULLs first in ASC, last in DESC — the UI's default DESC shows
-		// no-data rows at the bottom).
-		return "SUM(m.cache_hit_tokens) * 1.0 / CASE WHEN SUM(m.cache_hit_tokens + m.cache_miss_tokens) = 0 THEN NULL ELSE SUM(m.cache_hit_tokens + m.cache_miss_tokens) END", true
 	case MetricCredit:
 		return "SUM(m.credit)", true
 	case MetricCost:
@@ -366,13 +361,4 @@ func serializeDimKey(key map[string]string) string {
 		}
 	}
 	return strings.Join(parts, "\x00")
-}
-
-// ComputeHitRate returns hit/(hit+miss); 0 when the denominator is zero.
-func ComputeHitRate(hit, miss int64) float64 {
-	den := hit + miss
-	if den <= 0 {
-		return 0
-	}
-	return float64(hit) / float64(den)
 }

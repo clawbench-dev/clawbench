@@ -7,8 +7,8 @@ export type UsageDimId = 'model' | 'backend' | 'agent'
 export const USAGE_DIM_IDS: UsageDimId[] = ['model', 'backend', 'agent']
 
 /** Numeric metric ids (table columns / chart series). */
-export type UsageMetricId = 'input' | 'output' | 'total' | 'cacheHit' | 'hitRate' | 'credit' | 'cost'
-export const USAGE_METRIC_IDS: UsageMetricId[] = ['input', 'output', 'total', 'cacheHit', 'hitRate', 'credit', 'cost']
+export type UsageMetricId = 'input' | 'output' | 'total' | 'cacheHit' | 'credit' | 'cost'
+export const USAGE_METRIC_IDS: UsageMetricId[] = ['input', 'output', 'total', 'cacheHit', 'credit', 'cost']
 
 export type UsageRangeKey = '24h' | '7d' | '30d' | 'custom'
 export type UsageChartType = 'bar' | 'pie' | 'trend'
@@ -190,7 +190,10 @@ export function resetUsageStats(): void {
 
 // --- Derived getters ---
 
-/** Totals cards — a metric is only shown when its aggregated value is nonzero. */
+/** Totals overview cards — additive quantities only. Cache hit/miss is shown
+ * as the input drill-down donut (a portion of the input prompt), not as a
+ * standalone additive card, so it is excluded here. A metric is only shown
+ * when its aggregated value is nonzero. */
 const visibleTotals = computed(() => {
   const t = raw.value?.totals
   if (!t) return [] as { metric: UsageMetricId; value: number }[]
@@ -198,18 +201,10 @@ const visibleTotals = computed(() => {
   if (t.input > 0) items.push({ metric: 'input', value: t.input })
   if (t.output > 0) items.push({ metric: 'output', value: t.output })
   if (t.total > 0) items.push({ metric: 'total', value: t.total })
-  if (t.cacheHit > 0) items.push({ metric: 'cacheHit', value: t.cacheHit })
-  if (t.cacheHit + t.cacheMiss > 0) items.push({ metric: 'hitRate', value: hitRateOf(t.cacheHit, t.cacheMiss) })
   if (t.credit > 0) items.push({ metric: 'credit', value: t.credit })
   if (t.costUsd > 0) items.push({ metric: 'cost', value: t.costUsd })
   return items
 })
-
-function hitRateOf(hit: number, miss: number): number {
-  const den = hit + miss
-  if (den <= 0) return 0
-  return hit / den
-}
 
 /** Sorted table rows (server returns them pre-sorted by the requested sort). */
 const tableRows = computed<UsageRow[]>(() => raw.value?.rows ?? [])

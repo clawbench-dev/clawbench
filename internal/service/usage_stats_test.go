@@ -304,41 +304,6 @@ func TestUsageStatsEmptyResult(t *testing.T) {
 	assert.Empty(t, res.Rows)
 }
 
-func TestUsageStatsSortByHitRate(t *testing.T) {
-	db := setupDB(t)
-	ensureAgentsTable(t, db)
-
-	// High-rate model (0.9), low-rate model (0.25), and a no-cache model.
-	insertUsageSeed(t, db, usageSeed{
-		project: "/p", sessionID: "s1", agentID: "a", agentName: "A",
-		backend: "codebuddy", model: "high", createdAt: "2026-01-10 10:00:00", cacheHit: 90, cacheMiss: 10,
-	})
-	insertUsageSeed(t, db, usageSeed{
-		project: "/p", sessionID: "s2", agentID: "a", agentName: "A",
-		backend: "codebuddy", model: "low", createdAt: "2026-01-10 11:00:00", cacheHit: 10, cacheMiss: 30,
-	})
-	insertUsageSeed(t, db, usageSeed{
-		project: "/p", sessionID: "s3", agentID: "a", agentName: "A",
-		backend: "codebuddy", model: "nocache", createdAt: "2026-01-10 12:00:00", total: 1,
-	})
-
-	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
-		ProjectPath: "/p",
-		Dims:        []service.UsageDim{service.DimModel},
-		Metrics:     []service.UsageMetric{service.MetricHitRate},
-		SortBy:      service.MetricHitRate,
-		SortDesc:    true,
-	}))
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 3)
-	// Highest rate first; the no-cache row (denominator 0 → NULL) sorts last.
-	assert.Equal(t, "high", res.Rows[0].Key["model"])
-	assert.Equal(t, "nocache", res.Rows[2].Key["model"])
-	// Hit/miss sums returned so the client can recompute the ratio.
-	assert.Equal(t, int64(90), res.Rows[0].CacheHit)
-	assert.Equal(t, int64(10), res.Rows[0].CacheMiss)
-}
-
 func TestUsageStatsValidation(t *testing.T) {
 	db := setupDB(t)
 	ensureAgentsTable(t, db)
@@ -391,12 +356,6 @@ func TestUsageStatsValidation(t *testing.T) {
 			require.ErrorAs(t, err, &vErr, "expected validation error, got %T", err)
 		})
 	}
-}
-
-func TestComputeHitRate(t *testing.T) {
-	assert.InDelta(t, 0.8, service.ComputeHitRate(80, 20), 0.0001)
-	assert.InDelta(t, 0.0, service.ComputeHitRate(0, 0), 0.0001)
-	assert.InDelta(t, 1.0, service.ComputeHitRate(10, 0), 0.0001)
 }
 
 func TestUsageStatsSortByCostAsc(t *testing.T) {

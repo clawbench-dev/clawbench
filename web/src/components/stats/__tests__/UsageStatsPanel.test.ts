@@ -164,22 +164,25 @@ describe('UsageStatsPanel', () => {
     expect(chartOptions.length).toBeGreaterThan(optionsBefore)
   })
 
-  it('renders totals cards only for non-zero non-cache metrics', async () => {
+  it('renders overview cards: additive metrics + cache hit rate (no standalone cache card)', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
       rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
     }))
     const wrapper = await mountPanel()
     const cards = wrapper.findAll('.stats-total')
+    const labels = cards.map(c => c.find('.stats-total-label')?.text() ?? '')
     const cardText = cards.map(c => c.text()).join(' | ')
-    // Cache hit/miss is shown via the input drill-down donut, not as standalone
-    // cards (it is a portion of the input prompt) — so no 缓存命中/命中率 card.
+    // Cache hit rate is kept in the overview as a derived card (it is not an
+    // additive metric column), while cacheHit itself is not a standalone card.
+    expect(labels).toContain('缓存命中率')
+    expect(labels).not.toContain('缓存命中')
     expect(cardText).toContain('输入 Tokens')
     expect(cardText).toContain('总 Tokens')
     expect(cardText).toContain('费用 (USD)')
+    expect(cardText).toContain('80.0%') // cache hit rate
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
-    expect(cardText).not.toContain('缓存命中')
   })
 
   it('renders a data table with dim columns and selected metric columns', async () => {
@@ -234,24 +237,19 @@ describe('UsageStatsPanel', () => {
   })
 
   it('drops zero-value rows from the table (no wasted rows)', async () => {
-    // Two models: glm has cache traffic (hitRate>0), empty-model has none and
-    // shows all-zero for the selected hitRate metric → row must be filtered.
-    const stats = useUsageStats()
-    stats.setMetrics(['hitRate'])
-    await flushPromises()
+    // Two models: glm has usage, empty-model has all-zero for the selected
+    // metric (total) → its row must be filtered out.
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { input: 5, output: 0, total: 5, cacheHit: 3, cacheMiss: 2, credit: 0, costUsd: 0, messageCnt: 1 },
       rows: [
         { key: { model: 'glm' }, input: 5, output: 0, total: 5, cacheHit: 3, cacheMiss: 2, credit: 0, costUsd: 0, messageCnt: 1 },
-        { key: { model: 'no-cache' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+        { key: { model: 'no-usage' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
       ],
     }))
     const wrapper = await mountPanel()
     const text = wrapper.text()
     expect(text).toContain('glm')
-    expect(text).toContain('60.0%') // 3/(3+2)
-    expect(text).not.toContain('no-cache') // zero row dropped
-    await new Promise(r => setTimeout(r, 350))
+    expect(text).not.toContain('no-usage') // zero row dropped
   })
 
   it('renders the input/output overview donut from totals', async () => {

@@ -197,7 +197,6 @@ export function buildCacheDonut(hit: number, miss: number, hitLabel: string, mis
 export function formatMetricValue(metric: UsageMetricId, v: number): string {
   if (v == null || Number.isNaN(v)) return '—'
   switch (metric) {
-    case 'hitRate': return `${(v * 100).toFixed(1)}%`
     case 'credit': return `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
     case 'cost': {
       const abs = Math.abs(v)
@@ -209,17 +208,13 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
   }
 }
 
-/** Compute an ECharts row-series value for a metric (hitRate derived). */
+/** Compute an ECharts row-series value for a metric. */
 export function rowValueOf(row: UsageRow, metric: UsageMetricId): number {
   switch (metric) {
     case 'input': return row.input
     case 'output': return row.output
     case 'total': return row.total
     case 'cacheHit': return row.cacheHit
-    case 'hitRate': {
-      const den = row.cacheHit + row.cacheMiss
-      return den > 0 ? row.cacheHit / den : 0
-    }
     case 'credit': return row.credit
     case 'cost': return row.costUsd
   }
