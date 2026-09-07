@@ -26,6 +26,14 @@ import (
 // The theme dir lives under the test env watch dir so absolute-path source
 // files resolve against model.RootPaths (set to the watch dir).
 func setupThemeTestEnv(t *testing.T) (string, func()) {
+	themeDir, _, teardown := setupThemeTestEnvFull(t)
+	return themeDir, teardown
+}
+
+// setupThemeTestEnvFull is setupThemeTestEnv plus the underlying test env, so
+// tests can build project-relative source paths (robust across macOS and
+// Windows where absolute temp paths go through symlinks/8.3 short names).
+func setupThemeTestEnvFull(t *testing.T) (string, string, func()) {
 	env, teardown := setupTestEnv(t)
 
 	origConfig := model.ConfigInstance
@@ -41,7 +49,7 @@ func setupThemeTestEnv(t *testing.T) (string, func()) {
 		model.DataDir = origDataDir
 		teardown()
 	}
-	return themeDir, cleanup
+	return themeDir, env.ProjectDir, cleanup
 }
 
 // makePNG renders an RGBA image and PNG-encodes it.
@@ -120,19 +128,21 @@ func TestServeThemeBackground_PostMultipartJPEGDownscaled(t *testing.T) {
 }
 
 func TestServeThemeBackground_PostPathCopyReplacesOldExtension(t *testing.T) {
-	themeDir, teardown := setupThemeTestEnv(t)
+	themeDir, projectDir, teardown := setupThemeTestEnvFull(t)
 	defer teardown()
 
-	// A source file next to DataDir (absolute path, no project cookie needed).
-	projectFile := filepath.Join(filepath.Dir(themeDir), "source.png")
-	require.NoError(t, os.WriteFile(projectFile, makePNG(20, 20), 0o644))
+	// A source file inside the project dir referenced by a project-relative
+	// path. Relative resolution is robust across macOS and Windows (absolute
+	// temp paths go through symlinks / 8.3 short names on CI).
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "source.png"), makePNG(20, 20), 0o644))
 	// Also stage an old gif file to ensure it gets cleaned on replacement.
 	require.NoError(t, os.WriteFile(filepath.Join(themeDir, "background.gif"), []byte("old-gif"), 0o644))
 
-	body := strings.NewReader(`{"path":"` + projectFile + `"}`)
+	body := strings.NewReader(`{"path":"source.png"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", "application/json")
 	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, projectDir)
 	w := callHandler(ServeThemeBackground, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -344,14 +354,17 @@ func TestServeThemeBackground_PostPathCopyNonexistentFile(t *testing.T) {
 }
 
 func TestServeThemeBackground_PostPathCopyDirectoryRejected(t *testing.T) {
-	themeDir, teardown := setupThemeTestEnv(t)
+	_, projectDir, teardown := setupThemeTestEnvFull(t)
 	defer teardown()
 
-	// A directory must not be accepted as a wallpaper source.
-	body := strings.NewReader(`{"path":"` + themeDir + `"}`)
+	// A directory must not be accepted as a wallpaper source. Referenced
+	// project-relatively for cross-platform path resolution reliability.
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "adir"), 0o755))
+	body := strings.NewReader(`{"path":"adir"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", "application/json")
 	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, projectDir)
 	w := callHandler(ServeThemeBackground, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -546,13 +559,15 @@ func TestServeThemeBackground_PostPathCopyFileTooLarge(t *testing.T) {
 	defer teardown()
 
 	// A source file exceeding wallpaperMaxBytes must 400 before any read.
-	big := filepath.Join(env.WatchDir, "huge.png")
-	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte{0x89}, wallpaperMaxBytes+1024), 0o644))
+	// Project-relative reference keeps path resolution cross-platform.
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "huge.png"),
+		bytes.Repeat([]byte{0x89}, wallpaperMaxBytes+1024), 0o644))
 
-	body := strings.NewReader(`{"path":"` + big + `"}`)
+	body := strings.NewReader(`{"path":"huge.png"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", "application/json")
 	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeThemeBackground, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
