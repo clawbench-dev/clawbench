@@ -7,7 +7,7 @@
       @click.self="handleBackdropClick"
     >
       <Transition name="completion-popover-card" mode="out-in" appear>
-        <div :key="active.sessionId + active.kind" class="completion-popover" :class="{ 'is-expanded': expanded }">
+        <div :key="active.sessionId + active.kind" class="completion-popover" :class="{ 'is-expanded': expanded, 'summary-overflow': summaryOverflow }">
           <div class="completion-popover-header">
             <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-popover-icon" />
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
@@ -30,6 +30,7 @@
             </span>
           </div>
           <div
+            ref="summaryEl"
             class="completion-popover-summary markdown-body"
             :class="expanded ? 'is-expanded-summary' : 'is-collapsed'"
             :title="expanded ? undefined : gt('chat.popover.expand')"
@@ -77,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { Search, Send, Check, ExternalLink, MessageSquare, Paperclip } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
@@ -104,6 +105,22 @@ function expand(): void {
     expanded.value = true
     // 展开为全屏阅读态时同时展开用户消息引用块，确保用户能看全问题
     userMessageExpanded.value = true
+}
+
+// 折叠态摘要是否"溢出"折叠高度（需要底部淡出渐变）。
+// 内容很短（不满折叠高度）时摘要完全可见、无裁剪，也就不需要淡出带与
+// actions 负 margin 抬升——否则 actions 的渐变背景会盖住原本就少的几行。
+// 用 DOM 实测：折叠态 summary 受 max-height 钳制，scrollHeight 超过
+// clientHeight 即表示内容被裁掉、底部应淡出提示可展开。
+const summaryEl = ref<HTMLElement | null>(null)
+const summaryOverflow = ref(false)
+function measureSummaryOverflow(): void {
+    const el = summaryEl.value
+    if (!el || expanded.value) {
+        summaryOverflow.value = false
+        return
+    }
+    summaryOverflow.value = el.scrollHeight > el.clientHeight + 1
 }
 
 const agentBackend = computed(() => {
@@ -135,6 +152,12 @@ const summaryHtml = computed(() => {
     return rewriteImageUrls(base, projectRoot, getThumbWidth(isPC.value))
 })
 
+// 摘要 HTML 每次更新（会话切换 / 首次渲染）后补测一次溢出。image 折叠态
+// display:none 不影响高度；markdown 行高需等 v-html 落到 DOM 才能测得。
+watch(summaryHtml, () => {
+    void nextTick(() => measureSummaryOverflow())
+})
+
 // ── 快捷输入框 ──
 const inputText = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -154,6 +177,10 @@ watch(active, () => {
     sending.value = false
     userMessageExpanded.value = false
     expanded.value = false
+    // 摘要随会话切换而变：等新摘要渲染完再测是否溢出折叠高度。
+    // immediate 时元素可能还没挂载，measure 内会跳过；等 DOM 就绪后靠
+    // 下方 summary 的 ref watch 补测。
+    void nextTick(() => measureSummaryOverflow())
 }, { immediate: true })
 
 // 点击 backdrop 空白处关闭（带最小停留时长防误触保护）
@@ -309,6 +336,27 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     flex-direction: column;
     max-height: 100%;
+    /* 折叠 → 展开的布局切换（顶部小卡片 → 居中放大）由 flex 瞬时完成，
+       用一次淡入 + 轻微放大动画遮盖这次跳变，避免"生硬闪现"。
+       动画在 is-expanded 类加上时播放一次；展开无收起路径，不会重复触发。 */
+    animation: completion-popover-expand 0.22s ease-out;
+}
+
+@keyframes completion-popover-expand {
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .completion-popover.is-expanded {
+        animation: none;
+    }
 }
 
 /* PC 模式加宽通知栏，避免过窄难看 */
@@ -522,12 +570,19 @@ function handleSummaryClick(event: MouseEvent): void {
    底部留出淡出带，与下方按钮行重叠（负 margin）以省纵向空间。
    关键：mask 用 mask-size 固定到 max-height（132px）的坐标空间并 top 对齐，
    而非按内容实际高度百分比——否则短内容（一两行）时百分比渐变会把
-   大半内容也淡掉（表现为只露出半行）。 ── */
+   大半内容也淡掉（表现为只露出半行）。
+
+   溢出判定交给 JS（summary-overflow class）：内容很短、不满折叠高度时
+   summary 完整可见、无裁剪，也就没有"淡出/按钮重叠"——此时不给 mask、
+   actions 也回落到正常文档流，避免折叠态 actions 的渐变背景盖住内容。 ── */
 .completion-popover-summary.markdown-body.is-collapsed {
     max-height: 132px;
     overflow-y: hidden;
     position: relative;
     cursor: pointer;
+}
+
+.completion-popover.summary-overflow .completion-popover-summary.markdown-body.is-collapsed {
     -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
     mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
     -webkit-mask-size: 100% 132px;
@@ -737,8 +792,10 @@ function handleSummaryClick(event: MouseEvent): void {
 
 /* 折叠态：动作行用负 margin 抬入摘要底部淡出带，与渐变区重叠省纵向空间。
    容器顶部用"透明→卡色"渐变承接摘要的 mask 淡出，避免生硬接缝；
-   按钮浮于渐变带内、卡片底角靠右。 */
-.completion-popover:not(.is-expanded) .completion-popover-actions {
+   按钮浮于渐变带内、卡片底角靠右。
+   仅在摘要确实溢出折叠高度（summary-overflow）时生效——内容很少时
+   actions 保持正常文档流排在摘要下方，避免渐变背景盖住原本就少的几行。 */
+.completion-popover.summary-overflow:not(.is-expanded) .completion-popover-actions {
     position: relative;
     margin-top: -34px;
     padding-top: 16px;

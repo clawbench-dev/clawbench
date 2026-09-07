@@ -406,15 +406,62 @@ describe('CompletionPopover', () => {
         expect(window.getComputedStyle(input).display).toBe('none')
         // 不存在收起按钮（一旦展开不回折叠）
         expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
-        // 折叠态底部动作行与摘要淡出带重叠（负 margin 上移，省纵向空间）
+        // 折叠态按钮行的负 margin 抬升仅作用于摘要溢出（summary-overflow）场景；
+        // 内容很少时 actions 保持在摘要下方的正常文档流，避免盖住内容。
         const cssText = Array.from(document.styleSheets)
             .map((s) => {
                 try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
                 catch { return '' }
             })
             .join('\n')
-        const actionsRule = cssText.split('\n').filter((line) => line.includes('.completion-popover:not(.is-expanded) .completion-popover-actions')).join('\n')
-        expect(actionsRule).toContain('margin-top: -34px')
+        const overlapRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow:not(.is-expanded) .completion-popover-actions')).join('\n')
+        expect(overlapRule).toContain('margin-top: -34px')
+        // 规则必须限定在 summary-overflow 下：无前缀的折叠态 actions 不抬升
+        const plainRule = cssText.split('\n').filter((line) => line.includes('.completion-popover:not(.is-expanded) .completion-popover-actions')).join('\n')
+        expect(plainRule).not.toContain('margin-top: -34px')
+    })
+
+    it('collapses without a fade mask when the summary is short (no overflow)', async () => {
+        mockState.active = ref(makeItem({ summary: '很短的一行' }))
+        mountPopover()
+
+        // jsdom 中 scrollHeight/clientHeight 均为 0：内容不满折叠高度 → 不溢出
+        const card = document.querySelector('.completion-popover')!
+        expect(card.classList.contains('summary-overflow')).toBe(false)
+        // 折叠摘要基础规则保留裁剪（max-height + overflow hidden）
+        const el = document.querySelector('.completion-popover-summary.is-collapsed')!
+        expect(window.getComputedStyle(el).maxHeight).toBe('132px')
+        expect(window.getComputedStyle(el).overflowY).toBe('hidden')
+        // mask 淡出与 actions 抬升都由 .summary-overflow 门控，短内容不触发
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const maskRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow .completion-popover-summary.markdown-body.is-collapsed')).join('\n')
+        expect(maskRule).toContain('mask-size: 100% 132px')
+        // 短内容不应用负 margin 抬升（actions 自然排在摘要下方）
+        const actions = document.querySelector('.completion-popover-actions')!
+        expect(window.getComputedStyle(actions).marginTop).toBe('6px')
+    })
+
+    it('adds the overflow mask and actions overlap once the collapsed summary actually overflows', async () => {
+        mockState.active = ref(makeItem({ summary: '短内容', sessionId: 's-overflow' }))
+        mountPopover()
+
+        // 模拟摘要内容超出折叠高度：jsdom 不布局，需手工指定 scrollHeight。
+        // clientHeight 被 max-height 132px 钳制 → scrollHeight > clientHeight 即溢出。
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        Object.defineProperty(summary, 'scrollHeight', { configurable: true, value: 320 })
+        Object.defineProperty(summary, 'clientHeight', { configurable: true, value: 132 })
+        // 变更 active 内容使 summaryHtml 变化 → 溢出测量重新运行
+        mockState.active.value = makeItem({ summary: '变成足够长的摘要内容'.repeat(20), sessionId: 's-overflow' })
+        await nextTick()
+        await nextTick()
+
+        const card = document.querySelector('.completion-popover')!
+        expect(card.classList.contains('summary-overflow')).toBe(true)
     })
 
     it('clips the collapsed summary with a bottom fade and hides images', () => {
@@ -443,6 +490,36 @@ describe('CompletionPopover', () => {
         expect(cssText).toContain('.completion-popover-summary.is-collapsed img')
         const img = el.querySelector('img')!
         expect(window.getComputedStyle(img).display).toBe('none')
+    })
+
+    it('expands with a fade + slight scale-in animation to mask the layout jump', async () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        // 点击折叠摘要 → 展开态
+        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        const expanded = document.querySelector('.completion-popover.is-expanded')!
+        expect(expanded).toBeTruthy()
+        // jsdom 不跑 CSS 动画，改为断言样式表注入的动画规则：
+        // 展开动画只挂在 .is-expanded 卡片上（折叠态无动画），从轻微缩小 +
+        // 透明开始，到完整大小 + 不透明结束，ease-out 缓出。
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const expandRule = cssText.split('\n').filter((line) => line.includes('.completion-popover.is-expanded')).join('\n')
+        expect(expandRule).toContain('animation: completion-popover-expand')
+        expect(cssText).toContain('@keyframes completion-popover-expand')
+        expect(cssText).toContain('scale(0.96)')
+        expect(cssText).toContain('scale(1)')
+        expect(expandRule).toContain('ease-out')
+        // prefers-reduced-motion 时关闭展开动画
+        expect(cssText).toContain('prefers-reduced-motion: reduce')
     })
 
     it('expands to a near-fullscreen panel on content click: input visible, no collapse button, summary scrolls', async () => {
