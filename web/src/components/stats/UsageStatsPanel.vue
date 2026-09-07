@@ -1,5 +1,5 @@
 <template>
-  <div class="usage-stats-panel" v-show="active">
+  <div ref="panelEl" class="usage-stats-panel" v-show="active">
     <!-- Compact header — matches settings/task panel header style -->
     <header class="stats-header">
       <BarChart3 :size="18" class="stats-header-icon" />
@@ -45,7 +45,7 @@
           <Gauge :size="13" class="stats-card-title-icon" />
           <span>{{ t('stats.summaryTitle') }}</span>
         </div>
-        <div class="stats-summary">
+        <div class="stats-summary" :class="{ 'is-stacked': summaryStacked }" ref="summaryEl">
           <div class="stats-donut-col">
             <div class="stats-donut-title" v-if="!overviewDrill">{{ t('stats.summaryInOut') }}</div>
             <div class="stats-donut-title" v-else>
@@ -263,21 +263,43 @@ const themeTick = ref(0)
 // the narrow/mobile boundary (value-axis tick text is hidden on mobile).
 const viewportTick = ref(0)
 
+// Stacked overview layout: when the panel is too narrow to fit the donut
+// beside the value cards, switch to a vertical (top-to-bottom) arrangement.
+// The panel root always exists (unlike the v-if summary section), so it is the
+// observed element; its content width is the summary's max width minus padding.
+const panelEl = ref<HTMLElement | null>(null)
+const summaryStacked = ref(false)
+let panelResizeObserver: ResizeObserver | null = null
+
+function updateSummaryStacked() {
+  summaryStacked.value = !!panelEl.value && panelEl.value.clientWidth < 460
+}
+
 function onThemeChange() {
   themeTick.value++
 }
 function onWindowResize() {
   viewportTick.value++
+  updateSummaryStacked()
 }
 
 onMounted(() => {
   window.addEventListener('clawbench-theme-change', onThemeChange)
   window.addEventListener('resize', onWindowResize)
+  if (panelEl.value && typeof ResizeObserver !== 'undefined') {
+    panelResizeObserver = new ResizeObserver(() => updateSummaryStacked())
+    panelResizeObserver.observe(panelEl.value)
+  }
+  updateSummaryStacked()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-theme-change', onThemeChange)
   window.removeEventListener('resize', onWindowResize)
+  if (panelResizeObserver) {
+    panelResizeObserver.disconnect()
+    panelResizeObserver = null
+  }
 })
 
 function dimLabelKey(d: UsageDimId): string {
@@ -674,12 +696,28 @@ function onRefresh() {
   gap: 12px;
   min-width: 0;
 }
+/* Narrow container: stack vertically — donut on top (full width), value cards
+   below. */
+.stats-summary.is-stacked {
+  flex-direction: column;
+}
 .stats-donut-col {
   flex: 0 0 190px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+.stats-summary.is-stacked .stats-donut-col {
+  flex: none;
+  width: 100%;
+}
+.stats-summary.is-stacked .stats-donut {
+  height: 200px;
+}
+.stats-summary.is-stacked .stats-totals {
+  flex: none;
+  width: 100%;
 }
 .stats-donut-title {
   font-size: 11px;
