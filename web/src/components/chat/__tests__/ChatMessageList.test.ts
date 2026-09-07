@@ -127,6 +127,15 @@ describe('ChatMessageList — ensure-content event pass-through', () => {
   })
 })
 
+describe('ChatMessageList — rewind event pass-through', () => {
+  it('re-emits rewind-from-message from ChatMessageItem and declares the emit', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("@rewind-from-message=\"$emit('rewind-from-message', $event)\"")
+    expect(source).toContain("'rewind-from-message'")
+  })
+})
+
 /**
  * Tests for the unified scroll-state refactor.
  *

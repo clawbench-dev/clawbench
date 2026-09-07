@@ -680,6 +680,87 @@ func TestSQLiteStore_DeleteChunksBySessionIDs_EmptyList(t *testing.T) {
 	assert.Equal(t, int64(0), deleted)
 }
 
+// ---------- DeleteChunksByMessageIDs (rewind truncation cleanup) ----------
+
+func TestSQLiteStore_DeleteChunksByMessageIDs(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		makeTestChunk("sess-a", 1, 0, "content a1"),
+		makeTestChunk("sess-a", 2, 1, "content a2"),
+		makeTestChunk("sess-a", 3, 0, "content a3"),
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Delete only message 2 of sess-a — messages 1 and 3 must survive.
+	deleted, err := store.DeleteChunksByMessageIDs([]int64{2})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 2, count)
+}
+
+func TestSQLiteStore_DeleteChunksByMessageIDs_MultipleMessages(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		makeTestChunk("sess-a", 1, 0, "content a1"),
+		makeTestChunk("sess-a", 2, 0, "content a2"),
+		makeTestChunk("sess-a", 3, 0, "content a3"),
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	deleted, err := store.DeleteChunksByMessageIDs([]int64{2, 3})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), deleted)
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 1, count)
+}
+
+func TestSQLiteStore_DeleteChunksByMessageIDs_EmptyList(t *testing.T) {
+	store := setupSQLiteStore(t)
+	deleted, err := store.DeleteChunksByMessageIDs(nil)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+}
+
+func TestSQLiteStore_DeleteChunksByMessageIDs_SyncsFTS(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	chunks := []Chunk{
+		{
+			SessionID: "sess-a", MessageID: 1, ChunkText: "database query",
+			ChunkTextSegmented: "database query", ChunkIndex: 0,
+			TokenCount: 2, Embedding: makeTestEmbedding(), HasEmbedding: true,
+			ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+			CreatedAt: time.Now().Truncate(time.Millisecond),
+		},
+		{
+			SessionID: "sess-a", MessageID: 2, ChunkText: "database search",
+			ChunkTextSegmented: "database search", ChunkIndex: 0,
+			TokenCount: 2, Embedding: makeTestEmbedding(), HasEmbedding: true,
+			ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+			CreatedAt: time.Now().Truncate(time.Millisecond),
+		},
+	}
+	err := store.InsertChunks(chunks)
+	require.NoError(t, err)
+
+	// Delete message 1 — FTS should only return message 2's chunk now.
+	deleted, err := store.DeleteChunksByMessageIDs([]int64{1})
+	assert.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	hits, err := store.SearchFTS("database", 5, "", "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(2), hits[0].MessageID)
+}
+
 // ---------- ChunkCount ----------
 
 func TestSQLiteStore_ChunkCount_Empty(t *testing.T) {

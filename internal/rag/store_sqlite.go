@@ -1149,6 +1149,67 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return affected, nil
 }
 
+// DeleteChunksByMessageIDs deletes all chunks belonging to the given chat_history
+// message IDs. Used by the rewind/truncate path so orphan chunks never surface as
+// stale search hits after the underlying messages are deleted in place. FTS and
+// vec0 entries are deleted in the same transaction for consistency.
+func (s *Store) DeleteChunksByMessageIDs(messageIDs []int64) (int64, error) {
+	if len(messageIDs) == 0 {
+		return 0, nil
+	}
+
+	// Check vec0 table existence before starting transaction (avoids deadlock with in-memory DBs)
+	hasVecTable := s.vecTableExists()
+
+	placeholders := strings.Repeat("?,", len(messageIDs)-1) + "?"
+	args := make([]any, len(messageIDs))
+	for i, id := range messageIDs {
+		args[i] = id
+	}
+
+	s.writeMu.Lock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("begin delete transaction: %w", err)
+	}
+
+	// Delete vec0 entries (table may not exist if dimension is unknown)
+	if hasVecTable {
+		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE message_id IN ("+placeholders+"))", args...)
+		if err != nil {
+			_ = tx.Rollback()
+			s.writeMu.Unlock()
+			return 0, fmt.Errorf("delete vec entries: %w", err)
+		}
+	}
+
+	// Delete FTS entries
+	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE message_id IN ("+placeholders+"))", args...)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete fts entries: %w", err)
+	}
+
+	// Delete main table
+	result, err := tx.Exec("DELETE FROM rag_chunks WHERE message_id IN ("+placeholders+")", args...)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete chunks: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("commit delete: %w", err)
+	}
+	s.writeMu.Unlock()
+
+	return affected, nil
+}
+
 // FTSIntegrityCheck verifies FTS5 index consistency.
 func (s *Store) FTSIntegrityCheck() error {
 	s.writeMu.Lock()

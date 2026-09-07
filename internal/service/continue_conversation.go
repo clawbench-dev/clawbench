@@ -556,3 +556,190 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 
 	return nil
 }
+
+// RewindResult carries the outcome of an in-place session history truncation.
+type RewindResult struct {
+	// DeletedCount is the number of chat_history rows removed.
+	DeletedCount int64
+	// RestoredText is the plain text of the first user message removed by the
+	// truncation (the user message immediately following the anchor assistant
+	// reply). Empty when no user message was removed.
+	RestoredText string
+}
+
+// Sentinel errors for TruncateSessionAfterMessage anchor validation. The handler
+// maps them to an InvalidRewindPoint client response via errors.Is, so error
+// matching does not depend on error-message wording.
+var (
+	// ErrRewindAnchorNotFound reports that the anchor message id does not exist
+	// in the session.
+	ErrRewindAnchorNotFound = errors.New("rewind anchor message not found in session")
+	// ErrRewindAnchorStreaming reports that the anchor message is still streaming.
+	ErrRewindAnchorStreaming = errors.New("rewind anchor message is still streaming")
+	// ErrRewindAnchorNotAssistant reports that the anchor message is not an
+	// assistant message.
+	ErrRewindAnchorNotAssistant = errors.New("rewind anchor must be an assistant message")
+)
+
+// TruncateSessionAfterMessage truncates a session's history IN PLACE: every
+// chat_history row with id > anchorID is deleted (the anchor assistant message
+// and everything before it are preserved), along with all child rows. It is the
+// "rewind/回溯" sibling of ForkSession — instead of copying to a new session,
+// the current session is cut back to an earlier assistant reply.
+//
+// The anchor must be a finalized (streaming=0) assistant message. Because DB ids
+// are strictly chronological and the anchor is finalized, id > anchorID captures
+// exactly everything semantically after it, including queued user messages and
+// any in-flight streaming placeholder.
+//
+// Child rows are deleted transactionally in the same order as HardDeleteSession.
+// chat_tool_calls / chat_thinking / chat_metadata carry ON DELETE CASCADE on
+// message_id, but they are deleted explicitly anyway to keep semantics visible
+// and tests robust. RAG chunks for the removed messages are purged best-effort
+// after commit via the injected message-level callback (a separate SQLite store
+// that cannot be touched inside this DB transaction).
+//
+// The caller (handler) is responsible for resetting the AI-side session state
+// (clearing external_session_id and closing the ACP connection) — this function
+// only rewrites the local DB history.
+func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult, error) {
+	var res RewindResult
+
+	// 1. Validate the anchor message: must exist, be an assistant message and finalized.
+	var role string
+	var streaming int
+	err := dbRead.QueryRow(
+		"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
+		anchorID, sessionID,
+	).Scan(&role, &streaming)
+	if errors.Is(err, sql.ErrNoRows) {
+		return res, fmt.Errorf("%w: message %d in session %s", ErrRewindAnchorNotFound, anchorID, sessionID)
+	}
+	if err != nil {
+		return res, err
+	}
+	if streaming == 1 {
+		return res, fmt.Errorf("%w (message %d)", ErrRewindAnchorStreaming, anchorID)
+	}
+	if role != roleAssistant {
+		return res, fmt.Errorf("%w, message %d is role %q", ErrRewindAnchorNotAssistant, anchorID, role)
+	}
+
+	// 2. No-op when nothing follows the anchor.
+	var trailingCount int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND id > ?",
+		sessionID, anchorID,
+	).Scan(&trailingCount); err != nil {
+		return res, err
+	}
+	if trailingCount == 0 {
+		return res, nil
+	}
+
+	// 3. Capture the prefill text of the first removed user message BEFORE the
+	//    rows are deleted. queued/streaming user rows are included deliberately —
+	//    they are user-typed inputs the rewind discards, so they belong in the
+	//    input box for re-editing.
+	var removedContent sql.NullString
+	err = dbRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND id > ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+		sessionID, anchorID,
+	).Scan(&removedContent)
+	if err == nil && removedContent.Valid {
+		res.RestoredText = ExtractPlainText(removedContent.String)
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return res, err
+	}
+
+	// 4. Collect the message ids about to be removed for RAG chunk cleanup after commit.
+	rows, err := dbRead.Query(
+		"SELECT id FROM chat_history WHERE session_id = ? AND id > ?",
+		sessionID, anchorID,
+	)
+	if err != nil {
+		return res, err
+	}
+	var removedIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return res, err
+		}
+		removedIDs = append(removedIDs, id)
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return res, err
+	}
+
+	// 5. Transactional delete — mirrors HardDeleteSession (chat.go): child rows
+	//    are deleted first, with errors discarded — tts_summaries in particular
+	//    only exists after the InitDB migration, not in the base schema, and the
+	//    established pattern treats these best-effort cleanups as non-fatal. The
+	//    authoritative chat_history delete below carries the real error.
+	tx, err := WriteBegin()
+	if err != nil {
+		return res, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	childPred := "SELECT id FROM chat_history WHERE session_id = ? AND id > ?"
+	// ai_raw_responses: FK on message_id but NO cascade.
+	_, _ = tx.Exec(
+		"DELETE FROM ai_raw_responses WHERE session_id = ? AND message_id IN ("+childPred+")",
+		sessionID, sessionID, anchorID,
+	)
+	// chat_tool_calls / chat_thinking / chat_metadata: FK ON DELETE CASCADE, but
+	// deleted explicitly for visible semantics.
+	_, _ = tx.Exec(
+		"DELETE FROM chat_tool_calls WHERE session_id = ? AND message_id IN ("+childPred+")",
+		sessionID, sessionID, anchorID,
+	)
+	_, _ = tx.Exec(
+		"DELETE FROM chat_thinking WHERE session_id = ? AND message_id IN ("+childPred+")",
+		sessionID, sessionID, anchorID,
+	)
+	_, _ = tx.Exec(
+		"DELETE FROM chat_metadata WHERE message_id IN ("+childPred+")",
+		sessionID, anchorID,
+	)
+	// summaries / tts_summaries: no FK on target_id / message_id.
+	_, _ = tx.Exec(
+		"DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("+childPred+")",
+		sessionID, anchorID,
+	)
+	_, _ = tx.Exec(
+		"DELETE FROM tts_summaries WHERE message_id IN ("+childPred+")",
+		sessionID, anchorID,
+	)
+
+	result, err := tx.Exec("DELETE FROM chat_history WHERE session_id = ? AND id > ?", sessionID, anchorID)
+	if err != nil {
+		return res, err
+	}
+	res.DeletedCount, _ = result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return res, err
+	}
+
+	// 6. Best-effort RAG chunk cleanup for the removed messages (separate store,
+	//    after the DB transaction commits). Failures are logged, never fatal.
+	if len(removedIDs) > 0 {
+		if _, ragErr := PurgeRAGChunksByMessageIDs(removedIDs); ragErr != nil {
+			slog.Warn("rewind: failed to purge RAG chunks for truncated messages",
+				slog.String("session", sessionID),
+				slog.Int("message_ids", len(removedIDs)),
+				slog.String("error", ragErr.Error()))
+		}
+	}
+
+	slog.Info("session history rewound (truncated)",
+		slog.String("session", sessionID),
+		slog.Int64("anchor_message", anchorID),
+		slog.Int64("deleted_messages", res.DeletedCount))
+	return res, nil
+}

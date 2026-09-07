@@ -1374,6 +1374,52 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  /** Rewind/回溯 the current session IN PLACE — truncate its history after the
+   *  anchor assistant message, reset the AI-side session (so the next send
+   *  starts a fresh ACP session whose first prompt receives the retained
+   *  history as injected context), and return the plain text of the first
+   *  removed user message for input prefill ('' when none). Nothing is sent.
+   *  Unlike forkSession the same session row is kept and no session switch
+   *  happens — the message list is reloaded in place. */
+  async function rewindSession(sessionId: string, beforeMessageId: number): Promise<string> {
+    try {
+      const resp = await fetch('/api/ai/session/rewind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, beforeMessageId }),
+      })
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}))
+        const msgKey = errData.msgKey || ''
+        if (resp.status === 400 && msgKey === 'NothingToRewind') {
+          toast.show(gt('chat.session.nothingToRewind'), { icon: 'ℹ️', type: 'info' })
+        } else {
+          toast.show(errData.error || gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+        }
+        return ''
+      }
+      const data = await resp.json()
+      if (!data.ok) {
+        toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+        return ''
+      }
+      // Reload the message list in place (skipIfUnchanged=false forces an
+      // authoritative refresh that rebuilds from the truncated DB snapshot).
+      // Unlike switchSession this keeps the identity, cookie, WS subscription
+      // and input bar — the rewind operates on the current session.
+      await loadHistory(false, false, false)
+      // The truncating edit clears unread like an explicit open would.
+      markSessionRead(sessionId).catch(() => {})
+      loadSessionsOnce()
+      toast.show(gt('chat.session.rewinded'), { icon: '⏪', type: 'success', duration: 1500 })
+      return data.restoredText || ''
+    } catch (err: unknown) {
+      appLog.e(TAG, 'Failed to rewind session:', err)
+      toast.show(gt('chat.session.rewindFailed'), { icon: '⚠️', type: 'error' })
+      return ''
+    }
+  }
+
   return {
     // Exposed refs (consumed by ChatPanelContent etc.)
     currentSessionId,
@@ -1403,6 +1449,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     handleManualRefresh,
     continueFromExecution,
     forkSession,
+    rewindSession,
     checkContinueSession,
     // Unsubscribes the foreground-transition mark-read listener. Must be
     // called when the hosting component unmounts (SPA project switch) so the

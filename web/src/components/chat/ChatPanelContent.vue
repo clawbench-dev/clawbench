@@ -31,6 +31,7 @@
       @resume-session="handleResumeSession"
       @reset-session="handleResetSession"
       @fork-from-message="handleForkFromMessage"
+      @rewind-from-message="handleRewindFromMessage"
     />
 
     <!-- Session swipe indicator — floats above the message area -->
@@ -525,6 +526,7 @@ const manager = useSessionManager({
   destroySessionCore: session.destroySession,
   continueFromExecutionCore: session.continueFromExecution,
   forkSessionCore: session.forkSession,
+  rewindSessionCore: session.rewindSession,
   checkContinueSessionCore: session.checkContinueSession,
   disconnectStream: stream.disconnectStream,
   updateRenderedContents: (forceFull) => render.updateRenderedContents(forceFull),
@@ -736,6 +738,21 @@ function handleForkAgentSelect(agentId) {
   if (!pending) return
   forkPending.value = null
   manager.forkSession(pending.sessionId, pending.beforeMessageId, agentId)
+}
+
+// Rewind/回溯: truncate the current session at this assistant message, reset the
+// AI-side session so the conversation restarts here, and pre-fill the input box
+// with the first removed user message for re-editing. Nothing is auto-sent.
+async function handleRewindFromMessage(msg) {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  const ok = await dialog.confirm(t('chat.session.rewindFromMessageConfirm'), { dangerous: true })
+  if (!ok) return
+  messageListRef.value?.closeUserMsgIndex()
+  const restoredText = await manager.rewindSession(sid, msg.id)
+  if (restoredText) {
+    inputBarRef.value?.prefillInput(restoredText)
+  }
 }
 
 /** Persist session-scoped settings (mode, thinkingEffort, model, transport)

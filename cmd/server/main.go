@@ -893,6 +893,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		return rag.GlobalStore.DeleteChunksBySessionIDs(sessionIDs)
 	})
 
+	// Set RAG chunk purge callback for in-place history truncation (rewind):
+	// removes chunks whose chat_history rows were deleted so stale search hits
+	// never surface.
+	service.SetPurgeRAGChunksByMessageIDsFn(func(messageIDs []int64) (int64, error) {
+		if rag.GlobalStore == nil {
+			return 0, nil
+		}
+		return rag.GlobalStore.DeleteChunksByMessageIDs(messageIDs)
+	})
+
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
 

@@ -383,6 +383,39 @@ describe('ChatInputBar — quick-send inject to input', () => {
   })
 })
 
+describe('ChatInputBar — prefillInput (rewind/回溯 prefill)', () => {
+  it('replaces existing input content with the restored text', async () => {
+    const wrapper = mountInputBar()
+    setInputText(wrapper, 'stale draft')
+    await nextTick()
+
+    wrapper.vm.prefillInput('editable question')
+    await nextTick()
+
+    expect(getInputText(wrapper)).toBe('editable question')
+  })
+
+  it('fills the input when it was empty', async () => {
+    const wrapper = mountInputBar()
+
+    wrapper.vm.prefillInput('editable question')
+    await nextTick()
+
+    expect(getInputText(wrapper)).toBe('editable question')
+  })
+
+  it('clears the input when restored text is empty', async () => {
+    const wrapper = mountInputBar()
+    setInputText(wrapper, 'stale draft')
+    await nextTick()
+
+    wrapper.vm.prefillInput('')
+    await nextTick()
+
+    expect(getInputText(wrapper)).toBe('')
+  })
+})
+
 describe('ChatInputBar — quick-send click sends directly', () => {
   it('emits send when handleQuickSendClick is called', async () => {
     const wrapper = mountInputBar()

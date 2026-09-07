@@ -1,0 +1,200 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
+	"clawbench/internal/ai"
+	"clawbench/internal/service"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ── ServeSessionRewind: POST /api/ai/session/rewind ──────────────────────
+
+func TestServeSessionRewind_MethodNotAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/session/rewind", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeSessionRewind_MissingProjectCookie(t *testing.T) {
+	body := map[string]any{"sessionId": "s1", "beforeMessageId": 3}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeSessionRewind_MissingSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := map[string]any{"beforeMessageId": 3}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeSessionRewind_MissingBeforeMessageId(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	body := map[string]any{"sessionId": sessID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeSessionRewind_WrongProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession("/other-project", "claude", "Other", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": 1}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeSessionRewind_NonexistentSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := map[string]any{"sessionId": "nonexistent-session", "beforeMessageId": 1}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeSessionRewind_SuccessTruncatesAndResetsSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asst1ID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+	// Deleted message stored in the real JSON-blocks format.
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", `{"blocks":[{"type":"text","text":"editable Q2"}]}`, nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A2", nil, false, "")
+	require.NoError(t, err)
+
+	// Simulate a stale AI-side mapping that must be cleared.
+	require.NoError(t, service.UpdateExternalSessionID(sessionID, "ext-stale-session"))
+	assert.Equal(t, "ext-stale-session", service.GetExternalSessionID(sessionID))
+
+	// Inject a fake ACP connection into the pool.
+	mgr := ai.GetACPConnManager()
+	client := ai.NewClawBenchACPClient()
+	conn := &ai.ACPConn{}
+	conn.SetClientForTest(client)
+	conn.SetSessionMappingForTest(sessionID, "ext-stale-session")
+	mgr.SetConnForTest(sessionID, conn)
+
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asst1ID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result["ok"].(bool))
+	assert.Equal(t, sessionID, result["sessionId"])
+	assert.Equal(t, float64(2), result["deletedCount"])
+	assert.Equal(t, "editable Q2", result["restoredText"])
+
+	// History truncated in place.
+	msgs, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 2)
+	assert.Equal(t, "Q1", msgs[0].Content)
+	assert.Equal(t, "A1", msgs[1].Content)
+
+	// External session mapping cleared.
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
+
+	// ACP connection closed (goroutine — wait briefly).
+	assert.Eventually(t, func() bool { return mgr.GetConn(sessionID) == nil },
+		2*time.Second, 10*time.Millisecond, "ACP connection should be closed by rewind")
+}
+
+func TestServeSessionRewind_NoConnIsStillOK(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q2", nil, false, "")
+	require.NoError(t, err)
+
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asstID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assertOK(t, w)
+}
+
+func TestServeSessionRewind_NothingToRewind(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+
+	// Anchor is the last message — nothing after it, and the mapping must NOT be cleared.
+	require.NoError(t, service.UpdateExternalSessionID(sessionID, "ext-keep"))
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asstID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	assert.Equal(t, "ext-keep", service.GetExternalSessionID(sessionID),
+		"a no-op rewind must not clear the AI-side mapping")
+}
+
+func TestServeSessionRewind_InvalidAnchor(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	userID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+
+	// Anchor is a user message — invalid rewind point.
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": userID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

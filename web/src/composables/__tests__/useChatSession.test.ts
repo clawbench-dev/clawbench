@@ -5804,6 +5804,129 @@ describe('forkSession', () => {
 })
 
 // ───────────────────────────────────────────────────────────
+// rewindSession
+// ───────────────────────────────────────────────────────────
+
+describe('rewindSession', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  /** URL-aware fetch mock: rewinds the POST and lets loadHistory / mark-read /
+   *  loadSessionsOnce succeed with empty responses. */
+  function urlAwareFetch(rewindBody: Record<string, unknown>) {
+    return vi.fn((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/ai/session/rewind')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ok: true, sessionId: 'rewound-s1', restoredText: 'editable Q2', deletedCount: 2 }),
+        })
+      }
+      if (typeof url === 'string' && url.includes('/api/ai/chat')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessionId: 'rewound-s1', sessionTitle: 'T', messages: [], total: 0, running: false }),
+        })
+      }
+      // mark-read, sessions list, agents etc.
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], agents: [] }) })
+    })
+  }
+
+  it('calls rewind API and returns restored text', async () => {
+    const fetchMock = urlAwareFetch({ sessionId: 's1', beforeMessageId: 42 })
+    globalThis.fetch = fetchMock
+    mockState.currentSessionId = 's1'
+
+    const session = createSession()
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('editable Q2')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/ai/session/rewind',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 's1', beforeMessageId: 42 }),
+      })
+    )
+  })
+
+  it('returns empty string on non-ok response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'Internal error' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('shows info toast for NothingToRewind and returns empty string', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ msgKey: 'NothingToRewind' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 999)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'info' })
+    )
+  })
+
+  it('returns empty string on network failure', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('returns empty string when response has no restoredText', async () => {
+    const fetchMock = urlAwareFetch({})
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'rewound-s1', deletedCount: 1 }),
+    }))
+    globalThis.fetch = fetchMock
+
+    const session = createSession()
+    mockState.currentSessionId = 's1'
+    const restored = await session.rewindSession('s1', 42)
+
+    expect(restored).toBe('')
+  })
+})
+
+// ───────────────────────────────────────────────────────────
 // loadHistory race protection (loadHistorySeq)
 // ───────────────────────────────────────────────────────────
 
