@@ -1761,7 +1761,9 @@ func TestEmitPromptResponseUsage_NilCachedState(t *testing.T) {
 
 // TestEmitPromptResponseUsage_WithCachedState verifies that when a
 // cachedUsageState is already present (from a prior UsageUpdate), the
-// Used/Size/Cost/Currency are preserved from it.
+// Used/Size/Cost/Currency are preserved from it. It also asserts the cost
+// reaches the metadata event's CostUSD (claude reports cost on the final
+// usage_update; without this the chat_metadata.cost_usd column stays 0).
 func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	agent := &model.Agent{ID: "test-usage-cached", Backend: "acp-stdio", AcpCommand: "echo"}
 	conn := newACPConn(agent, "test-usage-cached")
@@ -1772,12 +1774,19 @@ func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	conn.emitPromptResponseUsage(usage, nil, "", streamCh)
 	close(streamCh)
 
-	var usageUpdate *StreamEvent
+	var metadataEvt, usageUpdate *StreamEvent
 	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			metadataEvt = &ev
+		}
 		if ev.Type == "usage_update" {
 			usageUpdate = &ev
 		}
 	}
+	require.NotNil(t, metadataEvt)
+	assert.Equal(t, 1.5, metadataEvt.Meta.CostUSD, "usage_update cost must persist into message metadata CostUSD")
+	assert.Equal(t, 10, metadataEvt.Meta.InputTokens)
+
 	require.NotNil(t, usageUpdate)
 	u := usageUpdate.Usage
 	require.NotNil(t, u)
@@ -1786,6 +1795,30 @@ func TestEmitPromptResponseUsage_WithCachedState(t *testing.T) {
 	assert.Equal(t, 1.5, u.Cost)
 	assert.Equal(t, "USD", u.Currency)
 }
+
+// TestEmitPromptResponseUsage_CachedCostZero verifies that when the cached
+// usage state carries no cost (CodeBuddy has no USD cost; opencode reports 0),
+// CostUSD stays at its existing value and no spurious cost is invented.
+func TestEmitPromptResponseUsage_CachedCostZero(t *testing.T) {
+	agent := &model.Agent{ID: "test-usage-costzero", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-usage-costzero")
+	conn.SetCachedUsageState(&UsageState{Used: 50, Size: 200000, Cost: 0, Currency: "USD"})
+
+	streamCh := make(chan StreamEvent, 8)
+	usage := &acp.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30}
+	conn.emitPromptResponseUsage(usage, nil, "", streamCh)
+	close(streamCh)
+
+	var metadataEvt *StreamEvent
+	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			metadataEvt = &ev
+		}
+	}
+	require.NotNil(t, metadataEvt)
+	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "zero cached cost must not set CostUSD")
+}
+
 
 // TestEmitPromptResponseUsage_NilUsage verifies that a nil PromptResponse.Usage
 // with non-empty _meta (CodeBuddy pattern: no PromptResponse.Usage, but quota /

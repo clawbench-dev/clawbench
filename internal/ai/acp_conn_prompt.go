@@ -290,6 +290,19 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 		meta.InputTokens = usage.InputTokens
 		meta.OutputTokens = usage.OutputTokens
 	}
+
+	// The PromptResponse carries no cost, but agents like Claude report it on
+	// the final usage_update of the turn (e.g. cost=0.1568 USD) which reached
+	// cachedUsageState. Persist that to the message metadata so
+	// chat_metadata.cost_usd is populated for ACP agents too — otherwise only
+	// CLI stream parsers ever set CostUSD and ACP rows stay 0.
+	c.mu.Lock()
+	cachedUsage := c.cachedUsageState
+	c.mu.Unlock()
+	if cachedUsage != nil && cachedUsage.Cost > 0 {
+		meta.CostUSD = cachedUsage.Cost
+	}
+
 	// Persist the ACP-standard stop reason (Claude/Codex report it here, not in
 	// _meta) so the message record reflects why the turn ended.
 	if stopReason != "" {
@@ -327,10 +340,9 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// Also update UsageState so the context chip shows input/output tokens.
 	// cachedUsageState may be nil on the first prompt that returns a Usage
 	// before any UsageUpdate notification (UNSTABLE feature) — fall back to
-	// zero values to avoid a nil pointer dereference.
-	c.mu.Lock()
-	cached := c.cachedUsageState
-	c.mu.Unlock()
+	// zero values to avoid a nil pointer dereference. cachedUsage was already
+	// read above when building the metadata event; reuse it here.
+	cached := cachedUsage
 	var used, size int
 	var cost float64
 	var currency string

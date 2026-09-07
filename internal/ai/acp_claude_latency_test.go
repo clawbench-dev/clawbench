@@ -711,3 +711,75 @@ func logACPTimeline(t *testing.T, events []StreamEvent, start time.Time) {
 }
 
 // truncate is inherited from integration_test.go in the same package.
+
+// TestClaudeACP_MetadataCostE2E drives a real claude ACP bridge through the
+// full ACPBackend.ExecuteStream path and verifies that the USD cost claude
+// reports on the final usage_update (cost=0.1568 USD in wire captures)
+// reaches the turn-final metadata event's CostUSD — the field persisted to
+// chat_metadata.cost_usd. Regression test for ACP agents whose cost was only
+// propagated to the live usage_state, leaving cost_usd at 0.
+func TestClaudeACP_MetadataCostE2E(t *testing.T) {
+	requireClaudeACPAvailable(t)
+
+	agent := claudeACPAgent()
+	_ = setupACPTestEnvForAgent(t, agent)
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	ctx, cancel := contextWithTimeout(t, 240*time.Second)
+	defer cancel()
+	ch, err := backend.ExecuteStream(ctx, ChatRequest{
+		Prompt:    "请只回复一个字：好",
+		SessionID: sessionID,
+		WorkDir:   acpTestWorkDir(),
+	})
+	require.NoError(t, err, "ExecuteStream should not return error")
+
+	var usageEvents, metadataEvents []StreamEvent
+	for evt := range ch {
+		switch evt.Type {
+		case "usage_update":
+			usageEvents = append(usageEvents, evt)
+		case "metadata":
+			metadataEvents = append(metadataEvents, evt)
+		}
+	}
+
+	require.NotEmpty(t, usageEvents, "expected at least one usage_update event")
+	var lastCost float64
+	for _, evt := range usageEvents {
+		if evt.Usage != nil {
+			lastCost = evt.Usage.Cost
+			t.Logf("usage_update: used=%d size=%d cost=%v currency=%q", evt.Usage.Used, evt.Usage.Size, evt.Usage.Cost, evt.Usage.Currency)
+		}
+	}
+
+	require.NotEmpty(t, metadataEvents, "expected a metadata event")
+	for _, evt := range metadataEvents {
+		if evt.Meta == nil {
+			continue
+		}
+		t.Logf("metadata: input=%d output=%d total=%d cachedWrite=%d costUsd=%v stopReason=%q",
+			evt.Meta.InputTokens, evt.Meta.OutputTokens, evt.Meta.TotalTokens,
+			evt.Meta.CachedWriteTokens, evt.Meta.CostUSD, evt.Meta.StopReason)
+	}
+
+	// claude reports cost on usage_update; the metadata event must now carry it
+	// so chat_metadata.cost_usd is populated. Model/version dependent — if the
+	// agent reported no cost at all (lastCost==0), the assertion is vacuous.
+	if lastCost > 0 {
+		var metaCost float64
+		for _, evt := range metadataEvents {
+			if evt.Meta != nil && evt.Meta.CostUSD > 0 {
+				metaCost = evt.Meta.CostUSD
+			}
+		}
+		assert.Equal(t, lastCost, metaCost, "usage_update cost must be propagated to the metadata event CostUSD")
+		t.Logf("CONFIRMED: claude cost %.6f USD reached message metadata", metaCost)
+	} else {
+		t.Logf("NOTICE: claude usage_update reported no cost this run — assertion skipped")
+	}
+}
