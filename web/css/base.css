@@ -149,7 +149,9 @@ html.wallpaper-active .image-preview-body,
 html.wallpaper-active .audio-preview-body,
 html.wallpaper-active .pdf-preview-container,
 html.wallpaper-active .pdf-error,
-html.wallpaper-active .office-preview-container {
+html.wallpaper-active .office-preview-container,
+html.wallpaper-active .usage-stats-panel,
+html.wallpaper-active .stats-header {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
 
