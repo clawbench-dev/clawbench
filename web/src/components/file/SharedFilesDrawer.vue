@@ -356,4 +356,19 @@ defineExpose({ open: openDrawer })
 @media (hover: hover) {
   .shared-files-clear:not(:disabled):hover { background: #fef2f2; }
 }
+
+/* Dark themes: the light-pink hover surfaces above were tuned for light
+   themes. Keep the red tint but adapt it to the dark surface so the icon/text
+   stays legible (same convention as .context-menu-item.danger hover). */
+[data-theme-base="dark"] .shared-file-btn.danger:hover {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.15);
+}
+[data-theme-base="dark"] .shared-files-clear {
+  color: #fca5a5;
+}
+[data-theme-base="dark"] .shared-files-clear:not(:disabled):hover {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.15);
+}
 </style>
