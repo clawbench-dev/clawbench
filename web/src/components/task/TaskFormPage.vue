@@ -399,12 +399,15 @@ onMounted(() => {
   background: var(--bg-primary, #ffffff);
 }
 
-/* Compact header */
+/* Compact header — unified with list/detail/settings/proxy headers */
 .form-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
   flex-shrink: 0;
+  gap: 6px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 

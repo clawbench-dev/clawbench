@@ -177,7 +177,7 @@ watch(() => props.active, (val) => {
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
-  gap: 8px;
+  gap: 6px;
 }
 
 .settings-page__back {

@@ -78,7 +78,7 @@ export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): s
 /**
  * Apply (or clear) the wallpaper effect for the given state.
  * `wallpaperFile` — active file name from server config ('' = none).
- * `panelOpacity`  — 0.7..1.0 opacity multiplier (clamped).
+ * `panelOpacity`  — 0.5..1.0 opacity multiplier (clamped).
  * `dark`          — current resolved theme is dark (drives scrim strength).
  * `forceBust`     — when true, regenerate the image URL even if the file name is
  *                   unchanged. Pass after an upload/replace that reuses the same
@@ -98,7 +98,7 @@ export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark
   el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
   el.style.setProperty('--wallpaper-scrim', active ? wallpaperScrim(dark) : 'transparent')
 
-  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.7, panelOpacity)) : 0.85
+  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
   // Store the panel opacity as a <percentage> so the CSS color-mix stops are
   // plain percentages (calc() inside color-mix trips some CSS minifiers).
   el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)

@@ -51,7 +51,7 @@ type Config struct {
 	} `yaml:"fonts"`
 	Appearance struct {
 		WallpaperFile string  `yaml:"wallpaper_file"` // Active custom wallpaper file name (bare name in <DataDir>/theme); empty = not set
-		PanelOpacity  float64 `yaml:"panel_opacity"`  // Main work-panel opacity multiplier (0.7–1.0; default 0.85). Only meaningful when a wallpaper is set.
+		PanelOpacity  float64 `yaml:"panel_opacity"`  // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
 	} `yaml:"appearance"`
 	DevPort int `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
 	Upload  struct {

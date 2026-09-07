@@ -2610,7 +2610,8 @@ func TestServeConfig_Patch_AppearancePanelOpacityOutOfRangeRejected(t *testing.T
 	cfg.Appearance.PanelOpacity = 0.85
 	model.ConfigInstance = cfg
 
-	body := `{"appearance":{"panel_opacity":0.5}}`
+	// 0.5 is the new lower bound — anything below is rejected.
+	body := `{"appearance":{"panel_opacity":0.45}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -2618,6 +2619,25 @@ func TestServeConfig_Patch_AppearancePanelOpacityOutOfRangeRejected(t *testing.T
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, 0.85, model.ConfigInstance.Appearance.PanelOpacity, "out-of-range patch must not apply")
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacityLowerBoundAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	// The relaxed lower bound (0.5) must be accepted.
+	body := `{"appearance":{"panel_opacity":0.5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0.5, model.ConfigInstance.Appearance.PanelOpacity)
 }
 
 func TestServeConfig_Patch_AppearanceWallpaperFileNonEmptyRejected(t *testing.T) {
