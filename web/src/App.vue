@@ -436,6 +436,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
+import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
 import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, setWallpaperFromPath } from '@/utils/themeBackground'
@@ -549,6 +550,11 @@ import './assets/chat-actions.css'
 const isAuthenticated = ref(null)
 const { t } = useI18n()
 const TAG = 'ClawBench'
+
+// Arm the global 401→/login redirect only once the user is authenticated.
+// The mount-time /api/me check (isAuthenticated still null) and the login
+// page itself never trigger it.
+watch(isAuthenticated, (v) => setAuthRedirectEnabled(v === true), { immediate: true })
 
 // SPA hot project switch: key forces Vue to destroy/rebuild the app-container subtree
 const projectKey = ref('initial')
