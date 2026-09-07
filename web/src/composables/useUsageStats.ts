@@ -190,10 +190,10 @@ export function resetUsageStats(): void {
 
 // --- Derived getters ---
 
-/** Totals overview cards — additive quantities only. Cache hit/miss is shown
- * as the input drill-down donut (a portion of the input prompt), not as a
- * standalone additive card, so it is excluded here. A metric is only shown
- * when its aggregated value is nonzero. */
+/** Totals overview cards — additive quantities over the range, shown when
+ * nonzero. Cache hit (tokens served from cache) is kept here so the overview
+ * shows how much cache traffic contributed; the hit-rate percentage and the
+ * hit/miss split are derived in the panel. */
 const visibleTotals = computed(() => {
   const t = raw.value?.totals
   if (!t) return [] as { metric: UsageMetricId; value: number }[]
@@ -201,6 +201,7 @@ const visibleTotals = computed(() => {
   if (t.input > 0) items.push({ metric: 'input', value: t.input })
   if (t.output > 0) items.push({ metric: 'output', value: t.output })
   if (t.total > 0) items.push({ metric: 'total', value: t.total })
+  if (t.cacheHit > 0) items.push({ metric: 'cacheHit', value: t.cacheHit })
   if (t.credit > 0) items.push({ metric: 'credit', value: t.credit })
   if (t.costUsd > 0) items.push({ metric: 'cost', value: t.costUsd })
   return items

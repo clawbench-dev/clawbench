@@ -164,7 +164,7 @@ describe('UsageStatsPanel', () => {
     expect(chartOptions.length).toBeGreaterThan(optionsBefore)
   })
 
-  it('renders overview cards: additive metrics + cache hit rate (no standalone cache card)', async () => {
+  it('renders overview cards: additive metrics + cache hit tokens + hit rate', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
       rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
@@ -173,10 +173,11 @@ describe('UsageStatsPanel', () => {
     const cards = wrapper.findAll('.stats-total')
     const labels = cards.map(c => c.find('.stats-total-label')?.text() ?? '')
     const cardText = cards.map(c => c.text()).join(' | ')
-    // Cache hit rate is kept in the overview as a derived card (it is not an
-    // additive metric column), while cacheHit itself is not a standalone card.
+    // Cache hit tokens are an overview card; the hit-rate percentage is a
+    // derived card; cacheMiss itself is not a standalone card.
+    expect(labels).toContain('缓存命中')
     expect(labels).toContain('缓存命中率')
-    expect(labels).not.toContain('缓存命中')
+    expect(labels).not.toContain('缓存未命中')
     expect(cardText).toContain('输入 Tokens')
     expect(cardText).toContain('总 Tokens')
     expect(cardText).toContain('费用 (USD)')

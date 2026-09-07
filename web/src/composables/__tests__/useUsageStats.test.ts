@@ -109,7 +109,7 @@ describe('useUsageStats', () => {
   })
 
   describe('derived totals', () => {
-    it('shows only nonzero additive cards (cache split excluded)', () => {
+    it('shows only nonzero additive cards incl. cache hit tokens', () => {
       const stats = useUsageStats()
       stats.raw.value = {
         totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
@@ -117,14 +117,15 @@ describe('useUsageStats', () => {
       }
       const visible = stats.visibleTotals.value
       const ids = visible.map(c => c.metric)
-      // output, credit are 0 → hidden; cost shown. Cache hit/miss is a portion
-      // of the input prompt (drill-down donut), so it is NOT an additive card.
+      // output, credit are 0 → hidden; cost shown. cacheHit tokens are a card;
+      // cacheMiss is not a standalone card (shown via the drill-down donut).
       expect(ids).toContain('input')
       expect(ids).toContain('total')
+      expect(ids).toContain('cacheHit')
       expect(ids).toContain('cost')
       expect(ids).not.toContain('output')
       expect(ids).not.toContain('credit')
-      expect(ids).not.toContain('cacheHit')
+      expect(ids).not.toContain('cacheMiss')
     })
   })
 
