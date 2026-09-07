@@ -95,71 +95,9 @@ func serveThemeBackgroundSet(w http.ResponseWriter, r *http.Request) {
 	themeMutex.Lock()
 	defer themeMutex.Unlock()
 
-	var (
-		srcBytes []byte
-		srcName  string // original file name (for extension detection)
-	)
-
-	contentType := r.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "application/json") {
-		var req themeBackgroundSetRequest
-		if !decodeJSON(w, r, &req) {
-			return
-		}
-		if req.Path == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		// Path-copy mode: read the server-side file. resolveAbsPath allows any
-		// absolute path under a root (Linux/macOS root = "/") as well as
-		// project-relative paths — the same permission domain the file viewer
-		// uses to open external absolute-path files.
-		absPath, ok := resolveAbsPath(w, r, req.Path)
-		if !ok {
-			return
-		}
-		info, err := os.Stat(absPath)
-		if err != nil || info.IsDir() {
-			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-			return
-		}
-		// Read with a size guard so a huge source can't be slurped before the
-		// per-format limit is applied below.
-		if info.Size() > wallpaperMaxBytes {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
-			return
-		}
-		srcBytes, err = os.ReadFile(absPath)
-		if err != nil {
-			writeLocalizedError(w, r, model.Internal(fmt.Errorf("cannot read source file")))
-			return
-		}
-		srcName = filepath.Base(absPath)
-	} else {
-		// Multipart mode: read the uploaded file.
-		r.Body = http.MaxBytesReader(w, r.Body, wallpaperMaxBytes+1<<20)        // +1MB multipart overhead
-		if err := r.ParseMultipartForm(wallpaperMaxBytes + 1<<20); err != nil { //nolint:gosec // MaxBytesReader limits parsed size
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeOrInvalid")
-			return
-		}
-		file, header, err := r.FormFile("file")
-		if err != nil {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoFileProvided")
-			return
-		}
-		defer func() { _ = file.Close() }()
-
-		if header.Size > wallpaperMaxBytes {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
-			return
-		}
-		buf, err := io.ReadAll(io.LimitReader(file, wallpaperMaxBytes+1))
-		if err != nil || int64(len(buf)) > wallpaperMaxBytes {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
-			return
-		}
-		srcBytes = buf
-		srcName = header.Filename
+	srcBytes, srcName, handled := readWallpaperSource(w, r)
+	if handled {
+		return
 	}
 
 	// Resolve the intended target file + process (validate, downscale, encode).
@@ -169,47 +107,122 @@ func serveThemeBackgroundSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	themeDir := model.DefaultThemeDir()
-	if themeDir == "" {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+	// Writes the processed file atomically and records it in config. On any
+	// failure the previous wallpaper file + config entry remain intact.
+	if err := writeWallpaperFile(target.data, target.ext, target.fileName); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
 		return
 	}
+
+	writeJSON(w, http.StatusOK, themeBackgroundSetResponse{File: wallpaperBaseName + target.ext})
+}
+
+// readWallpaperSource acquires the wallpaper bytes + source file name from the
+// request: path-copy mode (JSON body {path}) or multipart upload. On success it
+// returns handled=false and the caller proceeds; on any error it writes the
+// response and returns handled=true.
+func readWallpaperSource(w http.ResponseWriter, r *http.Request) (srcBytes []byte, srcName string, handled bool) {
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		var req themeBackgroundSetRequest
+		if !decodeJSON(w, r, &req) {
+			return nil, "", true
+		}
+		if req.Path == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return nil, "", true
+		}
+		// Path-copy mode: read the server-side file. resolveAbsPath allows any
+		// absolute path under a root (Linux/macOS root = "/") as well as
+		// project-relative paths — the same permission domain the file viewer
+		// uses to open external absolute-path files.
+		absPath, ok := resolveAbsPath(w, r, req.Path)
+		if !ok {
+			return nil, "", true
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+			return nil, "", true
+		}
+		// Read with a size guard so a huge source can't be slurped before the
+		// per-format limit is applied below.
+		if info.Size() > wallpaperMaxBytes {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
+			return nil, "", true
+		}
+		srcBytes, err = os.ReadFile(absPath)
+		if err != nil {
+			writeLocalizedError(w, r, model.Internal(fmt.Errorf("cannot read source file")))
+			return nil, "", true
+		}
+		return srcBytes, filepath.Base(absPath), false
+	}
+
+	// Multipart mode: read the uploaded file.
+	r.Body = http.MaxBytesReader(w, r.Body, wallpaperMaxBytes+1<<20)        // +1MB multipart overhead
+	if err := r.ParseMultipartForm(wallpaperMaxBytes + 1<<20); err != nil { //nolint:gosec // MaxBytesReader limits parsed size
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeOrInvalid")
+		return nil, "", true
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoFileProvided")
+		return nil, "", true
+	}
+	defer func() { _ = file.Close() }()
+
+	if header.Size > wallpaperMaxBytes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
+		return nil, "", true
+	}
+	buf, err := io.ReadAll(io.LimitReader(file, wallpaperMaxBytes+1))
+	if err != nil || int64(len(buf)) > wallpaperMaxBytes {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
+		return nil, "", true
+	}
+	return buf, header.Filename, false
+}
+
+// writeWallpaperFile atomically writes the processed wallpaper into the theme
+// dir (temp file + rename), persists its file name in config, and only then
+// removes stale old-extension wallpaper files. Caller must hold themeMutex.
+func writeWallpaperFile(data []byte, ext, fileName string) error {
+	themeDir := model.DefaultThemeDir()
+	if themeDir == "" {
+		return fmt.Errorf("theme directory unavailable")
+	}
 	if err := os.MkdirAll(themeDir, 0o755); err != nil {
-		writeLocalizedError(w, r, model.Internal(fmt.Errorf("cannot create theme directory")))
-		return
+		return fmt.Errorf("cannot create theme directory: %w", err)
 	}
 
 	// Atomic write: temp file + rename. Config is updated BEFORE any stale
 	// file cleanup, so a config-write failure leaves the previous wallpaper
 	// file + its config entry fully intact (only the brand-new file is removed
 	// on rollback below), and a successful set never 404s in the interim.
-	finalPath := filepath.Join(themeDir, target.fileName)
-	tmpPath := filepath.Join(themeDir, target.fileName+".tmp")
-	if err := os.WriteFile(tmpPath, target.data, 0o644); err != nil {
+	finalPath := filepath.Join(themeDir, fileName)
+	tmpPath := filepath.Join(themeDir, fileName+".tmp")
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		_ = os.Remove(tmpPath)
-		writeLocalizedError(w, r, model.Internal(fmt.Errorf("failed to write wallpaper")))
-		return
+		return fmt.Errorf("failed to write wallpaper")
 	}
 	if err := os.Rename(tmpPath, finalPath); err != nil {
 		_ = os.Remove(tmpPath)
-		writeLocalizedError(w, r, model.Internal(fmt.Errorf("failed to write wallpaper")))
-		return
+		return fmt.Errorf("failed to write wallpaper")
 	}
 
 	// Persist the file name in config (empty write removes nothing else).
-	if err := setConfigWallpaperFile(wallpaperBaseName + target.ext); err != nil {
+	if err := setConfigWallpaperFile(wallpaperBaseName + ext); err != nil {
 		// Config write failed — remove the brand-new file. The old wallpaper
 		// file + its config entry were left untouched (no cleanup ran yet), so
 		// the previous background remains active.
 		_ = os.Remove(finalPath)
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
-		return
+		return err
 	}
 
 	// Config now names the new file — safe to remove stale old-extension files.
-	removeStaleWallpapers(themeDir, target.fileName)
-
-	writeJSON(w, http.StatusOK, themeBackgroundSetResponse{File: wallpaperBaseName + target.ext})
+	removeStaleWallpapers(themeDir, fileName)
+	return nil
 }
 
 // serveThemeBackgroundClear handles DELETE /api/theme-background — removes the
@@ -291,8 +304,8 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 		// SVG is re-validated on every serve against the FULL file content
 		// (SVG is capped at 1MB at write time, so a full scan is cheap) and
 		// served under a sandbox CSP that disables scripts and external fetches.
-		svgBytes, err := os.ReadFile(absPath)
-		if err != nil || !svgLooksSafe(svgBytes) {
+		svgBytes, readErr := os.ReadFile(absPath)
+		if readErr != nil || !svgLooksSafe(svgBytes) {
 			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 			return
 		}

@@ -25,6 +25,48 @@ import (
 //   - The plain text of the first removed user message is returned as
 //     restoredText so the frontend can pre-fill the input box for re-editing.
 //     Nothing is auto-sent.
+//
+// errNothingToRewind is returned by validateRewindRequest after it has already
+// written a "NothingToRewind" 400 response; it exists only to stop the caller
+// from proceeding with the rewind.
+var errNothingToRewind = errors.New("nothing to rewind")
+
+// validateRewindRequest checks the rewind anchor BEFORE any in-flight turn is
+// cancelled: an invalid request (stale UI, double-click race, client bug) must
+// fail fast with a 400 and must NOT first cancel the user's running AI stream.
+// It also rejects no-op rewinds (nothing after the anchor).
+func validateRewindRequest(w http.ResponseWriter, r *http.Request, sessionID string, beforeMessageID int64) error {
+	// Validate the rewind anchor BEFORE cancelling any in-flight turn: an invalid
+	// request (stale UI, double-click race, client bug) must fail fast with a 400
+	// and must NOT first cancel the user's running AI stream.
+	if err := service.ValidateRewindAnchor(sessionID, beforeMessageID); err != nil {
+		slog.Info("session rewind: invalid anchor", "session_id", sessionID, "anchor_message", beforeMessageID, "error", err)
+		switch {
+		case errors.Is(err, service.ErrRewindAnchorNotFound),
+			errors.Is(err, service.ErrRewindAnchorNotAssistant),
+			errors.Is(err, service.ErrRewindAnchorStreaming):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRewindPoint")
+		default:
+			model.WriteError(w, model.Internal(err))
+		}
+		return err
+	}
+
+	// Nothing follows the anchor — a no-op rewind. Return before cancelling any
+	// running turn or touching the AI-side mapping: a last-message rewind must
+	// be a pure 400 with no side effects.
+	trailing, err := service.CountMessagesAfterAnchor(sessionID, beforeMessageID)
+	if err != nil {
+		model.WriteError(w, model.Internal(err))
+		return err
+	}
+	if trailing == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NothingToRewind")
+		return errNothingToRewind
+	}
+	return nil
+}
+
 func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -53,32 +95,7 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the rewind anchor BEFORE cancelling any in-flight turn: an invalid
-	// request (stale UI, double-click race, client bug) must fail fast with a 400
-	// and must NOT first cancel the user's running AI stream.
-	if err := service.ValidateRewindAnchor(req.SessionID, req.BeforeMessageID); err != nil {
-		slog.Info("session rewind: invalid anchor", "session_id", req.SessionID, "anchor_message", req.BeforeMessageID, "error", err)
-		switch {
-		case errors.Is(err, service.ErrRewindAnchorNotFound),
-			errors.Is(err, service.ErrRewindAnchorNotAssistant),
-			errors.Is(err, service.ErrRewindAnchorStreaming):
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRewindPoint")
-		default:
-			model.WriteError(w, model.Internal(err))
-		}
-		return
-	}
-
-	// Nothing follows the anchor — a no-op rewind. Return before cancelling any
-	// running turn or touching the AI-side mapping: a last-message rewind must
-	// be a pure 400 with no side effects.
-	trailing, err := service.CountMessagesAfterAnchor(req.SessionID, req.BeforeMessageID)
-	if err != nil {
-		model.WriteError(w, model.Internal(err))
-		return
-	}
-	if trailing == 0 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NothingToRewind")
+	if err := validateRewindRequest(w, r, req.SessionID, req.BeforeMessageID); err != nil {
 		return
 	}
 
@@ -147,7 +164,7 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
-		"sessionId":    req.SessionID,
+		strSessionID:   req.SessionID,
 		"restoredText": res.RestoredText,
 		"deletedCount": res.DeletedCount,
 	})

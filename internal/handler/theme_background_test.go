@@ -46,8 +46,8 @@ func setupThemeTestEnv(t *testing.T) (string, func()) {
 // makePNG renders an RGBA image and PNG-encodes it.
 func makePNG(w, h int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 128, A: 255})
 		}
 	}
@@ -59,8 +59,8 @@ func makePNG(w, h int) []byte {
 // makeJPEG renders a grayscale image and JPEG-encodes it.
 func makeJPEG(w, h int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
+	for y := range h {
+		for x := range w {
 			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 64, A: 255})
 		}
 	}
@@ -84,7 +84,7 @@ func TestServeThemeBackground_PostMultipartPNG(t *testing.T) {
 
 	// Build multipart body with a real PNG.
 	pngBytes := makePNG(64, 48)
-	body, contentType := makeMultipartBody("file", "photo.png", pngBytes)
+	body, contentType := makeMultipartBody("photo.png", pngBytes)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -104,7 +104,7 @@ func TestServeThemeBackground_PostMultipartJPEGDownscaled(t *testing.T) {
 
 	// A huge source (5000x4000) must be downscaled to ≤ wallpaperMaxLongEdge.
 	jpegBytes := makeJPEG(5000, 4000)
-	body, contentType := makeMultipartBody("file", "huge.jpg", jpegBytes)
+	body, contentType := makeMultipartBody("huge.jpg", jpegBytes)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -145,7 +145,7 @@ func TestServeThemeBackground_PostRejectsSpoofedExtension(t *testing.T) {
 	defer teardown()
 
 	// HTML content masquerading as .png must be rejected (content sniffing).
-	body, contentType := makeMultipartBody("file", "evil.png", []byte("<html><script>alert(1)</script></html>"))
+	body, contentType := makeMultipartBody("evil.png", []byte("<html><script>alert(1)</script></html>"))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -162,7 +162,7 @@ func TestServeThemeBackground_PostRejectsOversized(t *testing.T) {
 
 	// File larger than the 10MB cap.
 	big := bytes.Repeat([]byte{0x42}, wallpaperMaxBytes+1024)
-	body, contentType := makeMultipartBody("file", "big.png", big)
+	body, contentType := makeMultipartBody("big.png", big)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -177,7 +177,7 @@ func TestServeThemeBackground_PostRejectsUnsafeSVG(t *testing.T) {
 	defer teardown()
 
 	unsafeSVG := `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
-	body, contentType := makeMultipartBody("file", "bg.svg", []byte(unsafeSVG))
+	body, contentType := makeMultipartBody("bg.svg", []byte(unsafeSVG))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -189,7 +189,7 @@ func TestServeThemeBackground_PostRejectsUnsafeSVG(t *testing.T) {
 
 	// A safe SVG must pass.
 	safeSVG := `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="blue"/></svg>`
-	body2, ct2 := makeMultipartBody("file", "bg2.svg", []byte(safeSVG))
+	body2, ct2 := makeMultipartBody("bg2.svg", []byte(safeSVG))
 	req2 := httptest.NewRequest(http.MethodPost, "/api/theme-background", body2)
 	req2.Header.Set("Content-Type", ct2)
 	req2 = withAuthCookie(req2, model.SessionToken)
@@ -206,7 +206,7 @@ func TestServeThemeBackground_PostRejectsHugeDimensions(t *testing.T) {
 	// header claiming enormous dimensions — DecodeConfig reads the header only,
 	// so this exercises the dimension guard without allocating real pixels.
 	crafted := craftPngHeader(9000, 9000)
-	body, contentType := makeMultipartBody("file", "bomb.png", crafted)
+	body, contentType := makeMultipartBody("bomb.png", crafted)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", contentType)
@@ -300,11 +300,11 @@ func TestServeThemeBackground_GetWhenUnset(t *testing.T) {
 
 // --- helpers ---
 
-// makeMultipartBody builds a multipart/form-data body with one file field.
-func makeMultipartBody(field, filename string, content []byte) (*bytes.Buffer, string) {
+// makeMultipartBody builds a multipart/form-data body with one "file" field.
+func makeMultipartBody(filename string, content []byte) (*bytes.Buffer, string) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	fw, err := mw.CreateFormFile(field, filename)
+	fw, err := mw.CreateFormFile("file", filename)
 	if err != nil {
 		panic(err)
 	}
