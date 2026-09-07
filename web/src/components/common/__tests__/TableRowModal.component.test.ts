@@ -150,7 +150,7 @@ describe('TableRowModal — navigation', () => {
     const wrapper = mountModal({
       data: { headers: ['A'], rows: [['1'], ['2']], currentIndex: 1 },
     })
-    const btns = wrapper.findAll('.table-row-nav-btn')
+    const btns = wrapper.findAll('.fbtn')
     await btns[0].trigger('click')
     expect(wrapper.emitted('prev')).toBeTruthy()
   })
@@ -159,7 +159,7 @@ describe('TableRowModal — navigation', () => {
     const wrapper = mountModal({
       data: { headers: ['A'], rows: [['1'], ['2']], currentIndex: 0 },
     })
-    const btns = wrapper.findAll('.table-row-nav-btn')
+    const btns = wrapper.findAll('.fbtn')
     await btns[1].trigger('click')
     expect(wrapper.emitted('next')).toBeTruthy()
   })
@@ -168,7 +168,7 @@ describe('TableRowModal — navigation', () => {
     const wrapper = mountModal({
       data: { headers: ['A'], rows: [['1'], ['2']], currentIndex: 0 },
     })
-    const btns = wrapper.findAll('.table-row-nav-btn')
+    const btns = wrapper.findAll('.fbtn')
     expect(btns[0].attributes('disabled')).toBeDefined()
     expect(btns[1].attributes('disabled')).toBeUndefined()
   })
@@ -177,7 +177,7 @@ describe('TableRowModal — navigation', () => {
     const wrapper = mountModal({
       data: { headers: ['A'], rows: [['1'], ['2']], currentIndex: 1 },
     })
-    const btns = wrapper.findAll('.table-row-nav-btn')
+    const btns = wrapper.findAll('.fbtn')
     expect(btns[0].attributes('disabled')).toBeUndefined()
     expect(btns[1].attributes('disabled')).toBeDefined()
   })

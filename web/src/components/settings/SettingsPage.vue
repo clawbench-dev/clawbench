@@ -30,7 +30,7 @@
       />
     </div>
     <footer v-if="needsRestart" class="settings-page__footer">
-      <button class="settings-restart-btn settings-restart-btn--pending refresh-spin" :class="{ 'refresh-spin--active': restarting }" :disabled="restarting" @click="handleRestart">
+      <button class="fbtn settings-restart-btn settings-restart-btn--pending refresh-spin" :class="{ 'refresh-spin--active': restarting }" :disabled="restarting" @click="handleRestart">
         <RefreshCw :size="14" class="settings-restart-btn__icon" />
         <span>{{ restarting ? t('settings.restarting') : t('settings.restartPending') }}</span>
       </button>
@@ -46,6 +46,7 @@ import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
 import { useSettingsNavigation, consumePendingSettingsCategory, pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import '@/assets/modal-footer-btn.css'
 import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
@@ -247,23 +248,9 @@ watch(() => props.active, (val) => {
   padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
-/* Restart footer button */
+/* Restart footer button — layout + pulse only; pill visuals come from .fbtn. */
 .settings-restart-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
   width: 100%;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 10px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
 }
 
 .settings-restart-btn:disabled {
@@ -283,16 +270,9 @@ watch(() => props.active, (val) => {
 }
 
 @media (hover: hover) {
-  .settings-restart-btn:hover:not(:disabled):not(.settings-restart-btn--pending) {
-    background: var(--bg-secondary);
-  }
   .settings-restart-btn.settings-restart-btn--pending:hover:not(:disabled) {
     background: var(--accent-hover);
   }
-}
-
-.settings-restart-btn:active:not(.settings-restart-btn--pending) {
-  background: var(--bg-secondary);
 }
 
 .settings-restart-btn:active.settings-restart-btn--pending:not(:disabled) {

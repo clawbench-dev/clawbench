@@ -101,15 +101,15 @@
       <div class="group-panel__save-row">
         <button
           v-if="showTestButton"
-          class="group-panel__test-btn"
+          class="fbtn group-panel__test-btn"
           :disabled="connectivityTesting"
           @click="handleConnectivityTest"
         >
           {{ connectivityTesting ? t('settings.panel.testing') : t('settings.panel.testConnectivity') }}
         </button>
         <button
-          class="group-panel__save-btn"
-          :class="{ 'group-panel__save-btn--accent': hasChanges }"
+          class="fbtn group-panel__save-btn"
+          :class="{ 'fbtn-primary group-panel__save-btn--accent': hasChanges }"
           :disabled="!hasChanges || !canSave || saving"
           @click="onSave"
         >
@@ -171,6 +171,7 @@ import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
 import { apiPost } from '@/utils/api'
+import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
 import type { TerminalPreview } from './SettingsItem.vue'
 
@@ -819,60 +820,9 @@ watch(localValues, () => {
   margin-bottom: 6px;
 }
 
+/* Layout only — visuals come from the shared .fbtn pills. */
 .group-panel__save-btn {
   flex: 1;
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.group-panel__save-btn--accent {
-  background: var(--accent-color);
-  color: #fff;
-}
-
-.group-panel__save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .group-panel__save-btn--accent:hover:not(:disabled) {
-    background: var(--accent-hover);
-  }
-}
-
-.group-panel__save-btn--accent:active:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-/* Test button */
-.group-panel__test-btn {
-  padding: 10px 16px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  transition: background 0.15s ease;
-  white-space: nowrap;
-}
-
-.group-panel__test-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.group-panel__test-btn:active:not(:disabled) {
-  background: var(--bg-tertiary);
 }
 
 /* Test results */

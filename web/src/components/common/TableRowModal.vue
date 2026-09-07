@@ -14,8 +14,8 @@
       </div>
     </div>
     <template #footer>
-      <button class="table-row-nav-btn" :disabled="!data || data.currentIndex <= 0" @click="$emit('prev')">{{ t('chat.table.prevRow') }}</button>
-      <button class="table-row-nav-btn" :disabled="!data || data.currentIndex >= data.rows.length - 1" @click="$emit('next')">{{ t('chat.table.nextRow') }}</button>
+      <button class="fbtn" :disabled="!data || data.currentIndex <= 0" @click="$emit('prev')">{{ t('chat.table.prevRow') }}</button>
+      <button class="fbtn" :disabled="!data || data.currentIndex >= data.rows.length - 1" @click="$emit('next')">{{ t('chat.table.nextRow') }}</button>
     </template>
   </ModalDialog>
 </template>
