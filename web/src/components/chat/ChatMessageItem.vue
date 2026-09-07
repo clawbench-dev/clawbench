@@ -103,7 +103,7 @@
           :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
           @click="$emit('rewind-from-message', msg)"
         >
-          <Scissors :size="14" />
+          <Rewind :size="14" />
         </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
@@ -141,7 +141,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Scissors } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
