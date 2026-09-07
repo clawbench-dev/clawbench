@@ -237,6 +237,11 @@ export default defineConfig({
     emptyOutDir: false,
     assetsDir: '.',
     rollupOptions: {
+      // Cap concurrent module transforms to curb peak build memory. The default
+      // (20 parallel file ops) plus the ECharts module graph can exceed the
+      // Node default old-space heap during `vite build`; lowering the parallel
+      // op count trades a little wall-clock time for a much lower peak.
+      maxParallelFileOps: 10,
       input: {
         main: resolve(__dirname, 'web/index.html'),
         share: resolve(__dirname, 'web/share.html'),

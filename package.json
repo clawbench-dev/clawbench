@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node --max-old-space-size=2560 ./node_modules/vite/bin/vite.js build",
     "test": "./scripts/vitest-run.sh",
     "preview": "vite preview",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
@@ -63,6 +63,7 @@
     "codemirror-lang-ruby": "^0.4.4",
     "diff": "^9.0.0",
     "dompurify": "^3.3.3",
+    "echarts": "^6.1.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.45",
     "lucide-vue-next": "^1.0.0",

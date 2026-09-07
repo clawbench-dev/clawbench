@@ -214,6 +214,11 @@
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
                 </TabPanel>
 
+                <!-- Usage Statistics Tab -->
+                <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
+                  <UsageStatsPanel :active="panelIsActive('stats')" />
+                </TabPanel>
+
                 <!-- Settings Tab -->
                 <TabPanel tabId="settings" :activeTab="leftPanelActive" :noHeader="true">
                   <SettingsPage :active="panelIsActive('settings')" />
@@ -419,6 +424,10 @@
             <span>{{ t('nav.portForward') }}</span>
             <span v-if="store.state.portForwardEnabledCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
           </button>
+          <button v-if="popupOverflowTabs.includes('stats')" class="dock-overflow-item" :class="{ active: activeTab === 'stats' }" @click.stop="handleOverflowSelect('stats')">
+            <BarChart3 :size="16" />
+            <span>{{ t('nav.stats') }}</span>
+          </button>
           <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
             <span>{{ t('nav.settings') }}</span>
@@ -445,7 +454,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3 } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -481,6 +490,10 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
+const UsageStatsPanel = defineAsyncComponent({
+  loader: () => import('./components/stats/UsageStatsPanel.vue'),
+  loadingComponent: AsyncComponentLoader,
+})
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
@@ -1762,6 +1775,7 @@ const overflowTabs = computed(() => {
   const tabs = ['tasks']
   if (!isTerminalDisabled.value) tabs.push('terminal')
   if (!isSSHDisabled.value) tabs.push('proxy')
+  tabs.push('stats')
   tabs.push('settings')
   return tabs
 })
@@ -1769,6 +1783,7 @@ const overflowTabMeta = {
   tasks:   { icon: Clock, titleKey: 'nav.tasks' },
   proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
+  stats:   { icon: BarChart3, titleKey: 'nav.stats' },
   settings:{ icon: Settings, titleKey: 'nav.settings' },
 }
 
@@ -1970,6 +1985,7 @@ const wideScreenTabMeta = {
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
   terminal: overflowTabMeta.terminal,
+  stats: overflowTabMeta.stats,
   settings: overflowTabMeta.settings,
 }
 
