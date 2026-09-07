@@ -16,7 +16,7 @@
           <Clock :size="13" class="stats-card-title-icon" />
           <span>{{ t('stats.rangeTitle') }}</span>
         </div>
-        <div class="stats-range-row">
+        <div class="stats-chip-scroll">
           <button
             v-for="r in rangePresets"
             :key="r.key"
@@ -44,41 +44,47 @@
           <SlidersHorizontal :size="13" class="stats-card-title-icon" />
           <span>{{ t('stats.filterTitle') }}</span>
         </div>
-        <div class="stats-filter-row">
+        <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
-          <button
-            v-for="d in dimOptions"
-            :key="d.id"
-            class="stats-chip"
-            :class="{ active: filter.dims.includes(d.id) }"
-            @click="toggleDim(d.id)"
-          >
-            {{ t(d.labelKey) }}
-          </button>
+          <div class="stats-chip-scroll">
+            <button
+              v-for="d in dimOptions"
+              :key="d.id"
+              class="stats-chip"
+              :class="{ active: filter.dims.includes(d.id) }"
+              @click="toggleDim(d.id)"
+            >
+              {{ t(d.labelKey) }}
+            </button>
+          </div>
         </div>
-        <div class="stats-filter-row">
+        <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.metricTitle') }}</span>
-          <button
-            v-for="m in metricOptions"
-            :key="m.id"
-            class="stats-chip"
-            :class="{ active: filter.metrics.includes(m.id) }"
-            @click="toggleMetric(m.id)"
-          >
-            {{ t(m.labelKey) }}
-          </button>
+          <div class="stats-chip-scroll">
+            <button
+              v-for="m in metricOptions"
+              :key="m.id"
+              class="stats-chip"
+              :class="{ active: filter.metrics.includes(m.id) }"
+              @click="toggleMetric(m.id)"
+            >
+              {{ t(m.labelKey) }}
+            </button>
+          </div>
         </div>
-        <div class="stats-filter-row">
+        <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.chartTitle') }}</span>
-          <button
-            v-for="c in chartTypeOptions"
-            :key="c.id"
-            class="stats-chip"
-            :class="{ active: filter.chartType === c.id }"
-            @click="selectChartType(c.id)"
-          >
-            {{ t(c.labelKey) }}
-          </button>
+          <div class="stats-chip-scroll">
+            <button
+              v-for="c in chartTypeOptions"
+              :key="c.id"
+              class="stats-chip"
+              :class="{ active: filter.chartType === c.id }"
+              @click="selectChartType(c.id)"
+            >
+              {{ t(c.labelKey) }}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -408,6 +414,7 @@ function onRefresh() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--bg-primary, #fff);
 }
 
 /* ── Compact header (36px, matches settings/task panels) ── */
@@ -505,15 +512,38 @@ function onRefresh() {
   line-height: 16px;
 }
 
-/* ── Chips / toggles ── */
-.stats-range-row,
-.stats-filter-row {
+/* ── Chips / toggles ──
+   Each labelled group keeps the label fixed and lets the chips scroll
+   horizontally on one line — compact on narrow (mobile) widths instead of
+   wrapping into several tall rows. */
+.stats-filter-group {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.stats-filter-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  min-width: 4em;
+}
+.stats-chip-scroll {
+  display: flex;
+  align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  min-width: 0;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+}
+.stats-chip-scroll::-webkit-scrollbar {
+  display: none;
 }
 .stats-chip {
+  flex-shrink: 0;
   border: 1px solid var(--border-color);
   background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-secondary);
@@ -536,13 +566,8 @@ function onRefresh() {
   border-color: var(--accent-color, #4f8cff);
   color: #fff;
 }
-.stats-filter-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  min-width: 3.6em;
-}
 .stats-date-input {
+  flex-shrink: 0;
   background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-primary);
   border: 1px solid var(--border-color);
@@ -551,6 +576,7 @@ function onRefresh() {
   font-size: 12px;
 }
 .stats-date-sep {
+  flex-shrink: 0;
   color: var(--text-muted);
 }
 
