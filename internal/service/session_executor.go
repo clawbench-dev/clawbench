@@ -340,6 +340,35 @@ func activeStreamCount() int {
 	return n
 }
 
+// WaitSessionStreamDrained blocks until the SessionExecutor for the given
+// session has finished (its Finalize has persisted the streaming=0 marker), or
+// the timeout elapses. Unlike WaitStreamsDrained (which waits for ALL sessions),
+// this waits only for one session's executor.
+//
+// It is used by the rewind handler: CancelSession cancels the Go context but is
+// asynchronous — the executor goroutine still drains its event channel and runs
+// Finalize afterwards. Truncating the history in that window lets a late
+// Finalize write the cancelled turn's raw output onto the preserved anchor via
+// GetStreamingMessageID's fallback to the latest streaming=0 row. Waiting for
+// the executor to unregister closes that window.
+//
+// On timeout it logs a warning and returns (best-effort — same exposure as
+// Archive/Destroy which do not wait at all).
+func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, ok := activeStreams.Load(sessionID); !ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			slog.Warn("WaitSessionStreamDrained: deadline reached with session stream still active",
+				slog.String("session", sessionID))
+			return
+		}
+		time.Sleep(waitStreamsPollInterval)
+	}
+}
+
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
 //nolint:gocyclo,gocognit // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy

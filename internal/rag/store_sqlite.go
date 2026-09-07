@@ -1149,23 +1149,20 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return affected, nil
 }
 
-// DeleteChunksByMessageIDs deletes all chunks belonging to the given chat_history
-// message IDs. Used by the rewind/truncate path so orphan chunks never surface as
-// stale search hits after the underlying messages are deleted in place. FTS and
-// vec0 entries are deleted in the same transaction for consistency.
-func (s *Store) DeleteChunksByMessageIDs(messageIDs []int64) (int64, error) {
-	if len(messageIDs) == 0 {
-		return 0, nil
-	}
-
+// DeleteChunksBySessionAfterMessage deletes all chunks belonging to the given
+// session whose message_id is strictly greater than anchorID. Used by the
+// rewind/truncate path so orphan chunks never surface as stale search hits
+// after the underlying messages (and any messages after them) are deleted in
+// place.
+//
+// The range predicate (session_id = ? AND message_id > ?) is intentionally used
+// instead of a pre-captured message-id list: the RAG indexer may insert chunks
+// for not-yet-indexed messages concurrently between the chat_history truncation
+// and this cleanup, and a range delete covers those too. FTS and vec0 entries
+// are deleted in the same transaction for consistency.
+func (s *Store) DeleteChunksBySessionAfterMessage(sessionID string, anchorID int64) (int64, error) {
 	// Check vec0 table existence before starting transaction (avoids deadlock with in-memory DBs)
 	hasVecTable := s.vecTableExists()
-
-	placeholders := strings.Repeat("?,", len(messageIDs)-1) + "?"
-	args := make([]any, len(messageIDs))
-	for i, id := range messageIDs {
-		args[i] = id
-	}
 
 	s.writeMu.Lock()
 	tx, err := s.db.Begin()
@@ -1176,7 +1173,7 @@ func (s *Store) DeleteChunksByMessageIDs(messageIDs []int64) (int64, error) {
 
 	// Delete vec0 entries (table may not exist if dimension is unknown)
 	if hasVecTable {
-		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE message_id IN ("+placeholders+"))", args...)
+		_, err = tx.Exec("DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id = ? AND message_id > ?)", sessionID, anchorID)
 		if err != nil {
 			_ = tx.Rollback()
 			s.writeMu.Unlock()
@@ -1185,7 +1182,7 @@ func (s *Store) DeleteChunksByMessageIDs(messageIDs []int64) (int64, error) {
 	}
 
 	// Delete FTS entries
-	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE message_id IN ("+placeholders+"))", args...)
+	_, err = tx.Exec("DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE session_id = ? AND message_id > ?)", sessionID, anchorID)
 	if err != nil {
 		_ = tx.Rollback()
 		s.writeMu.Unlock()
@@ -1193,7 +1190,7 @@ func (s *Store) DeleteChunksByMessageIDs(messageIDs []int64) (int64, error) {
 	}
 
 	// Delete main table
-	result, err := tx.Exec("DELETE FROM rag_chunks WHERE message_id IN ("+placeholders+")", args...)
+	result, err := tx.Exec("DELETE FROM rag_chunks WHERE session_id = ? AND message_id > ?", sessionID, anchorID)
 	if err != nil {
 		_ = tx.Rollback()
 		s.writeMu.Unlock()

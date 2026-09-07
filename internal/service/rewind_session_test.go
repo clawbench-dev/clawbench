@@ -182,6 +182,24 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	// A metadata row with a dead/missing message_id and one for user2 metadata.
 	assert.NoError(t, service.SaveMetadata(user2ID, minimalMetadata()))
 
+	// chat_recommendations is not part of the shared test schema — create it and
+	// seed one row pointing at the to-be-deleted asst2 message plus one pointing
+	// at the preserved asst1 message.
+	db0 := service.UnsafeDBForTest()
+	_, err = db0.Exec(`CREATE TABLE IF NOT EXISTS chat_recommendations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		project_path TEXT NOT NULL DEFAULT '',
+		message_id INTEGER NOT NULL DEFAULT 0,
+		recommendation TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	assert.NoError(t, err)
+	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, '/project', ?, 'follow up on cut')", sessID, asst2ID)
+	assert.NoError(t, err)
+	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, '/project', ?, 'follow up on keep')", sessID, asst1ID)
+	assert.NoError(t, err)
+
 	res, err := service.TruncateSessionAfterMessage(sessID, asst1ID)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), res.DeletedCount) // Q2 + asst2 removed
@@ -204,6 +222,15 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	err = db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?", asst2ID).Scan(&n)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, n)
+
+	// Orphan recommendation for the deleted asst2 message is cleaned; the one for
+	// the preserved asst1 message survives.
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_recommendations WHERE session_id = ? AND message_id = ?", sessID, asst2ID).Scan(&n)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, n)
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_recommendations WHERE session_id = ? AND message_id = ?", sessID, asst1ID).Scan(&n)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n)
 
 	// Kept rows must survive.
 	rec, err := service.GetToolCall("toolu_keep", asst1ID)

@@ -307,3 +307,72 @@ func TestWaitStreamsDrained_DeadlineWithStuckStream(t *testing.T) {
 	assert.Less(t, elapsed, time.Second,
 		"must not block past the deadline")
 }
+
+// --- WaitSessionStreamDrained (per-session wait before in-place truncation) ---
+
+// TestWaitSessionStreamDrained_ReturnsImmediatelyWhenNoExecutor verifies that
+// the per-session wait does not block when the session has no active executor.
+func TestWaitSessionStreamDrained_ReturnsImmediatelyWhenNoExecutor(t *testing.T) {
+	start := time.Now()
+	WaitSessionStreamDrained("session-with-no-executor", time.Second)
+	assert.Less(t, time.Since(start), 500*time.Millisecond,
+		"no active executor must not block")
+}
+
+// TestWaitSessionStreamDrained_ReturnsAfterUnregister verifies that the wait
+// returns once THAT session's executor unregisters (Finalize completed), even
+// while other sessions' executors remain registered.
+func TestWaitSessionStreamDrained_ReturnsAfterUnregister(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	target, _ := newFlushableExecutor(t)
+	defer target.unregisterActiveStream() // no-op if already unregistered
+	other, _ := newFlushableExecutor(t)
+	defer other.unregisterActiveStream() // stays registered for the whole wait
+
+	// Unregister the target executor shortly after the wait starts.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		target.unregisterActiveStream()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		WaitSessionStreamDrained(target.cfg.SessionID, time.Second)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Returned before the deadline — the "other" executor being active must
+		// not block this session's wait.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitSessionStreamDrained did not return after the session's executor unregistered")
+	}
+}
+
+// TestWaitSessionStreamDrained_DeadlineWithStuckExecutor verifies that the wait
+// returns at the deadline when the session's executor never unregisters.
+func TestWaitSessionStreamDrained_DeadlineWithStuckExecutor(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	executor, _ := newFlushableExecutor(t)
+	// Intentionally leave the executor registered (stuck stream).
+	defer executor.unregisterActiveStream()
+
+	start := time.Now()
+	WaitSessionStreamDrained(executor.cfg.SessionID, 150*time.Millisecond)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 150*time.Millisecond,
+		"must wait until the deadline with a stuck executor")
+	assert.Less(t, elapsed, time.Second,
+		"must not block past the deadline")
+}

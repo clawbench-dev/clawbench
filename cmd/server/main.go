@@ -895,12 +895,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Set RAG chunk purge callback for in-place history truncation (rewind):
 	// removes chunks whose chat_history rows were deleted so stale search hits
-	// never surface.
-	service.SetPurgeRAGChunksByMessageIDsFn(func(messageIDs []int64) (int64, error) {
+	// never surface. A range predicate (session_id + message_id > anchor) is used
+	// so chunks the RAG indexer inserted concurrently between the truncation and
+	// this cleanup are covered too.
+	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
 		if rag.GlobalStore == nil {
 			return 0, nil
 		}
-		return rag.GlobalStore.DeleteChunksByMessageIDs(messageIDs)
+		return rag.GlobalStore.DeleteChunksBySessionAfterMessage(sessionID, anchorID)
 	})
 
 	// Start session archive cleanup worker

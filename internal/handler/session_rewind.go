@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -52,6 +53,35 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate the rewind anchor BEFORE cancelling any in-flight turn: an invalid
+	// request (stale UI, double-click race, client bug) must fail fast with a 400
+	// and must NOT first cancel the user's running AI stream.
+	if err := service.ValidateRewindAnchor(req.SessionID, req.BeforeMessageID); err != nil {
+		slog.Info("session rewind: invalid anchor", "session_id", req.SessionID, "anchor_message", req.BeforeMessageID, "error", err)
+		switch {
+		case errors.Is(err, service.ErrRewindAnchorNotFound),
+			errors.Is(err, service.ErrRewindAnchorNotAssistant),
+			errors.Is(err, service.ErrRewindAnchorStreaming):
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRewindPoint")
+		default:
+			model.WriteError(w, model.Internal(err))
+		}
+		return
+	}
+
+	// Nothing follows the anchor — a no-op rewind. Return before cancelling any
+	// running turn or touching the AI-side mapping: a last-message rewind must
+	// be a pure 400 with no side effects.
+	trailing, err := service.CountMessagesAfterAnchor(req.SessionID, req.BeforeMessageID)
+	if err != nil {
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if trailing == 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NothingToRewind")
+		return
+	}
+
 	// Cancel an in-flight turn before truncating. The executor's post-cancel
 	// persistence writes are all serialized under the global writeMu and target
 	// the streaming row by id — once truncation deletes that row they become
@@ -60,6 +90,14 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 	if service.IsSessionRunning(req.SessionID) {
 		slog.Info("session rewind: cancelling running session", "session_id", req.SessionID)
 		service.CancelSession(req.SessionID)
+		// Wait for the executor goroutine to fully finish its Finalize before
+		// truncating. CancelSession is asynchronous — the goroutine still drains
+		// and finalizes after cancel(). Truncating in that window could let a
+		// late SaveRawResponse (which falls back to GetStreamingMessageID = the
+		// latest streaming=0 row, i.e. the preserved anchor) write the cancelled
+		// turn's raw output onto the anchor message. Bounded wait; a timeout only
+		// logs and proceeds (the remaining race is the same as Archive/Destroy).
+		service.WaitSessionStreamDrained(req.SessionID, 2*time.Second)
 	}
 
 	res, err := service.TruncateSessionAfterMessage(req.SessionID, req.BeforeMessageID)

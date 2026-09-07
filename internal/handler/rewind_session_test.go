@@ -182,6 +182,34 @@ func TestServeSessionRewind_NothingToRewind(t *testing.T) {
 		"a no-op rewind must not clear the AI-side mapping")
 }
 
+func TestServeSessionRewind_NothingToRewindDoesNotCancelRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+
+	// Mark the session as running (simulates an in-flight AI turn answering the
+	// anchor's question that has not yet produced a reply row after A1).
+	service.SetSessionRunning(sessionID, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false) })
+
+	// Nothing follows the anchor — a no-op rewind. The running session must NOT
+	// be cancelled by this failed request.
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": asstID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	assert.True(t, service.IsSessionRunning(sessionID),
+		"a nothing-to-rewind request must not cancel the running session")
+}
+
 func TestServeSessionRewind_InvalidAnchor(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -197,4 +225,33 @@ func TestServeSessionRewind_InvalidAnchor(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeSessionRewind, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeSessionRewind_InvalidAnchorDoesNotCancelRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Rewind Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q1", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", "A1", nil, false, "")
+	require.NoError(t, err)
+	user2ID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "Q2", nil, false, "")
+	require.NoError(t, err)
+
+	// Mark the session as running (simulates an in-flight AI turn).
+	service.SetSessionRunning(sessionID, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false) })
+
+	// Anchor is a user message — invalid. The running session must NOT be
+	// cancelled by this failed request (anchor validation runs first).
+	body := map[string]any{"sessionId": sessionID, "beforeMessageId": user2ID}
+	req := newRequest(t, http.MethodPost, "/api/ai/session/rewind", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionRewind, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	assert.True(t, service.IsSessionRunning(sessionID),
+		"an invalid rewind request must not cancel the running session")
 }
