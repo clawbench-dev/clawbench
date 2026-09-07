@@ -569,6 +569,8 @@ export default {
       noUserMessages: 'No user messages yet',
       noUserMessagesHint: 'Messages you send will be listed here',
       userMsgIndexAttachment: 'Attachment',
+      conversationIndexSearch: 'Search messages or attachments…',
+      conversationIndexNoResults: 'No matching messages',
     },
     pending: {
       uploadedAttachment: 'Upload',

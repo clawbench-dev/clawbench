@@ -569,6 +569,8 @@ export default {
       noUserMessages: '暂无用户消息',
       noUserMessagesHint: '发送消息后，这里会列出对话中全部用户消息',
       userMsgIndexAttachment: '附件',
+      conversationIndexSearch: '搜索消息或附件…',
+      conversationIndexNoResults: '无匹配消息',
     },
     pending: {
       uploadedAttachment: '上传附件',

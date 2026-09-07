@@ -54,6 +54,24 @@ describe('SearchInput', () => {
     expect(wrapper.emitted('enter')).toBeTruthy()
   })
 
+  it('does not emit enter during IME composition (isComposing)', async () => {
+    const wrapper = mount(SearchInput, {
+      props: { modelValue: 'test' },
+      global: { stubs },
+    })
+    await wrapper.find('input').trigger('keydown.enter', { isComposing: true })
+    expect(wrapper.emitted('enter')).toBeFalsy()
+  })
+
+  it('does not emit enter during IME composition (keyCode 229)', async () => {
+    const wrapper = mount(SearchInput, {
+      props: { modelValue: 'test' },
+      global: { stubs },
+    })
+    await wrapper.find('input').trigger('keydown', { key: 'Enter', isComposing: false, keyCode: 229 })
+    expect(wrapper.emitted('enter')).toBeFalsy()
+  })
+
   it('emits down on ArrowDown', async () => {
     const wrapper = mount(SearchInput, {
       props: { modelValue: '' },
