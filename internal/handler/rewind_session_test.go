@@ -326,7 +326,7 @@ func TestServeSessionRewind_MethodNotAllowedForGet(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/ai/session/rewind", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/ai/session/rewind", http.NoBody)
 	req = withProjectCookie(req, "proj")
 	w := callHandler(ServeSessionRewind, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)

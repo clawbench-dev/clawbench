@@ -11,19 +11,21 @@ import (
 )
 
 // seedUsageStatsData inserts a session+history+metadata triple directly.
-func seedUsageStatsData(t *testing.T, projectPath, sessionID, agentID, backend, model, createdAt string, total int64) {
+// The backend/agent_id column is fixed to "codebuddy" — callers only vary
+// model/timestamp, so those are the only behavioral knobs exposed.
+func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt string, total int64) {
 	t.Helper()
 	db := service.UnsafeDBForTest()
 
 	_, err := db.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, 't', ?)",
-		sessionID, projectPath, backend, agentID,
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, 'codebuddy', 't', 'codebuddy')",
+		sessionID, projectPath,
 	)
 	require.NoError(t, err)
 
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', '{}', 0, ?)",
-		projectPath, backend, sessionID, createdAt,
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'codebuddy', ?, 'assistant', '{}', 0, ?)",
+		projectPath, sessionID, createdAt,
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
@@ -50,7 +52,7 @@ func TestServeUsageStats_ValidResponse(t *testing.T) {
 	defer teardown()
 
 	projectPath := env.ProjectDir
-	seedUsageStatsData(t, projectPath, "sess-1", "codebuddy", "codebuddy", "glm-5.1", "2026-01-10 10:00:00", 150)
+	seedUsageStatsData(t, projectPath, "sess-1", "glm-5.1", "2026-01-10 10:00:00", 150)
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start":   "2026-01-01T00:00:00Z",
@@ -120,8 +122,8 @@ func TestServeUsageStats_TrendResponse(t *testing.T) {
 	defer teardown()
 
 	projectPath := env.ProjectDir
-	seedUsageStatsData(t, projectPath, "sess-t1", "codebuddy", "codebuddy", "glm-5.1", "2026-01-10 10:00:00", 100)
-	seedUsageStatsData(t, projectPath, "sess-t2", "codebuddy", "codebuddy", "glm-5.1", "2026-01-11 09:00:00", 50)
+	seedUsageStatsData(t, projectPath, "sess-t1", "glm-5.1", "2026-01-10 10:00:00", 100)
+	seedUsageStatsData(t, projectPath, "sess-t2", "glm-5.1", "2026-01-11 09:00:00", 50)
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start":   "2026-01-01T00:00:00Z",
@@ -206,8 +208,8 @@ func TestServeUsageStats_QueryParamPassthrough(t *testing.T) {
 	defer teardown()
 	projectPath := env.ProjectDir
 
-	seedUsageStatsData(t, projectPath, "sess-p1", "codebuddy", "codebuddy", "glm-5.1", "2026-01-10 10:00:00", 150)
-	seedUsageStatsData(t, projectPath, "sess-p2", "codebuddy", "codebuddy", "glm-5.2", "2026-01-11 09:00:00", 50)
+	seedUsageStatsData(t, projectPath, "sess-p1", "glm-5.1", "2026-01-10 10:00:00", 150)
+	seedUsageStatsData(t, projectPath, "sess-p2", "glm-5.2", "2026-01-11 09:00:00", 50)
 
 	// asc order + explicit limit/top parses — the request must still succeed
 	// and exercise the sort/limit/top parameter parsing branches.

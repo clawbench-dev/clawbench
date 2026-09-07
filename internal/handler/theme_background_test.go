@@ -654,7 +654,7 @@ func TestServeThemeBackground_DeleteConfigWriteFailure(t *testing.T) {
 
 func TestProcessWallpaperSource_TooLargeRaster(t *testing.T) {
 	// A raster source over wallpaperMaxBytes must fail before decode.
-	_, err := processWallpaperSource(bytes.Repeat([]byte{0x00}, wallpaperMaxBytes+1), "bg.png")
+	_, err := processWallpaperSource(make([]byte, wallpaperMaxBytes+1), "bg.png")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
 }
