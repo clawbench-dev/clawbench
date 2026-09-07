@@ -1154,7 +1154,7 @@ export function useChatSession(options: UseChatSessionOptions) {
    * Shared resync flow for both the WS reconnect and the manual refresh button.
    * Refreshes runningSessions from the backend, then branches on session state.
    *
-   * forceReload:false (WS reconnect) — lightweight, silent:
+   * force:false (WS reconnect) — lightweight, silent:
    * - still running: reload history (the placeholder is restored from the DB
    *   streaming=1 row via rebuildFromDb, or created by the live stream_start
    *   event); no explicit stream connect needed.
@@ -1163,7 +1163,7 @@ export function useChatSession(options: UseChatSessionOptions) {
    * - idle: reload history with skipIfUnchanged=true (no UI churn if unchanged).
    * No switching overlay, no input lock, queued behind any in-flight loadHistory.
    *
-   * forceReload:true (manual refresh) — always authoritative:
+   * force:true (manual refresh / foreground return) — always authoritative:
    * - still running: force a history reload (isRunning keeps loading=true, the
    *   placeholder is restored from the DB streaming=1 row).
    * - finished while disconnected: same cleanup, then force reload history.
@@ -1171,42 +1171,33 @@ export function useChatSession(options: UseChatSessionOptions) {
    *   re-renders against the latest server state.
    * Shows the switching overlay, locks input, and runs immediately (bypasses
    * the loadHistory in-flight queue) so the user sees the full resync.
+   *
+   * The loadHistory parameters are derived from force in one place instead of
+   * being re-derived inside each branch: force → scrollBottom/showOverlay/
+   * immediate=true + skipIfUnchanged=false (authoritative); !force → the
+   * opposite (silent). The still-running branches differ only in the log
+   * message, so they share a single call site here.
    */
-  async function syncSessionOnReconnect(forceReload: boolean) {
+  async function runReload(opts: { force: boolean }) {
     if (!currentSessionId.value) return
+    const { force } = opts
     // Refresh runningSessions from the backend so the current-session decision
     // below reflects any change that happened on the server side.
     await loadSessionsOnceInner()
-    const source = forceReload ? 'Manual refresh' : 'WS reconnect'
-    // A manual refresh is always authoritative: it shows the switching overlay,
-    // scrolls to bottom, skips the snapshot check (skipIfUnchanged=false), and
-    // runs immediately (bypassing the loadHistory in-flight queue). The WS
-    // reconnect path stays silent — overlay off, skipIfUnchanged=true, queued.
-    const scrollBottom = forceReload
-    const showOverlay = forceReload
-    const skipIfUnchanged = !forceReload
-    const immediate = forceReload
+    const source = force ? 'Manual refresh' : 'WS reconnect'
+    const scrollBottom = force
+    const showOverlay = force
+    const skipIfUnchanged = !force
+    const immediate = force
     if (loading.value) {
       if (runningSessions.value.has(currentSessionId.value)) {
-        if (forceReload) {
-          // Still running — force a history reload. The isRunning branch keeps
-          // loading=true, and the streaming placeholder is restored from the
-          // authoritative DB streaming=1 row (rebuildFromDb), so the live
-          // stream resumes from the full message list.
-          appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — force reload history`)
-          try {
-            await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
-            onRenderUpdate(true)
-          } catch {
-            loading.value = false
-          }
-          return
-        }
-        // WS reconnect (e.g. app resumed from background): the live stream
-        // re-subscribes on reconnect (watch(connected) in useChatStream).
-        // Reload the FULL history so messages produced while the app was away
-        // appear, and the streaming placeholder is restored from the DB row.
-        // skipIfUnchanged keeps this silent (no UI churn when nothing changed).
+        // Still running — force a history reload. The isRunning branch keeps
+        // loading=true, and the streaming placeholder is restored from the
+        // authoritative DB streaming=1 row (rebuildFromDb) — or, for a WS
+        // reconnect, re-subscribed via the live stream_start event / the
+        // watch(connected) re-subscribe in useChatStream — so the live stream
+        // resumes from the full message list. skipIfUnchanged keeps the
+        // reconnect path silent (no UI churn when nothing changed).
         appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — reload history`)
         try {
           await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
@@ -1244,24 +1235,31 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
+   * Semantic single entry point for "resync the current session against the
+   * backend". Both public handlers below just pick the authority level:
+   * force=false for silent WS-reconnect resyncs, force=true for user-initiated
+   * authoritative refreshes.
+   */
+  async function syncCurrentSessionOnReconnect(force: boolean) {
+    await runReload({ force })
+  }
+
+  /**
    * Handle WS reconnection: resync the current session to reflect changes that
    * occurred while disconnected. Lightweight variant — skips UI refresh when
    * the message snapshot is unchanged, and re-subscribes a still-running stream
    * in place.
    */
-  async function handleWsReconnect() {
-    await syncSessionOnReconnect(false)
-  }
+  const handleWsReconnect = () => syncCurrentSessionOnReconnect(false)
 
   /**
-   * Manual refresh from the chat ActionBar refresh button. Mirrors the WS
-   * reconnect resync flow but ALWAYS forces a loadHistory so every refresh
-   * re-renders against the authoritative server state — messages, stream
-   * subscription, mode/usage/commands all stay consistent with the backend.
+   * Manual refresh from the chat ActionBar refresh button (and on foreground
+   * return). Mirrors the WS reconnect resync flow but ALWAYS forces a
+   * loadHistory so every refresh re-renders against the authoritative server
+   * state — messages, stream subscription, mode/usage/commands all stay
+   * consistent with the backend.
    */
-  async function handleManualRefresh() {
-    await syncSessionOnReconnect(true)
-  }
+  const handleManualRefresh = () => syncCurrentSessionOnReconnect(true)
 
   /**
    * Check whether a continued session already exists for a task execution.
