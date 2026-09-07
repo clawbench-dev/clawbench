@@ -161,7 +161,8 @@ html.wallpaper-active .settings-agents-index,
 html.wallpaper-active .settings-agent-detail,
 html.wallpaper-active .terminal-tab-bar,
 html.wallpaper-active .drilldown-header,
-html.wallpaper-active .manage-tabs {
+html.wallpaper-active .manage-tabs,
+html.wallpaper-active .toc-dock {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 
