@@ -812,6 +812,16 @@ describe('ChatMessageItem', () => {
       expect(wrapper.emitted('rewind-from-message')![0]).toEqual([msg])
     })
 
+    it('disables rewind button for the last message (nothing to truncate)', async () => {
+      const msg = { id: 'rw-last', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: false }
+      const wrapper = createWrapper({ msg, isLastMessage: true })
+      const btn = wrapper.find('button[title="chat.session.nothingToRewind"]')
+      expect(btn.exists()).toBe(true)
+      expect((btn.element as HTMLButtonElement).disabled).toBe(true)
+      await btn.trigger('click')
+      expect(wrapper.emitted('rewind-from-message')).toBeFalsy()
+    })
+
     it('does not emit rewind-from-message for streaming assistant messages', () => {
       const msg = { id: 'rw2', role: 'assistant', content: 'x', blocks: [{ type: 'text', text: 'x' }], streaming: true }
       const wrapper = createWrapper({ msg })

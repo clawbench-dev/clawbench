@@ -96,7 +96,13 @@
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
           <Split :size="14" />
         </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('rewind-from-message', msg)" :title="t('chat.actions.rewindSession')">
+        <button
+          v-if="!msg.streaming"
+          class="chat-action-btn"
+          :disabled="isLastMessage"
+          :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
+          @click="$emit('rewind-from-message', msg)"
+        >
           <Scissors :size="14" />
         </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
@@ -165,6 +171,9 @@ const props = defineProps({
   active: { type: Boolean, default: true },
   /** True when this message is the most recent assistant reply in the list (drives the 'mixed' display mode). */
   isLastAssistant: { type: Boolean, default: false },
+  /** True when this message is the very last entry in the rendered list — rewind
+   *  has nothing to truncate after it, so the rewind button is disabled. */
+  isLastMessage: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'fork-from-message', 'rewind-from-message', 'reset-session'])

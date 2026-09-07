@@ -73,6 +73,7 @@
       :staticBlockCache="staticBlockCache"
       :active="active"
       :isLastAssistant="isLastAssistant(msg, i)"
+      :isLastMessage="i === messages.length - 1"
       @toggle-tool="$emit('toggle-tool', $event)"
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
