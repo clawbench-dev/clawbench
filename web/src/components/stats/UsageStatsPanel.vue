@@ -259,16 +259,25 @@ const customEnd = ref<string>('')
 // build time would stay on the previous theme until a filter/data change.
 const themeTick = ref(0)
 
+// Viewport tick — bumped on window resize so options are rebuilt when crossing
+// the narrow/mobile boundary (value-axis tick text is hidden on mobile).
+const viewportTick = ref(0)
+
 function onThemeChange() {
   themeTick.value++
+}
+function onWindowResize() {
+  viewportTick.value++
 }
 
 onMounted(() => {
   window.addEventListener('clawbench-theme-change', onThemeChange)
+  window.addEventListener('resize', onWindowResize)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('clawbench-theme-change', onThemeChange)
+  window.removeEventListener('resize', onWindowResize)
 })
 
 function dimLabelKey(d: UsageDimId): string {
@@ -354,9 +363,11 @@ function formatMetricCellValue(m: UsageMetricId, row: UsageRowLike): string {
 type UsageRowLike = { key: Partial<Record<UsageDimId, string>>; input: number; output: number; total: number; cacheHit: number; cacheMiss: number; credit: number; costUsd: number }
 
 function chartOptionFor(m: UsageMetricId) {
-  // Read themeTick so a clawbench-theme-change rebuilds the option with the
-  // new palette (CSS vars are read live inside build*Option).
+  // Read themeTick (palette rebuild on theme change) and viewportTick (axis
+  // label visibility when crossing the mobile/desktop boundary) so the option
+  // is rebuilt when either changes.
   void themeTick.value
+  void viewportTick.value
   const dims = filter.value.dims
   const rows = filteredRows.value
   const labelOf = (r: { key: Partial<Record<UsageDimId, string>> }): string =>

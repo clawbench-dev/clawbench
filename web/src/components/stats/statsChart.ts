@@ -28,20 +28,41 @@ export function resolveStatsPalette() {
 /** Palette for chart series (distinct enough in both light and dark). */
 const SERIES_COLORS = ['#4f8cff', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#22d3ee', '#fb7185', '#4ade80']
 
+/**
+ * Whether we are on a narrow (mobile) viewport. Mirrors the app's wide-screen
+ * threshold (WIDE_SCREEN_MIN_WIDTH = 1024) so charts share the same split.
+ * On narrow screens value-axis tick text is dropped — tooltips/labels still
+ * show the exact numbers — while category/date labels are kept.
+ */
+export function isNarrowScreen(): boolean {
+  try {
+    return typeof window === 'undefined' || window.innerWidth < 1024
+  } catch {
+    return false
+  }
+}
+
 /** Build a horizontal bar chart option (one per selected metric column). */
 export function buildBarOption(categories: string[], values: number[], metric: UsageMetricId): EChartsCoreOption {
   const p = resolveStatsPalette()
   // On narrow screens a long category list would stretch the card very tall.
   // Cap the visible rows and enable inside scrolling once the list is long.
   const many = categories.length > 8
+  const narrow = isNarrowScreen()
   const opt: Record<string, unknown> = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-    grid: { left: 8, right: 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
-    xAxis: { type: 'value', axisLabel: { color: p.textSecondary }, splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } } },
+    grid: { left: 8, right: narrow ? 8 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
+    xAxis: {
+      type: 'value',
+      // Bar values are already printed on the right of each bar, so the value
+      // axis ticks are redundant on narrow screens — keep them on desktop.
+      axisLabel: narrow ? { show: false } : { color: p.textSecondary },
+      splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
+    },
     yAxis: {
       type: 'category',
       data: categories,
-      axisLabel: { color: p.textSecondary, width: 130, overflow: 'truncate' },
+      axisLabel: { color: p.textSecondary, width: narrow ? 96 : 130, overflow: 'truncate' },
       axisLine: { lineStyle: { color: p.axisLine } },
     },
     series: [{
@@ -100,12 +121,21 @@ export function buildTrendOption(
   metric: UsageMetricId,
 ): EChartsCoreOption {
   const p = resolveStatsPalette()
+  const narrow = isNarrowScreen()
   return {
     tooltip: { trigger: 'axis', valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
     legend: { type: 'scroll', bottom: 0, textStyle: { color: p.textSecondary } },
-    grid: { left: 8, right: 16, top: 24, bottom: 32, containLabel: true },
-    xAxis: { type: 'category', data: days, axisLabel: { color: p.textSecondary }, axisLine: { lineStyle: { color: p.axisLine } } },
-    yAxis: { type: 'value', axisLabel: { color: p.textSecondary }, splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } } },
+    grid: { left: 8, right: 8, top: 24, bottom: 32, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: days,
+      // Keep dates as the reference even on narrow; just avoid overlaps.
+      axisLabel: { color: p.textSecondary, hideOverlap: true, fontSize: narrow ? 10 : undefined },
+      axisLine: { lineStyle: { color: p.axisLine } },
+    },
+    // The value axis has no printed per-point labels; its tick text is noise on
+    // narrow screens (hover tooltip gives exact values) — hidden on mobile.
+    yAxis: { type: 'value', axisLabel: narrow ? { show: false } : { color: p.textSecondary }, splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } } },
     color: SERIES_COLORS,
     series: seriesList.map(s => ({
       type: 'line' as const,
