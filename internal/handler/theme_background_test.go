@@ -325,18 +325,19 @@ func TestServeThemeBackground_PostPathCopyMissingPathField(t *testing.T) {
 }
 
 func TestServeThemeBackground_PostPathCopyNonexistentFile(t *testing.T) {
-	themeDir, teardown := setupThemeTestEnv(t)
+	// Path-copy mode resolves project-relative paths against the project dir.
+	// A relative path whose file does not exist passes path validation (the
+	// parent dir exists — creation-style resolution) and then os.Stat must 404.
+	// Relative paths keep the assertion identical across macOS (/var→/private/var)
+	// and Linux, unlike absolute paths into a symlinked temp root.
+	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// An absolute path under a permitted root whose parent directory exists
-	// passes path validation, then os.Stat must 404 because the file itself is
-	// absent. The parent (the data dir next to themeDir) is created by setup,
-	// so EvalSymlinks resolution behaves identically on macOS and Linux.
-	missing := filepath.Join(filepath.Dir(themeDir), "nope", "wallpaper.png")
-	body := strings.NewReader(`{"path":"` + missing + `"}`)
+	body := strings.NewReader(`{"path":"nope/wallpaper.png"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
 	req.Header.Set("Content-Type", "application/json")
 	req = withAuthCookie(req, model.SessionToken)
+	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeThemeBackground, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
