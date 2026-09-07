@@ -490,14 +490,15 @@ async function handleRetryTunnel() {
   overflow: hidden;
 }
 
-/* Compact header — flush to panel edges, matches chat/app header style */
+/* Compact header — flush to panel edges, matches settings/stats header style */
 .proxy-header {
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
   flex-shrink: 0;
   gap: 6px;
-  background: var(--bg-secondary, #f8f9fa);
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 

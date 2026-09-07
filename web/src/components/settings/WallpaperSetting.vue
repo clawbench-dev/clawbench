@@ -42,7 +42,7 @@
           type="range"
           class="settings-item__slider"
           :value="panelOpacity"
-          min="0.7"
+          min="0.5"
           max="1"
           step="0.01"
           :disabled="!wallpaperHasImage"
@@ -139,7 +139,7 @@ const state = computed<WallpaperState>(() =>
 /** Whether a wallpaper image is actually set (enables the per-option rows). */
 const wallpaperHasImage = computed(() => state.value === 'set')
 
-/** Panel opacity from config (0.7..1.0). */
+/** Panel opacity from config (0.5..1.0). */
 const panelOpacity = computed(() => resolvePanelOpacity(serverConfig.value?.appearance as Record<string, unknown> | undefined))
 
 const opacityDisplay = computed(() => `${Math.round(panelOpacity.value * 100)}%`)

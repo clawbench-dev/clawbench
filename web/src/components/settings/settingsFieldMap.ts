@@ -206,7 +206,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // slider item is NOT rendered through the generic row (its UI lives inside
     // WallpaperSetting) — it exists so the section groups correctly and the
     // value is readable in the config pipeline.
-    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'appearance.panel_opacity', type: 'slider', source: 'server', min: 0.7, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
+    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'appearance.panel_opacity', type: 'slider', source: 'server', min: 0.5, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
   ],
   agents: [],
   chat: [

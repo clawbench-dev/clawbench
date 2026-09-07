@@ -70,7 +70,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// --- Appearance (custom wallpaper) ---
 	// PanelOpacity: default 0.85 (85% opacity for main work panels when a
 	// wallpaper is set). An explicit user value (including 0 = fully opaque is
-	// NOT a valid target here; range 0.7–1.0 is enforced by PATCH validation)
+	// NOT a valid target here; range 0.5–1.0 is enforced by PATCH validation)
 	// must survive zero-value handling, so only fill when truly unset and the
 	// key was not explicitly present in the config file. Treat any missing or
 	// zero value as "use default". PanelOpacity intentionally has no presence

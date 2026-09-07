@@ -138,8 +138,10 @@ async function onRefresh() {
 .detail-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
   flex-shrink: 0;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   gap: 6px;
 }

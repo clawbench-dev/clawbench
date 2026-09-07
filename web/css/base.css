@@ -124,58 +124,119 @@ html.wallpaper-active .wide-dock {
 }
 
 /* ── Extended page surfaces (wallpaper-active) ──────────────────────
-   Full-page roots and page-level bars across the task, port-forward,
-   settings, file-browser and media-preview panels. Their components declare
-   opaque var(--bg-*) backgrounds in scoped CSS; these rules (higher
-   specificity via the html.wallpaper-active prefix) make them translucent so
-   the wallpaper shows through. Content canvases stay opaque by design:
-   video player (#000), code editor (--code-bg), Excalidraw iframe, PDF page
-   canvas (#525659) and the terminal xterm surface. Cards/rows inside these
-   pages (task items, proxy port cards, settings card bodies, form sections)
-   deliberately keep their own opaque backgrounds (conservative depth). */
+   Full-page tab roots must NOT stack a second translucent layer over the
+   already-translucent .tab-panel: compounding alphas (panel root → card →
+   panel) dims the wallpaper until low-opacity settings nearly hide it. So,
+   following the .file-overlay precedent, whole-page roots AND the full-bleed
+   card/list surfaces inside them become fully transparent while the wallpaper
+   is active — the .tab-panel is the single visible surface and every tab reads
+   at the same translucency as the file browser. Only narrow page-level bars
+   keep a translucent tint (structure) and hover/active states re-add a tint as
+   feedback. Content canvases stay opaque by design: video player (#000), code
+   editor (--code-bg), Excalidraw iframe, PDF page canvas (#525659), the
+   terminal xterm surface, and input widgets inside forms (text fields,
+   textareas, selects keep their own solid fills). */
 
-/* bg-primary full-page roots + page-level action bars */
+/* Whole-page roots — remove the second scrim layer entirely */
 html.wallpaper-active .task-list-page,
 html.wallpaper-active .task-detail-page,
 html.wallpaper-active .task-form-page,
 html.wallpaper-active .exec-detail-page,
 html.wallpaper-active .task-overview,
-html.wallpaper-active .detail-actions,
-html.wallpaper-active .form-footer,
-html.wallpaper-active .exec-detail-actions,
 html.wallpaper-active .proxy-panel-content,
-html.wallpaper-active .settings-page__header,
-html.wallpaper-active .image-preview-body,
-html.wallpaper-active .audio-preview-body,
-html.wallpaper-active .pdf-preview-container,
-html.wallpaper-active .pdf-error,
-html.wallpaper-active .office-preview-container,
-html.wallpaper-active .usage-stats-panel,
-html.wallpaper-active .stats-header {
-    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
-}
-
-/* bg-secondary page-level bars / page roots (settings list surfaces) */
-html.wallpaper-active .proxy-header,
+html.wallpaper-active .settings-page,
 html.wallpaper-active .settings-index,
 html.wallpaper-active .settings-category,
 html.wallpaper-active .settings-agents-index,
 html.wallpaper-active .settings-agent-detail,
+html.wallpaper-active .usage-stats-panel,
+html.wallpaper-active .image-preview-body,
+html.wallpaper-active .audio-preview-body,
+html.wallpaper-active .pdf-preview-container,
+html.wallpaper-active .pdf-error,
+html.wallpaper-active .office-preview-container {
+    background: transparent;
+}
+
+/* Full-bleed cards / list rows inside those pages — translucent so cards keep
+   a subtle depth layer over the single .tab-panel surface. The page roots stay
+   transparent (above) so only this one card layer stacks on top of the panel;
+   card areas are thus a touch dimmer than bare gaps but never compounded three
+   layers deep. */
+html.wallpaper-active .task-item,
+html.wallpaper-active .execution-item,
+html.wallpaper-active .overview-card,
+html.wallpaper-active .proxy-port-item,
+html.wallpaper-active .form-section,
+html.wallpaper-active .stats-card-panel {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .settings-card__body,
+html.wallpaper-active .group-panel__card,
+html.wallpaper-active .settings-agents-index__row,
+html.wallpaper-active .settings-agents-index__rescan-row {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* Page-level bars keep a translucent tint so chrome stays legible over the
+   wallpaper (same look as the file browser's dir-toolbar / dir-nav-bottom).
+   Headers whose page root is transparent in wallpaper mode get the unified
+   bg-primary tint (matching their own non-wallpaper base) so they still read
+   as a distinct bar — task, proxy, settings and stats headers all share it. */
+html.wallpaper-active .settings-page__header,
+html.wallpaper-active .stats-header,
+html.wallpaper-active .list-header,
+html.wallpaper-active .detail-header,
+html.wallpaper-active .exec-detail-header,
+html.wallpaper-active .form-header,
+html.wallpaper-active .proxy-header,
+html.wallpaper-active .detail-actions,
+html.wallpaper-active .form-footer,
+html.wallpaper-active .exec-detail-actions {
+    background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
 html.wallpaper-active .terminal-tab-bar,
 html.wallpaper-active .drilldown-header,
 html.wallpaper-active .manage-tabs,
 html.wallpaper-active .toc-dock {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
-
-/* bg-tertiary file-manager toolbar */
 html.wallpaper-active .dir-toolbar {
     background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
 }
-
-/* file-browser bottom nav bar uses bg-primary */
 html.wallpaper-active .dir-nav-bottom {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+
+/* Section-title bands inside settings cards keep a translucent tint so the
+   grouping is still visible without blocking the wallpaper. */
+html.wallpaper-active .settings-card__header,
+html.wallpaper-active .group-panel__header,
+html.wallpaper-active .group-panel__section-header {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+
+/* Interactive states on the translucent cards/rows re-tint the surface as
+   feedback. Where a scoped rule paints a solid var(--bg-*) (e.g. :hover,
+   :active, .completed) this higher-specificity scope overrides it with the
+   translucent equivalent; running states keep their green tint composited
+   over the translucent card base. */
+html.wallpaper-active .task-item:active,
+html.wallpaper-active .task-item.completed,
+html.wallpaper-active .execution-item:active:not(.running),
+html.wallpaper-active .group-panel__entry-row:hover,
+html.wallpaper-active .group-panel__entry-row:active,
+html.wallpaper-active .settings-index__row:hover,
+html.wallpaper-active .settings-index__row:active,
+html.wallpaper-active .settings-agents-index__row:hover,
+html.wallpaper-active .settings-agents-index__row:active,
+html.wallpaper-active .settings-agents-index__rescan-row:hover,
+html.wallpaper-active .settings-agents-index__rescan-row:active {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .task-item.is-running,
+html.wallpaper-active .execution-item.running {
+    background: color-mix(in srgb, var(--success-color, #16a34a) 5%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
 }
 
 /* OfficePreview re-encodes its wrappers with !important deep overrides —
@@ -185,6 +246,25 @@ html.wallpaper-active .dir-nav-bottom {
 html.wallpaper-active .office-preview-body .docx-wrapper,
 html.wallpaper-active .office-preview-body .pptx-preview-wrapper {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent) !important;
+}
+
+/* CodeMirror source view — both browse (read-only preview) and edit mode let
+   the wallpaper show through the code canvas, gutters and the edit toolbar.
+   .cm-viewer is scoped CSS, while .cm-editor/.cm-gutters are injected by the
+   editor theme into .cm-host (global) — list every layer so none stays opaque.
+   The editable accent tint is preserved by mixing it over the translucent base. */
+html.wallpaper-active .cm-viewer,
+html.wallpaper-active .cm-viewer .cm-editor,
+html.wallpaper-active .cm-viewer .cm-gutters {
+    background: color-mix(in srgb, var(--code-bg) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .cm-viewer.is-editable,
+html.wallpaper-active .cm-viewer.is-editable .cm-editor,
+html.wallpaper-active .cm-viewer.is-editable .cm-gutters {
+    background: color-mix(in srgb, var(--accent-color) 6%, color-mix(in srgb, var(--code-bg) var(--panel-alpha), transparent));
+}
+html.wallpaper-active .cm-viewer .code-editor-actions {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 
 /* Scrollbar styling */

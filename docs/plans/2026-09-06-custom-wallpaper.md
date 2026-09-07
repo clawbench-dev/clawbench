@@ -21,7 +21,7 @@
 | 主题适配 | 单张图 + 深浅自动遮罩（dark ~0.35 黑 / light ~0.12 黑），遮罩强度不开放配置 |
 | 与主题关系 | 完全独立：背景图跨主题共享，仅遮罩随深浅态变化 |
 | 铺法 | `cover` 铺满 + 居中 + 不重复 |
-| 面板不透明度 | 引入 `--panel-alpha` 变量，默认 0.85，滑块可配（70%~100%）；**无背景图时强制 alpha=1、滑块禁用置灰** |
+| 面板不透明度 | 引入 `--panel-alpha` 变量，默认 0.85，滑块可配（50%~100%）；**无背景图时强制 alpha=1、滑块禁用置灰** |
 | 配置项 | 两个 server key：`appearance.wallpaperFile` + `appearance.panelOpacity`（YAML snake_case：`wallpaper_file`/`panel_opacity`）。**无开关**：有文件=启用，空=未设置。移除 = DELETE 端点清 key + 删文件（轻量 toast，不弹确认）。**wallpaperFile 禁止 PATCH 直写非空值**（见 C3/I3） |
 | 背景切换动效 | 无渐变动效，设置后即时生效 + toast |
 | 格式子集 | png/jpg/jpeg/webp/gif/svg 允许；排除 bmp/ico/tiff/avif |
@@ -49,7 +49,7 @@
 
 面板不透明度滑块：
 
-- `appearance.panelOpacity` slider，范围 70%~100%，默认 85%
+- `appearance.panelOpacity` slider，范围 50%~100%，默认 85%
 - 未设置背景图时滑块禁用置灰（强制 alpha=1，UI 与现状完全一致）
 - 滑块值保留，设置背景图后自动沿用
 - **背景状态三态**：server config 未加载完成时滑块 disabled（unknown 态），加载后按 set/unset 决定 enabled/disabled——避免冷启动闪烁（见 I2）
@@ -91,7 +91,7 @@
 1. `config.go`：Config struct 增 `Appearance AppearanceConfig` 段；`AppearanceConfig { WallpaperFile string; PanelOpacity float64 }`（YAML snake_case：`wallpaper_file` / `panel_opacity`，PATCH/GET JSON 用 camelCase `wallpaperFile`/`panelOpacity`，命名统一见 M4）
 2. `defaults.go`：`ApplyDefaults` 补 `appearance.panel_opacity: 0.85`（默认值权威在服务端），**presence-map 语义防零值覆盖**（参考 RAG/tls 先例）
 3. `settings.go` `PatchableConfigPaths` 白名单补 `appearance.wallpaperFile`、`appearance.panelOpacity`
-4. `settings.go` `validatePatchValues`：`appearance.panelOpacity` 范围校验 0.7~1.0（参考 frp.server_port 先例）；**`appearance.wallpaperFile` 非空值一律拒绝**（仅允许 `""` 表示移除；实际移除走 DELETE 端点清文件后置空，PATCH 直写非空 = 路径穿越入口，见 I3）
+4. `settings.go` `validatePatchValues`：`appearance.panelOpacity` 范围校验 0.5~1.0（参考 frp.server_port 先例）；**`appearance.wallpaperFile` 非空值一律拒绝**（仅允许 `""` 表示移除；实际移除走 DELETE 端点清文件后置空，PATCH 直写非空 = 路径穿越入口，见 I3）
 5. `settings.go` `hotReloadFields`：`appearance.panelOpacity` 列入（PATCH 后即时生效）；`wallpaperFile` 不依赖 PATCH（专用端点写）
 6. `settings.go` `configResponse`：GET /api/config 输出两 key（嵌套 `appearance` 段）
 7. `handler.go`：注册 `POST /api/theme-background`、`DELETE /api/theme-background`、`GET /api/file/theme-background` 路由

@@ -616,7 +616,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
 }

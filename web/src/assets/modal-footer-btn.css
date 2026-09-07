@@ -49,6 +49,14 @@
   text-decoration: none;
 }
 
+/* Dark themes: --bg-tertiary is dark, so the light-theme hover grey above would
+   flip the pill near-white while the text stays light (var(--text-primary)),
+   making the label blend into the hover background. Lighten the dark pill by a
+   text-primary tint instead — the standard theme-adaptive hover convention. */
+[data-theme-base="dark"] .fbtn:hover {
+  background: color-mix(in srgb, var(--text-primary, #e6edf3) 7%, var(--bg-tertiary, #f1f3f5));
+}
+
 .fbtn:active {
   transform: scale(0.96);
 }
@@ -109,4 +117,30 @@
   background: color-mix(in srgb, #16a34a 30%, var(--bg-tertiary, #f1f3f5));
   border-color: #16a34a;
   color: #15803d;
+}
+
+/* ── Dark-theme overrides ──
+   The tinted text colours above are deep light-theme shades (dark red/amber/
+   green). On dark themes --bg-tertiary is itself dark, so the same deep text
+   lands at ~2:1 contrast and disappears into the tinted pill. Lift the
+   foreground to the 300-level pastels (same convention as diff/badge text
+   elsewhere) so labels stay readable; the tinted backgrounds and borders are
+   already theme-aware via --bg-tertiary. */
+[data-theme-base="dark"] .fbtn-danger {
+  color: #fca5a5;
+}
+[data-theme-base="dark"] .fbtn-danger:hover {
+  color: #fecaca;
+}
+[data-theme-base="dark"] .fbtn-warn {
+  color: #fbbf24;
+}
+[data-theme-base="dark"] .fbtn-warn:hover {
+  color: #fde68a;
+}
+[data-theme-base="dark"] .fbtn-success {
+  color: #86efac;
+}
+[data-theme-base="dark"] .fbtn-success:hover {
+  color: #bbf7d0;
 }

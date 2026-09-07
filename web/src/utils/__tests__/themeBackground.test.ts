@@ -88,7 +88,7 @@ describe('themeBackground', () => {
       applyWallpaper('background.png', 5, false)
       expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('100%')
       applyWallpaper('background.png', 0.1, false)
-      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('70%')
+      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('50%')
     })
 
     it('clears the effect when the wallpaper file is empty', () => {

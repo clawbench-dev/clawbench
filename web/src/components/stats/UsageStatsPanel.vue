@@ -536,9 +536,9 @@ function onRefresh() {
 .stats-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: var(--header-height, 36px);
-  padding: 0 8px 0 12px;
+  padding: 0 4px 0 12px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
