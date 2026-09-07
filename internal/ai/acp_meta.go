@@ -153,24 +153,14 @@ func metaMaxInt(base int, vals ...int) int {
 	return out
 }
 
-// metaMergeUsage overlays src onto dst, keeping non-zero src values.
-func metaMergeUsage(dst *metaTokenUsage, src *metaTokenUsage) {
-	if src == nil || dst == nil {
-		return
-	}
-	dst.InputTokens = metaMaxInt(dst.InputTokens, src.InputTokens)
-	dst.OutputTokens = metaMaxInt(dst.OutputTokens, src.OutputTokens)
-	dst.TotalTokens = metaMaxInt(dst.TotalTokens, src.TotalTokens)
-	dst.CachedReadTokens = metaMaxInt(dst.CachedReadTokens, src.CachedReadTokens)
-	dst.CachedWriteTokens = metaMaxInt(dst.CachedWriteTokens, src.CachedWriteTokens)
-	dst.ThoughtTokens = metaMaxInt(dst.ThoughtTokens, src.ThoughtTokens)
-	dst.CacheCreationTokens = metaMaxInt(dst.CacheCreationTokens, src.CacheCreationTokens)
-	dst.CacheHitTokens = metaMaxInt(dst.CacheHitTokens, src.CacheHitTokens)
-	dst.CacheMissTokens = metaMaxInt(dst.CacheMissTokens, src.CacheMissTokens)
-	if src.Credit > dst.Credit {
-		dst.Credit = src.Credit
-	}
-	dst.Present = dst.Present || src.Present
+// metaTokenUsageInformative reports whether the usage carries real token
+// counters. Cost-only "naked" notifications (CodeBuddy sends used=0/size=0
+// cost-only payloads) may still set credit while every token counter is zero —
+// such payloads must never displace an adopted token snapshot.
+func (u *metaTokenUsage) hasTokenCounters() bool {
+	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
+		u.CachedReadTokens != 0 || u.CachedWriteTokens != 0 || u.ThoughtTokens != 0 ||
+		u.CacheCreationTokens != 0 || u.CacheHitTokens != 0 || u.CacheMissTokens != 0
 }
 
 // metaMergeTrace overlays src onto dst, filling empty fields.
@@ -213,32 +203,24 @@ func metaMergeTrace(dst *metaTrace, src *metaTrace) {
 	}
 }
 
-// metaMergeCategory overlays src onto dst (per-key max).
-func metaMergeCategory(dst *metaCategoryUsage, src *metaCategoryUsage) {
-	if src == nil || dst == nil || !src.Present {
-		return
-	}
-	dst.Present = true
-	if dst.Categories == nil {
-		dst.Categories = make(map[string]int64)
-	}
-	for k, v := range src.Categories {
-		if v > dst.Categories[k] {
-			dst.Categories[k] = v
-		}
-	}
-}
-
-// metaMergeExtraction merges src into dst.
+// metaMergeExtraction merges src into dst (the turn-level accumulator).
+//
+// Token/cache/credit usage adopts the LATEST informative snapshot wholesale.
+// ACP agents (CodeBuddy in particular) re-report the complete current usage on
+// each informative session/update notification, so the most recent one is
+// authoritative. Per-field max-stitching was removed: it combined counters
+// taken at different moments into one internally inconsistent row (e.g. a
+// cacheMiss from an early tool call with input from a later one, or a Claude
+// per-model total dwarfing the request) — which corrupted chat_metadata usage
+// stats. A cost-only "naked" notification (all token counters zero) never
+// replaces the adopted snapshot.
 func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 	if src == nil || dst == nil {
 		return
 	}
-	if src.Usage != nil && src.Usage.Present {
-		if dst.Usage == nil {
-			dst.Usage = &metaTokenUsage{}
-		}
-		metaMergeUsage(dst.Usage, src.Usage)
+	if src.Usage != nil && src.Usage.hasTokenCounters() {
+		cp := *src.Usage
+		dst.Usage = &cp
 	}
 	if src.Trace != nil && src.Trace.HasData() {
 		if dst.Trace == nil {
@@ -246,11 +228,12 @@ func metaMergeExtraction(dst *metaExtraction, src *metaExtraction) {
 		}
 		metaMergeTrace(dst.Trace, src.Trace)
 	}
-	if src.Category != nil && src.Category.Present {
-		if dst.Category == nil {
-			dst.Category = &metaCategoryUsage{}
-		}
-		metaMergeCategory(dst.Category, src.Category)
+	// Category breakdown is also a full re-report; adopt the latest one. It may
+	// arrive on a notification whose token counters are zero (CodeBuddy sends
+	// usageByCategory on a separate update), so it is independent of the usage
+	// block above.
+	if src.Category != nil && src.Category.Present && len(src.Category.Categories) > 0 {
+		dst.Category = &metaCategoryUsage{Present: true, Categories: src.Category.Categories}
 	}
 }
 

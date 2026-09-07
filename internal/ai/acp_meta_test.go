@@ -667,3 +667,83 @@ func TestMergeUsageState_NakedZeroWithWindowBackfill(t *testing.T) {
 	assert.Equal(t, 10000, merged2.Used, "used backfilled from the usageByCategory sum")
 	assert.Equal(t, 200000, merged2.Size)
 }
+
+// ---------------------------------------------------------------------------
+// metaMergeExtraction — latest-informative-snapshot semantics
+// ---------------------------------------------------------------------------
+
+func usageExt(i, o, t int) *metaExtraction {
+	return &metaExtraction{Usage: &metaTokenUsage{Present: true, InputTokens: i, OutputTokens: o, TotalTokens: t}}
+}
+
+func TestMetaMergeExtraction_LatestInformativeSnapshotReplaces(t *testing.T) {
+	// A later informative notification is a full re-report of current usage and
+	// must REPLACE the accumulator wholesale — even when an earlier one carried
+	// a larger input (the pre-change max-stitch kept the bigger value and
+	// produced internally inconsistent input/output/total).
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	metaMergeExtraction(&acc, usageExt(32752, 30, 32782))
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32752, acc.Usage.InputTokens, "latest input wins, not the max")
+	assert.Equal(t, 30, acc.Usage.OutputTokens)
+	assert.Equal(t, 32782, acc.Usage.TotalTokens)
+	assert.Equal(t, 32782, acc.Usage.InputTokens+acc.Usage.OutputTokens, "row stays internally consistent")
+}
+
+func TestMetaMergeExtraction_NakedNotificationDoesNotRegress(t *testing.T) {
+	// A cost-only "naked" notification (all token counters zero) must not wipe
+	// the adopted token snapshot.
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	naked := &metaExtraction{Usage: &metaTokenUsage{Present: true, Credit: 1.64}}
+	metaMergeExtraction(&acc, naked)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32635, acc.Usage.InputTokens, "naked notification must not regress input")
+	assert.Equal(t, 84, acc.Usage.OutputTokens)
+	assert.Equal(t, 32719, acc.Usage.TotalTokens)
+}
+
+func TestMetaMergeExtraction_CategoryIndependentOfTokenSnapshot(t *testing.T) {
+	// CodeBuddy may deliver usageByCategory on a notification whose token
+	// counters are zero; the category block must still be adopted.
+	var acc metaExtraction
+	metaMergeExtraction(&acc, usageExt(32635, 84, 32719))
+	catOnly := &metaExtraction{Category: &metaCategoryUsage{Present: true, Categories: map[string]int64{"tools": 24108, "conversation": 5447}}}
+	metaMergeExtraction(&acc, catOnly)
+	require.NotNil(t, acc.Usage)
+	assert.Equal(t, 32635, acc.Usage.InputTokens, "token snapshot kept")
+	require.NotNil(t, acc.Category)
+	assert.Equal(t, int64(24108), acc.Category.Categories["tools"])
+	assert.Equal(t, int64(5447), acc.Category.Categories["conversation"])
+}
+
+func TestExtractClaudeMeta_MultiModelUsageNoStitching(t *testing.T) {
+	// Two per-model entries each with their own cumulative-ish total: without a
+	// top-level aggregate the FIRST informative entry is adopted as the
+	// snapshot — never max-stitched across entries (the old code produced
+	// total == 10x input outliers here).
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model":       "claude-sonnet-4-6",
+					"token_count": map[string]any{"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627},
+				},
+				map[string]any{
+					"model":       "claude-opus-4-6",
+					"token_count": map[string]any{"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352},
+				},
+			},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 45575, ext.Usage.InputTokens)
+	assert.Equal(t, 52, ext.Usage.OutputTokens)
+	assert.Equal(t, 45627, ext.Usage.TotalTokens)
+	assert.Equal(t, 45627, ext.Usage.InputTokens+ext.Usage.OutputTokens, "single entry snapshot stays consistent")
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "claude-sonnet-4-6", ext.Trace.ResponseModelID)
+}
