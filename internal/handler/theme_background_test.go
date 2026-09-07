@@ -492,6 +492,196 @@ func TestVerifyRasterConfig_RejectsOutOfRangeDimensions(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot decode image")
 }
 
+func TestServeThemeBackground_GetMethodNotAllowed(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// GET accepts GET/HEAD only — a POST must 405.
+	req := httptest.NewRequest(http.MethodPost, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeThemeBackground_PostWriteFailureIs500(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Point DataDir at a path under a regular file so MkdirAll in
+	// writeWallpaperFile fails after the image is processed.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	model.DataDir = filepath.Join(blocker, "data")
+
+	body, contentType := makeMultipartBody("bg.png", makePNG(10, 10))
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", contentType)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestServeThemeBackground_PostInvalidJSONBody(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Malformed JSON in path-copy mode → decodeJSON fails → 400.
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", strings.NewReader(`{bad`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeThemeBackground_PostPathCopyFileTooLarge(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A source file exceeding wallpaperMaxBytes must 400 before any read.
+	big := filepath.Join(env.WatchDir, "huge.png")
+	require.NoError(t, os.WriteFile(big, bytes.Repeat([]byte{0x89}, wallpaperMaxBytes+1024), 0o644))
+
+	body := strings.NewReader(`{"path":"` + big + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeThemeBackground_PostMultipartNoFileField(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// A multipart body without a "file" field → NoFileProvided.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	require.NoError(t, mw.WriteField("note", "hello"))
+	require.NoError(t, mw.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeThemeBackground_GetWhenFileIsDirectory(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Config names a path that resolves to a directory → 404.
+	model.ConfigInstance.Appearance.WallpaperFile = "background.png"
+	require.NoError(t, os.MkdirAll(filepath.Join(themeDir, "background.png"), 0o755))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_GetUnreadableRasterFile(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Stat succeeds but os.Open fails (chmod 000) → 404.
+	model.ConfigInstance.Appearance.WallpaperFile = "background.png"
+	p := filepath.Join(themeDir, "background.png")
+	require.NoError(t, os.WriteFile(p, makePNG(10, 10), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeThemeBackground_GetSVGUnsafeContent404(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// SVG whose content fails svgLooksSafe on the serve path → 404.
+	model.ConfigInstance.Appearance.WallpaperFile = "background.svg"
+	require.NoError(t, os.WriteFile(filepath.Join(themeDir, "background.svg"),
+		[]byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`), 0o644))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestRemoveStaleWallpapers_IgnoresNonWallpaperAndDirs(t *testing.T) {
+	dir := t.TempDir()
+	// Entries that must be skipped: non-background files, directories.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "background.png"), []byte("x"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "background.old"), 0o755))
+
+	removeStaleWallpapers(dir, "background.png")
+	assert.FileExists(t, filepath.Join(dir, "readme.txt"), "non-background file must stay")
+	oldInfo, err := os.Stat(filepath.Join(dir, "background.old"))
+	assert.NoError(t, err, "directory with wallpaper prefix must stay")
+	assert.True(t, oldInfo.IsDir())
+	assert.FileExists(t, filepath.Join(dir, "background.png"), "kept file untouched")
+
+	// keepFile == "" removes all wallpaper files.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "background.gif"), []byte("x"), 0o644))
+	removeStaleWallpapers(dir, "")
+	assert.NoFileExists(t, filepath.Join(dir, "background.gif"))
+}
+
+func TestServeThemeBackground_DeleteConfigWriteFailure(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// Make the config dir uncreatable so setConfigWallpaperFile fails during
+	// DELETE → 500 and the in-memory wallpaper file name is restored.
+	model.DataDir = filepath.Join(t.TempDir(), "nested")
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	// Replace the config dir path with a regular file to force MkdirAll failure.
+	cfgDir := filepath.Join(model.DataDir, "config")
+	require.NoError(t, os.WriteFile(cfgDir, []byte("x"), 0o644))
+
+	model.ConfigInstance.Appearance.WallpaperFile = "background.png"
+	req := httptest.NewRequest(http.MethodDelete, "/api/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackground, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "background.png", model.ConfigInstance.Appearance.WallpaperFile,
+		"in-memory config must be restored on write failure")
+}
+
+func TestProcessWallpaperSource_TooLargeRaster(t *testing.T) {
+	// A raster source over wallpaperMaxBytes must fail before decode.
+	_, err := processWallpaperSource(bytes.Repeat([]byte{0x00}, wallpaperMaxBytes+1), "bg.png")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestSVGLooksSafe_HeadLongerThan4096(t *testing.T) {
+	// A safe SVG longer than 4096 bytes must still pass (only head scanned for
+	// the <svg marker, then the full body checked for forbidden content).
+	longSafe := `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat(" ", 5000) + `<rect width="10" height="10"/></svg>`
+	assert.True(t, svgLooksSafe([]byte(longSafe)))
+}
+
+func TestServeThemeBackground_GetRasterServesPNGBody(t *testing.T) {
+	themeDir, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// GET for a real PNG wallpaper streams the file content with ETag/Cache-Control.
+	png := makePNG(8, 8)
+	model.ConfigInstance.Appearance.WallpaperFile = "background.png"
+	require.NoError(t, os.WriteFile(filepath.Join(themeDir, "background.png"), png, 0o644))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/theme-background", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBackgroundGet, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, png, w.Body.Bytes())
+}
+
 // --- helpers ---
 
 // makeMultipartBody builds a multipart/form-data body with one "file" field.

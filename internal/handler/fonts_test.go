@@ -208,19 +208,68 @@ func TestServeFontsList_UnresolvableDir(t *testing.T) {
 	_, teardown := setupFontsTestEnv(t)
 	defer teardown()
 
-	// Point the fonts dir at a path whose parent cannot be created under it —
-	// simulate DataDir being unusable so ResolveFontsDir returns a path whose
-	// MkdirAll fails. A path under a regular file cannot be created.
+	// DataDir unset → ResolveFontsDir returns "" → handler 400s InvalidPath.
+	model.DataDir = ""
+	model.ConfigInstance.Fonts.Dir = ""
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/list", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontsList, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFontsList_MkdirAllFailure(t *testing.T) {
+	_, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// Point the fonts dir under a regular file so MkdirAll cannot create it.
 	parent := filepath.Join(t.TempDir(), "blocker")
 	require.NoError(t, os.WriteFile(parent, []byte("x"), 0o644))
-	cfg := model.ConfigInstance
-	cfg.Fonts.Dir = filepath.Join(parent, "fonts")
-	model.ConfigInstance = cfg
+	model.ConfigInstance.Fonts.Dir = filepath.Join(parent, "fonts")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/fonts/list", http.NoBody)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeFontsList, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFontsList_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/fonts/list", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontsList, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeFontFile_DataDirUnset(t *testing.T) {
+	_, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// DataDir unset → ResolveFontsDir "" → handler 400s InvalidPath.
+	model.DataDir = ""
+	model.ConfigInstance.Fonts.Dir = ""
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/file?name=x.ttf", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeFontFile_UnknownExtServedAsOctetStream(t *testing.T) {
+	fontsDir, teardown := setupFontsTestEnv(t)
+	defer teardown()
+
+	// A non-font extension inside the fonts dir is still servable but with the
+	// generic octet-stream content type.
+	require.NoError(t, os.MkdirAll(fontsDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(fontsDir, "logo.bin"), []byte("BIN"), 0o644))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/fonts/file?name=logo.bin", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeFontFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
+	assert.Equal(t, "BIN", w.Body.String())
 }
 
 func TestServeFontFile_RejectsBackslashInName(t *testing.T) {
