@@ -38,6 +38,35 @@
         </div>
       </section>
 
+      <!-- Totals overview: reflects the time-range totals only — independent of
+           the dimension filter below, so it sits above the filter card. -->
+      <section v-if="totalsPresent" class="stats-card-panel">
+        <div class="stats-card-title">
+          <Gauge :size="13" class="stats-card-title-icon" />
+          <span>{{ t('stats.summaryTitle') }}</span>
+        </div>
+        <div class="stats-summary">
+          <div class="stats-donut-col">
+            <div class="stats-donut-title" v-if="!overviewDrill">{{ t('stats.summaryInOut') }}</div>
+            <div class="stats-donut-title" v-else>
+              {{ t('stats.summaryInputCache') }}
+              <button class="stats-donut-back" @click="overviewDrill = null">{{ t('stats.back') }}</button>
+            </div>
+            <UsageChart
+              :option="overviewDrill === 'input' ? cacheDonutOption : overviewDonutOption"
+              class="stats-donut"
+              @chart-click="onOverviewSliceClick"
+            />
+          </div>
+          <div class="stats-totals">
+            <div v-for="card in totalCards" :key="card.metric" class="stats-total">
+              <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
+              <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Filters card -->
       <section class="stats-card-panel">
         <div class="stats-card-title">
@@ -108,35 +137,6 @@
         </div>
 
         <template v-else-if="hasContent">
-          <!-- Totals overview: input vs output donut (+ cache drill-down on the
-               input slice) beside the summary value cards -->
-          <section v-if="totalsPresent" class="stats-card-panel">
-            <div class="stats-card-title">
-              <Gauge :size="13" class="stats-card-title-icon" />
-              <span>{{ t('stats.summaryTitle') }}</span>
-            </div>
-            <div class="stats-summary">
-              <div class="stats-donut-col">
-                <div class="stats-donut-title" v-if="!overviewDrill">{{ t('stats.summaryInOut') }}</div>
-                <div class="stats-donut-title" v-else>
-                  {{ t('stats.summaryInputCache') }}
-                  <button class="stats-donut-back" @click="overviewDrill = null">{{ t('stats.back') }}</button>
-                </div>
-                <UsageChart
-                  :option="overviewDrill === 'input' ? cacheDonutOption : overviewDonutOption"
-                  class="stats-donut"
-                  @chart-click="onOverviewSliceClick"
-                />
-              </div>
-              <div class="stats-totals">
-                <div v-for="card in totalCards" :key="card.metric" class="stats-total">
-                  <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
-                  <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
-                </div>
-              </div>
-            </div>
-          </section>
-
           <!-- Detail table (only in non-trend grouping; trend responses carry no rows) -->
           <section v-if="filteredRows.length > 0" class="stats-card-panel">
             <div class="stats-card-title">

@@ -269,6 +269,21 @@ describe('UsageStatsPanel', () => {
     expect(values).toEqual(expect.arrayContaining([300, 100]))
   })
 
+  it('places the totals overview above the dimension filter card', async () => {
+    // The overview reflects time-range totals only and must not sit under the
+    // dimension filter (which re-groups the table below).
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    const panels = wrapper.findAll('.stats-card-panel')
+    const summaryIdx = panels.findIndex(p => p.text().includes('用量总览'))
+    const filterIdx = panels.findIndex(p => p.text().includes('筛选条件'))
+    expect(summaryIdx).toBeGreaterThanOrEqual(0)
+    expect(filterIdx).toBeGreaterThan(summaryIdx)
+  })
+
   it('renders custom date inputs when the custom range chip is clicked', async () => {
     mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
     const wrapper = await mountPanel()
