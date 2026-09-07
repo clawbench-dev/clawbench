@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/model"
@@ -285,6 +286,11 @@ func TestServeFontFile_RejectsBackslashInName(t *testing.T) {
 }
 
 func TestServeFontFile_UnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// chmod 000 does not remove read permission on Windows, so the open
+		// error branch cannot be forced portably there.
+		t.Skip("chmod-based open-failure not reproducible on Windows")
+	}
 	fontsDir, teardown := setupFontsTestEnv(t)
 	defer teardown()
 	require.NoError(t, os.MkdirAll(fontsDir, 0o755))

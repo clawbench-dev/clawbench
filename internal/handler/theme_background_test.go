@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -408,6 +409,10 @@ func TestServeThemeBackground_GetUnknownExtFallsBackToOctetStream(t *testing.T) 
 }
 
 func TestServeThemeBackground_GetSVGReadFailure404(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// chmod 000 does not remove read permission on Windows.
+		t.Skip("chmod-based read failure not reproducible on Windows")
+	}
 	themeDir, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
@@ -584,6 +589,10 @@ func TestServeThemeBackground_GetWhenFileIsDirectory(t *testing.T) {
 }
 
 func TestServeThemeBackground_GetUnreadableRasterFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// chmod 000 does not remove read permission on Windows.
+		t.Skip("chmod-based open failure not reproducible on Windows")
+	}
 	themeDir, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
