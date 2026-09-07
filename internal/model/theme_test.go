@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestIsThemeAllowedExt(t *testing.T) {
 	cases := []struct {
@@ -38,7 +41,8 @@ func TestDefaultThemeDir(t *testing.T) {
 	}
 
 	DataDir = "/data/.clawbench"
-	if got := DefaultThemeDir(); got != "/data/.clawbench/theme" {
-		t.Errorf("DefaultThemeDir() = %q, want /data/.clawbench/theme", got)
+	want := filepath.Join("/data/.clawbench", "theme")
+	if got := DefaultThemeDir(); got != want {
+		t.Errorf("DefaultThemeDir() = %q, want %q", got, want)
 	}
 }

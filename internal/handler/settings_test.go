@@ -2437,7 +2437,7 @@ func TestServeConfig_Get_STT(t *testing.T) {
 
 func TestServeConfig_Get_FontsDir(t *testing.T) {
 	origDataDir := model.DataDir
-	model.DataDir = "/data/.clawbench"
+	model.DataDir = filepath.Join("/data", ".clawbench")
 	defer func() { model.DataDir = origDataDir }()
 
 	cfg := model.Config{}
@@ -2454,7 +2454,7 @@ func TestServeConfig_Get_FontsDir(t *testing.T) {
 	fonts, ok := resp["fonts"].(map[string]any)
 	require.True(t, ok, "response should contain fonts section")
 	// Unset config → resolved default <DataDir>/fonts is reported.
-	assert.Equal(t, "/data/.clawbench/fonts", fonts["dir"])
+	assert.Equal(t, filepath.Join(model.DataDir, "fonts"), fonts["dir"])
 }
 
 func TestServeConfig_Patch_FontsDir(t *testing.T) {
@@ -2465,18 +2465,22 @@ func TestServeConfig_Patch_FontsDir(t *testing.T) {
 	model.DataDir = t.TempDir()
 	defer func() { model.DataDir = origDataDir }()
 
+	defaultDir := filepath.Join(t.TempDir(), "default", "fonts")
+	customDir := filepath.Join(t.TempDir(), "custom", "fonts")
+
 	cfg := model.Config{}
-	cfg.Fonts.Dir = "/default/fonts"
+	cfg.Fonts.Dir = defaultDir
 	model.ConfigInstance = cfg
 
-	body := `{"fonts":{"dir":"/custom/fonts"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	bodyJSON, err := json.Marshal(map[string]any{"fonts": map[string]any{"dir": customDir}})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(bodyJSON)))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "/custom/fonts", model.ConfigInstance.Fonts.Dir)
+	assert.Equal(t, customDir, model.ConfigInstance.Fonts.Dir)
 
 	// fonts.dir is a hot-reload field — no restart needed, no cold fields.
 	var resp map[string]any

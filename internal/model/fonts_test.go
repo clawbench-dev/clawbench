@@ -16,8 +16,9 @@ func TestDefaultFontsDir(t *testing.T) {
 	}
 
 	DataDir = "/data/.clawbench"
-	if got := DefaultFontsDir(); got != "/data/.clawbench/fonts" {
-		t.Errorf("DefaultFontsDir() = %q, want %q", got, "/data/.clawbench/fonts")
+	wantDefault := filepath.Join("/data/.clawbench", "fonts")
+	if got := DefaultFontsDir(); got != wantDefault {
+		t.Errorf("DefaultFontsDir() = %q, want %q", got, wantDefault)
 	}
 }
 
@@ -27,13 +28,14 @@ func TestConfigResolveFontsDir(t *testing.T) {
 	DataDir = "/data/.clawbench"
 
 	cfg := Config{}
-	if got := cfg.ResolveFontsDir(); got != "/data/.clawbench/fonts" {
+	wantDefault := filepath.Join("/data/.clawbench", "fonts")
+	if got := cfg.ResolveFontsDir(); got != wantDefault {
 		t.Errorf("ResolveFontsDir() empty = %q, want default", got)
 	}
 
-	cfg.Fonts.Dir = "/custom/fonts"
-	if got := cfg.ResolveFontsDir(); got != "/custom/fonts" {
-		t.Errorf("ResolveFontsDir() configured = %q, want /custom/fonts", got)
+	cfg.Fonts.Dir = filepath.Join("/custom", "fonts")
+	if got := cfg.ResolveFontsDir(); got != cfg.Fonts.Dir {
+		t.Errorf("ResolveFontsDir() configured = %q, want %q", got, cfg.Fonts.Dir)
 	}
 }
 
