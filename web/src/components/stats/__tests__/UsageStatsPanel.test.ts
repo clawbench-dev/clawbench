@@ -23,7 +23,7 @@ vi.mock('echarts/core', () => ({
   })),
 }))
 vi.mock('echarts/charts', () => ({ BarChart: {}, PieChart: {}, LineChart: {} }))
-vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {} }))
+vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {}, DataZoomComponent: {} }))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 import UsageStatsPanel from '@/components/stats/UsageStatsPanel.vue'
@@ -36,6 +36,16 @@ const zhMessages = {
     range7d: '近 7 天',
     range30d: '近 30 天',
     custom: '自定义',
+    rangeTitle: '时间范围',
+    filterTitle: '筛选条件',
+    summaryTitle: '用量总览',
+    summaryInOut: '输入 vs 输出',
+    summaryInputCache: '输入构成 — 缓存命中 / 未命中',
+    back: '返回',
+    onlyOneSide: '仅单侧有用量',
+    cacheHitShort: '缓存命中',
+    cacheMissShort: '缓存未命中',
+    detailTitle: '维度明细',
     dimTitle: '按维度分组',
     dimModel: '模型',
     dimBackend: 'AI 后端',
@@ -154,7 +164,7 @@ describe('UsageStatsPanel', () => {
     expect(chartOptions.length).toBeGreaterThan(optionsBefore)
   })
 
-  it('renders totals cards only for non-zero metrics', async () => {
+  it('renders totals cards only for non-zero non-cache metrics', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 },
       rows: [{ key: { model: 'glm' }, input: 100, output: 0, total: 100, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0.05, messageCnt: 1 }],
@@ -162,12 +172,14 @@ describe('UsageStatsPanel', () => {
     const wrapper = await mountPanel()
     const cards = wrapper.findAll('.stats-total')
     const cardText = cards.map(c => c.text()).join(' | ')
+    // Cache hit/miss is shown via the input drill-down donut, not as standalone
+    // cards (it is a portion of the input prompt) — so no 缓存命中/命中率 card.
     expect(cardText).toContain('输入 Tokens')
     expect(cardText).toContain('总 Tokens')
-    expect(cardText).toContain('缓存命中率')
     expect(cardText).toContain('费用 (USD)')
     expect(cardText).not.toContain('输出 Tokens') // zero → hidden
     expect(cardText).not.toContain('Credit') // zero → hidden
+    expect(cardText).not.toContain('缓存命中')
   })
 
   it('renders a data table with dim columns and selected metric columns', async () => {
@@ -221,19 +233,40 @@ describe('UsageStatsPanel', () => {
     expect(wrapper.findAll('.usage-chart-stub').length).toBeGreaterThan(0)
   })
 
-  it('shows a dash for a hit-rate cell with no cache activity', async () => {
-    // hitRate column selected; row has zero cache hit+miss → "—" not "0.0%".
+  it('drops zero-value rows from the table (no wasted rows)', async () => {
+    // Two models: glm has cache traffic (hitRate>0), empty-model has none and
+    // shows all-zero for the selected hitRate metric → row must be filtered.
     const stats = useUsageStats()
     stats.setMetrics(['hitRate'])
     await flushPromises()
     mockApiGet.mockResolvedValue(mockResponse({
-      totals: { input: 5, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
-      rows: [{ key: { model: 'glm' }, input: 5, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+      totals: { input: 5, output: 0, total: 5, cacheHit: 3, cacheMiss: 2, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [
+        { key: { model: 'glm' }, input: 5, output: 0, total: 5, cacheHit: 3, cacheMiss: 2, credit: 0, costUsd: 0, messageCnt: 1 },
+        { key: { model: 'no-cache' }, input: 0, output: 0, total: 0, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+      ],
     }))
     const wrapper = await mountPanel()
-    expect(wrapper.text()).toContain('—')
-    expect(wrapper.text()).not.toContain('0.0%')
+    const text = wrapper.text()
+    expect(text).toContain('glm')
+    expect(text).toContain('60.0%') // 3/(3+2)
+    expect(text).not.toContain('no-cache') // zero row dropped
     await new Promise(r => setTimeout(r, 350))
+  })
+
+  it('renders the input/output overview donut from totals', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    // The overview donut is the first UsageChart option pushed (input vs output).
+    expect(wrapper.text()).toContain('输入 vs 输出')
+    const donutOption = chartOptions[0] as { series?: { type?: string; data?: { name: string; value: number }[] }[] }
+    const series = donutOption.series?.[0]
+    expect(series?.type).toBe('pie')
+    const values = series?.data?.map(d => d.value) ?? []
+    expect(values).toEqual(expect.arrayContaining([300, 100]))
   })
 
   it('renders custom date inputs when the custom range chip is clicked', async () => {

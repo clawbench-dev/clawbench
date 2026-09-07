@@ -31,9 +31,12 @@ const SERIES_COLORS = ['#4f8cff', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#
 /** Build a horizontal bar chart option (one per selected metric column). */
 export function buildBarOption(categories: string[], values: number[], metric: UsageMetricId): EChartsCoreOption {
   const p = resolveStatsPalette()
-  return {
+  // On narrow screens a long category list would stretch the card very tall.
+  // Cap the visible rows and enable inside scrolling once the list is long.
+  const many = categories.length > 8
+  const opt: Record<string, unknown> = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-    grid: { left: 8, right: 24, top: 16, bottom: 8, containLabel: true },
+    grid: { left: 8, right: 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
     xAxis: { type: 'value', axisLabel: { color: p.textSecondary }, splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } } },
     yAxis: {
       type: 'category',
@@ -49,6 +52,16 @@ export function buildBarOption(categories: string[], values: number[], metric: U
       label: { show: true, position: 'right', color: p.textSecondary, fontSize: 10 },
     }],
   }
+  if (many) {
+    // Inside horizontal scroll: start showing the top (first) rows.
+    opt.dataZoom = [{
+      type: 'inside',
+      yAxisIndex: 0,
+      start: 0,
+      end: Math.max(12, Math.round((8 / categories.length) * 100)),
+    }]
+  }
+  return opt as EChartsCoreOption
 }
 
 /** Build a pie/donut option (one per selected metric column). */
@@ -102,6 +115,79 @@ export function buildTrendOption(
       symbolSize: 5,
       lineStyle: { width: 2 },
     })),
+  }
+}
+
+// ── Overview donut (input vs output) + cache-drilldown donut ──
+
+const labelFormatter = (name: string, value: number): string =>
+  `${name}\n${value.toLocaleString('en-US')}`
+
+/**
+ * Build the totals-overview donut: input vs output slices. Clicking a slice
+ * drills into the input slice's cache composition (see buildCacheDonut).
+ * Show a title when only one side is non-zero.
+ */
+export function buildOverviewDonut(input: number, output: number, inputLabel: string, outputLabel: string): EChartsCoreOption {
+  const p = resolveStatsPalette()
+  const data = [
+    { name: inputLabel, value: input },
+    { name: outputLabel, value: output },
+  ].filter(d => d.value > 0)
+  const total = input + output
+  const oneSideOnly = data.length <= 1
+  return {
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: unknown) => {
+        const { name, value } = params as { name: string; value: number }
+        return labelFormatter(name, value)
+      },
+    },
+    color: [p.accent, SERIES_COLORS[1]],
+    title: oneSideOnly && total > 0
+      ? { text: gt('stats.onlyOneSide'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 11 } }
+      : undefined,
+    legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    series: [{
+      type: 'pie',
+      radius: ['45%', '72%'],
+      center: ['50%', '44%'],
+      data,
+      label: { show: false },
+      emphasis: { scaleSize: 6 },
+    }],
+  }
+}
+
+/**
+ * Cache composition donut for the input slice: cache hit vs miss. The parent
+ * shows this when the user clicks the input slice of the overview donut.
+ */
+export function buildCacheDonut(hit: number, miss: number, hitLabel: string, missLabel: string): EChartsCoreOption {
+  const p = resolveStatsPalette()
+  const data = [
+    { name: hitLabel, value: hit },
+    { name: missLabel, value: miss },
+  ].filter(d => d.value > 0)
+  return {
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: unknown) => {
+        const { name, value } = params as { name: string; value: number }
+        return labelFormatter(name, value)
+      },
+    },
+    color: [SERIES_COLORS[2], SERIES_COLORS[5]],
+    legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    series: [{
+      type: 'pie',
+      radius: ['45%', '72%'],
+      center: ['50%', '44%'],
+      data,
+      label: { show: false },
+      emphasis: { scaleSize: 6 },
+    }],
   }
 }
 

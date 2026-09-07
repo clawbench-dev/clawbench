@@ -100,34 +100,49 @@
       <template v-else>
         <!-- Empty state -->
         <div
-          v-if="tableRows.length === 0 && rawTrend.length === 0 && !error"
+          v-if="!hasContent && !error"
           class="stats-empty"
         >
           <BarChart3 :size="34" class="stats-empty-icon" />
           <span>{{ t('stats.noData') }}</span>
         </div>
 
-        <template v-else-if="tableRows.length > 0 || rawTrend.length > 0">
-          <!-- Totals overview -->
-          <section v-if="visibleTotals.length > 0" class="stats-card-panel">
+        <template v-else-if="hasContent">
+          <!-- Totals overview: input vs output donut (+ cache drill-down on the
+               input slice) beside the summary value cards -->
+          <section v-if="totalsPresent" class="stats-card-panel">
             <div class="stats-card-title">
               <Gauge :size="13" class="stats-card-title-icon" />
               <span>{{ t('stats.summaryTitle') }}</span>
             </div>
-            <div class="stats-totals">
-              <div v-for="card in visibleTotals" :key="card.metric" class="stats-total">
-                <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
-                <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+            <div class="stats-summary">
+              <div class="stats-donut-col">
+                <div class="stats-donut-title" v-if="!overviewDrill">{{ t('stats.summaryInOut') }}</div>
+                <div class="stats-donut-title" v-else>
+                  {{ t('stats.summaryInputCache') }}
+                  <button class="stats-donut-back" @click="overviewDrill = null">{{ t('stats.back') }}</button>
+                </div>
+                <UsageChart
+                  :option="overviewDrill === 'input' ? cacheDonutOption : overviewDonutOption"
+                  class="stats-donut"
+                  @chart-click="onOverviewSliceClick"
+                />
+              </div>
+              <div class="stats-totals">
+                <div v-for="card in totalCards" :key="card.metric" class="stats-total">
+                  <span class="stats-total-label">{{ t(metricLabelKey(card.metric)) }}</span>
+                  <span class="stats-total-value">{{ formatMetricCardValue(card.metric, card.value) }}</span>
+                </div>
               </div>
             </div>
           </section>
 
           <!-- Detail table (only in non-trend grouping; trend responses carry no rows) -->
-          <section v-if="tableRows.length > 0" class="stats-card-panel">
+          <section v-if="filteredRows.length > 0" class="stats-card-panel">
             <div class="stats-card-title">
               <Table :size="13" class="stats-card-title-icon" />
               <span>{{ t('stats.detailTitle') }}</span>
-              <span class="stats-count-chip">{{ tableRows.length }}</span>
+              <span class="stats-count-chip">{{ filteredRows.length }}</span>
             </div>
             <div class="stats-table-wrap">
               <table class="stats-table">
@@ -151,7 +166,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, i) in tableRows" :key="i">
+                  <tr v-for="(row, i) in filteredRows" :key="i">
                     <td v-for="d in filter.dims" :key="d" class="stats-td-dim">
                       {{ row.key[d] === EMPTY_GROUP_LABEL ? t('stats.emptyLabel') : (row.key[d] || t('stats.emptyLabel')) }}
                     </td>
@@ -199,6 +214,8 @@ import {
   buildBarOption,
   buildPieOption,
   buildTrendOption,
+  buildOverviewDonut,
+  buildCacheDonut,
   formatMetricValue,
   rowValueOf,
   EMPTY_GROUP_LABEL,
@@ -339,7 +356,7 @@ function chartOptionFor(m: UsageMetricId) {
   // new palette (CSS vars are read live inside build*Option).
   void themeTick.value
   const dims = filter.value.dims
-  const rows = tableRows.value
+  const rows = filteredRows.value
   const labelOf = (r: { key: Partial<Record<UsageDimId, string>> }): string =>
     dims.map(d => r.key[d] ?? '').filter(Boolean).join(' × ') || t('stats.emptyLabel')
   const categories = rows.map(r => labelOf(r))
@@ -369,6 +386,61 @@ function chartOptionFor(m: UsageMetricId) {
 }
 
 const rawTrend = computed(() => stats.raw.value?.trend ?? [])
+
+// Rows whose every selected metric value is zero add no information and only
+// waste space in the table/charts — drop them.
+const filteredRows = computed(() => {
+  const ms = filter.value.metrics
+  return tableRows.value.filter(r => ms.some(m => rowValueOf(r, m) !== 0))
+})
+
+// The overview donut / cards render from the range totals regardless of row
+// grouping; "has content" = any totals present OR rows OR trend data.
+const totals = computed(() => stats.raw.value?.totals ?? null)
+const totalsPresent = computed(() => {
+  const t = totals.value
+  if (!t) return false
+  return t.input > 0 || t.output > 0 || t.total > 0 || t.cacheHit > 0 || t.cacheMiss > 0 || t.costUsd > 0
+})
+const hasContent = computed(() => totalsPresent.value || filteredRows.value.length > 0 || rawTrend.value.length > 0)
+
+// Summary value cards: cache hit/miss is shown as the input drill-down donut,
+// not as standalone totals (it is a portion of the input prompt), so drop the
+// cache-derived cards from the grid to avoid double counting confusion.
+const totalCards = computed(() =>
+  visibleTotals.value.filter(c => c.metric !== 'cacheHit' && c.metric !== 'hitRate'),
+)
+
+// Overview donut: input vs output share of the range totals. Clicking the
+// input slice drills into that input's cache composition (hit vs miss).
+const overviewDrill = ref<null | 'input'>(null)
+const overviewDonutOption = computed(() => {
+  void themeTick.value
+  const tt = totals.value
+  return buildOverviewDonut(
+    tt?.input ?? 0,
+    tt?.output ?? 0,
+    t('stats.colInput'),
+    t('stats.colOutput'),
+  )
+})
+const cacheDonutOption = computed(() => {
+  void themeTick.value
+  const tt = totals.value
+  return buildCacheDonut(
+    tt?.cacheHit ?? 0,
+    tt?.cacheMiss ?? 0,
+    t('stats.cacheHitShort'),
+    t('stats.cacheMissShort'),
+  )
+})
+function onOverviewSliceClick(params: Record<string, unknown>) {
+  // ECharts pie click params: name is the slice's legend label.
+  if (overviewDrill.value !== null) return // already drilled
+  if (params.name === t('stats.colInput')) {
+    overviewDrill.value = 'input'
+  }
+}
 
 const errorText = computed(() => {
   if (!error.value) return ''
@@ -581,10 +653,50 @@ function onRefresh() {
 }
 
 /* ── Totals overview ── */
+.stats-summary {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-width: 0;
+}
+.stats-donut-col {
+  flex: 0 0 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.stats-donut-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 20px;
+}
+.stats-donut-back {
+  border: none;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.stats-donut {
+  width: 100%;
+  height: 170px;
+}
 .stats-totals {
+  flex: 1;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
   gap: 8px;
+  min-width: 0;
+  align-content: start;
 }
 .stats-total {
   background: var(--bg-elevated, var(--bg-primary));

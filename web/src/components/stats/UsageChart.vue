@@ -6,19 +6,23 @@
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import * as echarts from 'echarts/core'
 import { BarChart, PieChart, LineChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
+import { GridComponent, TooltipComponent, LegendComponent, TitleComponent, DataZoomComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsCoreOption } from 'echarts/core'
 
 // Register once at module load.
 echarts.use([
   BarChart, PieChart, LineChart,
-  GridComponent, TooltipComponent, LegendComponent, TitleComponent,
+  GridComponent, TooltipComponent, LegendComponent, TitleComponent, DataZoomComponent,
   CanvasRenderer,
 ])
 
 const props = defineProps<{
   option: EChartsCoreOption
+}>()
+
+const emit = defineEmits<{
+  (e: 'chart-click', params: Record<string, unknown>): void
 }>()
 
 const chartEl = ref<HTMLDivElement | null>(null)
@@ -34,6 +38,9 @@ function initChart() {
   if (!chartEl.value) return
   chart = echarts.init(chartEl.value)
   render()
+  chart.on('click', (params: unknown) => {
+    emit('chart-click', params as Record<string, unknown>)
+  })
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
       chart?.resize()
