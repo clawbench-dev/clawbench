@@ -71,7 +71,7 @@ export default {
     range30d: '30d',
     custom: 'Custom',
     rangeTitle: 'Time range',
-    filterTitle: 'Filters',
+    filterTitle: 'Statistics',
     summaryTitle: 'Summary',
     summaryInOut: 'Input vs output',
     summaryInputCache: 'Input — cache hit / miss',

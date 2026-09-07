@@ -37,7 +37,7 @@ const zhMessages = {
     range30d: '近 30 天',
     custom: '自定义',
     rangeTitle: '时间范围',
-    filterTitle: '筛选条件',
+    filterTitle: '统计条件',
     summaryTitle: '用量总览',
     summaryInOut: '输入 vs 输出',
     summaryInputCache: '输入构成 — 缓存命中 / 未命中',
@@ -46,7 +46,7 @@ const zhMessages = {
     cacheHitShort: '缓存命中',
     cacheMissShort: '缓存未命中',
     detailTitle: '维度明细',
-    dimTitle: '按维度分组',
+    dimTitle: '分组方式',
     dimModel: '模型',
     dimBackend: 'AI 后端',
     dimAgent: '智能体',
@@ -278,7 +278,7 @@ describe('UsageStatsPanel', () => {
     const wrapper = await mountPanel()
     const panels = wrapper.findAll('.stats-card-panel')
     const summaryIdx = panels.findIndex(p => p.text().includes('用量总览'))
-    const filterIdx = panels.findIndex(p => p.text().includes('筛选条件'))
+    const filterIdx = panels.findIndex(p => p.text().includes('统计条件'))
     expect(summaryIdx).toBeGreaterThanOrEqual(0)
     expect(filterIdx).toBeGreaterThan(summaryIdx)
   })

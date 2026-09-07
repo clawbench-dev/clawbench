@@ -606,12 +606,11 @@ function onRefresh() {
 }
 
 /* ── Chips / toggles ──
-   Each labelled group keeps the label fixed and lets the chips scroll
-   horizontally on one line — compact on narrow (mobile) widths instead of
-   wrapping into several tall rows. */
+   Each labelled group keeps a fixed label; the chips wrap onto further lines
+   when the row does not fit (no horizontal scrolling). */
 .stats-filter-group {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
 }
@@ -620,20 +619,15 @@ function onRefresh() {
   color: var(--text-secondary);
   flex-shrink: 0;
   min-width: 4em;
+  line-height: 26px;
 }
 .stats-chip-scroll {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
   min-width: 0;
   flex: 1;
-  -webkit-overflow-scrolling: touch;
-}
-.stats-chip-scroll::-webkit-scrollbar {
-  display: none;
 }
 .stats-chip {
   flex-shrink: 0;
