@@ -195,6 +195,7 @@
           v-if="markdownViewMode === 'rendered'"
           :file="file"
           :view-mode="markdownViewMode"
+          :chat-quote="true"
         />
         <div v-else class="raw-content-viewer">
           <CodeMirrorViewer
