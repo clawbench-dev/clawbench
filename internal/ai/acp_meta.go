@@ -153,10 +153,7 @@ func metaMaxInt(base int, vals ...int) int {
 	return out
 }
 
-// metaTokenUsageInformative reports whether the usage carries real token
-// counters. Cost-only "naked" notifications (CodeBuddy sends used=0/size=0
-// cost-only payloads) may still set credit while every token counter is zero —
-// such payloads must never displace an adopted token snapshot.
+// hasTokenCounters reports whether the usage carries real token counters.
 func (u *metaTokenUsage) hasTokenCounters() bool {
 	return u.InputTokens != 0 || u.OutputTokens != 0 || u.TotalTokens != 0 ||
 		u.CachedReadTokens != 0 || u.CachedWriteTokens != 0 || u.ThoughtTokens != 0 ||

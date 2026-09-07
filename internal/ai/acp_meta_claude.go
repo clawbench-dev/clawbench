@@ -72,14 +72,14 @@ func extractClaudeMeta(meta map[string]any) *metaExtraction {
 	// It maps to ResponseModelID — "the model that actually responded" — the
 	// same semantic as CodeBuddy's codebuddy.ai/responseModelId (its actual
 	// serving endpoint, ep-*), so the two agents populate one consistent field.
-	// When the top-level aggregate token_count is absent, the FIRST per-model
-	// entry carrying token counters is adopted as a fallback snapshot — single
-	// entry, never max-stitched across entries.
+	// When the top-level aggregate token_count is absent or carries no token
+	// counters, the FIRST per-model entry carrying counters is adopted as a
+	// fallback snapshot — single entry, never max-stitched across entries.
 	if mus, ok := quota[metaKeyModelUsage].([]any); ok && len(mus) > 0 {
 		if trace := claudeModelUsageTrace(mus); trace.HasData() {
 			ext.Trace = trace
 		}
-		if ext.Usage == nil {
+		if ext.Usage == nil || !ext.Usage.hasTokenCounters() {
 			ext.Usage = claudeModelUsageFallback(mus)
 		}
 	}

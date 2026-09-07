@@ -435,8 +435,10 @@ const cacheDonutOption = computed(() => {
   )
 })
 function onOverviewSliceClick(params: Record<string, unknown>) {
-  // ECharts pie click params: name is the slice's legend label.
+  // ECharts pie click params: name is the slice's legend label. Only drill when
+  // a series slice (not the legend) is clicked.
   if (overviewDrill.value !== null) return // already drilled
+  if (params.componentType && params.componentType !== 'series') return
   if (params.name === t('stats.colInput')) {
     overviewDrill.value = 'input'
   }

@@ -210,6 +210,59 @@ func TestExtractClaudeMeta_ModelUsage(t *testing.T) {
 	assert.Equal(t, "deepseek-v4-flash", ext.Trace.ResponseModelID)
 }
 
+func TestExtractClaudeMeta_AggregateWinsOverModelUsage(t *testing.T) {
+	// When both top-level aggregate token_count AND per-model entries are
+	// present but disagree, the aggregate is authoritative (per-model counters
+	// must never be merged in — that is what produced total==10x input rows).
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model": "claude-opus-4-6",
+					"token_count": map[string]any{
+						"inputTokens": 14170, "outputTokens": 246, "totalTokens": 147352,
+					},
+				},
+			},
+			"token_count": map[string]any{
+				"inputTokens": 45575, "outputTokens": 52, "totalTokens": 45627,
+			},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 45575, ext.Usage.InputTokens, "aggregate wins over per-model")
+	assert.Equal(t, 52, ext.Usage.OutputTokens)
+	assert.Equal(t, 45627, ext.Usage.TotalTokens)
+	require.NotNil(t, ext.Trace)
+	assert.Equal(t, "claude-opus-4-6", ext.Trace.ResponseModelID)
+}
+
+func TestExtractClaudeMeta_ZeroAggregateFallsBackToModelUsage(t *testing.T) {
+	// Top-level token_count present but all-zero (a zeroed final snapshot):
+	// must still fall back to the per-model entry that carries real counters.
+	meta := map[string]any{
+		"quota": map[string]any{
+			"model_usage": []any{
+				map[string]any{
+					"model": "claude-sonnet-4-6",
+					"token_count": map[string]any{
+						"inputTokens": 142, "outputTokens": 44, "totalTokens": 40904,
+					},
+				},
+			},
+			"token_count": map[string]any{},
+		},
+	}
+	ext := extractClaudeMeta(meta)
+	require.NotNil(t, ext)
+	require.NotNil(t, ext.Usage)
+	assert.Equal(t, 142, ext.Usage.InputTokens, "per-model counters used when aggregate is all-zero")
+	assert.Equal(t, 44, ext.Usage.OutputTokens)
+	assert.Equal(t, 40904, ext.Usage.TotalTokens)
+}
+
 func TestExtractClaudeMeta_ModelUsage_NoAggregate(t *testing.T) {
 	// model_usage present but no top-level token_count: usage still extracted
 	// from the per-model entries, model name still surfaced.

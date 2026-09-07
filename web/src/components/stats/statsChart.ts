@@ -146,7 +146,7 @@ export function buildOverviewDonut(input: number, output: number, inputLabel: st
     },
     color: [p.accent, SERIES_COLORS[1]],
     title: oneSideOnly && total > 0
-      ? { text: gt('stats.onlyOneSide'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 11 } }
+      ? { text: gt('stats.onlyOneSide'), left: 'center', top: 4, textStyle: { color: p.textSecondary, fontSize: 11 } }
       : undefined,
     legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
     series: [{
@@ -170,6 +170,7 @@ export function buildCacheDonut(hit: number, miss: number, hitLabel: string, mis
     { name: hitLabel, value: hit },
     { name: missLabel, value: miss },
   ].filter(d => d.value > 0)
+  const noData = data.length === 0
   return {
     tooltip: {
       trigger: 'item',
@@ -179,7 +180,8 @@ export function buildCacheDonut(hit: number, miss: number, hitLabel: string, mis
       },
     },
     color: [SERIES_COLORS[2], SERIES_COLORS[5]],
-    legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    title: noData ? { text: gt('stats.noData'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 12 } } : undefined,
+    legend: noData ? undefined : { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
     series: [{
       type: 'pie',
       radius: ['45%', '72%'],
