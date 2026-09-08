@@ -2,6 +2,19 @@
    Base Styles (Reset, Box-sizing, HTML/Body)
    ========================================================================== */
 
+/* Native form controls (date/time pickers, checkbox/radio/select UA chrome,
+   number spinners, …) render from the CSS `color-scheme` of their element.
+   The app switches themes through data-theme-base on <html>, so point the
+   UA-drawn surfaces at the matching color scheme — otherwise the date-input
+   calendar icon and its popup card stay in the browser default (light) even
+   under a dark theme. */
+:root {
+    color-scheme: light;
+}
+:root[data-theme-base="dark"] {
+    color-scheme: dark;
+}
+
 /* Reset */
 *, *::before, *::after {
     box-sizing: border-box;
