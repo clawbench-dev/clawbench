@@ -39,9 +39,7 @@
             :title="t('file.codePreview.expandAbove', { n: stepAbove })"
             @click="expandAbove(stepAbove)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="18 15 12 9 6 15" />
-            </svg>
+            <ChevronUp :size="13" />
             <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
           </button>
           <button
@@ -51,10 +49,7 @@
             :title="t('file.codePreview.expandToTop')"
             @click="expandAbove(remainingAbove)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="17 11 12 6 7 11" />
-              <polyline points="17 18 12 13 7 18" />
-            </svg>
+            <ChevronsUp :size="13" />
             <span>{{ t('file.codePreview.expandToTop') }}</span>
           </button>
         </span>
@@ -86,9 +81,7 @@
             :title="t('file.codePreview.expandBelow', { n: stepBelow })"
             @click="expandBelow(stepBelow)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <ChevronDown :size="13" />
             <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
           </button>
           <button
@@ -98,10 +91,7 @@
             :title="t('file.codePreview.expandToBottom')"
             @click="expandBelow(remainingBelow)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="7 13 12 18 17 13" />
-              <polyline points="7 6 12 11 17 6" />
-            </svg>
+            <ChevronsDown :size="13" />
             <span>{{ t('file.codePreview.expandToBottom') }}</span>
           </button>
         </span>
@@ -113,6 +103,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.

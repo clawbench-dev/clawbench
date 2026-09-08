@@ -47,13 +47,8 @@
             :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
             @click="handleCopyPath"
           >
-            <svg v-if="isPathCopied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-            </svg>
+            <Check v-if="isPathCopied" :size="13" />
+            <Link v-else :size="13" />
           </button>
           <!-- Rendered / Source toggle (Markdown only, no line range) -->
           <button
@@ -65,10 +60,7 @@
             :aria-pressed="isRenderedView"
             @click="toggleRenderView"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <Eye :size="13" />
           </button>
           <!-- Word Wrap Toggle (code-slice view only) -->
           <button
@@ -79,9 +71,7 @@
             :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
             @click="toggleWordWrap"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
-            </svg>
+            <TextWrap :size="13" />
           </button>
           <!-- Line Numbers Toggle (code-slice view only) -->
           <button
@@ -93,12 +83,7 @@
             :aria-pressed="showLineNumbers"
             @click="toggleLineNumbers"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 9h16" />
-              <path d="M4 15h16" />
-              <path d="M10 3L8 21" />
-              <path d="M16 3l-2 18" />
-            </svg>
+            <Hash :size="13" />
           </button>
           <!-- Copy Code (code-slice view only) -->
           <button
@@ -109,13 +94,8 @@
             :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
             @click="handleCopy"
           >
-            <svg v-if="copied" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
+            <Check v-if="copied" :size="13" />
+            <Copy v-else :size="13" />
           </button>
         </div>
       </div>
@@ -144,14 +124,14 @@
         <span class="code-preview-search-count">
           {{ searchQuery ? (totalMatches > 0 ? t('file.codePreview.matchIndex', { current: activeMatchIndex + 1, total: totalMatches }) : t('file.codePreview.noMatches')) : '' }}
         </span>
-        <button class="code-preview-btn" :disabled="totalMatches === 0" :title="t('file.codePreview.findPrev')" @click="findPrev">
-          ▲
+        <button class="code-preview-btn icon-only" :disabled="totalMatches === 0" :title="t('file.codePreview.findPrev')" @click="findPrev">
+          <ChevronUp :size="12" />
         </button>
-        <button class="code-preview-btn" :disabled="totalMatches === 0" :title="t('file.codePreview.findNext')" @click="findNext">
-          ▼
+        <button class="code-preview-btn icon-only" :disabled="totalMatches === 0" :title="t('file.codePreview.findNext')" @click="findNext">
+          <ChevronDown :size="12" />
         </button>
-        <button class="code-preview-btn" :title="t('file.codePreview.findClose')" @click="closeSearch">
-          &times;
+        <button class="code-preview-btn icon-only" :title="t('file.codePreview.findClose')" @click="closeSearch">
+          <X :size="12" />
         </button>
       </div>
 
@@ -206,9 +186,7 @@
           :aria-label="t('file.codePreview.refresh')"
           @click="preview.refresh()"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-          </svg>
+          <RefreshCw :size="15" />
         </button>
 
         <!-- Search in preview: icon-only, code-slice view only -->
@@ -220,10 +198,7 @@
           :aria-label="t('file.codePreview.findInPreview')"
           @click="toggleSearch"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+          <Search :size="15" />
         </button>
 
         <!-- Reveal in file tree: icon-only -->
@@ -233,9 +208,7 @@
           :aria-label="t('file.codePreview.revealInTree')"
           @click="handleRevealInTree"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
+          <Folder :size="15" />
         </button>
 
         <!-- Open Full / View Details — primary action -->
@@ -244,9 +217,7 @@
           class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="handleViewDetails"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
-          </svg>
+          <ExternalLink :size="15" />
           <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
         <button
@@ -254,9 +225,7 @@
           class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
-          </svg>
+          <ExternalLink :size="15" />
           <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
 
@@ -266,9 +235,7 @@
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <MessageSquare :size="15" />
           <span>{{ t('file.codePreview.quoteShort') }}</span>
         </button>
       </div>
@@ -323,23 +290,30 @@
         </div>
 
         <div class="code-preview-header-actions" @pointerdown.stop>
+          <!-- Window Controls: Pin + Close live in the header on wide screens -->
           <button
-            class="code-preview-btn copy-path-btn"
-            :class="{ 'is-copied': isPathCopied }"
-            :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
+            class="code-preview-btn"
+            :class="{ 'is-pinned': preview.isPinned.value }"
+            :aria-pressed="preview.isPinned.value"
+            :title="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
+            :aria-label="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
+            :data-tooltip="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
+            @pointerenter="showTooltip($event, preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin'))"
             @pointerleave="hideTooltip()"
-            @click.stop="handleCopyPath"
+            @click="handleTogglePin"
           >
-            <svg v-if="isPathCopied" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-            </svg>
+            <Pin :size="12" :fill="preview.isPinned.value ? 'currentColor' : 'none'" />
+          </button>
+          <button
+            class="code-preview-btn close"
+            :title="t('file.codePreview.close')"
+            :aria-label="t('file.codePreview.close')"
+            :data-tooltip="t('file.codePreview.close')"
+            @pointerenter="showTooltip($event, t('file.codePreview.close'))"
+            @pointerleave="hideTooltip()"
+            @click="preview.close()"
+          >
+            <X :size="12" />
           </button>
         </div>
       </div>
@@ -364,10 +338,7 @@
             @pointerleave="hideTooltip()"
             @click="toggleRenderView"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <Eye :size="12" />
           </button>
           <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
           <button
@@ -382,10 +353,7 @@
             @pointerleave="hideTooltip()"
             @click="toggleSearch"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
+            <Search :size="12" />
           </button>
           <button
             v-if="!isRenderedView"
@@ -399,9 +367,7 @@
             @pointerleave="hideTooltip()"
             @click="toggleWordWrap"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
-            </svg>
+            <TextWrap :size="12" />
           </button>
           <button
             v-if="!isRenderedView"
@@ -415,12 +381,7 @@
             @pointerleave="hideTooltip()"
             @click="toggleLineNumbers"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 9h16" />
-              <path d="M4 15h16" />
-              <path d="M10 3L8 21" />
-              <path d="M16 3l-2 18" />
-            </svg>
+            <Hash :size="12" />
           </button>
           <button
             class="code-preview-btn"
@@ -431,14 +392,14 @@
             @pointerleave="hideTooltip()"
             @click="preview.refresh()"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-            </svg>
+            <RefreshCw :size="12" />
           </button>
 
           <span class="code-preview-actions-divider" />
 
-          <!-- Actions: Quote, Copy Code, Reveal -->
+          <!-- Actions: Quote, Copy Code (code view). Then the contiguous file
+               tools — Copy Path / Open Directory (reveal) / Open File — with no
+               dividers between them, in that left-to-right order. -->
           <button
             class="code-preview-btn"
             :title="t('file.codePreview.quoteToChat')"
@@ -448,9 +409,7 @@
             @pointerleave="hideTooltip()"
             @click="handleQuoteToChat"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <MessageSquare :size="12" />
           </button>
           <button
             v-if="!isRenderedView"
@@ -463,14 +422,25 @@
             @pointerleave="hideTooltip()"
             @click="handleCopy"
           >
-            <svg v-if="copied" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
+            <Check v-if="copied" :size="12" />
+            <Copy v-else :size="12" />
           </button>
+
+          <!-- Copy Path -->
+          <button
+            class="code-preview-btn copy-path-btn"
+            :class="{ 'is-copied': isPathCopied }"
+            :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+            :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+            :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
+            @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
+            @pointerleave="hideTooltip()"
+            @click="handleCopyPath"
+          >
+            <Check v-if="isPathCopied" :size="12" />
+            <Link v-else :size="12" />
+          </button>
+          <!-- Open Directory (reveal in tree) -->
           <button
             class="code-preview-btn"
             :title="t('file.codePreview.revealInTree')"
@@ -480,39 +450,9 @@
             @pointerleave="hideTooltip()"
             @click="handleRevealInTree"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            </svg>
+            <Folder :size="12" />
           </button>
-
-          <span class="code-preview-actions-divider" />
-
-          <!-- Window Controls: Pin, Open Full, Close -->
-          <button
-            class="code-preview-btn"
-            :class="{ 'is-pinned': preview.isPinned.value }"
-            :aria-pressed="preview.isPinned.value"
-            :title="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
-            :aria-label="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
-            :data-tooltip="preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin')"
-            @pointerenter="showTooltip($event, preview.isPinned.value ? t('file.codePreview.unpin') : t('file.codePreview.pin'))"
-            @pointerleave="hideTooltip()"
-            @click="handleTogglePin"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="12"
-              height="12"
-              :fill="preview.isPinned.value ? 'currentColor' : 'none'"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 17v5" />
-              <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-            </svg>
-          </button>
+          <!-- Open File / View Details -->
           <button
             v-if="preview.errorCode.value === 'too-large'"
             class="code-preview-btn"
@@ -535,20 +475,7 @@
             @pointerleave="hideTooltip()"
             @click="preview.openFull()"
           >
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
-            </svg>
-          </button>
-          <button
-            class="code-preview-btn close"
-            :title="t('file.codePreview.close')"
-            :aria-label="t('file.codePreview.close')"
-            :data-tooltip="t('file.codePreview.close')"
-            @pointerenter="showTooltip($event, t('file.codePreview.close'))"
-            @pointerleave="hideTooltip()"
-            @click="preview.close()"
-          >
-            &times;
+            <ExternalLink :size="12" />
           </button>
         </div>
       </div>
@@ -576,7 +503,7 @@
           @pointerleave="hideTooltip()"
           @click="findPrev"
         >
-          ▲
+          <ChevronUp :size="12" />
         </button>
         <button
           class="code-preview-btn"
@@ -587,7 +514,7 @@
           @pointerleave="hideTooltip()"
           @click="findNext"
         >
-          ▼
+          <ChevronDown :size="12" />
         </button>
         <button
           class="code-preview-btn"
@@ -597,7 +524,7 @@
           @pointerleave="hideTooltip()"
           @click="closeSearch"
         >
-          &times;
+          <X :size="12" />
         </button>
       </div>
 
@@ -659,6 +586,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, MessageSquare, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
@@ -1371,6 +1299,23 @@ const handleEscape = () => {
   }
 }
 
+// Outside-click dismissal for the desktop floating card. A click that lands
+// anywhere outside the card closes it — but only while it is unpinned
+// (transient). Pinned cards are explicitly dismissed (Esc / × / pin toggle),
+// and the touch BottomSheet never uses this path (its own scrim handles
+// dismissal). pointerdown is used so a drag that starts on the titlebar/meta
+// row never races this check (the down target is already inside the card).
+const onDocumentPointerDown = (e: PointerEvent) => {
+  if (!props.preview.visible.value) return
+  if (props.preview.mode.value === 'sheet') return
+  if (props.preview.isPinned.value) return
+  const card = cardRef.value
+  if (!card) return
+  const target = e.target as Node | null
+  if (target && card.contains(target)) return
+  props.preview.close()
+}
+
 // Drag handling
 const updateDragPosition = () => {
   dragRafId = null
@@ -1692,6 +1637,7 @@ const onKeyDown = (e: KeyboardEvent) => {
 onMounted(() => {
   window.addEventListener('resize', onWindowResize)
   window.addEventListener('keydown', onKeyDown)
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
 
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
@@ -1723,6 +1669,7 @@ onBeforeUnmount(() => {
   }
   window.removeEventListener('resize', onWindowResize)
   window.removeEventListener('keydown', onKeyDown)
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null

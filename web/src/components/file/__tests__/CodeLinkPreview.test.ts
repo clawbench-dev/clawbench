@@ -416,6 +416,69 @@ describe('CodeLinkPreview.vue', () => {
     expect(anchor.focus).toHaveBeenCalled()
   })
 
+  it('closes an unpinned floating card when clicking outside it', async () => {
+    const closeSpy = vi.fn()
+    const preview = createMockPreviewController({
+      visible: ref(true),
+      mode: ref('transient'),
+      isPinned: ref(false),
+      close: closeSpy,
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    expect(document.querySelector('.code-link-preview-floating')).not.toBeNull()
+
+    // Pointer down on a spot outside the card closes the transient preview
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, target: document.body }))
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a pinned floating card open when clicking outside it', async () => {
+    const closeSpy = vi.fn()
+    const preview = createMockPreviewController({
+      visible: ref(true),
+      mode: ref('pinned'),
+      isPinned: ref(true),
+      close: closeSpy,
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, target: document.body }))
+    expect(closeSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not close the floating card when clicking inside it', async () => {
+    const closeSpy = vi.fn()
+    const preview = createMockPreviewController({
+      visible: ref(true),
+      mode: ref('transient'),
+      isPinned: ref(false),
+      close: closeSpy,
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    expect(floating).not.toBeNull()
+    // A pointerdown inside the card (e.g. starting a drag) must not dismiss it
+    floating.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(closeSpy).not.toHaveBeenCalled()
+  })
+
   it('renders top and bottom expand bars and triggers directional expansion', async () => {
     const preview = createMockPreviewController({
       status: ref('ready'),
@@ -1452,7 +1515,7 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // Row 1: File path (dir + filename + line range) & copy path button
+    // Row 1: File path (dir + filename + line range) & window controls in header
     const titleDir = document.querySelector('.code-preview-title-dir')
     expect(titleDir?.textContent).toBe('packages/coding-agent/src/')
 
@@ -1462,12 +1525,19 @@ describe('CodeLinkPreview.vue', () => {
     const lineRef = document.querySelector('.code-preview-line-ref')
     expect(lineRef?.textContent).toBe(':542-559')
 
-    const copyPathBtn = document.querySelector('.code-preview-header-actions .copy-path-btn')
-    expect(copyPathBtn).not.toBeNull()
+    // Header hosts window controls (pin + close), not the copy-path tool
+    const headerPinBtn = document.querySelector('.code-preview-header-actions button[title="Unpin preview"], .code-preview-header-actions button[title="Pin preview"]')
+    expect(headerPinBtn).not.toBeNull()
+    const headerCloseBtn = document.querySelector('.code-preview-header-actions button[title="Close preview"]')
+    expect(headerCloseBtn).not.toBeNull()
+    expect(document.querySelector('.code-preview-header-actions .copy-path-btn')).toBeNull()
 
-    // Row 2: File type/size/lines & remaining action buttons
+    // Row 2: File type/size/lines & remaining action buttons (copy-path grouped with file actions)
     const metaInfo = document.querySelector('.code-preview-meta-info')
     expect(metaInfo?.textContent).toContain('3525')
+
+    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
+    expect(copyPathBtn).not.toBeNull()
 
     const actionBtns = document.querySelectorAll('.code-preview-meta .code-preview-actions button')
     expect(actionBtns.length).toBeGreaterThanOrEqual(8)
