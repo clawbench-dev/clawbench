@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1667,8 +1669,19 @@ func IsRunningUnderSupervisor() bool {
 	if os.Getenv("CLAWBENCH_NO_SUPERVISOR") != "" {
 		return false
 	}
-	if os.Getenv("INVOCATION_ID") != "" {
-		return true
+	// systemd: only a process that IS the MainPID of its unit is actually
+	// supervised. Merely inheriting INVOCATION_ID is not enough — a process
+	// started via setsid/nohup from a systemd agent shell (e.g. tat_agent)
+	// also inherits INVOCATION_ID, but systemd will NOT restart it when it
+	// exits. Treating it as supervised made upgrades shut down forever
+	// waiting for a restart that never comes.
+	if unit := currentSystemdUnit(); unit != "" {
+		mainPID := unitMainPID(unit)
+		if mainPID != "" && mainPID == strconv.Itoa(os.Getpid()) {
+			return true
+		}
+		// Member of a unit but not its MainPID → not supervised. Keep going
+		// so the container branches below get a chance to decide.
 	}
 	if os.Getenv("container") != "" {
 		return true
@@ -1682,6 +1695,62 @@ func IsRunningUnderSupervisor() bool {
 	// make the next config-panel restart skip launching a sentinel and simply
 	// shut down, leaving the service permanently down.
 	return false
+}
+
+// systemdCgroupPath points at the cgroup file used to discover the current
+// systemd unit. It is a package-level var so tests can point it at fixtures.
+var systemdCgroupPath = "/proc/self/cgroup"
+
+// systemctlShowFunc queries a unit's MainPID. It is a package-level var so
+// tests can stub it without a live systemd.
+var systemctlShowFunc = systemctlShowMainPID
+
+// currentSystemdUnit returns the systemd unit name this process belongs to
+// (e.g. "tat_agent.service"), or "" when not inside any .service unit.
+func currentSystemdUnit() string {
+	data, err := os.ReadFile(systemdCgroupPath)
+	if err != nil {
+		return ""
+	}
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		// e.g. "0::/system.slice/tat_agent.service". Trim a trailing \r so the
+		// parsing is robust when the input has CRLF line endings (e.g. cgroup
+		// fixture files checked out by git on Windows, which converts LF to
+		// CRLF when no .gitattributes pins them).
+		line := strings.TrimSuffix(rawLine, "\r")
+		// e.g. "0::/system.slice/tat_agent.service"
+		if idx := strings.LastIndex(line, "/"); idx >= 0 {
+			name := line[idx+1:]
+			if strings.HasSuffix(name, ".service") && !strings.Contains(name, " ") {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// unitMainPID queries the given unit's MainPID via systemctl. It returns ""
+// when systemctl is unavailable or the unit is inactive (MainPID 0), and
+// callers treat "" as "not supervised" — the fail-safe direction.
+func unitMainPID(unit string) string {
+	pid := strings.TrimSpace(systemctlShowFunc(unit))
+	if pid == "" || pid == "0" { // unit inactive → MainPID reset to 0
+		return ""
+	}
+	return pid
+}
+
+// systemctlShowMainPID shells out to `systemctl show` for a unit's MainPID.
+// It uses CommandContext with a short timeout so a hung systemctl (e.g. a
+// stalled DBus) cannot block the upgrade/restart path indefinitely.
+func systemctlShowMainPID(unit string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 // joinArgs joins command-line args into a space-separated string with proper
