@@ -128,13 +128,23 @@ export function normalizeForCompare(path: string): string {
  * 2. When a project root is known, relativize any path that lies under it.
  *    This turns "E:/git/app/web/src/x.ts" and "web/src/x.ts" into the same
  *    comparison key. Paths outside the root are left untouched (absolute).
- * 3. Match by full equality OR by a "/"-boundary suffix match in either
- *    direction (preserves the historical heuristic that tolerates tool paths
- *    relative to a subdirectory of the project).
+ * 3. Match by full equality; otherwise fall back to a "/"-boundary suffix
+ *    match in either direction.
  *
- * The suffix match requires a "/" before the shorter path so a bare basename
- * never collides with a deeper same-named file (e.g. "web/a.ts" vs "a.ts"
- * only match when one is genuinely the other's suffix with a separator).
+ * Suffix-match rules (intentionally conservative to avoid false positives):
+ * - The shorter side must contain at least one "/", so a bare basename
+ *   ("x.ts") only matches by full equality and can never collide with a
+ *   deeper same-named file ("web/src/x.ts").
+ * - The match must align on a "/" boundary, so partial segment fragments
+ *   ("ther.ts") never match.
+ *
+ * Known, intentional limit (kept for compatibility with tool paths relative
+ * to a project subdirectory): when one side is a project-external absolute
+ * path and the other a project-relative path whose tail is a "/"-boundary
+ * suffix of it, they are treated as the same file. E.g. viewing an external
+ * "/home/u/other/web/src/x.ts" and the agent editing the project's
+ * "web/src/x.ts" would spuriously match. This mirrors the pre-existing
+ * heuristic and is harmless (a refresh of unchanged content).
  */
 export function sameFilePath(
     a: string,
@@ -149,5 +159,11 @@ export function sameFilePath(
         normB = toProjectRelative(normB, projectRoot)
     }
     if (normA === normB) return true
-    return normA.endsWith('/' + normB) || normB.endsWith('/' + normA)
+    // Suffix fallback: only when the suffix side itself carries a directory,
+    // so a bare basename never collides with a deeper same-named file.
+    const aHasDir = normA.includes('/')
+    const bHasDir = normB.includes('/')
+    if (bHasDir && normA.endsWith('/' + normB)) return true
+    if (aHasDir && normB.endsWith('/' + normA)) return true
+    return false
 }

@@ -204,7 +204,28 @@ func ExtractDisplayName(name string, input map[string]any) string {
 	return ""
 }
 
+// fileTools is the set of canonical tool names whose primary target is a
+// single file path. Only these tools have a detected FilePath promoted to
+// ToolCallMeta/block metadata; other tools may carry coincidental path-like
+// input fields (e.g. a Bash command string containing "filename=…", or a
+// Glob/LS "path" that is a directory or pattern) that must not be treated as
+// the file identity of the call. Consumers of FilePath (file-modification
+// detection, preview refresh) only act on Write/Edit; Read is kept so file
+// reads still surface the path they operated on.
+var fileTools = map[string]bool{
+	"Write": true,
+	"Edit":  true,
+	"Read":  true,
+}
+
+// isFileTool reports whether the canonical tool name operates on a file path.
+func isFileTool(name string) bool {
+	return fileTools[name]
+}
+
 // ExtractFilePath extracts the file path from a tool call input.
+// Only file tools (Write/Edit/Read) are considered; other tools return "" so
+// coincidental path-like input fields are not promoted to a file identity.
 // Priority order for a direct string path field:
 //
 //	file_path > new_file_path > old_file_path > path > filename > file_name
@@ -221,7 +242,7 @@ func ExtractDisplayName(name string, input map[string]any) string {
 // Container/array forms only yield a path when the element itself looks like a
 // file reference, so a command string never accidentally becomes a "path".
 func ExtractFilePath(name string, input map[string]any) string {
-	if input == nil {
+	if input == nil || !isFileTool(name) {
 		return ""
 	}
 

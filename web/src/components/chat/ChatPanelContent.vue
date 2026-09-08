@@ -471,7 +471,7 @@ const stream = useChatStream({
     // Path matching: tool paths may be relative, absolute (project-internal or
     // external), or have "./" prefixes. sameFilePath normalizes separators,
     // relativizes project paths under the project root, then suffix-matches
-    // on "/" boundaries.
+    // on "/" boundaries (bare basenames match only by full equality).
     const isMatch = sameFilePath(filePath, currentFilePath || '', store.state.projectRoot)
 
     if (isMatch && currentFilePath) {

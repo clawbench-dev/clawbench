@@ -320,9 +320,27 @@ func TestExtractFilePath(t *testing.T) {
 		},
 		{
 			name:     "no file_path, path present",
+			toolName: "Read",
+			input:    map[string]any{"path": "/src/main.go"},
+			want:     "/src/main.go",
+		},
+		{
+			name:     "LS directory path is not a file identity",
 			toolName: "LS",
 			input:    map[string]any{"path": "/src"},
-			want:     "/src",
+			want:     "",
+		},
+		{
+			name:     "Glob pattern path is not a file identity",
+			toolName: "Glob",
+			input:    map[string]any{"path": "src/**/*.ts"},
+			want:     "",
+		},
+		{
+			name:     "Bash filename field is not promoted",
+			toolName: "Bash",
+			input:    map[string]any{"command": "curl -o /tmp/a.go", "filename": "/tmp/a.go"},
+			want:     "",
 		},
 		{
 			name:     "file_path takes priority over path",

@@ -267,10 +267,14 @@ describe('sameFilePath', () => {
     expect(sameFilePath('src/x.ts', 'web/src/x.ts', root)).toBe(true)
   })
 
+  it('does NOT match a bare basename against a deeper same-named file', () => {
+    // A bare basename (no directory) only matches by full equality — it must
+    // not collide with a deeper same-named file via suffix matching.
+    expect(sameFilePath('x.ts', 'web/src/x.ts', root)).toBe(false)
+    expect(sameFilePath('a.ts', 'web/a.ts', root)).toBe(false)
+  })
+
   it('does not match an unrelated suffix fragment', () => {
-    // Boundary suffix matching can conflate a root "x.ts" with a deeper
-    // "web/src/x.ts" (historical heuristic limit, kept for compatibility),
-    // but it must NOT match plain unrelated fragments or segment merges.
     expect(sameFilePath('src/other.ts', 'web/src/x.ts', root)).toBe(false)
     expect(sameFilePath('ther.ts', 'web/src/x.ts', root)).toBe(false)
   })
