@@ -99,7 +99,7 @@ func emitSessionEvent(sessionID, status string, hasNewMessages bool, pushEnabled
 			data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 		}
 		// Include the last user message so clients can show it alongside the reply
-		data.LastUserMessage = GetLastUserMessagePlain(context.Background(), sessionID)
+		data.LastUserMessage, data.LastUserHasFiles = GetLastUserMessageMeta(context.Background(), sessionID)
 		// Include the agent so clients can render the backend icon
 		data.AgentID = GetSessionAgentID(sessionID)
 	}
@@ -283,23 +283,50 @@ func truncatePreview(text string) string {
 // "last user message" line in completion popovers/notifications alongside the
 // AI's response preview. Returns "" when no such message exists.
 func GetLastUserMessagePlain(ctx context.Context, sessionID string) string {
+	plain, _ := GetLastUserMessageMeta(ctx, sessionID)
+	return plain
+}
+
+// GetLastUserMessageMeta returns the plain-text content of the most recent
+// non-streaming, non-queued user message in a session together with whether
+// that message carried file attachments (chat_history.files non-empty).
+// Used to render an "attachment" chip next to the quoted user message in
+// completion popovers without leaking which files were attached.
+//
+// The returned text is a single-line preview: newlines from multi-block
+// content (ExtractPlainText joins text blocks with "\n\n") and runs of
+// whitespace are collapsed into single spaces, so the quoted message reads
+// as flowing text instead of unexpectedly breaking into multiple lines.
+func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string, hasFiles bool) {
 	if dbRead == nil || sessionID == "" {
-		return ""
+		return "", false
 	}
 	var content string
+	var files string
 	err := dbRead.QueryRowContext(ctx,
-		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
+		"SELECT content, COALESCE(files, '') FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 AND queued = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
-	).Scan(&content)
+	).Scan(&content, &files)
 	if err != nil {
 		// sql.ErrNoRows → no user message yet; other errors → treat as unavailable
-		return ""
+		return "", false
 	}
-	plain := ExtractPlainText(content)
-	if plain == "" {
-		return ""
+	// Any non-empty files column value means attachments were present. The column
+	// holds a JSON array ("[...]") when attachments exist, so a bare "[]" / ""
+	// both count as no attachments.
+	hasFiles = files != "" && files != "[]" && files != jsonNull
+	plain = collapseToSingleLine(ExtractPlainText(content))
+	if plain != "" {
+		plain = truncatePreview(plain)
 	}
-	return truncatePreview(plain)
+	return plain, hasFiles
+}
+
+// collapseToSingleLine normalizes any run of whitespace (including newlines
+// inserted by multi-block joins, tabs, and double spaces) into a single space,
+// returning a single flowing line.
+func collapseToSingleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // IsSessionRunning checks if a session is currently running.

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
-import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
 import { previewCache } from '@/utils/codeLinkPreview'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
@@ -52,6 +52,9 @@ vi.mock('@/composables/useFilePathAnnotation', () => ({
   openFilePath: (...args: any[]) => mockOpenFilePath(...args),
 }))
 
+// Real file-type lookup drives the markdown detection in the composable.
+// getFileType is pure (reads the built-in extension table) so no mock needed.
+
 describe('useCodeLinkPreview', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -72,6 +75,142 @@ describe('useCodeLinkPreview', () => {
     reactiveLocalConfig.markdownCodeLinkPreview = false
     await nextTick()
     expect(preview.enabled.value).toBe(false)
+  })
+
+  it('defaults a line-less Markdown file to the rendered document view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title\n\nSome **markdown**.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(true)
+    expect(preview.hasExplicitLineRange.value).toBe(false)
+    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('keeps a line-annotated Markdown file on the source slice view by default', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md', lineStart: 3, lineEnd: 5 })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(true)
+    expect(preview.hasExplicitLineRange.value).toBe(true)
+    // A Markdown file stays render-capable even with a line annotation — only
+    // the DEFAULT view is the code slice so the user can pinpoint the lines.
+    expect(preview.canRenderMarkdown.value).toBe(true)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('lets a line-annotated Markdown file switch to the rendered view', async () => {
+    mockApiGet.mockResolvedValue({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md', lineStart: 3, lineEnd: 5 })
+    await vi.runAllTicks()
+
+    expect(preview.effectiveRenderMode.value).toBe('source')
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('keeps non-Markdown files on the source slice view', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'const x = 1',
+      name: 'main.ts',
+      path: 'main.ts',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'main.ts' })
+    await vi.runAllTicks()
+
+    expect(preview.isMarkdown.value).toBe(false)
+    expect(preview.canRenderMarkdown.value).toBe(false)
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('toggleRenderMode switches a renderable Markdown target between views', async () => {
+    mockApiGet.mockResolvedValue({
+      content: '# Title\n\nBody.',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 40,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+    preview.toggleRenderMode()
+    expect(preview.renderMode.value).toBe('source')
+    expect(preview.effectiveRenderMode.value).toBe('source')
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+  })
+
+  it('toggleRenderMode is a no-op when the target cannot render Markdown', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'code',
+      name: 'main.ts',
+      path: 'main.ts',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'main.ts', lineStart: 1 })
+    await vi.runAllTicks()
+
+    preview.toggleRenderMode()
+    expect(preview.effectiveRenderMode.value).toBe('source')
+  })
+
+  it('resets renderMode to source when the preview closes', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: '# Title',
+      name: 'README.md',
+      path: 'README.md',
+      supported: true,
+      size: 20,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'README.md' })
+    await vi.runAllTicks()
+    expect(preview.effectiveRenderMode.value).toBe('rendered')
+
+    preview.close()
+    expect(preview.visible.value).toBe(false)
+    expect(preview.renderMode.value).toBe('source')
+    expect(preview.effectiveRenderMode.value).toBe('source')
   })
 
   it('opens preview on desktop click without hover delay', async () => {
@@ -589,5 +728,78 @@ describe('useCodeLinkPreview', () => {
       expect(preview.mode.value).toBe('sheet')
       expect(preview.visible.value).toBe(true)
     })
+  })
+})
+
+describe('handleVerifiedFilePathClick (shared container interceptor)', () => {
+  function makePreview(overrides: Partial<{ enabled: boolean; touch: boolean; handleClick: ReturnType<typeof vi.fn> }> = {}) {
+    const handleClick = overrides.handleClick ?? vi.fn()
+    const preview = {
+      enabled: { value: overrides.enabled ?? true },
+      isTouchDevice: () => overrides.touch ?? false,
+      handleClick,
+    }
+    return { preview, handleClick }
+  }
+
+  function makeElement(pathType: string | null, extraClass = ''): HTMLElement {
+    const el = document.createElement(extraClass.includes('open-btn') ? 'button' : 'span')
+    el.className = extraClass || (pathType ? 'chat-file-path' : '')
+    if (pathType !== null) el.setAttribute('data-file-path', '/repo/src/main.ts')
+    if (pathType !== null) el.setAttribute('data-path-type', pathType)
+    return el
+  }
+
+  function makeEvent(target: HTMLElement, ctrl = false) {
+    return {
+      target,
+      ctrlKey: ctrl,
+      metaKey: false,
+    } as unknown as MouseEvent
+  }
+
+  it('returns false when the preview is disabled', () => {
+    const { preview, handleClick } = makePreview({ enabled: false })
+    expect(handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)).toBe(false)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('desktop click on verified file path text opens a transient preview', () => {
+    const { preview, handleClick } = makePreview()
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('desktop modifier-click on the open button opens the preview', () => {
+    const { preview, handleClick } = makePreview()
+    const el = makeElement('file', 'chat-file-open-btn')
+    const handled = handleVerifiedFilePathClick(makeEvent(el, true), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('plain desktop click on the open button falls through (returns false)', () => {
+    const { preview, handleClick } = makePreview()
+    const el = makeElement('file', 'chat-file-open-btn')
+    const handled = handleVerifiedFilePathClick(makeEvent(el), preview as never)
+    expect(handled).toBe(false)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('touch tap on verified file path text opens the sheet preview', () => {
+    const { preview, handleClick } = makePreview({ touch: true })
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement('file')), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('directories and unverified paths fall through (return false)', () => {
+    for (const pathType of ['dir', null]) {
+      const { preview, handleClick } = makePreview()
+      const handled = handleVerifiedFilePathClick(makeEvent(makeElement(pathType)), preview as never)
+      expect(handled).toBe(false)
+      expect(handleClick).not.toHaveBeenCalled()
+    }
   })
 })

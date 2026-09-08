@@ -35,6 +35,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { extractToc, slugify } from '@/utils/toc.ts'
+import { flashElement } from '@/utils/domFlash'
 import { protectMarkdown } from '@/utils/markdownProtect.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
@@ -78,7 +79,7 @@ const props = defineProps({
      */
     codeView: { type: Boolean, default: false },
 })
-const emit = defineEmits(['jump', 'jumpPage'])
+const emit = defineEmits(['jump', 'jumpPage', 'activated'])
 
 const toc = ref([])
 const activeId = ref('')
@@ -268,9 +269,13 @@ function scrollTo(item) {
     const elById = findHeadingEl(item.id)
     if (elById) {
         elById.scrollIntoView({ behavior: 'auto', block: 'start' })
-        elById.classList.add('line-flash')
-        elById.addEventListener('animationend', () => elById.classList.remove('line-flash'), { once: true })
+        flashElement(elById)
         activeId.value = item.id
+        // The jump was handled right here (rendered markdown/PDF heading DOM),
+        // so the host is not going to see a `jump`/`jumpPage` event. Notify it
+        // that an item was activated anyway — e.g. a drawer host can dismiss
+        // itself while a persistent dock stays open.
+        emit('activated', item.id)
         return
     }
     if (item.line) {

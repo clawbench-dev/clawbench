@@ -23,6 +23,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { flashElement } from '@/utils/domFlash'
 import { useI18n } from 'vue-i18n'
 import SearchBar, { type SearchBarLabels } from '@/components/common/SearchBar.vue'
 
@@ -247,11 +248,8 @@ function goPrev() {
 }
 
 // ── Jump: instant center scroll + match-text flash ──────────────────────────
-const flashTimers = new Set<ReturnType<typeof setTimeout>>()
 
 onBeforeUnmount(() => {
-    flashTimers.forEach((t) => clearTimeout(t))
-    flashTimers.clear()
     clearHighlights()
 })
 
@@ -259,11 +257,10 @@ function jumpTo(mark: HTMLElement | null | undefined) {
     if (!mark || !mark.isConnected) return
     // Flash the active match text. The scroll is a single instant jump
     // (behavior:'auto' centers immediately — no animation, no settle loop).
-    mark.classList.add('search-match-flash')
     mark.scrollIntoView({ behavior: 'auto', block: 'center' })
-    // Aligned to the canonical 1.2s flash (assets/code-viewer.css line-flash).
-    const timer = setTimeout(() => mark.classList.remove('search-match-flash'), 1250)
-    flashTimers.add(timer)
+    // Aligned to the canonical line-flash (assets/code-viewer.css) — the
+    // class cleanup + reduced-motion handling live in domFlash.
+    flashElement(mark, { className: 'search-match-flash' })
 }
 
 function close() {

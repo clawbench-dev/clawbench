@@ -32,6 +32,7 @@
 <script setup>
 import { ref, watch, nextTick, computed } from 'vue'
 import '@/assets/modal-card.css'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps({
   open: Boolean,

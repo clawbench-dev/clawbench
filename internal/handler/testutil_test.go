@@ -380,7 +380,7 @@ func withProjectCookie(req *http.Request, projectPath string) *http.Request {
 }
 
 // withAuthCookie adds the clawbench_session cookie to the request.
-func withAuthCookie(req *http.Request, token string) *http.Request { //nolint:unparam // test helper: return value unused but signature supports chaining
+func withAuthCookie(req *http.Request, token string) *http.Request {
 	req.AddCookie(&http.Cookie{
 		Name:  model.ScopedCookieName(model.SessionCookie),
 		Value: token,

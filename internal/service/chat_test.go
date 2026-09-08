@@ -5103,3 +5103,70 @@ func TestQueuedMessage_ReplyQueueIDAnchor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "pending-3", qm3)
 }
+
+func TestPatchContextStateMerge_UsageNakedZeroKeepsStoredWindow(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// First: a real usage_update establishes a known window.
+	service.PatchContextStateMerge(sid, map[string]string{
+		"usage": `{"used":300000,"size":1000000,"inputTokens":301000,"cost":5.0}`,
+	})
+
+	// Then a naked usage_update (used=0, size=0, higher cost only) arrives —
+	// the exact bug scenario. It must NOT regress the stored window.
+	service.PatchContextStateMerge(sid, map[string]string{
+		"usage": `{"used":0,"size":0,"cost":6.08}`,
+	})
+
+	state := service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 1000000, state.Usage.Size, "stored window must survive a naked usage_update")
+	assert.Equal(t, 300000, state.Usage.Used, "stored used must survive a naked usage_update")
+	assert.Equal(t, 301000, state.Usage.InputTokens, "stored token fields must survive")
+	assert.Equal(t, 6.08, state.Usage.Cost, "cost is monotonic — the higher cost applies")
+}
+
+func TestPatchContextStateMerge_UsageRealUpdateApplies(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	service.PatchContextStateMerge(sid, map[string]string{
+		"usage": `{"used":1000,"size":200000,"cost":1.0}`,
+	})
+
+	// A genuinely informative notification updates the state normally.
+	service.PatchContextStateMerge(sid, map[string]string{
+		"usage": `{"used":15000,"size":200000,"cost":1.2,"inputTokens":15000}`,
+	})
+
+	state := service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 15000, state.Usage.Used)
+	assert.Equal(t, 200000, state.Usage.Size)
+	assert.Equal(t, 15000, state.Usage.InputTokens)
+	assert.Equal(t, 1.2, state.Usage.Cost)
+}
+
+func TestPatchContextStateMerge_UsageFirstWriteAsIs(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	// No prior state — the first usage patch is written as-is (nothing to
+	// protect against regression).
+	service.PatchContextStateMerge(sid, map[string]string{
+		"usage": `{"used":0,"size":0,"cost":0.5}`,
+	})
+
+	state := service.GetContextState(sid)
+	require.NotNil(t, state)
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 0, state.Usage.Used)
+	assert.Equal(t, 0, state.Usage.Size)
+	assert.Equal(t, 0.5, state.Usage.Cost)
+}

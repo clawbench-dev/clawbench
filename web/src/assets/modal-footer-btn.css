@@ -1,0 +1,146 @@
+/**
+ * Shared footer action buttons for dialogs / bottom sheets.
+ *
+ * All popup-style surfaces (ModalDialog footer, BottomSheet footer, custom
+ * teleport dialogs) previously each re-declared their own button CSS. This
+ * file is the single source for the "pill" footer-button language used across
+ * those surfaces (30px tall, radius 15). Loaded by the base components
+ * (ModalDialog / BottomSheet); individual consumers just use `.fbtn`.
+ *
+ * Colour families:
+ *   - .fbtn           neutral secondary (grey pill + subtle border) — cancel /
+ *                     dismiss / neutral actions
+ *   - .fbtn-primary   solid accent pill — the primary / confirm action
+ *   - .fbtn-danger    soft red-tinted pill — destructive actions
+ *
+ * The secondary border is derived from the text colour rather than
+ * --border-color: the plain border token sits too close to --bg-tertiary on
+ * light themes and the buttons would melt into the panel background.
+ */
+
+.fbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 16px;
+  border-radius: 15px;
+  border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 40%, transparent);
+  background: var(--bg-tertiary, #f1f3f5);
+  color: var(--text-secondary, #4b5563);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  box-sizing: border-box;
+  user-select: none;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.fbtn svg {
+  flex-shrink: 0;
+}
+
+.fbtn:hover {
+  background: #e5e7eb;
+  color: var(--text-primary, #1a1a1a);
+  text-decoration: none;
+}
+
+/* Dark themes: --bg-tertiary is dark, so the light-theme hover grey above would
+   flip the pill near-white while the text stays light (var(--text-primary)),
+   making the label blend into the hover background. Lighten the dark pill by a
+   text-primary tint instead — the standard theme-adaptive hover convention. */
+[data-theme-base="dark"] .fbtn:hover {
+  background: color-mix(in srgb, var(--text-primary, #e6edf3) 7%, var(--bg-tertiary, #f1f3f5));
+}
+
+.fbtn:active {
+  transform: scale(0.96);
+}
+
+.fbtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Primary: solid accent pill. The border is a darker shade of the accent so
+   the solid button still shows a visible outline against the panel. */
+.fbtn-primary {
+  background: var(--accent-color, #0066cc);
+  border-color: color-mix(in srgb, var(--accent-color, #0066cc) 72%, black);
+  color: #fff;
+}
+
+.fbtn-primary:hover {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
+  border-color: color-mix(in srgb, var(--accent-color, #0066cc) 55%, black);
+  color: #fff;
+}
+
+/* Danger: soft red tint with a clear red border. */
+.fbtn-danger {
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-tertiary, #f1f3f5));
+  border-color: color-mix(in srgb, #ef4444 55%, #b91c1c);
+  color: #b91c1c;
+}
+
+.fbtn-danger:hover {
+  background: color-mix(in srgb, #ef4444 20%, var(--bg-tertiary, #f1f3f5));
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+/* Warn: amber-tinted pill (e.g. pause a scheduled task). */
+.fbtn-warn {
+  background: color-mix(in srgb, #ca8a04 15%, var(--bg-tertiary, #f1f3f5));
+  border-color: color-mix(in srgb, #ca8a04 55%, #b45309);
+  color: #a16207;
+}
+
+.fbtn-warn:hover {
+  background: color-mix(in srgb, #ca8a04 30%, var(--bg-tertiary, #f1f3f5));
+  border-color: #ca8a04;
+  color: #a16207;
+}
+
+/* Success: green pill (e.g. resume a paused task). */
+.fbtn-success {
+  background: color-mix(in srgb, #16a34a 15%, var(--bg-tertiary, #f1f3f5));
+  border-color: color-mix(in srgb, #16a34a 55%, #15803d);
+  color: #15803d;
+}
+
+.fbtn-success:hover {
+  background: color-mix(in srgb, #16a34a 30%, var(--bg-tertiary, #f1f3f5));
+  border-color: #16a34a;
+  color: #15803d;
+}
+
+/* ── Dark-theme overrides ──
+   The tinted text colours above are deep light-theme shades (dark red/amber/
+   green). On dark themes --bg-tertiary is itself dark, so the same deep text
+   lands at ~2:1 contrast and disappears into the tinted pill. Lift the
+   foreground to the 300-level pastels (same convention as diff/badge text
+   elsewhere) so labels stay readable; the tinted backgrounds and borders are
+   already theme-aware via --bg-tertiary. */
+[data-theme-base="dark"] .fbtn-danger {
+  color: #fca5a5;
+}
+[data-theme-base="dark"] .fbtn-danger:hover {
+  color: #fecaca;
+}
+[data-theme-base="dark"] .fbtn-warn {
+  color: #fbbf24;
+}
+[data-theme-base="dark"] .fbtn-warn:hover {
+  color: #fde68a;
+}
+[data-theme-base="dark"] .fbtn-success {
+  color: #86efac;
+}
+[data-theme-base="dark"] .fbtn-success:hover {
+  color: #bbf7d0;
+}

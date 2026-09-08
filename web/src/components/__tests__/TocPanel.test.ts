@@ -499,6 +499,12 @@ describe('TocPanel — rendered markdown anchor scoping', () => {
       expect(scrollSpy).toHaveBeenCalled()
       const scrolledH2 = scrollSpy.mock.instances.find(i => i === current.querySelector('h2'))
       expect(scrolledH2).toBeTruthy()
+      // The jump was handled in-panel (heading DOM found), so the host gets an
+      // `activated` notice instead of a `jump` event — a drawer host relies on
+      // it to dismiss itself while a persistent dock stays open.
+      expect(wrapper.emitted('activated')).toBeTruthy()
+      expect(wrapper.emitted('activated')![0]).toEqual(['能量公式-mathi0'])
+      expect(wrapper.emitted('jump')).toBeFalsy()
       wrapper.unmount()
     } finally {
       Element.prototype.scrollIntoView = orig

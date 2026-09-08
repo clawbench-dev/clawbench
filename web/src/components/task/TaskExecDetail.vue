@@ -29,12 +29,12 @@
 
     <!-- Fixed bottom action bar -->
     <div class="exec-detail-actions">
-      <button v-if="showContinueBtn" class="action-btn accent" :disabled="continueLoading || isRunning" @click="onContinueConversation" :title="t('task.exec.continueConversation')">
+      <button v-if="showContinueBtn" class="fbtn fbtn-primary accent" :disabled="continueLoading || isRunning" @click="onContinueConversation" :title="t('task.exec.continueConversation')">
         <MessageSquare :size="14" />
         <span class="action-text">{{ continueLoading ? t('task.exec.continueConversationLoading') : t('task.exec.continueConversation') }}</span>
       </button>
       <span class="actions-spacer"></span>
-      <button v-if="isRunning" class="action-btn danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
+      <button v-if="isRunning" class="fbtn fbtn-danger danger" :disabled="cancelling" @click="onTerminate" :title="t('task.exec.cancel')">
         <Square :size="14" />
         <span class="action-text">{{ cancelling ? t('common.loading') : t('task.exec.cancel') }}</span>
       </button>
@@ -79,6 +79,9 @@
       @prev="tableRowPrev"
       @next="tableRowNext"
     />
+
+    <!-- Code link preview for annotated file paths in the execution content -->
+    <CodeLinkPreview v-if="codeLinkPreview.enabled.value" :preview="codeLinkPreview" />
   </div>
 </template>
 
@@ -95,6 +98,7 @@ import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
@@ -102,11 +106,13 @@ import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
+import '@/assets/modal-footer-btn.css'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import { terminateExecution } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 
 const props = defineProps({
   execDetail: Object,
@@ -444,6 +450,9 @@ function showMetadata() {
 // ── Delegated click handler for .chat-file-open-btn ──
 const contentRef = ref(null)
 
+// Code link preview for annotated file paths in the execution content.
+const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef })
+
 // ── Auto-follow scroll (mirrors chat streaming UX) ──
 // When live streaming output, keep pinned to the bottom unless the user
 // manually scrolls elsewhere. Scrolling back to the bottom resumes following.
@@ -501,6 +510,11 @@ function handleContentClick(event) {
   // 2. Handle table row click — open row-form modal
   if (handleTableRowClick(event)) return
 
+  // 2.5. Annotated *verified* file paths open the code link preview (same
+  // behaviour as chat messages). Only data-path-type="file" elements are
+  // intercepted — directories / unverified paths fall through below.
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
   // 3. Handle commit-hash clicks (span or button)
   const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
   if (commitEl) {
@@ -518,6 +532,7 @@ function handleContentClick(event) {
   if (wtBtn) {
     event.preventDefault()
     event.stopPropagation()
+    codeLinkPreview.close()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
     if (wtPath) {
       appStore.setProject(wtPath)
@@ -530,6 +545,7 @@ function handleContentClick(event) {
   if (!btn) return
   event.preventDefault()
   event.stopPropagation()
+  codeLinkPreview.close()
   const filePath = btn.getAttribute('data-file-path')
   const lineStart = btn.getAttribute('data-line-start')
   const lineEnd = btn.getAttribute('data-line-end')
@@ -572,6 +588,13 @@ watch(() => props.execDetail, (newVal, oldVal) => {
         .filter(Boolean)
       if (paths.length > 0) verifyFilePaths([...new Set(paths)], contentRef.value)
     }
+    // The execution content may have been re-rendered while a code link
+    // preview was open; if its anchor element was detached, close it so the
+    // floating card does not linger over stale content. Only auto-close the
+    // transient card — pinned / sheet previews are dismissed by the user
+    // (mirrors checkAndClose's mode exemption).
+    const anchor = codeLinkPreview.target?.value?.anchorEl
+    if (anchor && !anchor.isConnected && codeLinkPreview.mode?.value === 'transient') codeLinkPreview.close()
   })
 }, { immediate: true })
 
@@ -593,7 +616,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
 }
@@ -649,62 +674,6 @@ onUnmounted(() => {
 
 .actions-spacer {
   flex: 1;
-}
-
-.action-btn {
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: var(--bg-secondary, #f1f3f5);
-  color: var(--text-secondary, #666);
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  transition: all 0.15s ease;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-@media (hover: hover) {
-  .action-btn:hover:not(:disabled) {
-    background: var(--border-color, #e5e5e5);
-    transform: translateY(-1px);
-  }
-}
-
-.action-btn:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.action-btn.accent {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .action-btn.accent:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    color: #fff;
-  }
-}
-
-.action-btn.danger {
-  background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary, #f1f3f5));
-  color: #b91c1c;
-}
-
-@media (hover: hover) {
-  .action-btn.danger:hover:not(:disabled) {
-    background: color-mix(in srgb, #ef4444 25%, var(--bg-secondary, #f1f3f5));
-  }
 }
 
 .action-text {

@@ -25,6 +25,22 @@
   }
 }
 
+/* Disabled state — action has no meaning for this message (e.g. rewind on the
+   last message: there is nothing after it to truncate). Keep the icon visible
+   but muted and non-interactive. */
+.chat-action-btn:disabled,
+.chat-action-btn.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .chat-action-btn:disabled:hover,
+  .chat-action-btn.is-disabled:hover {
+    background: transparent;
+  }
+}
+
 .chat-action-btn svg {
   width: 14px;
   height: 14px;

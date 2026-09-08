@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { ref, reactive, computed, nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
@@ -25,6 +25,16 @@ vi.mock('@/utils/fileType', () => ({
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   },
+}))
+
+// Mock the lazy markdown builder so the rendered-document view tests never pull
+// the real marked/katex pipeline into the component unit test.
+const buildPreviewMarkdownHtml = vi.fn((source: { content: string }) => {
+  const escaped = source.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<div class="fake-rendered-md">${escaped}</div>`
+})
+vi.mock('@/utils/previewMarkdown', () => ({
+  buildPreviewMarkdownHtml,
 }))
 
 // Mock settings config
@@ -83,6 +93,8 @@ const i18n = createI18n({
           loadError: 'Failed to load code',
           quoteToChat: 'Quote to chat',
           quotedToChat: 'Quoted code added to chat',
+          quoteShort: 'Quote',
+          openFileShort: 'Full file',
           copyPath: 'Copy path',
           pathCopied: 'File path copied',
           revealInTree: 'Open Directory',
@@ -97,6 +109,8 @@ const i18n = createI18n({
           noMatches: 'No matches',
           matchIndex: '{current} of {total}',
           linesCount: '{n} lines',
+          renderedView: 'Rendered preview',
+          sourceView: 'Source code',
         },
         header: {
           lineNumbers: 'Line Numbers',
@@ -146,6 +160,23 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     quadrant: 'bottom-right',
   })
 
+  // ── Rendered Markdown view state ──
+  // The mock mirrors the real composable: renderMode is per-open defaulted to
+  // 'rendered' for a Markdown file WITHOUT a line range, otherwise 'source'.
+  // canRenderMarkdown reflects the FILE's renderability (any Markdown file,
+  // with or without a line annotation), so the eye toggle stays available.
+  const renderMode = ref<'rendered' | 'source'>('source')
+  const isMarkdown = ref(false)
+  const hasExplicitLineRange = ref(false)
+  const canRenderMarkdown = computed(() => isMarkdown.value)
+  const effectiveRenderMode = computed<'rendered' | 'source'>(() =>
+    canRenderMarkdown.value ? renderMode.value : 'source'
+  )
+  const toggleRenderMode = vi.fn(() => {
+    if (!canRenderMarkdown.value) return
+    renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
+  })
+
   return {
     enabled: ref(true),
     visible,
@@ -160,6 +191,11 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     isLargeFile,
     contextExpansion,
     placement,
+    renderMode,
+    isMarkdown,
+    hasExplicitLineRange,
+    canRenderMarkdown,
+    effectiveRenderMode,
     showPreview: vi.fn(),
     close: vi.fn(() => {
       visible.value = false
@@ -181,6 +217,7 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
         mode.value = 'pinned'
       }
     }),
+    toggleRenderMode,
     refresh: vi.fn(),
     expandContext: vi.fn(),
     shrinkContext: vi.fn(),
@@ -411,6 +448,61 @@ describe('CodeLinkPreview.vue', () => {
 
     expandBelowBtn.click()
     expect(preview.expandBelow).toHaveBeenCalledWith(10)
+  })
+
+  it('hides expand buttons but keeps the remaining-lines hint at the line-count render cap', async () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: '...',
+        startLine: 1,
+        endLine: 200,
+        totalLines: 500,
+        lineOutOfRange: false,
+        renderTruncated: true,
+        truncateReason: 'lines',
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    // At the 200-line cap further expansion cannot grow the slice, so the
+    // expand buttons must be gone…
+    const bottomBar = floating.querySelector('.code-preview-expand-bar.expand-below')
+    expect(bottomBar).not.toBeNull()
+    expect(bottomBar?.querySelector('.code-preview-expand-btn')).toBeNull()
+    expect(floating.querySelector('.code-preview-expand-bar.expand-above .code-preview-expand-btn')).toBeNull()
+    // …but the "(N lines remaining)" hint stays visible (500 − 200 = 300).
+    expect(bottomBar?.querySelector('.code-preview-expand-hint')?.textContent).toContain('300')
+  })
+
+  it('keeps expand buttons when truncation is byte-based, not line-cap based', async () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: '...',
+        startLine: 1,
+        endLine: 40,
+        totalLines: 500,
+        lineOutOfRange: false,
+        renderTruncated: true,
+        truncateReason: 'bytes',
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating') as HTMLElement
+    // Byte-based truncation is not pinned to a window boundary — further
+    // expansion may still make progress, so the buttons stay available.
+    expect(floating.querySelector('.code-preview-expand-bar.expand-below .code-preview-expand-btn')).not.toBeNull()
   })
 
   it('supports header dragging with pointer events', () => {
@@ -1420,19 +1512,19 @@ describe('CodeLinkPreview.vue', () => {
     const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn')
     expect(copyBtn).not.toBeNull()
 
-    // Body toolbar: meta + tools (Copy Path, Search, Wrap, Line Numbers, Copy Code)
+    // Body toolbar: meta + tools (Copy Path, Wrap, Line Numbers, Copy Code).
+    // Search moved to the footer bar.
     const row2 = document.querySelector('.code-preview-sheet-row2')
     expect(row2).not.toBeNull()
     const metaInfo = row2?.querySelector('.code-preview-sheet-meta-info')
     expect(metaInfo?.textContent).toContain('804')
 
     const tools = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(tools?.length).toBe(5)
+    expect(tools?.length).toBe(4)
     expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toMatch(/copy/i)
-    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toContain('Find')
-    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toMatch(/wrap/i)
-    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toContain('Line Numbers')
-    expect(tools?.[4]?.getAttribute('aria-label') || tools?.[4]?.getAttribute('title')).toMatch(/copy/i)
+    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toMatch(/wrap/i)
+    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toContain('Line Numbers')
+    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toMatch(/copy/i)
 
     // Bottom Sheet Footer: Refresh icon first, then Reveal / Quote / Open Full
     const footer = document.querySelector('.code-preview-sheet-footer')
@@ -1522,36 +1614,29 @@ describe('CodeLinkPreview.vue', () => {
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('packages/agent/src/types.ts:415-420')
 
-    // 2. Body toolbar: Copy Path -> Search -> Wrap -> Line Numbers -> Copy Code
+    // 2. Body toolbar: Copy Path -> Wrap -> Line Numbers -> Copy Code
     const row2 = document.querySelector('.code-preview-sheet-row2')
     const toolBtns = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(toolBtns?.length).toBe(5)
+    expect(toolBtns?.length).toBe(4)
 
-    // Tool 1: Search opens the in-preview search bar
-    const searchBtn = toolBtns?.[1] as HTMLElement
-    expect(searchBtn.getAttribute('aria-label') || searchBtn.getAttribute('title')).toContain('Find')
-    searchBtn.click()
-    await nextTick()
-    expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
-
-    // Tool 2: Wrap toggle
-    const wrapBtn = toolBtns?.[2] as HTMLElement
+    // Tool 1: Wrap toggle
+    const wrapBtn = toolBtns?.[1] as HTMLElement
     expect(wrapBtn.getAttribute('aria-label') || wrapBtn.getAttribute('title')).toMatch(/wrap/i)
 
-    // Tool 3: Line numbers toggle (uses the shared global file-viewer setting)
-    const lineNumBtn = toolBtns?.[3] as HTMLElement
+    // Tool 2: Line numbers toggle (uses the shared global file-viewer setting)
+    const lineNumBtn = toolBtns?.[2] as HTMLElement
     expect(lineNumBtn.getAttribute('aria-label') || lineNumBtn.getAttribute('title')).toContain('Line Numbers')
     lineNumBtn.click()
     await nextTick()
     expect(document.querySelectorAll('.code-preview-line-row .code-preview-line-number').length).toBe(0)
 
-    // Tool 4: Copy Code
-    expect(toolBtns?.[4]?.getAttribute('aria-label') || toolBtns?.[4]?.getAttribute('title')).toMatch(/copy/i)
-    ;(toolBtns?.[4] as HTMLElement).click()
+    // Tool 3: Copy Code
+    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toMatch(/copy/i)
+    ;(toolBtns?.[3] as HTMLElement).click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('export interface AgentContext { ... }')
 
-    // 3. Footer: Refresh icon first, then Reveal in file tree, Quote to Chat, Open Full
+    // 3. Footer: Refresh icon first, then Search, Reveal, Open Full, Quote
     const footer = document.querySelector('.code-preview-sheet-footer')
     expect(footer).not.toBeNull()
     expect(footer?.querySelector('.collapse-btn')).toBeNull()
@@ -1562,6 +1647,13 @@ describe('CodeLinkPreview.vue', () => {
     refreshBtn.click()
     expect(preview.refresh).toHaveBeenCalled()
 
+    // Search now lives in the footer (icon-only) and opens the search bar
+    const searchBtn = footer?.querySelector('.code-preview-footer-btn.is-active, .code-preview-footer-btn[title="Find"]') as HTMLElement
+    expect(searchBtn).not.toBeNull()
+    searchBtn.click()
+    await nextTick()
+    expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
+
     const revealBtn = footer?.querySelector('.reveal-btn') as HTMLElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
@@ -1569,6 +1661,207 @@ describe('CodeLinkPreview.vue', () => {
     await nextTick()
     expect(loadFilesSpy).toHaveBeenCalledWith('packages/agent/src', false, 0, true)
     vi.unstubAllGlobals()
+
+    wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    localStorage.clear()
+    useChatContext().clearAll()
+  })
+
+  function makeMdTarget(overrides: Record<string, unknown> = {}) {
+    return {
+      filePath: 'docs/guide.md',
+      anchorEl: document.createElement('span'),
+      ...overrides,
+    }
+  }
+
+  it('defaults a line-less Markdown file to the rendered view', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMdTarget()),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode: ref('rendered'),
+      slicedCode: ref({
+        code: '# Guide\n\nHello **world**',
+        startLine: 1,
+        endLine: 2,
+        totalLines: 2,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const floating = document.querySelector('.code-link-preview-floating')
+    expect(floating).not.toBeNull()
+
+    // Rendered document body is shown (MarkdownPreviewBody), not code lines
+    expect(floating?.querySelector('.md-preview-body')).not.toBeNull()
+    expect(floating?.querySelector('.fake-rendered-md')).not.toBeNull()
+    expect(floating?.querySelectorAll('.code-preview-line-row').length).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it('keeps line-annotated Markdown and non-Markdown on the source slice view', async () => {
+    // Markdown with line range -> source slice by default (eye toggle still
+    // available since the file is renderable)
+    const mdWithLine = createMockPreviewController({
+      target: ref(makeMdTarget({ lineStart: 12, lineEnd: 14 })),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode: ref('source'),
+    })
+    const wrapperMd = mount(CodeLinkPreview, {
+      props: { preview: mdWithLine },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    await nextTick()
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('.md-preview-body')).toBeNull()
+    wrapperMd.unmount()
+
+    // Non-markdown file (ts) -> source slice, no render toggle
+    const tsFile = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+      canRenderMarkdown: ref(false),
+      effectiveRenderMode: ref('source'),
+    })
+    const wrapperTs = mount(CodeLinkPreview, {
+      props: { preview: tsFile },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+    await nextTick()
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('.md-preview-body')).toBeNull()
+    wrapperTs.unmount()
+  })
+
+  it('shows an eye toggle only for renderable Markdown and switches views', async () => {
+    const effectiveRenderMode = ref<'rendered' | 'source'>('rendered')
+    const mdNoLine = createMockPreviewController({
+      target: ref(makeMdTarget()),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode,
+      toggleRenderMode: vi.fn(() => {
+        effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
+      }),
+      slicedCode: ref({
+        code: '# Guide',
+        startLine: 1,
+        endLine: 1,
+        totalLines: 1,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview: mdNoLine },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    // Rendered view active + toggle present (first action button is the eye)
+    let eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    expect(eyeBtn).not.toBeNull()
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Source')
+    expect(document.querySelector('.md-preview-body')).not.toBeNull()
+
+    // Toggle to source -> code rows appear
+    eyeBtn.click()
+    await nextTick()
+    eyeBtn = document.querySelector('.code-preview-actions .code-preview-btn') as HTMLElement
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('.md-preview-body')).toBeNull()
+
+    // Toggle back to rendered
+    eyeBtn.click()
+    await nextTick()
+    await nextTick()
+    expect(document.querySelector('.md-preview-body')).not.toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('shows the eye toggle for line-annotated Markdown and can switch to the rendered view', async () => {
+    const effectiveRenderMode = ref<'rendered' | 'source'>('source')
+    const mdWithLine = createMockPreviewController({
+      target: ref(makeMdTarget({ lineStart: 3 })),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode,
+      toggleRenderMode: vi.fn(() => {
+        effectiveRenderMode.value = effectiveRenderMode.value === 'rendered' ? 'source' : 'rendered'
+      }),
+      slicedCode: ref({
+        code: '# Doc\n\nbody line',
+        startLine: 3,
+        endLine: 4,
+        totalLines: 20,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview: mdWithLine },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    // Line-annotated Markdown opens in the code slice view…
+    expect(document.querySelector('.code-preview-line-row')).not.toBeNull()
+    expect(document.querySelector('.md-preview-body')).toBeNull()
+
+    // …but the eye toggle is present (renderable Markdown), labeled for the
+    // view it would switch to ('Rendered preview').
+    const eyeBtn = document.querySelector('.code-preview-actions button[aria-pressed]') as HTMLElement
+    expect(eyeBtn).not.toBeNull()
+    expect(eyeBtn.getAttribute('aria-label')).toContain('Rendered')
+
+    // Clicking switches to the rendered document view of the same slice.
+    eyeBtn.click()
+    await nextTick()
+    await nextTick()
+    expect(document.querySelector('.code-preview-line-row')).toBeNull()
+    expect(document.querySelector('.md-preview-body')).not.toBeNull()
+
+    wrapper.unmount()
+  })
+
+  it('renders the Markdown document body in mobile sheet mode too', async () => {
+    const mdNoLine = createMockPreviewController({
+      mode: ref('sheet'),
+      target: ref(makeMdTarget()),
+      canRenderMarkdown: ref(true),
+      effectiveRenderMode: ref('rendered'),
+      slicedCode: ref({
+        code: '# Sheet\n\ndoc',
+        startLine: 1,
+        endLine: 2,
+        totalLines: 2,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview: mdNoLine },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(document.querySelector('.md-preview-body')).not.toBeNull()
+    expect(document.querySelector('.code-preview-sheet-tools .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
   })

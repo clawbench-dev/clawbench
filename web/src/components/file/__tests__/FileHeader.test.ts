@@ -50,6 +50,7 @@ const i18n = createI18n({
           edit: 'Edit',
           finishEditing: 'Finish editing',
           details: 'Details',
+          setAsBackground: 'Set as theme background',
         },
         overlay: { back: 'Back', forward: 'Forward' },
       },
@@ -659,6 +660,37 @@ describe('FileHeader', () => {
       expect(button).toBeTruthy()
       expect(button!.classes()).not.toContain('active')
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
+    })
+  })
+
+  describe('set as background', () => {
+    it('shows the set-as-background button for supported image files', () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null, isImage: true } })
+      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      expect(button).toBeTruthy()
+      expect((wrapper.vm as any).$.setupState.isWallpaperSource).toBe(true)
+    })
+
+    it('does not show the set-as-background button for non-image files', () => {
+      const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'const x = 1' } })
+      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      expect(button).toBeUndefined()
+      expect((wrapper.vm as any).$.setupState.isWallpaperSource).toBe(false)
+    })
+
+    it('excludes unsupported image extensions like bmp/tiff', () => {
+      const wrapper = mountHeader({ file: { name: 'scan.bmp', path: '/tmp/scan.bmp', content: null, isImage: true } })
+      expect((wrapper.vm as any).$.setupState.isWallpaperSource).toBe(false)
+    })
+
+    it('emits setAsBackground with the file path when clicked', async () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null, isImage: true } })
+      const button = wrapper.findAll('.header-actions .file-header-btn').find(b => b.attributes('title') === 'Set as theme background')
+      expect(button).toBeTruthy()
+      await button!.trigger('click')
+      const emitted = wrapper.emitted('setAsBackground')
+      expect(emitted).toBeTruthy()
+      expect(emitted![0]).toEqual(['/tmp/photo.png'])
     })
   })
 })

@@ -3,7 +3,7 @@
     <template #header>
       <span class="bs-header-icon"><MessagesSquare :size="16" /></span>
       <span class="bs-header-title">{{ t('chat.messageList.conversationIndexTitle') }}</span>
-      <span class="panel-count">{{ messages.length }}</span>
+      <span class="panel-count">{{ isSearching ? `${filteredMessages.length}/${messages.length}` : messages.length }}</span>
     </template>
     <LoadingIndicator v-if="loading" size="md" :label="t('chat.messageList.loadingMore')" />
     <LoadingIndicator v-else-if="jumping" size="md" :label="t('chat.messageList.loadingMore')" />
@@ -15,34 +15,52 @@
       <span class="panel-empty-hint">{{ t('chat.messageList.noUserMessagesHint') }}</span>
     </div>
     <div v-else class="panel-content">
-      <div class="panel-list" ref="listRef">
-        <div
-          v-for="(msg, idx) in messages"
-          :key="msg.id || idx"
-          class="msg-item"
-          :class="{ active: msg.id === activeId, 'msg-item-active': listNav.activeIndex.value === idx }"
-          :aria-current="msg.id === activeId || undefined"
-          tabindex="0"
-          role="button"
-          @click="$emit('select', msg)"
-          @keydown.enter="$emit('select', msg)"
-        >
-          <span class="msg-node">
-            <span class="msg-index">{{ idx + 1 }}</span>
-          </span>
-          <div class="msg-body">
-            <span class="msg-text">{{ truncateText(msg) }}</span>
-            <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
+      <div class="msg-index-search-row">
+        <SearchInput
+          ref="searchInputRef"
+          v-model="searchQuery"
+          :placeholder="t('chat.messageList.conversationIndexSearch')"
+          @enter="listNav.confirm"
+          @down="listNav.down"
+          @up="listNav.up"
+        />
+      </div>
+      <div v-if="isSearching && filteredMessages.length === 0" class="panel-empty">
+        <span class="panel-empty-icon-wrap">
+          <MessagesSquare :size="26" class="panel-empty-icon" />
+        </span>
+        <span class="panel-empty-text">{{ t('chat.messageList.conversationIndexNoResults') }}</span>
+      </div>
+      <template v-else>
+        <div class="panel-list" ref="listRef">
+          <div
+            v-for="(msg, idx) in filteredMessages"
+            :key="msg.id || idx"
+            class="msg-item"
+            :class="{ active: msg.id === activeId, 'msg-item-active': listNav.activeIndex.value === idx }"
+            :aria-current="msg.id === activeId || undefined"
+            tabindex="0"
+            role="button"
+            @click="$emit('select', msg)"
+            @keydown.enter="$emit('select', msg)"
+          >
+            <span class="msg-node">
+              <span class="msg-index">{{ msgIndex(msg) }}</span>
+            </span>
+            <div class="msg-body">
+              <span class="msg-text" v-html="rowHighlight(msg)"></span>
+              <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
+            </div>
+            <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
+              <Split :size="14" />
+            </button>
           </div>
-          <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
-            <Split :size="14" />
-          </button>
         </div>
-      </div>
-      <div class="panel-hint">
-        <MousePointerClick :size="13" />
-        <span>{{ t('chat.messageList.conversationIndexDesc') }}</span>
-      </div>
+        <div class="panel-hint">
+          <MousePointerClick :size="13" />
+          <span>{{ t('chat.messageList.conversationIndexDesc') }}</span>
+        </div>
+      </template>
     </div>
   </BottomSheet>
 </template>
@@ -50,13 +68,15 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { MessagesSquare, Split, MousePointerClick } from 'lucide-vue-next'
-import { formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { highlightText } from '@/utils/searchUtils'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { ref, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 
 const { t } = useI18n()
 
@@ -71,15 +91,44 @@ const props = defineProps({
 const emit = defineEmits(['close', 'select', 'fork'])
 
 const listRef = ref(null)
+const searchInputRef = ref(null)
+let focusTimer = null
+
+const searchQuery = ref('')
+const isSearching = computed(() => searchQuery.value.trim().length > 0)
+
+const filteredMessages = computed(() => {
+  const q = searchQuery.value.trim()
+  if (!q) return props.messages
+  const attachmentLabel = t('chat.messageList.userMsgIndexAttachment')
+  return props.messages.filter(m => matchUserMsg(m, q, attachmentLabel))
+})
+
+// Full-list ordinal per message object, so the index badge keeps the message's
+// original conversation number while the list is filtered.
+const msgOrdinal = computed(() => {
+  const map = new Map()
+  props.messages.forEach((m, i) => map.set(m, i))
+  return map
+})
+
+function msgIndex(msg) {
+  return (msgOrdinal.value.get(msg) ?? 0) + 1
+}
 
 function truncateText(msg) {
   return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
 
+/** Row display text with the active query's matches wrapped in <mark>. */
+function rowHighlight(msg) {
+  return highlightText(truncateText(msg), searchQuery.value)
+}
+
 // ── Keyboard ↑/↓ + Enter navigation over the message index ──
 const listNav = useListNav({
-  getCount: () => props.messages.length,
-  onConfirm: (idx) => emit('select', props.messages[idx]),
+  getCount: () => filteredMessages.value.length,
+  onConfirm: (idx) => emit('select', filteredMessages.value[idx]),
   onActiveChange: scrollActiveIntoView,
 })
 // Document-level keys so navigation works regardless of where focus is inside the drawer
@@ -93,7 +142,30 @@ function scrollActiveIntoView(index) {
   }
 }
 
-watch(() => props.messages, () => listNav.reset())
+watch(filteredMessages, () => {
+  listNav.reset()
+  // A filter change can shorten the list dramatically; snap back to the top so
+  // the first result (and any highlight) is visible instead of clamped below.
+  if (listRef.value) listRef.value.scrollTop = 0
+})
+
+// Reset the search query when the underlying messages change (e.g. switching
+// sessions swaps the whole list) or when the drawer reopens, so a stale query
+// never hides the freshly shown list.
+watch(() => props.messages, () => {
+  searchQuery.value = ''
+  listNav.reset()
+})
+watch(() => props.open, (val) => {
+  searchQuery.value = ''
+  listNav.reset()
+  clearTimeout(focusTimer)
+  if (val) {
+    // Wait for the BottomSheet slide-up animation before focusing, so the
+    // search box is ready for immediate typing (matches SessionSearchDrawer).
+    focusTimer = setTimeout(() => searchInputRef.value?.focus(), 300)
+  }
+})
 
 // Scroll the active message into view when the drawer opens.
 // Must wait for loading/jumping to finish so .panel-list is rendered (listRef is non-null).
@@ -105,6 +177,11 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
   if (activeEl) {
     activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }
+})
+
+onUnmounted(() => {
+  clearTimeout(focusTimer)
+  focusTimer = null
 })
 </script>
 
@@ -120,6 +197,19 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
   border-radius: 10px;
   padding: 1px 8px;
   line-height: 1.5;
+}
+
+/* ── Search row (below header, above the list) ── */
+.msg-index-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 4px;
+  flex-shrink: 0;
+}
+
+.msg-index-search-row :deep(.search-pill) {
+  flex: 1;
 }
 
 /* ── List ── */
@@ -312,6 +402,13 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
   white-space: pre-wrap;
 }
 
+.msg-text :deep(mark) {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .msg-time {
   display: inline-flex;
   align-items: center;
@@ -383,5 +480,14 @@ watch([() => props.open, () => props.loading, () => props.jumping], async ([isOp
 
 .panel-hint svg {
   opacity: 0.7;
+}
+</style>
+
+<style>
+/* Dark theme override — non-scoped for the [data-theme] selector. Softer mark
+   fill keeps highlighted query text readable on dark backgrounds. */
+[data-theme-base="dark"] .msg-text mark {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
+  color: inherit;
 }
 </style>

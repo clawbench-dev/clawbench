@@ -541,6 +541,24 @@ func (m *ACPConnManager) CloseConn(clawbenchSID string) {
 	}
 }
 
+// RemoveConn removes the connection for the given ClawBench session ID from the
+// pool and returns it WITHOUT closing it. The caller owns the returned
+// connection and must call conn.Close() (or close()) to reap the agent process —
+// typically from a goroutine, since close() blocks on cmd.Wait(). Removing the
+// map entry synchronously first closes the "rewind then immediately re-send"
+// race where GetOrCreateConn would otherwise reuse the stale conn (whose acpSID
+// still points at the old transcript) before the goroutine close ran.
+func (m *ACPConnManager) RemoveConn(clawbenchSID string) *ACPConn {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	conn, ok := m.conns[clawbenchSID]
+	if !ok {
+		return nil
+	}
+	delete(m.conns, clawbenchSID)
+	return conn
+}
+
 // DeleteSession best-effort tells the ACP agent to delete the session, then
 // closes the connection. Used when a ClawBench session is permanently deleted.
 // Failures are logged but not propagated — session deletion on the agent side

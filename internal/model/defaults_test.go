@@ -166,6 +166,15 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.RAG.SearchPoolSize != 20 {
 		t.Errorf("RAG.SearchPoolSize = %d, want 20", cfg.RAG.SearchPoolSize)
 	}
+	if cfg.Fonts.Dir != filepath.Join(tmpDir, ".clawbench", "fonts") {
+		t.Errorf("Fonts.Dir = %q, want %q", cfg.Fonts.Dir, filepath.Join(tmpDir, ".clawbench", "fonts"))
+	}
+	if cfg.Appearance.PanelOpacity != 0.85 {
+		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
+	}
+	if cfg.Appearance.WallpaperFile != "" {
+		t.Errorf("Appearance.WallpaperFile = %q, want empty (no wallpaper set)", cfg.Appearance.WallpaperFile)
+	}
 }
 
 func TestApplyDefaultsPartialConfig(t *testing.T) {
@@ -204,6 +213,27 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Appearance.PanelOpacity = 0.7
+	cfg.Appearance.WallpaperFile = "background.png"
+
+	ApplyDefaults(&cfg, map[string]bool{
+		"appearance":                true,
+		"appearance.panel_opacity":  true,
+		"appearance.wallpaper_file": true,
+	})
+
+	if cfg.Appearance.PanelOpacity != 0.7 {
+		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
+	}
+	if cfg.Appearance.WallpaperFile != "background.png" {
+		t.Errorf("Appearance.WallpaperFile = %q, want %q (explicitly set)", cfg.Appearance.WallpaperFile, "background.png")
+	}
+}
+
 func TestApplyDefaultsBoolPresencePortForwardEnabledFalse(t *testing.T) {
 	cfg := Config{}
 	presence := map[string]bool{
@@ -216,6 +246,21 @@ func TestApplyDefaultsBoolPresencePortForwardEnabledFalse(t *testing.T) {
 
 	if cfg.PortForward.Enabled {
 		t.Error("PortForward.Enabled should stay false when explicitly set to false")
+	}
+}
+
+func TestApplyDefaultsFontsDirPreserved(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Fonts.Dir = "/custom/font-dir"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Fonts.Dir != "/custom/font-dir" {
+		t.Errorf("Fonts.Dir = %q, want explicitly-set %q", cfg.Fonts.Dir, "/custom/font-dir")
+	}
+	if cfg.ResolveFontsDir() != "/custom/font-dir" {
+		t.Errorf("ResolveFontsDir() = %q, want %q", cfg.ResolveFontsDir(), "/custom/font-dir")
 	}
 }
 

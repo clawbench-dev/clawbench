@@ -1,6 +1,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
+import { flashElement } from '@/utils/domFlash'
 import { formatUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 /**
@@ -20,8 +21,15 @@ export function useUserMsgIndex(options: {
    *  Jumping to an older message must set this false so streaming auto-follow
    *  doesn't snap the view back down. */
   setAtBottom: (val: boolean) => void
+  /** How to highlight the jumped-to message. Defaults to an immediate flash;
+   *  the chat list injects a queue that defers the flash until its smooth
+   *  scroll settles, so a long-distance jump still shows the full animation. */
+  highlightMessage?: (el: Element) => void
 }) {
   const { t } = useI18n()
+
+  const doHighlight = options.highlightMessage
+    ?? ((el: Element) => flashElement(el, { className: 'chat-message-highlight' }))
 
   const hasUserMessages = computed(() => options.getMessages().some(m => m.role === 'user'))
   const userMsgIndexList = ref<Record<string, unknown>[]>([])
@@ -67,8 +75,7 @@ export function useUserMsgIndex(options: {
   }
 
   function highlightMessage(el: Element) {
-    el.classList.add('chat-message-highlight')
-    setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)
+    doHighlight(el)
   }
 
   function _scrollAndHighlight(item: Element) {

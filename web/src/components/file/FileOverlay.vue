@@ -33,6 +33,7 @@
             @navigate-forward="emit('navigateForward')"
             @share-external="emit('shareExternal')"
             @share-link="emit('shareLink')"
+            @set-as-background="(path) => emit('setAsBackground', path)"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -110,6 +111,7 @@ const emit = defineEmits([
   'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
   'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
+  'setAsBackground',
 ])
 
 const contentRef = ref(null)

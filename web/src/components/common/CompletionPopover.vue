@@ -3,22 +3,18 @@
     <div
       v-if="active"
       class="completion-popover-backdrop"
+      :class="{ 'is-expanded': expanded }"
       @click.self="handleBackdropClick"
     >
       <Transition name="completion-popover-card" mode="out-in" appear>
-        <div :key="active.sessionId + active.kind" class="completion-popover">
+        <div :key="active.sessionId + active.kind" class="completion-popover" :class="{ 'is-expanded': expanded, 'summary-overflow': summaryOverflow }">
           <div class="completion-popover-header">
             <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-popover-icon" />
             <span class="completion-popover-title" :title="active.title">{{ active.title || '未命名会话' }}</span>
-            <span class="completion-popover-mark-read" role="button" :aria-label="gt('chat.popover.markRead')" :title="gt('chat.popover.markRead')" @click="handleMarkRead">
-              <Check :size="14" />
-            </span>
-            <span class="completion-popover-open" role="button" :aria-label="openLabel" :title="openLabel" @click="openSession">
-              <Search :size="15" />
-            </span>
           </div>
-          <div v-if="active.userMessage" class="completion-popover-meta completion-popover-meta-user">
+          <div v-if="active.userMessage || active.userHasFiles" class="completion-popover-meta completion-popover-meta-user">
             <div
+              v-if="active.userMessage"
               class="completion-popover-user-quote"
               :class="{ 'is-expanded': userMessageExpanded }"
               role="button"
@@ -28,9 +24,20 @@
               <MessageSquare :size="12" class="completion-popover-user-quote-icon" />
               <span class="completion-popover-user-quote-text">{{ active.userMessage }}</span>
             </div>
+            <span v-if="active.userHasFiles" class="completion-popover-attachment-chip">
+              <Paperclip :size="11" />
+              {{ gt('chat.popover.attachment') }}
+            </span>
           </div>
-          <div class="completion-popover-summary markdown-body" v-html="summaryHtml" @click="handleSummaryClick"></div>
-          <div class="completion-popover-input">
+          <div
+            ref="summaryEl"
+            class="completion-popover-summary markdown-body"
+            :class="expanded ? 'is-expanded-summary' : 'is-collapsed'"
+            :title="expanded ? undefined : gt('chat.popover.expand')"
+            v-html="summaryHtml"
+            @click="handleSummaryClick"
+          ></div>
+          <div v-show="expanded" class="completion-popover-input">
             <textarea
               ref="inputRef"
               v-model="inputText"
@@ -42,6 +49,16 @@
             />
             <button class="completion-popover-send" :class="{ disabled: !canSend }" @click="handleSend" :title="gt('chat.popover.send')" :aria-label="gt('chat.popover.send')">
               <Send :size="14" />
+            </button>
+          </div>
+          <div class="completion-popover-actions">
+            <button class="completion-popover-action-btn completion-popover-mark-read" type="button" :aria-label="gt('chat.popover.markRead')" @click="handleMarkRead">
+              <Check :size="14" />
+              <span class="completion-popover-action-label">{{ gt('chat.popover.markRead') }}</span>
+            </button>
+            <button class="completion-popover-action-btn completion-popover-open" type="button" :aria-label="openLabel" @click="openSession">
+              <Search :size="15" />
+              <span class="completion-popover-action-label">{{ openLabel }}</span>
             </button>
           </div>
           <div v-if="active.projectName" class="completion-popover-footer">
@@ -61,20 +78,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { Search, Send, Check, ExternalLink, MessageSquare } from 'lucide-vue-next'
+import { computed, ref, watch, nextTick } from 'vue'
+import { Search, Send, Check, ExternalLink, MessageSquare, Paperclip } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
+import { rewriteImageUrls, getThumbWidth } from '@/utils/chatRenderUtils'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
 import { gt } from '@/composables/useLocale'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useToast } from '@/composables/useToast'
 import { canSendInput } from '@/utils/quoteQuestionUtils'
+import { store } from '@/stores/app'
 
 const { active, dismiss, dismissOnBackdrop } = useCompletionPopover()
 const { getAgentBackend } = useAgents()
 const toast = useToast()
+const { isPC } = usePlatformDetect()
+
+// 展开态（近全屏可滚动 + 显示输入框/图片）。默认折叠（紧凑预览），
+// 点击摘要内容区展开。展开后不提供"收起"——回到折叠态无操作意义，
+// 用户通过 打开会话/标记已读/点空白 完成或离开。
+const expanded = ref(false)
+function expand(): void {
+    expanded.value = true
+    // 展开为全屏阅读态时同时展开用户消息引用块，确保用户能看全问题
+    userMessageExpanded.value = true
+}
+
+// 折叠态摘要是否"溢出"折叠高度（需要底部淡出渐变）。
+// 内容很短（不满折叠高度）时摘要完全可见、无裁剪，也就不需要淡出带与
+// actions 负 margin 抬升——否则 actions 的渐变背景会盖住原本就少的几行。
+// 用 DOM 实测：折叠态 summary 受 max-height 钳制，scrollHeight 超过
+// clientHeight 即表示内容被裁掉、底部应淡出提示可展开。
+const summaryEl = ref<HTMLElement | null>(null)
+const summaryOverflow = ref(false)
+function measureSummaryOverflow(): void {
+    const el = summaryEl.value
+    if (!el || expanded.value) {
+        summaryOverflow.value = false
+        return
+    }
+    summaryOverflow.value = el.scrollHeight > el.clientHeight + 1
+}
 
 const agentBackend = computed(() => {
     const agentId = active.value?.agentId
@@ -90,11 +137,25 @@ const inputPlaceholder = computed(() => active.value?.kind === 'task'
     ? gt('chat.popover.replyTask')
     : gt('chat.popover.replySession'))
 
-// 基础 Markdown 渲染（轻量路径：跳过路径/commit 注解与 KaTeX，与流式文本同款）
+// 摘要 Markdown：折叠与展开共用同一份完整渲染。折叠态靠 CSS 裁剪 + 隐藏
+// img（不滚动），展开态展示全部并可滚动。相对路径图片按会话归属项目解析：
+// 本项目会话用当前项目根，跨项目用其 projectPath，避免误按当前项目解析导致裂图。
+// 轻量渲染（skipEnhancements）跳过路径/commit 注解与 KaTeX，保留富文本与代码块
+// 表头；随后仅对图片做改写（缩略图 + lightbox 包装）。
 const summaryHtml = computed(() => {
-    const summary = active.value?.summary || ''
+    const item = active.value
+    const summary = item?.summary || ''
     if (!summary) return ''
-    return renderMarkdownHtml(summary, { skipEnhancements: true, skipKatex: true })
+    const base = renderMarkdownHtml(summary, { skipEnhancements: true, skipKatex: true })
+    const projectRoot = item?.projectPath || store.state.projectRoot
+    if (!projectRoot) return base
+    return rewriteImageUrls(base, projectRoot, getThumbWidth(isPC.value))
+})
+
+// 摘要 HTML 每次更新（会话切换 / 首次渲染）后补测一次溢出。image 折叠态
+// display:none 不影响高度；markdown 行高需等 v-html 落到 DOM 才能测得。
+watch(summaryHtml, () => {
+    void nextTick(() => measureSummaryOverflow())
 })
 
 // ── 快捷输入框 ──
@@ -110,11 +171,16 @@ function toggleUserMessage(): void {
     userMessageExpanded.value = !userMessageExpanded.value
 }
 
-// 弹窗切换时重置输入框（immediate：mount 时也重置一次）
+// 弹窗切换时重置输入框与展开态（immediate：mount 时也重置一次）
 watch(active, () => {
     inputText.value = ''
     sending.value = false
     userMessageExpanded.value = false
+    expanded.value = false
+    // 摘要随会话切换而变：等新摘要渲染完再测是否溢出折叠高度。
+    // immediate 时元素可能还没挂载，measure 内会跳过；等 DOM 就绪后靠
+    // 下方 summary 的 ref watch 补测。
+    void nextTick(() => measureSummaryOverflow())
 }, { immediate: true })
 
 // 点击 backdrop 空白处关闭（带最小停留时长防误触保护）
@@ -210,9 +276,23 @@ function openSession(): void {
     dismiss()
 }
 
-// 摘要内代码块复制/换行、表格操作等按钮点击不应触发任何导航/关闭
+// ── 摘要点击 ──
+// 命中交互元素（代码/表格按钮、lightbox、链接、播放器等）不放行到展开——
+// 这些按钮的点击由 handleCodeBlockClick / handleTableBlockClick / Lightbox
+// 全局监听自行处理；其余"空白/正文"点击：折叠态展开面板，展开态不动作。
+function isInteractiveTarget(target: EventTarget | null): boolean {
+    const el = (target as HTMLElement | null)?.closest?.(
+        '.code-block-copy-btn, .code-block-wrap-btn, .table-block-copy-btn, .table-block-wrap-btn, ' +
+        '.table-block-header-actions, .lightbox-img-wrap, .lightbox-expand-icon, .chat-audio-player, ' +
+        '.chat-video-player, a, button'
+    )
+    return !!el
+}
+
 function handleSummaryClick(event: MouseEvent): void {
     if (handleCodeBlockClick(event) || handleTableBlockClick(event)) return
+    if (isInteractiveTarget(event.target)) return
+    if (!expanded.value) expand()
 }
 </script>
 
@@ -228,6 +308,14 @@ function handleSummaryClick(event: MouseEvent): void {
     background: transparent;
 }
 
+/* 展开态：面板垂直居中、四周等距留边 —— 短内容自然高度居中，
+   长内容撑到留白处形成"几乎占满屏幕"的近全屏卡片 */
+.completion-popover-backdrop.is-expanded {
+    align-items: center;
+    padding: 16px;
+    padding-top: calc(16px + var(--header-safe-area-top, 0px));
+}
+
 .completion-popover {
     max-width: min(480px, 92vw);
     width: 100%;
@@ -240,6 +328,35 @@ function handleSummaryClick(event: MouseEvent): void {
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     overflow: hidden;
+}
+
+/* 展开态卡片：占满可用高度（由居中遮罩的 16px 四周留边约束），
+   内容区内部滚动 */
+.completion-popover.is-expanded {
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    /* 折叠 → 展开的布局切换（顶部小卡片 → 居中放大）由 flex 瞬时完成，
+       用一次淡入 + 轻微放大动画遮盖这次跳变，避免"生硬闪现"。
+       动画在 is-expanded 类加上时播放一次；展开无收起路径，不会重复触发。 */
+    animation: completion-popover-expand 0.22s ease-out;
+}
+
+@keyframes completion-popover-expand {
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .completion-popover.is-expanded {
+        animation: none;
+    }
 }
 
 /* PC 模式加宽通知栏，避免过窄难看 */
@@ -273,26 +390,6 @@ function handleSummaryClick(event: MouseEvent): void {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.completion-popover-open {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    color: #fff;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-    transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.completion-popover-open:hover {
-    opacity: 0.85;
-    transform: scale(1.05);
 }
 
 /* 元信息行（项目、用户消息）：小号、弱化，与正文形成层次 */
@@ -377,6 +474,30 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-meta-user {
     justify-content: flex-start;
     padding-left: 0;
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+/* 附件胶囊 chip：表示用户消息带附件，不泄漏具体文件。与文字引用块同行并存 */
+.completion-popover-attachment-chip {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 6px;
+    padding: 2px 9px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 500;
+    color: var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
+    border-radius: 999px;
+    user-select: none;
+}
+
+.completion-popover-meta-user .completion-popover-attachment-chip:first-child {
+    margin-left: 0;
 }
 
 .completion-popover-user-quote {
@@ -442,6 +563,89 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--text-secondary, var(--text-primary));
     word-break: break-word;
     padding-top: 2px;
+}
+
+/* ── 折叠态摘要：富文本预览按固定高度裁剪（不滚动），底部淡出渐变，
+   暗示下方还有更多内容。图片此态不展示（CSS 隐藏）。点击内容区展开。
+   底部留出淡出带，与下方按钮行重叠（负 margin）以省纵向空间。
+   关键：mask 用 mask-size 固定到 max-height（132px）的坐标空间并 top 对齐，
+   而非按内容实际高度百分比——否则短内容（一两行）时百分比渐变会把
+   大半内容也淡掉（表现为只露出半行）。
+
+   溢出判定交给 JS（summary-overflow class）：内容很短、不满折叠高度时
+   summary 完整可见、无裁剪，也就没有"淡出/按钮重叠"——此时不给 mask、
+   actions 也回落到正常文档流，避免折叠态 actions 的渐变背景盖住内容。 ── */
+.completion-popover-summary.markdown-body.is-collapsed {
+    max-height: 132px;
+    overflow-y: hidden;
+    position: relative;
+    cursor: pointer;
+}
+
+.completion-popover.summary-overflow .completion-popover-summary.markdown-body.is-collapsed {
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+    -webkit-mask-size: 100% 132px;
+    mask-size: 100% 132px;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: top center;
+    mask-position: top center;
+}
+
+.completion-popover-summary.is-collapsed img {
+    display: none;
+}
+
+/* ── 展开态摘要：卡片撑满时由内部滚动承接长内容（flex 布局见 .is-expanded 卡片） ── */
+.completion-popover.is-expanded .completion-popover-summary {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    max-height: none;
+}
+
+/* 输入框与 footer 在展开卡片列布局中不得随剩余高度伸缩 */
+.completion-popover.is-expanded .completion-popover-input,
+.completion-popover.is-expanded .completion-popover-footer {
+    flex: 0 0 auto;
+}
+
+/* 展开态下图片以实际渲染展示，容器需要有定位与 lightbox 悬停图标样式；
+   镜像 MarkdownPreview 的 lightbox-img-wrap 规则（img 由 v-html 注入，
+   非 scoped 才可命中） */
+.completion-popover-summary .lightbox-img-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.completion-popover-summary .lightbox-img-wrap .lightbox-expand-icon {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    cursor: pointer;
+    z-index: 2;
+    pointer-events: auto;
+}
+
+@media (hover: hover) {
+    .completion-popover-summary .lightbox-img-wrap:hover .lightbox-expand-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+}
+
+.completion-popover-summary .lightbox-img-wrap .lightbox-expand-icon::after {
+    content: '⤢';
+    font-size: 14px;
+    line-height: 1;
 }
 
 /* 有元信息行时，正文用分隔线+更大间距分层；
@@ -530,27 +734,77 @@ function handleSummaryClick(event: MouseEvent): void {
     cursor: not-allowed;
 }
 
-/* 标记已读按钮 — 与发送按钮同尺寸圆形，但用描边弱化，区别于主操作 */
-.completion-popover-mark-read {
+/* ── 底部动作按钮：标记已读 / 打开 —— 胶囊形（图标 + 文字） ──
+   标记已读：描边弱化次级样式；打开：accent 实底主操作 */
+.completion-popover-action-btn {
     flex-shrink: 0;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: 28px;
+    gap: 5px;
     height: 28px;
-    padding: 0;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.completion-popover-mark-read {
     background: transparent;
     color: var(--accent-color);
     border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
-    border-radius: 50%;
-    cursor: pointer;
-    transition: opacity 0.15s, background 0.15s;
 }
 
 @media (hover: hover) {
     .completion-popover-mark-read:hover {
         background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     }
+}
+
+.completion-popover-open {
+    background: var(--accent-color);
+    color: #fff;
+    border: none;
+}
+
+@media (hover: hover) {
+    .completion-popover-open:hover {
+        opacity: 0.88;
+    }
+}
+
+/* ── 底部动作行：标记已读 / 打开 按钮靠右，不属于标题栏 ── */
+.completion-popover-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.completion-popover.is-expanded .completion-popover-actions {
+    flex: 0 0 auto;
+}
+
+/* 折叠态：动作行用负 margin 抬入摘要底部淡出带，与渐变区重叠省纵向空间。
+   容器顶部用"透明→卡色"渐变承接摘要的 mask 淡出，避免生硬接缝；
+   按钮浮于渐变带内、卡片底角靠右。
+   仅在摘要确实溢出折叠高度（summary-overflow）时生效——内容很少时
+   actions 保持正常文档流排在摘要下方，避免渐变背景盖住原本就少的几行。 */
+.completion-popover.summary-overflow:not(.is-expanded) .completion-popover-actions {
+    position: relative;
+    margin-top: -34px;
+    padding-top: 16px;
+    background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary))) 55%
+    );
+    border-radius: 0 0 12px 12px;
 }
 
 /* Android 通知风格：卡片从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */

@@ -2444,3 +2444,253 @@ func TestServeConfig_Get_STT(t *testing.T) {
 	assert.Equal(t, float64(800), stt["chunk_ms"])
 	assert.Equal(t, "Ctrl+M", stt["shortcut_key"])
 }
+
+// --- fonts.dir: config response + PATCH plumbing ---
+
+func TestServeConfig_Get_FontsDir(t *testing.T) {
+	origDataDir := model.DataDir
+	model.DataDir = filepath.Join("/data", ".clawbench")
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	fonts, ok := resp["fonts"].(map[string]any)
+	require.True(t, ok, "response should contain fonts section")
+	// Unset config → resolved default <DataDir>/fonts is reported.
+	assert.Equal(t, filepath.Join(model.DataDir, "fonts"), fonts["dir"])
+}
+
+func TestServeConfig_Patch_FontsDir(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	defaultDir := filepath.Join(t.TempDir(), "default", "fonts")
+	customDir := filepath.Join(t.TempDir(), "custom", "fonts")
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = defaultDir
+	model.ConfigInstance = cfg
+
+	bodyJSON, err := json.Marshal(map[string]any{"fonts": map[string]any{"dir": customDir}})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(bodyJSON)))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, customDir, model.ConfigInstance.Fonts.Dir)
+
+	// fonts.dir is a hot-reload field — no restart needed, no cold fields.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool), "fonts.dir should not require restart")
+	changed, ok := resp["changed_cold_fields"].([]any)
+	assert.True(t, ok)
+	assert.Empty(t, changed)
+}
+
+func TestServeConfig_Patch_FontsDirEmptyResetsToDefault(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = "/custom/fonts"
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"dir":""}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	// Stored empty — runtime resolution falls back to the default dir.
+	assert.Equal(t, "", model.ConfigInstance.Fonts.Dir)
+	assert.Equal(t, filepath.Join(model.DataDir, "fonts"), model.ConfigInstance.ResolveFontsDir())
+}
+
+func TestServeConfig_Patch_FontsForbiddenNestedKey(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeConfig_Patch_FontsDirRelativeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Fonts.Dir = "/default/fonts"
+	model.ConfigInstance = cfg
+
+	body := `{"fonts":{"dir":"relative/fonts"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// Patch must not have been applied.
+	assert.Equal(t, "/default/fonts", model.ConfigInstance.Fonts.Dir)
+}
+
+// --- appearance (custom wallpaper): config response + PATCH plumbing ---
+
+func TestServeConfig_Get_Appearance(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	cfg.Appearance.PanelOpacity = 0.9
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	appearance, ok := resp["appearance"].(map[string]any)
+	require.True(t, ok, "response should contain appearance section")
+	assert.Equal(t, "background.png", appearance["wallpaper_file"])
+	assert.Equal(t, 0.9, appearance["panel_opacity"])
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacity(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	body := `{"appearance":{"panel_opacity":0.75}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0.75, model.ConfigInstance.Appearance.PanelOpacity)
+
+	// panel_opacity is a hot-reload field — no restart needed.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool))
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacityOutOfRangeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	// 0.5 is the new lower bound — anything below is rejected.
+	body := `{"appearance":{"panel_opacity":0.45}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0.85, model.ConfigInstance.Appearance.PanelOpacity, "out-of-range patch must not apply")
+}
+
+func TestServeConfig_Patch_AppearancePanelOpacityLowerBoundAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.PanelOpacity = 0.85
+	model.ConfigInstance = cfg
+
+	// The relaxed lower bound (0.5) must be accepted.
+	body := `{"appearance":{"panel_opacity":0.5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 0.5, model.ConfigInstance.Appearance.PanelOpacity)
+}
+
+func TestServeConfig_Patch_AppearanceWallpaperFileNonEmptyRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// Non-empty wallpaper_file is owned by the theme-background handler — a
+	// direct PATCH would be a path-traversal entry point for the GET endpoint.
+	body := `{"appearance":{"wallpaper_file":"background.png"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+}
+
+func TestServeConfig_Patch_AppearanceWallpaperFileClearAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	model.ConfigInstance = cfg
+
+	// Empty string = clear, allowed by PATCH (file cleanup is the DELETE
+	// endpoint's job; config clear alone is safe).
+	body := `{"appearance":{"wallpaper_file":""}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+}

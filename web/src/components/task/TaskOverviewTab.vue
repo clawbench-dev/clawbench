@@ -55,6 +55,9 @@
         <div v-show="!promptCollapsed" class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
       </div>
     </div>
+
+    <!-- Code link preview for annotated file paths in the task prompt -->
+    <CodeLinkPreview v-if="codeLinkPreview.enabled.value" :preview="codeLinkPreview" />
   </div>
 </template>
 
@@ -66,9 +69,11 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app.ts'
 import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/format'
 
@@ -101,6 +106,9 @@ const promptCollapsed = ref(true)
 const promptBodyRef = ref<HTMLElement | null>(null)
 const renderedPrompt = ref('')
 let promptRenderId = 0
+
+// Code link preview for annotated file paths in the prompt body.
+const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef })
 
 function copyId() {
   if (taskId.value) {
@@ -167,6 +175,11 @@ function handlePromptClick(event: MouseEvent) {
   // Table block header buttons (copy/wrap)
   if (handleTableBlockClick(event)) return
 
+  // Annotated *verified* file paths open the code link preview (same behaviour
+  // as chat messages). Only data-path-type="file" elements are intercepted —
+  // directories / unverified paths fall through to the handlers below.
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
   const target = event.target as HTMLElement | null
   // Handle commit-hash clicks
   const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
@@ -184,6 +197,7 @@ function handlePromptClick(event: MouseEvent) {
   if (wtBtn) {
     event.preventDefault()
     event.stopPropagation()
+    codeLinkPreview.close()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
     if (wtPath) {
       store.setProject(wtPath)
@@ -195,6 +209,7 @@ function handlePromptClick(event: MouseEvent) {
   if (btn) {
     event.preventDefault()
     event.stopPropagation()
+    codeLinkPreview.close()
     const filePath = btn.getAttribute('data-file-path')
     const lineStart = btn.getAttribute('data-line-start')
     const lineEnd = btn.getAttribute('data-line-end')

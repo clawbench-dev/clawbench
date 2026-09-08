@@ -48,11 +48,13 @@ describe('ChatMessageList — message jump flash is accent background (not borde
     expect(source).toContain('--msg-base-bg: var(--user-msg-color)')
     expect(source).toContain('--msg-base-bg: var(--bg-tertiary)')
     expect(source).toContain('color-mix(in srgb, var(--accent-color) 65%, var(--msg-base-bg))')
-    expect(source).toContain('animation: msg-highlight-flash 1.2s ease-out 1')
+    // The bubble flash follows the canonical flash timing (--flash-duration,
+    // kept in sync with domFlash.ts LINE_FLASH_MS).
+    expect(source).toContain('animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1')
     // The background only animates — the keyframes block contains no color:
     // property (only background-color), so text color never changes.
     const kfStart = source.indexOf('@keyframes msg-highlight-flash')
-    const kfEnd = source.indexOf('}', source.indexOf('color-mix(in srgb, var(--accent-color) 25%, var(--msg-base-bg))'))
+    const kfEnd = source.indexOf('}', source.indexOf('color-mix(in srgb, var(--accent-color) 35%, var(--msg-base-bg))'))
     const keyframes = source.slice(kfStart, kfEnd > -1 ? kfEnd + 1 : undefined)
     expect(keyframes).toContain('background-color')
     // `background-color:` contains the substring "color:", so match a standalone
@@ -60,10 +62,14 @@ describe('ChatMessageList — message jump flash is accent background (not borde
     expect(keyframes).not.toMatch(/(?:^|[;{])\s*color:/)
   })
 
-  it('keeps removing the highlight class after the animation window', async () => {
+  it('removes the highlight class through the shared domFlash helper', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain("setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)")
+    // The class removal is delegated to flashElement (domFlash) instead of an
+    // inline setTimeout — cleanup now survives environments where the CSS
+    // animation never fires (jsdom / reduced-motion).
+    expect(source).toContain("flashElement(el, { className: 'chat-message-highlight' })")
+    expect(source).toContain("import { flashElement } from '@/utils/domFlash'")
   })
 })
 
@@ -118,6 +124,15 @@ describe('ChatMessageList — ensure-content event pass-through', () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     expect(source).toContain("'ensure-content'")
+  })
+})
+
+describe('ChatMessageList — rewind event pass-through', () => {
+  it('re-emits rewind-from-message from ChatMessageItem and declares the emit', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toContain("@rewind-from-message=\"$emit('rewind-from-message', $event)\"")
+    expect(source).toContain("'rewind-from-message'")
   })
 })
 
@@ -547,7 +562,7 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     expect(source).toContain("import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'")
-    expect(source).toContain("import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'")
+    expect(source).toContain('import { useCodeLinkPreview, handleVerifiedFilePathClick } from')
   })
 
   it('instantiates useCodeLinkPreview with containerRef bound to messagesRef', async () => {
@@ -564,21 +579,10 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     expect(source).toContain(':preview="codeLinkPreview"')
   })
 
-  it('handles modifier click or touch tap for in-place code preview in handleChatClick', async () => {
+  it('delegates verified file-path clicks to the shared interceptor in handleChatClick', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain('if (codeLinkPreview.enabled.value)')
-    expect(source).toContain('codeLinkPreview.handleClick(event)')
-  })
-
-  it('only intercepts verified file paths so dirs/unverified fall through to original handlers', async () => {
-    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
-    const source = typeof mod.default === 'string' ? mod.default : ''
-    // Guard must exist so directories and not-yet-verified paths are NOT
-    // swallowed by the preview interceptor (they keep navigating as before).
-    expect(source).toContain("const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'")
-    expect(source).toContain('isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))')
-    expect(source).toContain('isVerifiedFile && isTouch && pathEl')
+    expect(source).toContain('if (handleVerifiedFilePathClick(event, codeLinkPreview)) return')
   })
 
   it('closes preview when clicking file-open button or double clicking', async () => {

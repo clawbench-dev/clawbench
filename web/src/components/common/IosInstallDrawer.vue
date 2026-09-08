@@ -21,7 +21,7 @@
       </div>
     </div>
     <template #footer>
-      <button class="ios-got-it-btn" @click="close">{{ t('pwa.gotIt') }}</button>
+      <button class="fbtn fbtn-primary ios-got-it-btn" @click="close">{{ t('pwa.gotIt') }}</button>
     </template>
   </BottomSheet>
 </template>
@@ -76,21 +76,8 @@ function close() {
   flex-shrink: 0;
 }
 
+/* Layout only — visuals come from the shared .fbtn pills. */
 .ios-got-it-btn {
   width: 100%;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 8px;
-  background: var(--accent-color);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .ios-got-it-btn:hover {
-    opacity: 0.9;
-  }
 }
 </style>

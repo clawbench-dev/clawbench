@@ -9,7 +9,7 @@ export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
 export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
-export const WIDE_SCREEN_DOCK_TABS = ['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'settings']
+export const WIDE_SCREEN_DOCK_TABS = ['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'stats', 'settings']
 /**
  * Tabs that are always rendered in the wide-screen vertical dock, in order.
  * The wide dock shows every tab inline — no overflow/popup — so this is the

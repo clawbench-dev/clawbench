@@ -448,6 +448,11 @@ func isKnownContentWrapper(v any) bool {
 // JSON gracefully instead of recursing unboundedly.
 const maxUnwrapDepth = 8
 
+// jsonNull is the string form of the JSON null literal. Columns holding a JSON
+// blob written by json.Marshal of a nil slice render as "null"; callers compare
+// against this constant to treat that as an absent/empty value.
+const jsonNull = "null"
+
 // extractTextFromValue recursively walks decoded JSON and pulls out the first
 // meaningful text it can find, unwrapping known wrapper shapes:
 //
@@ -1820,6 +1825,15 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	if sessionID == "" || len(patches) == 0 {
 		return
 	}
+	// usage is a partial update, not a full snapshot: an agent notification
+	// carrying only used=0/size=0/cost must never regress a previously-known
+	// context window persisted in the DB. Merge it against the stored usage
+	// (read-modify-write) before applying the json_set chain — mirror of the
+	// in-memory MergeUsageState in internal/ai. Otherwise a naked trailing
+	// usage_update wipes context_state.usage to {used:0,size:0} forever.
+	if rawUsage, ok := patches["usage"]; ok {
+		patches = mergeUsagePatchIntoDB(sessionID, patches, rawUsage)
+	}
 	// Build json_set chain: json_set(context_state, '$.mode', json('...'), '$.usage', json('...'))
 	// Start from '{}' if column is empty, so json_set works on a valid JSON object.
 	query := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END"
@@ -1833,6 +1847,50 @@ func PatchContextStateMerge(sessionID string, patches map[string]string) {
 	if _, err := WriteExec(query, args...); err != nil {
 		slog.Warn("patchContextStateMerge: write failed", "err", err, "sid", sessionID)
 	}
+}
+
+// mergeUsagePatchIntoDB merges an incoming usage patch against the usage
+// currently stored in chat_sessions.context_state so a partial (naked
+// used=0/size=0) notification never regresses a known context window. When the
+// stored state is absent or the incoming patch is strictly more informative,
+// the patch is kept as-is. Returns the (possibly updated) patch map.
+func mergeUsagePatchIntoDB(sessionID string, patches map[string]string, rawUsage string) map[string]string {
+	var incoming ai.UsageState
+	if err := json.Unmarshal([]byte(rawUsage), &incoming); err != nil {
+		slog.Warn("mergeUsagePatch: unmarshal incoming usage failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	var stored ai.UsageState
+	storedRaw := ""
+	// NOTE on the read-modify-write window: this non-atomic SELECT→UPDATE is
+	// safe only because each session's usage writes flow through a single
+	// SessionExecutor flush loop (single writer per session); concurrent usage
+	// writers on the same session would need a lock here.
+	if err := dbRead.QueryRow("SELECT json_extract(context_state, '$.usage') FROM chat_sessions WHERE id = ?", sessionID).Scan(&storedRaw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Session row does not exist (deleted/never created) — nothing to
+			// merge or protect; the subsequent UPDATE is a harmless no-op.
+			return patches
+		}
+		slog.Warn("mergeUsagePatch: read stored usage failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	if storedRaw == "" || storedRaw == jsonNull {
+		// No prior state — nothing to protect, write the incoming patch as-is.
+		return patches
+	}
+	if err := json.Unmarshal([]byte(storedRaw), &stored); err != nil {
+		slog.Warn("mergeUsagePatch: unmarshal stored usage failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	merged := ai.MergeUsageState(&stored, &incoming)
+	mergedJSON, err := json.Marshal(merged)
+	if err != nil {
+		slog.Warn("mergeUsagePatch: marshal merged usage failed", "err", err, "sid", sessionID)
+		return patches
+	}
+	patches["usage"] = string(mergedJSON)
+	return patches
 }
 
 // GetContextState reads and parses the context_state JSON for a session.
@@ -2386,7 +2444,7 @@ func summarizeContentForView(content string) string {
 		return ""
 	}
 	out := map[string]any{"blocks": []any{}}
-	if len(parsed.Metadata) > 0 && string(parsed.Metadata) != "null" {
+	if len(parsed.Metadata) > 0 && string(parsed.Metadata) != jsonNull {
 		out["metadata"] = parsed.Metadata
 	}
 	if parsed.Cancelled {

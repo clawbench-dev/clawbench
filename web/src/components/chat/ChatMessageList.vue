@@ -73,6 +73,7 @@
       :staticBlockCache="staticBlockCache"
       :active="active"
       :isLastAssistant="isLastAssistant(msg, i)"
+      :isLastMessage="i === messages.length - 1"
       @toggle-tool="$emit('toggle-tool', $event)"
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
@@ -87,6 +88,7 @@
 
       @remove-pending="$emit('remove-pending', $event)"
       @fork-from-message="$emit('fork-from-message', $event)"
+      @rewind-from-message="$emit('rewind-from-message', $event)"
     />
     </div>
   </div>
@@ -156,7 +158,7 @@ import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
-import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader.ts'
@@ -170,6 +172,7 @@ import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { isUserScrolling, shouldPin, SCROLL_STOP_MS, NEAR_BOTTOM_PX, RESUME_FOLLOW_PX, updateUserLeftBottom } from '@/utils/scrollState'
 import { appLog } from '@/utils/appLog'
 import { isLastAssistantMessage } from '@/utils/chatSessionUtils'
+import { flashElement } from '@/utils/domFlash'
 
 const { t } = useI18n()
 
@@ -194,7 +197,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
@@ -315,21 +318,7 @@ async function handleChatClick(event) {
   // not yet been verified (data-path-type unset) fall through to the original
   // handlers below (anchor navigation / open button), preserving the pre-feature
   // behavior for those cases.
-  if (codeLinkPreview.enabled.value) {
-    const isTouch = codeLinkPreview.isTouchDevice()
-    const isModifier = !isTouch && (event.ctrlKey || event.metaKey)
-    const linkOrBtn = (event.target).closest('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
-    const pathEl = (event.target).closest('.chat-file-path[data-file-path]')
-    const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
-    if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
-      codeLinkPreview.handleClick(event)
-      return
-    }
-    if (isVerifiedFile && isTouch && pathEl) {
-      codeLinkPreview.handleClick(event)
-      return
-    }
-  }
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
 
   // 3. Worktree action button — show modal with "Switch" or "Open directory"
   const wtBtn = (event.target).closest('.chat-worktree-btn')
@@ -486,6 +475,10 @@ let userTouching = false
 const scrollFrameScheduler = new StreamFrameScheduler()
 
 function handleScroll() {
+  // A scroll event during a queued message jump means the smooth scroll is
+  // actually moving — the flash must wait for onScrollStopped instead of the
+  // no-scroll fallback.
+  if (pendingMsgHighlight) sawScrollWhilePending = true
   if (!scrollFrameScheduler.has('tick')) {
     scrollFrameScheduler.schedule('tick', () => { scrollTick.value++ })
   }
@@ -676,6 +669,9 @@ function onScrollTouchEnd() {
  * to the bottom.
  */
 function onScrollStopped() {
+  // The scroll stream has settled — flash any message queued by a jump now
+  // that its target is stationary (full animation visible to the user).
+  flushMessageHighlight()
   // Any scroll stream stopped (user drag/wheel OR programmatic smooth scroll):
   // release programmatic ownership first so the next scroll events are read as
   // user scrolls again. The input flags and ownership are reset below.
@@ -899,9 +895,44 @@ function scrollToTop() {
   // Ownership released by onScrollStopped when the smooth scroll settles.
 }
 
+// ── Message jump highlight: flash AFTER the smooth scroll settles ────────────
+// Jumping to a message smooth-scrolls the container, which can take hundreds of
+// ms for far-away messages. Firing the flash immediately on jump would play the
+// whole 0.7s animation while the target is still travelling — by the time the
+// scroll lands the user sees nothing. Instead the target is queued and flashed
+// once the programmatic scroll stops (onScrollStopped). A fallback covers the
+// "target already visible → smooth scroll produces no events" case: if no
+// scroll event was seen during the queue window, flash right away.
+let pendingMsgHighlight = null
+let pendingMsgHighlightTimer = null
+let sawScrollWhilePending = false
+
+function flushMessageHighlight() {
+  clearTimeout(pendingMsgHighlightTimer)
+  pendingMsgHighlightTimer = null
+  const el = pendingMsgHighlight
+  pendingMsgHighlight = null
+  if (el && el.isConnected) flashElement(el, { className: 'chat-message-highlight' })
+}
+
+function queueMessageHighlight(el) {
+  if (!el) return
+  // A newer jump supersedes the previous pending target (no double flash).
+  clearTimeout(pendingMsgHighlightTimer)
+  pendingMsgHighlight = el
+  sawScrollWhilePending = false
+  pendingMsgHighlightTimer = setTimeout(() => {
+    // Fallback fired with no scroll-stop yet. If the smooth scroll never
+    // emitted events (target already in view / container cannot scroll), the
+    // element is settled — flash it. If scrolling is visibly in progress,
+    // leave it to onScrollStopped (which always follows a scroll stream).
+    if (!sawScrollWhilePending) flushMessageHighlight()
+  }, SCROLL_STOP_MS + 50)
+}
+
+// Component-internal entry used by FAB prev/next jumps (scrollAndHighlight).
 function highlightMessage(el) {
-  el.classList.add('chat-message-highlight')
-  setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)
+  queueMessageHighlight(el)
 }
 
 // Fallback timeout so programmatic ownership never gets stuck: if a smooth
@@ -1020,6 +1051,8 @@ const {
   emitLoadMore: () => emit('load-more'),
   getMessagesRef: () => messagesRef.value,
   hideScrollFab,
+  // Defer the flash until the smooth scroll settles (see queueMessageHighlight).
+  highlightMessage: (el) => queueMessageHighlight(el),
   setProgrammaticScrolling: (val) => { setProgrammatic(val) },
   setAtBottom: (val) => {
     isAtBottom.value = val
@@ -1544,22 +1577,37 @@ defineExpose({
    the text, so user-bubble white text and assistant text never change). Each
    bubble role mixes the accent over its own resting theme background
    (user: --user-msg-color / assistant: --bg-tertiary); the animation pulses
-   to brighter tints and returns to the resting background (no forwards fill,
-   class removal restores the base rule). Timing mirrors the canonical
-   `line-flash` (assets/code-viewer.css): 1.2s, two diminishing blinks. */
+   once and fades out, then the class removal restores the base rule.
+   Timing mirrors the canonical `line-flash` (assets/code-viewer.css) via
+   --flash-duration (0.7s) — keep in sync with LINE_FLASH_MS in
+   web/src/utils/domFlash.ts. */
 :deep(.chat-message.user.chat-message-highlight) {
   --msg-base-bg: var(--user-msg-color);
-  animation: msg-highlight-flash 1.2s ease-out 1;
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
 :deep(.chat-message.assistant.chat-message-highlight) {
   --msg-base-bg: var(--bg-tertiary);
-  animation: msg-highlight-flash 1.2s ease-out 1;
+  animation: msg-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
 }
 
 @keyframes msg-highlight-flash {
-  0%, 20%, 40%, 60%, 80%, 100% { background-color: var(--msg-base-bg); }
-  10%, 30% { background-color: color-mix(in srgb, var(--accent-color) 65%, var(--msg-base-bg)); }
-  50%, 70% { background-color: color-mix(in srgb, var(--accent-color) 45%, var(--msg-base-bg)); }
-  90% { background-color: color-mix(in srgb, var(--accent-color) 25%, var(--msg-base-bg)); }
+  0%, 100% { background-color: var(--msg-base-bg); }
+  14%      { background-color: color-mix(in srgb, var(--accent-color) 65%, var(--msg-base-bg)); }
+  45%      { background-color: color-mix(in srgb, var(--accent-color) 35%, var(--msg-base-bg)); }
+}
+
+/* Reduced motion: no animation — show a brief static accent tint instead.
+   The JS side (flashElement in domFlash) removes the class after
+   REDUCED_FLASH_MS so the highlight never sticks. Each role mixes the accent
+   over its own resting bubble background. */
+@media (prefers-reduced-motion: reduce) {
+  :deep(.chat-message.user.chat-message-highlight) {
+    animation: none !important;
+    background-color: color-mix(in srgb, var(--accent-color) 65%, var(--user-msg-color));
+  }
+  :deep(.chat-message.assistant.chat-message-highlight) {
+    animation: none !important;
+    background-color: color-mix(in srgb, var(--accent-color) 35%, var(--bg-tertiary));
+  }
 }
 </style>

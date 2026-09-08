@@ -334,7 +334,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Root --help handler
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
-		fmt.Println("ClawBench - Mobile-first AI workstation")
+		fmt.Println("ClawBench - AI Workbench, United Across Devices")
 		fmt.Println()
 		fmt.Println("Usage: clawbench <command> [options]")
 		fmt.Println()
@@ -891,6 +891,18 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			return 0, nil
 		}
 		return rag.GlobalStore.DeleteChunksBySessionIDs(sessionIDs)
+	})
+
+	// Set RAG chunk purge callback for in-place history truncation (rewind):
+	// removes chunks whose chat_history rows were deleted so stale search hits
+	// never surface. A range predicate (session_id + message_id > anchor) is used
+	// so chunks the RAG indexer inserted concurrently between the truncation and
+	// this cleanup are covered too.
+	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
+		if rag.GlobalStore == nil {
+			return 0, nil
+		}
+		return rag.GlobalStore.DeleteChunksBySessionAfterMessage(sessionID, anchorID)
 	})
 
 	// Start session archive cleanup worker

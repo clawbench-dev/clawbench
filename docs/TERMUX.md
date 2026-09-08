@@ -1,11 +1,12 @@
-# 在 Termux（Android）上运行 ClawBench
+# 在 Termux（Android）上完全运行 ClawBench
 
-ClawBench 可以运行在 Android 手机/平板的 **Termux** 终端模拟器里。Termux 提供完整的 Linux 用户态，ClawBench 的 Go 后端（`linux-arm64` 纯 Go 二进制，无 CGO）可以直接执行，配合内置的 Web 前端，手机上就能获得一个完整的 AI 工作站。
+ClawBench 可以完全运行在 Android 手机/平板的 **Termux** 终端模拟器里——无需额外 PC 或服务器。Termux 提供完整的 Linux 用户态，ClawBench 的 Go 后端（`linux-arm64` 纯 Go 二进制，无 CGO）可以直接执行，配合内置的 Web 前端与安装好的 AI CLI 工具，手机上就能获得一个完整独立运行的多端 AI 工作台。
 
-> **English Summary**: ClawBench can run inside Termux on Android. Termux provides a full
-> Linux userland, so the pure-Go `linux-arm64` backend runs natively. Since Termux reports
-> `process.platform === "android"` to Node, the npm launcher maps `android` → `linux` and
-> auto-installs the `linux-arm64` platform package — no manual steps required.
+> **English Summary**: ClawBench can run completely inside Termux on Android — no separate PC
+> or server needed. Termux provides a full Linux userland, so the pure-Go `linux-arm64`
+> backend, the built-in web frontend, and your AI CLI tools all run locally on the phone.
+> Since Termux reports `process.platform === "android"` to Node, the npm launcher maps
+> `android` → `linux` and auto-installs the `linux-arm64` platform package — no manual steps required.
 
 ## 前置条件
 

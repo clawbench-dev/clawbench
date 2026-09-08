@@ -331,6 +331,8 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
+  wallpaperBlur: 0,
+  wallpaperEdgeFade: false,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -438,6 +440,8 @@ const serverDefaults: Record<string, unknown> = {
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',
+  'appearance.wallpaper_file': '',
+  'appearance.panel_opacity': 0.85,
 }
 
 // ── Agent preference helpers ──────────────────────────────

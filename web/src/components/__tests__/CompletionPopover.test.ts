@@ -88,6 +88,48 @@ describe('CompletionPopover', () => {
         expect(styles.whiteSpace).toBe('nowrap')
     })
 
+    it('shows an attachment chip alongside the user message text when the message has files', () => {
+        mockState.active = ref(makeItem({ userMessage: '看图', userHasFiles: true }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        const quote = row.querySelector('.completion-popover-user-quote')!
+        const chip = row.querySelector('.completion-popover-attachment-chip')!
+        expect(quote).toBeTruthy()
+        expect(chip).toBeTruthy()
+        // chip 文案 + 图标（当前测试环境默认 en：Attachment）
+        expect(chip.textContent).toContain('Attachment')
+        expect(chip.querySelector('svg')).toBeTruthy()
+    })
+
+    it('shows the attachment chip alone for an attachment-only user message (no text)', () => {
+        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: true }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        const chip = row.querySelector('.completion-popover-attachment-chip')!
+        expect(chip).toBeTruthy()
+        // 无文字时不渲染引用块，只保留附件 chip
+        expect(row.querySelector('.completion-popover-user-quote')).toBeFalsy()
+        expect(chip.textContent).toContain('Attachment')
+    })
+
+    it('hides the attachment chip when the user message has no files', () => {
+        mockState.active = ref(makeItem({ userMessage: '没有附件', userHasFiles: false }))
+        mountPopover()
+
+        const row = document.querySelector('.completion-popover-meta-user')!
+        expect(row.querySelector('.completion-popover-user-quote')).toBeTruthy()
+        expect(row.querySelector('.completion-popover-attachment-chip')).toBeFalsy()
+    })
+
+    it('does not render the user message row when neither text nor files present', () => {
+        mockState.active = ref(makeItem({ userMessage: '', userHasFiles: false }))
+        mountPopover()
+
+        expect(document.querySelector('.completion-popover-meta-user')).toBeFalsy()
+    })
+
     it('styles the user message as a quote block (left accent border, no radius, tinted bg)', () => {
         mockState.active = ref(makeItem({ userMessage: '请帮我修复登录 bug' }))
         mountPopover()
@@ -347,16 +389,229 @@ describe('CompletionPopover', () => {
         expect(el.querySelector('strong')!.textContent).toBe('加粗摘要')
     })
 
-    it('shows the full summary without line clamping, scrolling when overflow', () => {
+    it('collapses by default: no scroll (clipped preview) and no visible input', () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
         const el = document.querySelector('.completion-popover-summary')!
         const styles = window.getComputedStyle(el)
-        // Full content visible — no -webkit-box line clamp
+        // 默认折叠态：富文本预览固定高度裁剪、不滚动
+        expect(el.classList.contains('is-collapsed')).toBe(true)
+        expect(styles.overflowY).toBe('hidden')
+        expect(styles.maxHeight).toBe('132px')
+        // 无 -webkit-box line clamp（用 max-height + 淡出裁剪，而非文字行截断）
         expect(styles.webkitLineClamp).not.toBe('10')
-        // Internal scroll for overflow
+        // 输入框隐藏（v-show）
+        const input = document.querySelector('.completion-popover-input')!
+        expect(window.getComputedStyle(input).display).toBe('none')
+        // 不存在收起按钮（一旦展开不回折叠）
+        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
+        // 折叠态按钮行的负 margin 抬升仅作用于摘要溢出（summary-overflow）场景；
+        // 内容很少时 actions 保持在摘要下方的正常文档流，避免盖住内容。
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const overlapRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow:not(.is-expanded) .completion-popover-actions')).join('\n')
+        expect(overlapRule).toContain('margin-top: -34px')
+        // 规则必须限定在 summary-overflow 下：无前缀的折叠态 actions 不抬升
+        const plainRule = cssText.split('\n').filter((line) => line.includes('.completion-popover:not(.is-expanded) .completion-popover-actions')).join('\n')
+        expect(plainRule).not.toContain('margin-top: -34px')
+    })
+
+    it('collapses without a fade mask when the summary is short (no overflow)', async () => {
+        mockState.active = ref(makeItem({ summary: '很短的一行' }))
+        mountPopover()
+
+        // jsdom 中 scrollHeight/clientHeight 均为 0：内容不满折叠高度 → 不溢出
+        const card = document.querySelector('.completion-popover')!
+        expect(card.classList.contains('summary-overflow')).toBe(false)
+        // 折叠摘要基础规则保留裁剪（max-height + overflow hidden）
+        const el = document.querySelector('.completion-popover-summary.is-collapsed')!
+        expect(window.getComputedStyle(el).maxHeight).toBe('132px')
+        expect(window.getComputedStyle(el).overflowY).toBe('hidden')
+        // mask 淡出与 actions 抬升都由 .summary-overflow 门控，短内容不触发
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const maskRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow .completion-popover-summary.markdown-body.is-collapsed')).join('\n')
+        expect(maskRule).toContain('mask-size: 100% 132px')
+        // 短内容不应用负 margin 抬升（actions 自然排在摘要下方）
+        const actions = document.querySelector('.completion-popover-actions')!
+        expect(window.getComputedStyle(actions).marginTop).toBe('6px')
+    })
+
+    it('adds the overflow mask and actions overlap once the collapsed summary actually overflows', async () => {
+        mockState.active = ref(makeItem({ summary: '短内容', sessionId: 's-overflow' }))
+        mountPopover()
+
+        // 模拟摘要内容超出折叠高度：jsdom 不布局，需手工指定 scrollHeight。
+        // clientHeight 被 max-height 132px 钳制 → scrollHeight > clientHeight 即溢出。
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        Object.defineProperty(summary, 'scrollHeight', { configurable: true, value: 320 })
+        Object.defineProperty(summary, 'clientHeight', { configurable: true, value: 132 })
+        // 变更 active 内容使 summaryHtml 变化 → 溢出测量重新运行
+        mockState.active.value = makeItem({ summary: '变成足够长的摘要内容'.repeat(20), sessionId: 's-overflow' })
+        await nextTick()
+        await nextTick()
+
+        const card = document.querySelector('.completion-popover')!
+        expect(card.classList.contains('summary-overflow')).toBe(true)
+    })
+
+    it('clips the collapsed summary with a bottom fade and hides images', () => {
+        mockState.active = ref(makeItem({ summary: '![pic](img/a.png)\n\n正文内容' }))
+        mountPopover()
+
+        // 折叠态摘要容器：mask 渐变淡出底部 + overflow hidden
+        const el = document.querySelector('.completion-popover-summary.is-collapsed')!
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        // jsdom 将 #000 序列化为 rgb(0, 0, 0)，此处只断言渐变 mask 的存在
+        expect(cssText).toContain('-webkit-mask-image: linear-gradient(rgb')
+        expect(cssText).toContain('transparent 100%)')
+        // 回归保护：mask 渐变坐标固定到 132px（mask-size）而非内容实际高度——
+        // 否则短内容（一两行）会被按百分比淡出，表现为只露出半行。
+        // mask top 对齐使短内容完全落在不透明区，仅接近占满 132px 时才淡出底部。
+        expect(cssText).toContain('-webkit-mask-size: 100% 132px')
+        expect(cssText).toContain('mask-size: 100% 132px')
+        expect(cssText).toContain('-webkit-mask-position: top center')
+        expect(cssText).toContain('mask-position: top center')
+        // 图片在折叠态不展示（CSS display:none），避免裂图占位
+        expect(cssText).toContain('.completion-popover-summary.is-collapsed img')
+        const img = el.querySelector('img')!
+        expect(window.getComputedStyle(img).display).toBe('none')
+    })
+
+    it('expands with a fade + slight scale-in animation to mask the layout jump', async () => {
+        mockState.active = ref(makeItem())
+        mountPopover()
+
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        // 点击折叠摘要 → 展开态
+        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        const expanded = document.querySelector('.completion-popover.is-expanded')!
+        expect(expanded).toBeTruthy()
+        // jsdom 不跑 CSS 动画，改为断言样式表注入的动画规则：
+        // 展开动画只挂在 .is-expanded 卡片上（折叠态无动画），从轻微缩小 +
+        // 透明开始，到完整大小 + 不透明结束，ease-out 缓出。
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const expandRule = cssText.split('\n').filter((line) => line.includes('.completion-popover.is-expanded')).join('\n')
+        expect(expandRule).toContain('animation: completion-popover-expand')
+        expect(cssText).toContain('@keyframes completion-popover-expand')
+        expect(cssText).toContain('scale(0.96)')
+        expect(cssText).toContain('scale(1)')
+        expect(expandRule).toContain('ease-out')
+        // prefers-reduced-motion 时关闭展开动画
+        expect(cssText).toContain('prefers-reduced-motion: reduce')
+    })
+
+    it('expands to a near-fullscreen panel on content click: input visible, no collapse button, summary scrolls', async () => {
+        mockState.active = ref(makeItem({ summary: '很长'.repeat(200) }))
+        mountPopover()
+
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        // 点击折叠摘要正文 → 展开
+        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        // 输入框出现
+        const input = document.querySelector('.completion-popover-input')!
+        expect(window.getComputedStyle(input).display).not.toBe('none')
+        expect(document.querySelector('.completion-popover-textarea')).toBeTruthy()
+        // 展开后不再提供"收起"按钮（回到折叠态无意义）
+        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
+        // 展开态摘要可滚动（无 max-height 钳制）
+        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
+        expect(expanded).toBeTruthy()
+        const styles = window.getComputedStyle(expanded)
         expect(styles.overflowY).toBe('auto')
+        // 展开态已无折叠裁剪 class
+        expect(expanded.classList.contains('is-collapsed')).toBe(false)
+    })
+
+    it('auto-expands the user message quote block when the panel expands', async () => {
+        mockState.active = ref(makeItem({ summary: '正文', userMessage: '一个非常长的用户消息'.repeat(10) }))
+        mountPopover()
+
+        // 初始折叠：用户消息单行省略、未展开
+        const quote = document.querySelector('.completion-popover-user-quote')!
+        expect(quote.classList.contains('is-expanded')).toBe(false)
+        const text = quote.querySelector('.completion-popover-user-quote-text')!
+        expect(window.getComputedStyle(text).whiteSpace).toBe('nowrap')
+
+        // 点击折叠摘要正文 → 展开面板
+        const summary = document.querySelector('.completion-popover-summary.is-collapsed')!
+        summary.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        // 用户消息引用块随面板展开而展开，确保能看全问题
+        expect(quote.classList.contains('is-expanded')).toBe(true)
+        expect(quote.getAttribute('aria-expanded')).toBe('true')
+        expect(window.getComputedStyle(text).whiteSpace).toBe('pre-wrap')
+    })
+
+    it('stays expanded once opened — clicking the expanded content does not collapse it', async () => {
+        mockState.active = ref(makeItem({ summary: '很长'.repeat(200) }))
+        mountPopover()
+
+        const collapsed = document.querySelector('.completion-popover-summary.is-collapsed')!
+        collapsed.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        // 展开态点击正文不收起
+        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
+        expanded.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+        expect(document.querySelector('.completion-popover-summary.is-expanded-summary')).toBeTruthy()
+        expect(document.querySelector('.completion-popover-input')!).toBeTruthy()
+        expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
+    })
+
+    it('renders rewritten images (lightbox wrapped), hidden when collapsed and shown when expanded', async () => {
+        mockState.active = ref(makeItem({ summary: '![pic](img/a.png)', projectPath: '/proj' }))
+        mountPopover()
+
+        // 折叠态：HTML 已完全渲染（图片已按归属项目重写为缩略图），但 CSS 隐藏
+        const collapsed = document.querySelector('.completion-popover-summary.is-collapsed')!
+        const collapsedImg = collapsed.querySelector('img')!
+        expect(window.getComputedStyle(collapsedImg).display).toBe('none')
+        // 折叠态下图片同样完成 src 重写（与展开态共用同一份渲染）
+        expect(collapsedImg.src).toContain('/api/file/thumb?path=img/a.png')
+
+        // 点击展开：同一 DOM 元素切换 class，图片变为可见
+        collapsed.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        await nextTick()
+
+        const expanded = document.querySelector('.completion-popover-summary.is-expanded-summary')!
+        const img = expanded.querySelector('img')!
+        // 仍是同一个摘要元素（折叠/展开共用渲染，无重复解析）
+        expect(expanded).toBe(collapsed)
+        expect(window.getComputedStyle(img).display).not.toBe('none')
+        // rewriteImageUrls 按路径段逐个 encodeURIComponent（'/' 保留），
+        // src 是缩略图端点，data-full-src 保留原图供 lightbox 使用
+        expect(img.src).toContain('/api/file/thumb?path=img/a.png')
+        expect(img.src).toContain('w=')
+        expect(img.getAttribute('data-full-src')).toContain('/api/local-file/img/a.png')
+        const wrap = img.closest('.lightbox-img-wrap')!
+        expect(wrap).toBeTruthy()
+        expect(wrap.querySelector('.lightbox-expand-icon')).toBeTruthy()
     })
 
     it('truncates the title with ellipsis via CSS', () => {
@@ -471,25 +726,47 @@ describe('CompletionPopover', () => {
         mountPopover()
 
         expect(document.querySelector('.completion-popover-textarea')).toBeTruthy()
-        // 空输入时：发送按钮存在但 disabled；标记已读按钮在 header 中始终存在
+        // 空输入时：发送按钮存在但 disabled；标记已读按钮在底部动作行始终存在
         const sendBtn = document.querySelector('.completion-popover-send')!
         expect(sendBtn.classList.contains('disabled')).toBe(true)
         expect(document.querySelector('.completion-popover-mark-read')).toBeTruthy()
     })
 
-    it('keeps the mark-as-read button in the header (left of open) independent of input', async () => {
+    it('keeps the mark-as-read and open buttons in the bottom actions row (right-aligned), independent of input', async () => {
         mockState.active = ref(makeItem())
         mountPopover()
 
+        // 操作按钮不属于标题栏
         const header = document.querySelector('.completion-popover-header')!
-        // mark-read 和 open 都在 header 中
+        const actions = document.querySelector('.completion-popover-actions')!
+        expect(actions).toBeTruthy()
         const markRead = document.querySelector('.completion-popover-mark-read')!
         const open = document.querySelector('.completion-popover-open')!
         expect(markRead).toBeTruthy()
         expect(open).toBeTruthy()
+        // mark-read 与 open 位于底部动作行，不在 header 内
+        expect(header.contains(markRead)).toBe(false)
+        expect(header.contains(open)).toBe(false)
+        expect(actions.contains(markRead)).toBe(true)
+        expect(actions.contains(open)).toBe(true)
         // mark-read 位于 open 左边
-        expect(header.compareDocumentPosition(markRead) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
         expect(markRead.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        // 胶囊按钮：图标 + 文字标签（当前测试环境默认 en：Mark as read / Open session）
+        expect(markRead.querySelector('.completion-popover-action-label')!.textContent).toContain('Mark as read')
+        expect(open.querySelector('.completion-popover-action-label')!.textContent).toContain('Open session')
+        // 动作行内容靠右对齐
+        const cssText = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+        const actionsRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-actions')).join('\n')
+        expect(actionsRule).toContain('justify-content: flex-end')
+        // 胶囊样式：圆角 999px（非圆形按钮），内边距容纳文字（jsdom 序列化为 0px 12px）
+        const btnRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-action-btn')).join('\n')
+        expect(btnRule).toContain('border-radius: 999px')
+        expect(btnRule).toContain('padding: 0px 12px')
 
         // 输入内容后 mark-read 依然存在（不随输入联动）
         const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement

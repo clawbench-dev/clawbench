@@ -199,6 +199,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUi', descriptionKey: 'settings.items.fontUiDesc', key: 'fontUi', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontUiFallback', descriptionKey: 'settings.items.fontUiFallbackDesc', key: 'fontUiFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(false) }},
+    { type: 'item', spec: { labelKey: 'settings.items.fontDir', descriptionKey: 'settings.items.fontDirDesc', key: 'fonts.dir', type: 'text', source: 'server', sectionHeader: 'settings.items.fontSection' }},
+    // Custom wallpaper: the wallpaper-file control is a dedicated component
+    // (WallpaperSetting.vue) rendered by SettingsCategory at the top of this
+    // section; only the panel-opacity slider is a real data item here. The
+    // slider item is NOT rendered through the generic row (its UI lives inside
+    // WallpaperSetting) — it exists so the section groups correctly and the
+    // value is readable in the config pipeline.
+    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'appearance.panel_opacity', type: 'slider', source: 'server', min: 0.5, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
   ],
   agents: [],
   chat: [

@@ -1,7 +1,7 @@
 {
   "name": "@xulongzhe/clawbench-darwin-arm64",
   "version": "0.1.0",
-  "description": "ClawBench binary for macOS arm64 (Apple Silicon)",
+  "description": "ClawBench — AI Workbench, United Across Devices. macOS arm64 binary (Apple Silicon)",
   "os": ["darwin"],
   "cpu": ["arm64"],
   "preferUnplugged": true,

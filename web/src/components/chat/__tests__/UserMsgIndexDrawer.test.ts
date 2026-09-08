@@ -18,6 +18,16 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
   },
 }))
 
+vi.mock('@/components/common/SearchInput.vue', () => ({
+  default: {
+    name: 'SearchInput',
+    props: { modelValue: { type: String, default: '' }, placeholder: { type: String, default: '' } },
+    emits: ['update:modelValue', 'enter', 'down', 'up'],
+    template:
+      '<input class="search-stub" :value="modelValue" :placeholder="placeholder" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'enter\')" @keydown.down.prevent="$emit(\'down\')" @keydown.up.prevent="$emit(\'up\')" />',
+  },
+}))
+
 vi.mock('@/utils/format.ts', () => ({
   formatRelativeTime: vi.fn(() => '2m ago'),
 }))
@@ -216,6 +226,160 @@ describe('UserMsgIndexDrawer', () => {
       ] })
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.msg-item')).toHaveLength(2)
+    })
+  })
+
+  describe('search filtering', () => {
+    const messages = [
+      { id: 1, content: 'Fix the login bug', role: 'user' },
+      { id: 2, content: 'Refactor the parser', role: 'user' },
+      { id: 3, content: 'Fix the build', role: 'user' },
+    ]
+
+    it('shows the search box when messages exist', () => {
+      const wrapper = mountSheet({ messages })
+      expect(wrapper.find('.search-stub').exists()).toBe(true)
+    })
+
+    it('hides the search box when there are no messages', () => {
+      const wrapper = mountSheet({ open: true, messages: [], loading: false, jumping: false })
+      expect(wrapper.find('.search-stub').exists()).toBe(false)
+      expect(wrapper.find('.panel-empty').exists()).toBe(true)
+    })
+
+    it('filters the list by message text', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('fix')
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(2)
+      expect(items[0].find('.msg-text').text()).toContain('Fix the login bug')
+      expect(items[1].find('.msg-text').text()).toContain('Fix the build')
+    })
+
+    it('wraps the matched text in <mark> highlights', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('parser')
+      const item = wrapper.find('.msg-item')
+      const marks = item.findAll('.msg-text mark')
+      expect(marks).toHaveLength(1)
+      expect(marks[0].text()).toBe('parser')
+      // Non-matching rows are filtered out entirely; text outside <mark> is plain.
+      expect(item.find('.msg-text').html()).toContain('<mark>parser</mark>')
+    })
+
+    it('highlights matches case-insensitively across the whole row text', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('fix')
+      const marks = wrapper.findAll('.msg-text mark')
+      expect(marks.length).toBeGreaterThan(0)
+      for (const m of marks) {
+        expect(m.text().toLowerCase()).toContain('fix')
+      }
+    })
+
+    it('renders no <mark> when the query is cleared', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('fix')
+      await wrapper.find('.search-stub').setValue('')
+      expect(wrapper.findAll('.msg-text mark')).toHaveLength(0)
+    })
+
+    it('keeps original message numbering while filtered', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('refactor')
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].find('.msg-index').text()).toBe('2')
+    })
+
+    it('filters by attachment file path', async () => {
+      const wrapper = mountSheet({ messages: [
+        { id: 1, content: '', files: [{ path: 'src/foo/bar.ts', isDir: false }], role: 'user' },
+        { id: 2, content: 'plain message', role: 'user' },
+      ] })
+      await wrapper.find('.search-stub').setValue('bar.ts')
+      const items = wrapper.findAll('.msg-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].find('.msg-text').text()).toContain('userMsgIndexAttachment')
+    })
+
+    it('shows a no-results state distinct from the empty state', async () => {
+      const wrapper = mountSheet({ messages })
+      await wrapper.find('.search-stub').setValue('zzz-no-match')
+      expect(wrapper.findAll('.msg-item')).toHaveLength(0)
+      expect(wrapper.find('.panel-empty-text').text()).toContain('conversationIndexNoResults')
+      // The search box stays visible so the query can be edited away.
+      expect(wrapper.find('.search-stub').exists()).toBe(true)
+    })
+
+    it('shows filtered/total in the count badge while searching', async () => {
+      const wrapper = mountSheet({ messages })
+      expect(wrapper.find('.panel-count').text()).toBe('3')
+      await wrapper.find('.search-stub').setValue('fix')
+      expect(wrapper.find('.panel-count').text()).toBe('2/3')
+      await wrapper.find('.search-stub').setValue('')
+      expect(wrapper.find('.panel-count').text()).toBe('3')
+    })
+
+    it('navigates the filtered list via keyboard and emits select on Enter', async () => {
+      Element.prototype.scrollIntoView = vi.fn()
+      const wrapper = mountSheet({ open: true, messages }, { attach: true })
+      await wrapper.vm.$nextTick()
+
+      // Filter to only the third message ("Fix the build"), then confirm.
+      await wrapper.find('.search-stub').setValue('build')
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([messages[2]])
+      wrapper.unmount()
+    })
+
+    it('selects the highlighted item when Enter is pressed inside the search input', async () => {
+      Element.prototype.scrollIntoView = vi.fn()
+      const wrapper = mountSheet({ open: true, messages }, { attach: true })
+      await wrapper.vm.$nextTick()
+
+      // Filter to only the second message ("Refactor the parser"). Focus is in
+      // the input, so navigation must flow through SearchInput's forwarded
+      // @down/@enter events rather than the document-level handler (which
+      // skips editable targets).
+      const searchEl = wrapper.find('.search-stub')
+      await searchEl.setValue('parser')
+      await searchEl.trigger('keydown', { key: 'ArrowDown' })
+      await searchEl.trigger('keydown', { key: 'Enter' })
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([messages[1]])
+      wrapper.unmount()
+    })
+
+    it('resets the query when reopened', async () => {
+      const wrapper = mountSheet({ open: true, messages })
+      await wrapper.find('.search-stub').setValue('refactor')
+      expect(wrapper.findAll('.msg-item')).toHaveLength(1)
+
+      await wrapper.setProps({ open: false })
+      await wrapper.vm.$nextTick()
+      await wrapper.setProps({ open: true })
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.findAll('.msg-item')).toHaveLength(3)
+      expect(wrapper.vm.searchQuery).toBe('')
+    })
+
+    it('resets the query when the messages prop changes', async () => {
+      const wrapper = mountSheet({ open: true, messages })
+      await wrapper.find('.search-stub').setValue('refactor')
+      expect(wrapper.findAll('.msg-item')).toHaveLength(1)
+
+      await wrapper.setProps({ messages: [{ id: 9, content: 'New session message', role: 'user' }] })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findAll('.msg-item')).toHaveLength(1)
+      expect(wrapper.vm.searchQuery).toBe('')
     })
   })
 })

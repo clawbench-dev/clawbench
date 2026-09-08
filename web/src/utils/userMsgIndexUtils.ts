@@ -124,3 +124,55 @@ export function formatUserMsg(msg: { content?: string; files?: string[] }, attac
   }
   return text
 }
+
+/** A user-message index row: content + attachments (legacy string[] or FileEntry-like objects). */
+type UserMsgForMatch = {
+  content?: string
+  files?: Array<string | { path?: string }>
+}
+
+/**
+ * Case-insensitive substring match against a user message's plain text and/or
+ * its attachment path/basename. Used by the conversation-index search box.
+ *
+ * Matching semantics:
+ *   - The message haystack is the same extractPlainText output the index row
+ *     displays, so any text visible in a row is searchable.
+ *   - Attachments match on the full normalized path (so a query like "src/foo"
+ *     finds "src/foo/bar.ts") and on the basename; both case-insensitively.
+ *   - Handles legacy string[] entries and current FileEntry objects ({path}).
+ *   - Attachment-only rows display the generic "[{attachmentLabel}]" label;
+ *     when attachmentLabel is provided it is also matched, so a user typing
+ *     that visible label (e.g. "附件" / "Attachment") finds the row.
+ *   - Empty/whitespace query matches everything (no filtering).
+ */
+export function matchUserMsg(msg: UserMsgForMatch, query: string, attachmentLabel?: string): boolean {
+  const q = (query || '').trim().toLowerCase()
+  if (!q) return true
+  if (!msg) return false
+
+  // 1) Message plain text — same extraction the row displays.
+  if (extractPlainText(msg.content || '').toLowerCase().includes(q)) return true
+
+  // 2) Attachment path / basename. Handles string[] (legacy) and {path, isDir}
+  //    FileEntry objects (current backend), case-insensitively.
+  const files = msg.files
+  if (files && files.length) {
+    // 2a) The visible "[Attachment]" label of attachment-only rows.
+    if (attachmentLabel && attachmentLabel.toLowerCase().includes(q)) return true
+    for (const f of files) {
+      const path = typeof f === 'string'
+        ? f
+        : (f && typeof f === 'object' && typeof (f as { path?: string }).path === 'string')
+          ? (f as { path: string }).path
+          : ''
+      if (!path) continue
+      // Normalize backslashes (Windows) so a forward-slash query still matches.
+      const lower = path.replace(/\\/g, '/').toLowerCase()
+      if (lower.includes(q)) return true
+      const base = lower.slice(lower.lastIndexOf('/') + 1)
+      if (base.includes(q)) return true
+    }
+  }
+  return false
+}

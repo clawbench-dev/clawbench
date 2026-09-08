@@ -111,7 +111,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		return fmt.Errorf("marshal models: %w", err)
 	}
 	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
-	if string(modelsJSON) == "null" {
+	if string(modelsJSON) == jsonNull {
 		modelsJSON = []byte("[]")
 	}
 	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)

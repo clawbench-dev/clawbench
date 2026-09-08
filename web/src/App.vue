@@ -8,6 +8,25 @@
 
     <!-- Main app -->
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
+      <!-- Custom wallpaper layer (rendered when a wallpaper is active). The image
+           is an <img> (not a CSS background-image) so swapping :src reliably
+           re-decodes in Android WebView — CSS-var-driven background-image swaps
+           sometimes need an app restart to repaint. -->
+      <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+        <img
+          v-if="wallpaperActive"
+          :src="wallpaperUrl"
+          class="wallpaper-image"
+          :class="{
+            'wallpaper-image--blurred': wallpaperBlurPx > 0,
+            'wallpaper-image--edge-fade': wallpaperEdgeFade,
+          }"
+          :style="wallpaperImageStyle"
+          alt=""
+          draggable="false"
+        />
+        <div class="wallpaper-scrim"></div>
+      </div>
       <WelcomeOverlay ref="welcomeOverlay" />
       <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
@@ -123,6 +142,7 @@
                       @navigate-back="handleFileHistoryBack"
                       @navigate-forward="handleFileHistoryForward"
                       @share-link="openShareLinkDialog"
+                      @set-as-background="handleSetAsBackground"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
                       <template v-if="recentFileEntries.length">
@@ -192,6 +212,11 @@
                 <!-- Tasks Tab -->
                 <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
+                </TabPanel>
+
+                <!-- Usage Statistics Tab -->
+                <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
+                  <UsageStatsPanel :active="panelIsActive('stats')" />
                 </TabPanel>
 
                 <!-- Settings Tab -->
@@ -399,6 +424,10 @@
             <span>{{ t('nav.portForward') }}</span>
             <span v-if="store.state.portForwardEnabledCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
           </button>
+          <button v-if="popupOverflowTabs.includes('stats')" class="dock-overflow-item" :class="{ active: activeTab === 'stats' }" @click.stop="handleOverflowSelect('stats')">
+            <BarChart3 :size="16" />
+            <span>{{ t('nav.stats') }}</span>
+          </button>
           <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
             <span>{{ t('nav.settings') }}</span>
@@ -416,14 +445,16 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick, defineAsyncComponent } from 'vue'
 import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
+import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
-import { resolveThemeId, applyThemeAttributes, buildThemePalette } from '@/utils/themeMeta'
+import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3 } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -459,10 +490,15 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
+const UsageStatsPanel = defineAsyncComponent({
+  loader: () => import('./components/stats/UsageStatsPanel.vue'),
+  loadingComponent: AsyncComponentLoader,
+})
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
+import { resetUsageStats } from '@/composables/useUsageStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
@@ -486,6 +522,7 @@ import { openRecentFile, removeRecentFile, useRecentFiles } from './composables/
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
+import { flashElement } from './utils/domFlash'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
@@ -528,6 +565,11 @@ const isAuthenticated = ref(null)
 const { t } = useI18n()
 const TAG = 'ClawBench'
 
+// Arm the global 401→/login redirect only once the user is authenticated.
+// The mount-time /api/me check (isAuthenticated still null) and the login
+// page itself never trigger it.
+watch(isAuthenticated, (v) => setAuthRedirectEnabled(v === true), { immediate: true })
+
 // SPA hot project switch: key forces Vue to destroy/rebuild the app-container subtree
 const projectKey = ref('initial')
 const switchingProject = ref(false)
@@ -565,6 +607,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   resetIdentity()
   resetAgents()
   resetChatSessionState()
+  resetUsageStats()
   clearPlanState()
   resetTaskTabState()
   resetTabDrawerState()
@@ -860,11 +903,50 @@ registerOpenSessionTabOverride(() => sessionSidebar.openSessionTabBridge())
 // Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)
 
 const showHidden = ref(false)
-const { localConfig, setLocalConfig: setSetting, loadConfig } = useSettingsConfig()
+const { localConfig, setLocalConfig: setSetting, loadConfig, serverConfig } = useSettingsConfig()
 // Initialize from settings config (which handles legacy key migration)
 showHidden.value = !!localConfig.showHidden
 const sortField = ref(localConfig.sortField || null)
 const sortDir = ref(localConfig.sortDir || 'asc')
+
+// ── Custom wallpaper ────────────────────────────────────────────────
+// wallpaperActive drives the wallpaper-layer visibility. wallpaperUrl is the
+// image URL bound to the <img> (rebuilt only when the file changes — see
+// resolveWallpaperUrl); wallpaperBlurPx / wallpaperEdgeFade are local display
+// preferences that take effect immediately (no server round-trip needed).
+const wallpaperActive = ref(false)
+const wallpaperUrl = ref('')
+const wallpaperBlurPx = ref(0)
+const wallpaperEdgeFade = ref(false)
+
+/** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
+const wallpaperImageStyle = computed(() =>
+  wallpaperBlurPx.value > 0
+    ? { filter: `blur(${wallpaperBlurPx.value}px)`, transform: 'scale(1.06)' }
+    : undefined
+)
+
+/** Apply the wallpaper effect from the latest server config + theme state. */
+function refreshWallpaper() {
+  const appearance = serverConfig.value?.appearance ?? {}
+  const state = resolveWallpaperState(serverConfig.value?.appearance)
+  const file = String(appearance.wallpaper_file ?? '')
+  const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
+
+  wallpaperActive.value = state === 'set'
+  wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
+  wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
+  // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
+  // panel-alpha CSS variables + wallpaper-active class.
+  wallpaperUrl.value = resolveWallpaperUrl(file, false)
+  applyWallpaper(file, resolvePanelOpacity(appearance), dark, false)
+}
+
+// Apply whenever the server config (re)loads — covers cold start (after
+// loadConfig resolves), PATCH round-trips and project switches.
+watch(() => serverConfig.value, refreshWallpaper, { deep: true })
+// Local display prefs (blur / edge fade) change instantly without a round-trip.
+watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -982,6 +1064,7 @@ function handleCompletionEvent(event, data, skipReplay = false) {
             title: data.session_title || '未命名任务',
             summary: data.response_preview || '',
             userMessage: data.last_user_message || '',
+            userHasFiles: !!data.last_user_has_files,
             agentId: data.agent_id || '',
             projectPath: data.project_path || '',
             projectName,
@@ -995,6 +1078,7 @@ function handleCompletionEvent(event, data, skipReplay = false) {
             title: data.session_title || '未命名会话',
             summary: data.response_preview || '',
             userMessage: data.last_user_message || '',
+            userHasFiles: !!data.last_user_has_files,
             agentId: data.agent_id || '',
             projectPath: data.project_path || '',
             projectName,
@@ -1259,7 +1343,6 @@ function registerAppEventListeners() {
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
   window.addEventListener('quote-sent', playQuoteEmitAnimation)
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
-  window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line, e.detail.lineEnd) })
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   document.addEventListener('click', handleOverflowOutsideClick)
@@ -1267,6 +1350,8 @@ function registerAppEventListeners() {
       const resolved = e.detail
       applyThemeAttributes(resolved)
       theme.value = resolved
+      // Recompute the wallpaper scrim strength for the new light/dark base.
+      applyWallpaperScrim(isDarkTheme(resolved))
       // Notify native app to update status bar/nav bar/floating window colors
       const palette = buildThemePalette(resolved)
       getNative()?.setTheme?.(resolved, palette.bg, palette.text, palette.textSecondary, palette.accent)
@@ -1313,6 +1398,9 @@ async function initializeApp() {
   initGlobalEvents()
   loadTasks()
   loadConfig()
+  // Preload custom fonts (Settings → Appearance → 自定义字体目录) so terminals,
+  // the file viewer and mermaid pick up a stored custom selection on cold start.
+  import('@/utils/customFonts').then(m => m.loadCustomFonts()).catch(() => {})
   registerAppEventListeners()
 
   // Request browser notification permission (web mode only).
@@ -1553,6 +1641,17 @@ function handleOverlayClose() {
     closeOverlayAndSync()
 }
 
+/** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
+async function handleSetAsBackground(path) {
+    try {
+        await setWallpaperFromPath(path)
+        await loadConfig()
+        toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
+    } catch {
+        toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
+    }
+}
+
 async function handleFileHistoryBack() {
     const path = fileNav.goBack()
     const location = fileNav.currentLocation.value
@@ -1678,6 +1777,7 @@ const overflowTabs = computed(() => {
   const tabs = ['tasks']
   if (!isTerminalDisabled.value) tabs.push('terminal')
   if (!isSSHDisabled.value) tabs.push('proxy')
+  tabs.push('stats')
   tabs.push('settings')
   return tabs
 })
@@ -1685,6 +1785,7 @@ const overflowTabMeta = {
   tasks:   { icon: Clock, titleKey: 'nav.tasks' },
   proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
+  stats:   { icon: BarChart3, titleKey: 'nav.stats' },
   settings:{ icon: Settings, titleKey: 'nav.settings' },
 }
 
@@ -1886,6 +1987,7 @@ const wideScreenTabMeta = {
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
   terminal: overflowTabMeta.terminal,
+  stats: overflowTabMeta.stats,
   settings: overflowTabMeta.settings,
 }
 
@@ -2119,8 +2221,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
             for (let i = startLine; i <= endLine; i++) {
                 const el = document.querySelector(`.code-line[data-line="${i}"]`)
                 if (el) {
-                    el.classList.add('line-flash')
-                    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+                    flashElement(el)
                 }
             }
             cleanup()
@@ -2131,8 +2232,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
         if (anchorEl) {
             window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
             anchorEl.scrollIntoView({ behavior: 'auto', block: 'start' })
-            anchorEl.classList.add('line-flash')
-            anchorEl.addEventListener('animationend', () => anchorEl.classList.remove('line-flash'), { once: true })
+            flashElement(anchorEl)
             cleanup()
             return
         }

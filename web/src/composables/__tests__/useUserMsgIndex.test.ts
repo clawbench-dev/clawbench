@@ -3,6 +3,7 @@ import { ref, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
+import { LINE_FLASH_MS, LINE_FLASH_FALLBACK_PAD_MS } from '@/utils/domFlash'
 
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = createI18n({
@@ -246,11 +247,28 @@ describe('useUserMsgIndex — highlightMessage', () => {
   it('adds and removes highlight class', () => {
     const { vm } = createComposable()
     const el = document.createElement('div')
+    document.body.appendChild(el)
 
     vm.highlightMessage(el)
     expect(el.classList.contains('chat-message-highlight')).toBe(true)
 
-    vi.advanceTimersByTime(1500)
+    // Class removal is driven by the shared domFlash fallback timer.
+    vi.advanceTimersByTime(LINE_FLASH_MS + LINE_FLASH_FALLBACK_PAD_MS)
+    expect(el.classList.contains('chat-message-highlight')).toBe(false)
+  })
+
+  it('delegates to the injected highlightMessage when one is provided', () => {
+    // ChatMessageList injects a queue that defers the flash until its smooth
+    // scroll settles; the composable must call that instead of flashing itself.
+    const injected = vi.fn()
+    const { vm } = createComposable({ highlightMessage: injected })
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+
+    vm.highlightMessage(el)
+    expect(injected).toHaveBeenCalledTimes(1)
+    expect(injected).toHaveBeenCalledWith(el)
+    // No default flash class was applied (the injectable owns the highlight).
     expect(el.classList.contains('chat-message-highlight')).toBe(false)
   })
 })

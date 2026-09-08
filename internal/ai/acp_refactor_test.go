@@ -1567,6 +1567,30 @@ func TestRefactor_ACPConnManager_CloseConn(t *testing.T) {
 	mgr.CloseConn("nonexistent") // should not panic
 }
 
+func TestRefactor_ACPConnManager_RemoveConn(t *testing.T) {
+	mgr := &ACPConnManager{
+		conns:     make(map[string]*ACPConn),
+		stopSweep: make(chan struct{}),
+	}
+
+	agent := &model.Agent{ID: "test-removeconn", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "sid-remove")
+
+	mgr.conns["sid-remove"] = conn
+
+	// RemoveConn synchronously removes the entry and returns the connection.
+	removed := mgr.RemoveConn("sid-remove")
+	assert.Same(t, conn, removed, "RemoveConn should return the removed connection")
+	assert.Nil(t, mgr.GetConn("sid-remove"), "connection should be removed synchronously (no goroutine needed)")
+
+	// The caller owns the returned conn and must close it explicitly.
+	removed.Close()
+	assert.False(t, removed.alive, "returned connection should be closed by caller")
+
+	// RemoveConn on nonexistent returns nil, not panic.
+	assert.Nil(t, mgr.RemoveConn("nonexistent"))
+}
+
 func TestRefactor_ACPConnManager_CancelTurn(t *testing.T) {
 	mgr := &ACPConnManager{
 		conns:     make(map[string]*ACPConn),

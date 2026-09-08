@@ -245,8 +245,8 @@
           </div>
         </div>
         <template #footer>
-          <button class="port-add-cancel" @click="showForm = false">{{ t('common.cancel') }}</button>
-          <button class="port-add-confirm" @click="handleSave" :disabled="!isValidPort || saving">{{ saving ? '...' : t('common.confirm') }}</button>
+          <button class="fbtn" @click="showForm = false">{{ t('common.cancel') }}</button>
+          <button class="fbtn fbtn-primary" @click="handleSave" :disabled="!isValidPort || saving">{{ saving ? '...' : t('common.confirm') }}</button>
         </template>
       </ModalDialog>
 
@@ -490,14 +490,15 @@ async function handleRetryTunnel() {
   overflow: hidden;
 }
 
-/* Compact header — flush to panel edges, matches chat/app header style */
+/* Compact header — flush to panel edges, matches settings/stats header style */
 .proxy-header {
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
   flex-shrink: 0;
   gap: 6px;
-  background: var(--bg-secondary, #f8f9fa);
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
@@ -1099,32 +1100,5 @@ async function handleRetryTunnel() {
   background: rgba(239, 68, 68, 0.08);
   padding: 6px 10px;
   border-radius: 4px;
-}
-
-.port-add-confirm {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-  font-weight: 600;
-}
-
-.port-add-confirm:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.port-add-cancel {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #666);
-  font-weight: 600;
 }
 </style>

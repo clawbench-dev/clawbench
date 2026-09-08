@@ -34,10 +34,10 @@
     <!-- Footer with save button -->
     <template #footer>
       <div class="kcd-footer">
-        <button class="kcd-btn kcd-btn-cancel" @click="handleClose">
+        <button class="fbtn" @click="handleClose">
           {{ t('common.cancel') }}
         </button>
-        <button class="kcd-btn kcd-btn-save" :disabled="saving" @click="handleSave">
+        <button class="fbtn fbtn-primary" :disabled="saving" @click="handleSave">
           <LoadingIndicator v-if="saving" size="sm" inline />
           <span v-else>{{ t('common.save') }}</span>
         </button>
@@ -152,36 +152,5 @@ function handleClose() {
   justify-content: flex-end;
   gap: 8px;
   width: 100%;
-}
-
-.kcd-btn {
-  padding: 8px 20px;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  -webkit-tap-highlight-color: transparent;
-  transition: opacity 0.15s;
-}
-
-.kcd-btn:active {
-  opacity: 0.7;
-}
-
-.kcd-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.kcd-btn-cancel {
-  background: var(--bg-tertiary, #eee);
-  color: var(--text-primary, #1a1a1a);
-}
-
-.kcd-btn-save {
-  background: var(--accent, #4f8ef7);
-  color: #fff;
 }
 </style>

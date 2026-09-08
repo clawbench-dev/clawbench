@@ -194,8 +194,8 @@
 
     <!-- Fixed bottom bar -->
     <div class="form-footer">
-      <button class="action-btn secondary" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="action-btn primary" :disabled="saving" @click="submit">
+      <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
+      <button class="fbtn fbtn-primary" :disabled="saving" @click="submit">
         <Save v-if="!saving" :size="14" />
         <LoadingIndicator v-else class="action-btn-spinner" size="sm" inline />
         {{ mode === 'create' ? t('task.form.create') : t('task.form.save') }}
@@ -226,6 +226,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { humanizeCron } from '@/utils/format.ts'
+import '@/assets/modal-footer-btn.css'
 
 const { t } = useI18n()
 
@@ -398,12 +399,15 @@ onMounted(() => {
   background: var(--bg-primary, #ffffff);
 }
 
-/* Compact header */
+/* Compact header — unified with list/detail/settings/proxy headers */
 .form-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
   flex-shrink: 0;
+  gap: 6px;
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
@@ -437,7 +441,7 @@ onMounted(() => {
   --li-color: #16a34a;
 }
 
-.action-btn.primary .action-btn-spinner {
+.fbtn-primary .action-btn-spinner {
   --li-color: #fff;
 }
 
@@ -829,56 +833,6 @@ onMounted(() => {
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
-}
-
-.action-btn {
-  height: 30px;
-  border: none;
-  border-radius: 15px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 16px;
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-btn.primary {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-@media (hover: hover) {
-  .action-btn.primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 85%, black);
-    transform: translateY(-1px);
-  }
-}
-
-.action-btn.secondary {
-  background: var(--bg-tertiary, #f1f3f5);
-  color: var(--text-secondary, #4b5563);
-}
-
-@media (hover: hover) {
-  .action-btn.secondary:hover {
-    background: #e5e7eb;
-    color: var(--text-primary, #1a1a1a);
-  }
-}
-
-.action-btn:active:not(:disabled) {
-  transform: scale(0.96);
 }
 
 /* Animations */

@@ -110,6 +110,42 @@ describe('settingsFieldMap', () => {
     }
   })
 
+  it('fonts.dir is a hot-reload server text field in the appearance font section', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['fonts.dir']).toBe('settings.items.fontDir')
+
+    const appearanceEntries = categoryItems['appearance']
+    const entry = appearanceEntries.find(e => e.type === 'item' && e.spec.key === 'fonts.dir')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item entry for fonts.dir')
+    expect(entry!.spec.source).toBe('server')
+    expect(entry!.spec.type).toBe('text')
+    expect(entry!.spec.needsRestart).toBeFalsy() // backend hot-reloads fonts.dir
+    expect(entry!.spec.sectionHeader).toBe('settings.items.fontSection')
+  })
+
+  it('wallpaper panel-opacity slider allows the relaxed 0.5 lower bound', () => {
+    // Regression: the panel-opacity floor was relaxed from 0.7 to 0.5 (the
+    // wallpaper translucent-panel tuning range widened). Guard the slider spec
+    // so a future tighten does not silently diverge from the server-side
+    // PATCH validation (settings.go, validatePatchValues: 0.5–1.0).
+    const map = getServerFieldToLabelKey()
+    expect(map['appearance.panel_opacity']).toBe('settings.items.wallpaperPanelOpacity')
+
+    const appearanceEntries = categoryItems['appearance']
+    const entry = appearanceEntries.find(e => e.type === 'item' && e.spec.key === 'appearance.panel_opacity')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item entry for appearance.panel_opacity')
+    expect(entry.spec.source).toBe('server')
+    expect(entry.spec.type).toBe('slider')
+    expect(entry.spec.min).toBe(0.5)
+    expect(entry.spec.max).toBe(1)
+    expect(entry.spec.step).toBe(0.01)
+    expect(entry.spec.defaultValue).toBe(0.85)
+    expect(entry.spec.displayFormat).toBe('percent')
+    expect(entry.spec.sectionHeader).toBe('settings.items.wallpaperSection')
+  })
+
   it('includes recent_projects.max_count', () => {
     const map = getServerFieldToLabelKey()
     expect(map['recent_projects.max_count']).toBeTruthy()

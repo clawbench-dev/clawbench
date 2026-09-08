@@ -55,21 +55,24 @@
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
             </svg>
           </button>
-          <!-- Search in Preview -->
+          <!-- Rendered / Source toggle (Markdown only, no line range) -->
           <button
+            v-if="showRenderToggle"
             class="code-preview-btn icon-only"
-            :class="{ 'is-active': isSearchOpen }"
-            :title="t('file.codePreview.findInPreview')"
-            :aria-label="t('file.codePreview.findInPreview')"
-            @click="toggleSearch"
+            :class="{ 'is-active': isRenderedView }"
+            :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+            :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+            :aria-pressed="isRenderedView"
+            @click="toggleRenderView"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
-          <!-- Word Wrap Toggle -->
+          <!-- Word Wrap Toggle (code-slice view only) -->
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-active': isWordWrap }"
             :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
@@ -80,8 +83,9 @@
               <path d="M4 6h16M4 12h10a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11m0 0l3-3m-3 3l3 3M4 18h4" />
             </svg>
           </button>
-          <!-- Line Numbers Toggle -->
+          <!-- Line Numbers Toggle (code-slice view only) -->
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-active': showLineNumbers }"
             :title="t('file.header.lineNumbers')"
@@ -96,8 +100,9 @@
               <path d="M16 3l-2 18" />
             </svg>
           </button>
-          <!-- Copy Code -->
+          <!-- Copy Code (code-slice view only) -->
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-copied': copied }"
             :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
@@ -150,8 +155,26 @@
         </button>
       </div>
 
-      <!-- Content Area -->
+      <!-- Content Area: rendered Markdown document OR source code slice -->
+      <MarkdownPreviewBody
+        v-if="isRenderedView"
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :rendered-html="renderedHtml"
+        :file-path="targetFilePath"
+        :remaining-above="remainingAbove"
+        :remaining-below="remainingBelow"
+        :step-above="stepAbove"
+        :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
+        :expand-above-lines="expandAbove"
+        :expand-below-lines="expandBelow"
+        @refresh="preview.refresh()"
+      />
       <CodePreviewBody
+        v-else
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -165,6 +188,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -174,9 +198,9 @@
     <!-- Bottom Action Bar (Thumb area - Left-hand optimized) -->
     <template #footer>
       <div class="code-preview-sheet-footer">
-        <!-- Refresh (leftmost icon button) -->
+        <!-- Refresh: icon-only round button -->
         <button
-          class="code-preview-footer-btn icon-btn refresh-btn"
+          class="code-preview-footer-btn icon-btn fbtn refresh-btn"
           :class="{ 'is-loading': preview.status.value === 'loading' }"
           :title="t('file.codePreview.refresh')"
           :aria-label="t('file.codePreview.refresh')"
@@ -187,10 +211,24 @@
           </svg>
         </button>
 
-        <!-- Open directory: opens the containing dir in the file manager
-             and selects the file (same behavior as file-search results). -->
+        <!-- Search in preview: icon-only, code-slice view only -->
         <button
-          class="code-preview-footer-btn reveal-btn"
+          v-if="!isRenderedView"
+          class="code-preview-footer-btn icon-btn fbtn"
+          :class="{ 'is-active': isSearchOpen }"
+          :title="t('file.codePreview.findInPreview')"
+          :aria-label="t('file.codePreview.findInPreview')"
+          @click="toggleSearch"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </button>
+
+        <!-- Reveal in file tree: icon-only -->
+        <button
+          class="code-preview-footer-btn icon-btn fbtn reveal-btn"
           :title="t('file.codePreview.revealInTree')"
           :aria-label="t('file.codePreview.revealInTree')"
           @click="handleRevealInTree"
@@ -198,38 +236,40 @@
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          <span class="reveal-btn-label">{{ t('file.codePreview.revealInTree') }}</span>
         </button>
 
-        <!-- Open Full / View Details — kept next to "Locate file" -->
+        <!-- Open Full / View Details — primary action -->
         <button
           v-if="preview.errorCode.value === 'too-large'"
-          class="code-preview-footer-btn action-btn primary-btn"
+          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="handleViewDetails"
         >
-          {{ t('file.codePreview.viewDetails') }}
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
+          </svg>
+          <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
         <button
           v-else
-          class="code-preview-footer-btn action-btn primary-btn"
+          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3" />
           </svg>
-          <span>{{ t('file.codePreview.openFull') }}</span>
+          <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
 
         <!-- Quote to Chat -->
         <button
-          class="code-preview-footer-btn action-btn quote-btn"
+          class="code-preview-footer-btn action-btn fbtn quote-btn"
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
         >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
-          <span>{{ t('file.codePreview.quoteToChat') }}</span>
+          <span>{{ t('file.codePreview.quoteShort') }}</span>
         </button>
       </div>
     </template>
@@ -311,8 +351,27 @@
         </div>
 
         <div class="code-preview-actions" @pointerdown.stop>
-          <!-- Viewer Tools: Find, Wrap, Refresh -->
+          <!-- Rendered / Source toggle (Markdown only, no line range) -->
           <button
+            v-if="showRenderToggle"
+            class="code-preview-btn"
+            :class="{ 'is-active': isRenderedView }"
+            :aria-pressed="isRenderedView"
+            :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+            :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+            :data-tooltip="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
+            @pointerenter="showTooltip($event, isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView'))"
+            @pointerleave="hideTooltip()"
+            @click="toggleRenderView"
+          >
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
+          <button
+            v-if="!isRenderedView"
             ref="firstActionBtnRef"
             class="code-preview-btn"
             :class="{ 'is-active': isSearchOpen }"
@@ -329,6 +388,7 @@
             </svg>
           </button>
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-active': isWordWrap }"
             :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
@@ -344,6 +404,7 @@
             </svg>
           </button>
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-active': showLineNumbers }"
             :aria-pressed="showLineNumbers"
@@ -392,6 +453,7 @@
             </svg>
           </button>
           <button
+            v-if="!isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-copied': copied }"
             :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
@@ -552,8 +614,26 @@
         </div>
       </div>
 
-      <!-- Body / Scroll pane -->
+      <!-- Body / Scroll pane: rendered Markdown document OR source code slice -->
+      <MarkdownPreviewBody
+        v-if="isRenderedView"
+        ref="bodyRef"
+        :status="preview.status.value"
+        :error-message-text="errorMessageText"
+        :error-code="preview.errorCode.value"
+        :rendered-html="renderedHtml"
+        :file-path="targetFilePath"
+        :remaining-above="remainingAbove"
+        :remaining-below="remainingBelow"
+        :step-above="stepAbove"
+        :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
+        :expand-above-lines="expandAbove"
+        :expand-below-lines="expandBelow"
+        @refresh="preview.refresh()"
+      />
       <CodePreviewBody
+        v-else
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -567,6 +647,7 @@
         :remaining-below="remainingBelow"
         :step-above="stepAbove"
         :step-below="stepBelow"
+        :hide-expand-buttons="atLineRenderCap"
         :expand-above-lines="expandAbove"
         :expand-below-lines="expandBelow"
         @refresh="preview.refresh()"
@@ -580,6 +661,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, i
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
+import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
@@ -609,6 +691,65 @@ const showLineNumbers = computed(() => localConfig.lineNumbers !== false)
 function toggleLineNumbers() {
   setLocalConfig('lineNumbers', !showLineNumbers.value)
 }
+
+// ── Rendered Markdown document view ────────────────────────────────────────
+// A Markdown file previewed WITHOUT a line range defaults to a read-only
+// rendered document (see useCodeLinkPreview.showPreview). The render mode is
+// switchable via the eye toggle, but only when the current target qualifies:
+// non-Markdown files and line-annotated Markdown paths stay on the source
+// slice view.
+
+// HTML for the rendered document view, produced lazily through the shared
+// markdown pipeline. Built as a string whenever the source slice changes and
+// the rendered view is visible. The builder is imported lazily so the heavy
+// markdown/katex/mermaid pipeline is only loaded when an actual Markdown file
+// renders (code-only previews and unit tests that mock the pipeline never pull
+// those modules in).
+const renderedHtml = ref('')
+
+let renderedSliceKey = ''
+
+const isRenderedView = computed(() => props.preview.effectiveRenderMode?.value === 'rendered')
+const showRenderToggle = computed(() => Boolean(props.preview.canRenderMarkdown?.value))
+
+function toggleRenderView() {
+  props.preview.toggleRenderMode?.()
+}
+
+watch(
+  () => [
+    props.preview.status.value,
+    props.preview.slicedCode.value?.code,
+    props.preview.target.value?.filePath,
+    isRenderedView.value,
+  ],
+  async () => {
+    // Leaving the rendered view (closed, switched target, toggled to source)
+    // clears the cached slice so re-opening the same file re-renders it.
+    if (!isRenderedView.value || props.preview.status.value !== 'ready') {
+      renderedHtml.value = ''
+      renderedSliceKey = ''
+      return
+    }
+    const filePath = props.preview.target.value?.filePath || ''
+    const code = props.preview.slicedCode.value?.code
+    if (!filePath || code === undefined) return
+    const sliceKey = `${filePath}::${code.length}::${code.slice(0, 120)}`
+    if (sliceKey === renderedSliceKey) return
+    renderedSliceKey = sliceKey
+    try {
+      const { buildPreviewMarkdownHtml } = await import('@/utils/previewMarkdown')
+      renderedHtml.value = buildPreviewMarkdownHtml({
+        content: code,
+        path: filePath,
+      })
+    } catch {
+      // Fall back to the source slice if rendering fails for any reason.
+      renderedHtml.value = ''
+    }
+  },
+  { immediate: true }
+)
 
 const STORAGE_KEY_WRAP = 'clawbench:code-preview-word-wrap'
 
@@ -1070,6 +1211,17 @@ const codeLines = computed<FormattedCodeLine[]>(() => {
     })
   }
   return result
+})
+
+// When the slice has hit the hard line-count render cap (MAX_RENDER_LINES in
+// sliceCodeForPreview, truncateReason='lines'), the window width is pinned at
+// 200 lines — pressing expand below/above no longer grows the rendered slice
+// (direction-only shifts the window against the same cap). We keep the
+// "N lines remaining" hint visible but suppress the expand buttons, which
+// would otherwise appear clickable while doing nothing.
+const atLineRenderCap = computed(() => {
+  const sliced = props.preview.slicedCode.value
+  return !!sliced && sliced.renderTruncated === true && sliced.truncateReason === 'lines'
 })
 
 const remainingAbove = computed(() => {

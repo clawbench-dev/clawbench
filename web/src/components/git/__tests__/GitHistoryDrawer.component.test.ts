@@ -65,6 +65,10 @@ vi.mock('@/utils/gitFileHistory.ts', () => ({
   buildFileHistoryCommits: (commits: any[], has: boolean, msg: string) =>
     has ? [{ sha: 'HEAD', msg, isWT: true }, ...commits] : commits,
   shouldShowFullLoading: (commits: any[], err: string) => commits.length === 0 && !err,
+  splitGitFilePath: (path: string) => {
+    const idx = path.lastIndexOf('/')
+    return idx < 0 ? { name: path, dir: '' } : { name: path.slice(idx + 1), dir: path.slice(0, idx) }
+  },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -656,6 +660,26 @@ describe('GitHistoryDrawer — files view rendering', () => {
     vm.totalFileCount = 1
     await flushPromises()
     expect(wrapper.find('.drilldown-page').exists()).toBe(true)
+    // Two-line item: bare name on top, parent directory (no file name) below.
+    const item = wrapper.find('.drilldown-item')
+    expect(item.find('.git-file-name').text()).toBe('foo.ts')
+    expect(item.find('.git-file-dir').text()).toBe('src')
+  })
+
+  it('renders merge-group files as two-line items', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.selectedSHA = 'abc123'
+    vm.currentView = 'files'
+    vm.mergeGroups = [{ label: 'main', files: [{ path: 'web/src/a.ts', type: 'M' }] }]
+    vm.selectedCommit = { sha: 'abc123' }
+    vm.totalFileCount = 1
+    await flushPromises()
+    const item = wrapper.find('.merge-group .drilldown-item')
+    expect(item.find('.git-file-name').text()).toBe('a.ts')
+    expect(item.find('.git-file-dir').text()).toBe('web/src')
+    expect(item.text()).not.toContain('web/src/a.ts')
   })
 
   it('shows empty state when no file changes', async () => {

@@ -1,5 +1,6 @@
 import { inject } from 'vue'
 import { copyText } from '@/utils/clipboard.ts'
+import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { isExternalLink, isAnchorLink, slugifyForHeading, stripLeadingNumbering } from '@/utils/doubleClickUtils.ts'
@@ -79,10 +80,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
 
         copyText(text, () => {
             // 触发闪烁动画
-            element.classList.add('copy-flash')
-            element.addEventListener('animationend', () => {
-                element.classList.remove('copy-flash')
-            }, { once: true })
+            flashElement(element, { className: 'copy-flash' })
 
             // 显示 toast 提示
             if (toast) {

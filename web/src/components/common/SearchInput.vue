@@ -9,7 +9,7 @@
       @input="$emit('update:modelValue', $event.target.value)"
       @focus="focused = true"
       @blur="focused = false"
-      @keydown.enter="$emit('enter')"
+      @keydown.enter="onEnter"
       @keydown="onKeydown"
       @dblclick="$emit('dblclick')"
     />
@@ -54,6 +54,14 @@ function onKeydown(e) {
     e.preventDefault()
     emit('up')
   }
+}
+
+// Suppress Enter while an IME composition is in progress (e.g. pinyin on
+// mobile/Android): the commit-Enter that ends a composition must select the
+// composed text, not trigger a list action on the still-incomplete query.
+function onEnter(e) {
+  if (e.isComposing || e.keyCode === 229) return
+  emit('enter')
 }
 
 defineExpose({ focus, inputRef, focused })

@@ -82,15 +82,15 @@
     <!-- Detail view footer (uses BottomSheet's footer slot — fixed at bottom) -->
     <template v-if="selectedSession" #footer>
       <div class="detail-footer-row">
-        <button v-if="selectedSession.archived" class="detail-resume-btn" @click="emit('resume', selectedSession)">
+        <button v-if="selectedSession.archived" class="fbtn fbtn-primary detail-resume-btn" @click="emit('resume', selectedSession)">
           <RotateCcw :size="14" />
           {{ t('sessionSearch.resume') }}
         </button>
-        <button v-else class="detail-resume-btn" @click="emit('open', selectedSession)">
+        <button v-else class="fbtn fbtn-primary detail-resume-btn" @click="emit('open', selectedSession)">
           <MessageSquare :size="14" />
           {{ t('sessionSearch.openSession') }}
         </button>
-        <button v-if="selectedSession.archived" class="detail-destroy-btn" @click="emit('destroy', selectedSession)">
+        <button v-if="selectedSession.archived" class="fbtn fbtn-danger detail-destroy-btn" @click="emit('destroy', selectedSession)">
           <Trash2 :size="14" />
           {{ t('sessionSearch.destroy') }}
         </button>
@@ -688,60 +688,6 @@ defineExpose({ focusSearchInput })
   padding: 6px 8px;
   border-top: none;
   gap: 6px;
-}
-
-.detail-footer-row .detail-resume-btn {
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 15px;
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: opacity 0.15s;
-}
-
-@media (hover: hover) {
-  .detail-footer-row .detail-resume-btn:hover {
-    opacity: 0.85;
-  }
-
-  .detail-destroy-btn:hover {
-    opacity: 0.8;
-  }
-}
-
-.detail-footer-row .detail-resume-btn:active {
-  opacity: 0.7;
-}
-
-.detail-destroy-btn {
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 16px;
-  border: 1px solid var(--color-error, #e74c3c);
-  border-radius: 15px;
-  background: transparent;
-  color: var(--color-error, #e74c3c);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: opacity 0.15s;
-}
-
-.detail-destroy-btn:active {
-  opacity: 0.6;
 }
 </style>
 

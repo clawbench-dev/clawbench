@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { reactive } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 
 // ── Mock setup ──
@@ -10,22 +11,37 @@ const {
   closeCurrentFileFn,
   dialogConfirmFn,
   removeRecentFileFn,
-  mockState,
+  mockStateHolder,
   wsConfig,
   isAppModeConfig,
-} = vi.hoisted(() => ({
-  loadGitBranchFn: vi.fn(),
-  setPendingManageNavigationFn: vi.fn(),
-  closeCurrentFileFn: vi.fn(),
-  dialogConfirmFn: vi.fn(),
-  removeRecentFileFn: vi.fn(),
-  mockState: { gitBranch: '', gitDirty: false, gitWorkingTreeChangeCount: 0 },
-  wsConfig: { value: 'connected' as string },
-  isAppModeConfig: { value: false as boolean },
-}))
+} = vi.hoisted(() => {
+  const holder: { state: Record<string, unknown> | null } = { state: null }
+  return {
+    loadGitBranchFn: vi.fn(),
+    setPendingManageNavigationFn: vi.fn(),
+    closeCurrentFileFn: vi.fn(),
+    dialogConfirmFn: vi.fn(),
+    removeRecentFileFn: vi.fn(),
+    mockStateHolder: holder,
+    wsConfig: { value: 'connected' as string },
+    isAppModeConfig: { value: false as boolean },
+  }
+})
+
+// Reactive (module-graph vue) so the header's `watch(computed gitBranch)`
+// fires when a test mutates gitBranch after mount (branch reveal card). A
+// plain object would not notify the computed. The store mock exposes it via a
+// lazy getter (mock factory runs before this module body executes).
+const mockState = reactive({ gitBranch: '', gitDirty: false, gitWorkingTreeChangeCount: 0 })
+mockStateHolder.state = mockState
 
 vi.mock('@/stores/app.ts', () => ({
-  store: { state: mockState, loadGitBranch: loadGitBranchFn, loadFiles: vi.fn(), closeCurrentFile: closeCurrentFileFn },
+  store: {
+    get state() { return mockStateHolder.state },
+    loadGitBranch: loadGitBranchFn,
+    loadFiles: vi.fn(),
+    closeCurrentFile: closeCurrentFileFn,
+  },
 }))
 vi.mock('@/composables/useGlobalEvents', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -141,7 +157,7 @@ describe('AppHeader', () => {
       activeWrapper.unmount()
       activeWrapper = null
     }
-    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title').forEach(el => el.remove())
+    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title,.badge-reveal').forEach(el => el.remove())
     if (activeContainer?.parentNode) {
       document.body.removeChild(activeContainer)
       activeContainer = null
@@ -1062,7 +1078,6 @@ describe('AppHeader', () => {
     const wrapper = mountAndTrack({ currentFileName: 'src/a.ts' })
     await wrapper.setProps({ currentFileName: 'src/longer-name-abcdef.ts' })
     await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick() // pulseBadge's nextTick measurement
 
     const capsule = document.querySelector('.badge-capsule')
     const fileBtn = document.querySelector('.current-file-badge')
@@ -1070,5 +1085,95 @@ describe('AppHeader', () => {
     expect((wrapper.vm as any).highlightBadge).toBe('file')
     expect(fileBtn).toBeTruthy()
     expect(fileBtn?.classList.contains('badge-highlight')).toBe(true)
+  })
+
+  // ── Reveal card (full name under the changed badge segment) ──
+
+  it('shows a reveal card with the full file name + directory when the file changes', async () => {
+    const wrapper = mountAndTrack({
+      currentFileName: 'a.ts',
+      currentFilePath: '/proj/src/a.ts',
+    })
+    await wrapper.setProps({
+      currentFileName: 'components/common/AppHeader.vue',
+      currentFilePath: '/proj/src/components/common/AppHeader.vue',
+    })
+    await wrapper.vm.$nextTick()
+
+    const card = document.querySelector('.badge-reveal')
+    expect(card).toBeTruthy()
+    expect(card?.querySelector('.badge-reveal-name')?.textContent).toBe('components/common/AppHeader.vue')
+    // subtitle = the file's directory, shown in full
+    expect(card?.querySelector('.badge-reveal-subtitle')?.textContent).toBe('/proj/src/components/common')
+  })
+
+  it('does not show a reveal card when the file is merely opened to empty state', async () => {
+    const wrapper = mountAndTrack({ recentFilesAvailable: 1 })
+    await wrapper.setProps({ currentFileName: 'notes.md', currentFilePath: '/proj/notes.md' })
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal')).toBeTruthy()
+  })
+
+  it('shows a reveal card with the branch name when the branch changes', async () => {
+    const wrapper = mountAndTrack({ projectRoot: '/proj' })
+    mockState.gitBranch = 'feature/push-authoritative-sync'
+    await wrapper.vm.$nextTick() // watcher runs, branch badge renders
+    await wrapper.vm.$nextTick() // reveal card placed (deferred until badge exists)
+    await wrapper.vm.$nextTick() // card v-if renders
+
+    const card = document.querySelector('.badge-reveal')
+    expect(card).toBeTruthy()
+    expect(card?.querySelector('.badge-reveal-name')?.textContent).toBe('feature/push-authoritative-sync')
+    // no subtitle row for a branch
+    expect(card?.querySelector('.badge-reveal-subtitle')).toBeFalsy()
+  })
+
+  it('shows a reveal card with the project name + root path when the project changes', async () => {
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/my-project' })
+    await wrapper.setProps({ projectRoot: '/home/user/other-long-project-name' })
+    await wrapper.vm.$nextTick()
+
+    const card = document.querySelector('.badge-reveal')
+    expect(card).toBeTruthy()
+    expect(card?.querySelector('.badge-reveal-name')?.textContent).toBe('other-long-project-name')
+    expect(card?.querySelector('.badge-reveal-subtitle')?.textContent).toBe('/home/user/other-long-project-name')
+  })
+
+  it('auto-dismisses the reveal card after the reveal window', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountAndTrack({ currentFileName: 'a.ts' })
+    await wrapper.setProps({ currentFileName: 'very-long-file-name-that-would-be-truncated.ts' })
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal')).toBeTruthy()
+
+    vi.advanceTimersByTime(1600)
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal')).toBeFalsy()
+  })
+
+  it('replaces the reveal card when a new segment change arrives mid-reveal', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountAndTrack({ currentFileName: 'a.ts' })
+    await wrapper.setProps({ currentFileName: 'first-long-file-name.ts' })
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal-name')?.textContent).toBe('first-long-file-name.ts')
+
+    // Wait 1s into the first card's 1.5s window, then swap content — the new
+    // card replaces the text and restarts the full dismissal window.
+    vi.advanceTimersByTime(1000)
+    await wrapper.setProps({ currentFileName: 'second-even-longer-file-name.ts' })
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal-name')?.textContent).toBe('second-even-longer-file-name.ts')
+
+    // 600ms later = 1.6s since the FIRST pulse: the old timer (cancelled) would
+    // have dismissed by now, but the new card is only 600ms into its own window.
+    vi.advanceTimersByTime(600)
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal')).toBeTruthy()
+
+    // Finish the restarted window.
+    vi.advanceTimersByTime(900)
+    await wrapper.vm.$nextTick()
+    expect(document.querySelector('.badge-reveal')).toBeFalsy()
   })
 })

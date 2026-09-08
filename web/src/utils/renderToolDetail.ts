@@ -277,23 +277,74 @@ function renderWritePreview(input: ToolInput): string {
 }
 
 /**
+ * Classification of an AskUserQuestion tool input.
+ *  - 'valid':     carries at least one renderable question (question text or
+ *                 non-empty options), so the card is genuinely answerable.
+ *  - 'malformed': carries input content but no renderable question — the model
+ *                 emitted e.g. a leftover <ask-question> XML fragment or a
+ *                 junk questions array. Such a call can never be answered.
+ *  - 'empty':     no input / no questions at all (slim block awaiting lazy
+ *                 load, or a skeleton block whose input has not been written).
+ */
+export type AskQuestionInputKind = 'valid' | 'malformed' | 'empty'
+
+export function classifyAskQuestionsInput(input: unknown): AskQuestionInputKind {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return 'empty'
+  const questions = (input as ToolInput).questions
+  if (Array.isArray(questions)) {
+    if (questions.length === 0) return 'empty'
+    // Schema-valid container — but entries can still be junk ({}, no question
+    // text and no options). Only genuinely renderable entries count; a non-empty
+    // array where none is renderable is a malformed (unanswerable) question.
+    const renderable = questions.some(q => {
+      if (!q || typeof q !== 'object') return false
+      const hasQuestion = typeof (q as ToolInput).question === 'string' && String((q as ToolInput).question).trim() !== ''
+      const opts = (q as ToolInput).options
+      const hasOptions = Array.isArray(opts) && opts.length > 0
+      return hasQuestion || hasOptions
+    })
+    return renderable ? 'valid' : 'malformed'
+  }
+  // No usable questions array. If the input carries other raw content (e.g. an
+  // ask XML fragment) or a wrongly-typed questions field it is schema-violating;
+  // otherwise it is simply empty.
+  const hasQuestionsProp = Object.prototype.hasOwnProperty.call(input, 'questions')
+  return hasQuestionsProp || Object.keys(input).length > 0 ? 'malformed' : 'empty'
+}
+
+/**
+ * True when a tool input carries at least one renderable AskUserQuestion question.
+ * Kept as a convenience over classifyAskQuestionsInput for callers that only need
+ * the boolean.
+ */
+export function hasRenderableAskQuestions(input: unknown): boolean {
+  return classifyAskQuestionsInput(input) === 'valid'
+}
+
+/**
  * Render AskUserQuestion tool input as an interactive question card.
  * Shows question header, question text, and selectable option buttons.
  * Clicking an option is handled by the AskUserQuestion action handler
  * registered at the bottom of this file.
  */
 function renderAskUserQuestion(input: ToolInput): string {
-  const questions = input.questions
-  if (!Array.isArray(questions) || questions.length === 0) {
-    return `<div class="ask-question-view"><div class="ask-question-empty">${gt('tool.askUser.noQuestions')}</div></div>`
+  const kind = classifyAskQuestionsInput(input)
+  if (kind === 'malformed') {
+    // Malformed-data notice — can never be answered.
+    return `<div class="ask-question-view ask-invalid"><div class="ask-question-empty">${escapeHtml(gt('tool.askUser.invalidFormat'))}</div></div>`
   }
+  if (kind === 'empty') {
+    // Neutral empty placeholder — no input yet / no questions to show.
+    return `<div class="ask-question-view"><div class="ask-question-empty">${escapeHtml(gt('tool.askUser.noQuestions'))}</div></div>`
+  }
+  const questions = input.questions as Array<Record<string, unknown>>
 
   let html = '<div class="ask-question-view">'
 
   for (let qi = 0; qi < questions.length; qi++) {
     const q = questions[qi]
-    const header = q.header || ''
-    const question = q.question || ''
+    const header = str(q.header)
+    const question = str(q.question)
     const multiSelect = !!q.multiSelect
     const options = Array.isArray(q.options) ? q.options : []
 
@@ -1657,7 +1708,9 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         }
         optionEl.classList.add('selected')
         const indicator = optionEl.querySelector('.ask-option-indicator')
-        if (indicator) indicator.textContent = '◉'
+        // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
+        // so the filled state does not render smaller than the hollow one.
+        if (indicator) indicator.textContent = '●'
       }
 
       updateAskSubmitState(view)

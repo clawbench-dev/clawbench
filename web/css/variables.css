@@ -27,6 +27,18 @@
     --radius-md: 10px;
     --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
 
+    /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
+       --wallpaper-url: url(...) of the active wallpaper, or `none`.
+       --wallpaper-scrim: translucent overlay color on top of the wallpaper
+       (dark themes darken more). --panel-alpha: opacity multiplier applied to
+       main work-panel surfaces so the wallpaper shows through them. These are
+       inert by default (wallpaper absent → surfaces stay opaque, zero
+       regression). The wallpaper-active class on <html> activates the rules
+       that consume them. ── */
+    --wallpaper-url: none;
+    --wallpaper-scrim: transparent;
+    --panel-alpha: 100%;
+
     /* ── Font stacks (user-configurable via Settings → Appearance).
        Runtime overrides the selected open-source font to the head of each
        stack through <html> inline style (see utils/fontConfig.ts).
