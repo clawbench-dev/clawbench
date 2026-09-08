@@ -47,6 +47,10 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
@@ -138,7 +142,26 @@ const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = use
 const { isPC } = usePlatformDetect()
 const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef, source: 'file' })
 
+// Image attach-to-chat badge (touch devices): actions injected from the shared
+// chat-attachment singleton + toast + i18n labels.
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+const mdImageAttachActions: MdImageAttachActions = {
+    add: addAttachedFile,
+    remove: removeAttachedFileByPath,
+    has: hasAttachedFile,
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
 function handleClick(event: MouseEvent) {
+    // Touch image attach badge — first in the chain so its stopPropagation
+    // prevents the click from reaching the image/lightbox handlers below.
+    if (handleMdImageAttachClick(event, mdImageAttachActions)) return
+
     // Code block header buttons (copy/wrap)
     if (handleCodeBlockClick(event)) return
 

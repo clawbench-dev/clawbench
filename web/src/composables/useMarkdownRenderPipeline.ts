@@ -22,6 +22,7 @@ import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '
 import { escapeHtml } from '@/utils/html.ts'
 import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { gt } from '@/composables/useLocale'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
 
 /**
@@ -135,11 +136,22 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
         // Add lightbox-img class to all <img> tags for lightbox activation
         result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {
             const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-            return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span></span>`
+            // Local images (the pipeline stamped data-attach-src) get a mobile
+            // "attach to chat" badge inside the wrapper; external/data: images
+            // (no data-attach-src) stay plain. Shown only on touch devices via
+            // the .img-attach-badge CSS media rules.
+            const label = escapeHtml(gt('chat.attach.attachImageToChat'))
+            const badge = /\sdata-attach-src=/.test(clean)
+                ? `<span class="img-attach-badge" role="button" tabindex="-1" title="${label}" aria-label="${label}">${ATTACH_BADGE_SVG}</span>`
+                : ''
+            return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span>${badge}</span>`
         })
         return result
     }
 }
+
+/** Minimal paperclip glyph for the image attach-to-chat badge (no font deps). */
+const ATTACH_BADGE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
 
 /** Result of rendering markdown source. */
 export interface BuildMarkdownPreviewDomResult {

@@ -60,6 +60,17 @@ describe('createFixLocalImagePaths', () => {
     expect(out.match(/lightbox-img-wrap/g)).toHaveLength(2)
   })
 
+  it('injects the attach badge only for local images (data-attach-src)', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<img src="a.png"><img src="https://x.com/b.png"><img src="data:image/png;base64,abc">')
+    // Local raster → thumbnail; wrapper contains exactly one attach badge.
+    expect(out.match(/img-attach-badge/g)).toHaveLength(1)
+    // External / data: images get no badge.
+    const localWrap = out.slice(0, out.indexOf('https://x.com'))
+    expect(localWrap).toContain('img-attach-badge')
+    expect(out.slice(out.indexOf('https://x.com'))).not.toContain('img-attach-badge')
+  })
+
   it('HTML-escapes data-attach-src so decoded filenames cannot break the attribute', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
     // A percent-encoded quote+onerror decodes into the path attribute. It must

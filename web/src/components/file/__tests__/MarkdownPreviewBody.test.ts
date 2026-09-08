@@ -1,8 +1,16 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import { ATTACH_DRAG_MIME } from '@/utils/attachDrag'
+import { useChatContext } from '@/composables/useChatContext'
+
+const { attachedFiles, clearAll, addAttachedFile } = useChatContext()
+
+/** Seed an attached file so the toggle-off path can be exercised. */
+function addTestAttachment(path: string) {
+  addAttachedFile(path)
+}
 
 const i18n = createI18n({
   legacy: false,
@@ -51,6 +59,13 @@ function mountBody(overrides: Record<string, unknown> = {}) {
 describe('MarkdownPreviewBody.vue', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  // The attach actions operate on the module-level useChatContext singleton;
+  // reset it after every test (even failing ones) so state never leaks between
+  // tests in this file or into sibling files sharing the same worker.
+  afterEach(() => {
+    clearAll()
   })
 
   it('renders the markdown HTML inside .markdown-body > .markdown-content', () => {
@@ -177,5 +192,30 @@ describe('MarkdownPreviewBody.vue', () => {
     const dataTransfer = { setData: vi.fn(), setDragImage: vi.fn() }
     await wrapper.find('img.lightbox-img').trigger('dragstart', { dataTransfer })
     expect(dataTransfer.setData).not.toHaveBeenCalled()
+  })
+
+  it('attaches a local image when its attach badge is tapped (touch)', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+    })
+    await wrapper.find('.img-attach-badge').trigger('click')
+    expect(attachedFiles.value).toEqual([{ path: 'docs/a.png', isDir: false }])
+  })
+
+  it('removes a local image from attachments when its badge is tapped again', async () => {
+    addTestAttachment('docs/a.png')
+    const { wrapper } = mountBody({
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+    })
+    await wrapper.find('.img-attach-badge').trigger('click')
+    expect(attachedFiles.value).toEqual([])
+  })
+
+  it('does not attach when tapping the image body (not the badge)', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+    })
+    await wrapper.find('img.lightbox-img').trigger('click')
+    expect(attachedFiles.value).toEqual([])
   })
 })

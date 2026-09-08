@@ -60,6 +60,7 @@
         :data-file-path="filePath"
         @dragstart="onMdImageDragStart"
         @dragend="onMdImageDragEnd"
+        @click="handleBodyClick"
       >
         <div class="markdown-content" v-html="renderedHtml" />
       </div>
@@ -107,6 +108,10 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.
@@ -157,6 +162,27 @@ const scrollEl = ref<HTMLElement | null>(null)
 
 const canExpandAbove = computed(() => props.remainingAbove > 0)
 const canExpandBelow = computed(() => props.remainingBelow > 0)
+
+// Image attach-to-chat badge (touch devices). This component is a read-only
+// rendered view; the only interactive bit it owns is the badge toggle.
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+const mdImageAttachActions: MdImageAttachActions = {
+  add: addAttachedFile,
+  remove: removeAttachedFileByPath,
+  has: hasAttachedFile,
+  toast: (msg, opts) => showToast(msg, opts),
+  messages: {
+    added: gt('chat.attach.addedToChat'),
+    removed: gt('chat.attach.removedFromChat'),
+  },
+}
+
+/** Delegated click: only the image attach badge reacts; everything else in the
+    read-only document view is left untouched (the parent / lightbox handle it). */
+function handleBodyClick(e: MouseEvent) {
+  handleMdImageAttachClick(e, mdImageAttachActions)
+}
 
 // ── Mermaid ────────────────────────────────────────────────────────────────
 // MarkdownPreview.vue renders mermaid diagrams at the DOM level after the HTML

@@ -459,6 +459,7 @@ export default {
       alreadyAttached: 'Already in chat attachments',
       removedFromChat: 'Removed from chat attachments',
       removeFromChat: 'Remove attachment',
+      attachImageToChat: 'Add image to chat',
     },
     quickSend: {
       title: 'Quick Send Message',
