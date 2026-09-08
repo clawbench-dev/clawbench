@@ -125,6 +125,19 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 
+		// CodeBuddy exposes its task system through Task* tools (TaskCreate/
+		// TaskUpdate/TaskList) rather than ACP plan notifications; each terminal
+		// result carries the full task snapshot in _meta.codebuddy.ai/rawResponse.
+		// Bridge those into plan_update so the frontend PlanPanel renders the
+		// checklist. Placed before the debouncer because the debouncer's terminal
+		// path breaks out of the switch, and the bridge only fires for completed
+		// task-tool results (all other updates no-op). Runs on the notification
+		// goroutine; only non-blocking forwardACPEvent + SetCachedPlanState (the
+		// same pattern the update.Plan branch below uses).
+		if backendID == "codebuddy" && conn != nil && isCodeBuddyBackend(conn.agent) {
+			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
+		}
+
 		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
 		// streaming. Batching these into a single event per 50ms window cuts
