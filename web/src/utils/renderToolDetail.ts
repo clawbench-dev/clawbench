@@ -582,6 +582,15 @@ function renderWebFetch(input: ToolInput): string {
  * Shows agent type badge + description + full markdown-rendered prompt.
  */
 function renderAgentCall(input: ToolInput): string {
+  // Codex sub-agent lifecycle control frames (Start/Complete/Interact/Interrupt
+  // subagent) carry { activityKind, agentPath, agentThreadId } instead of the
+  // claude-style { subagent_type, description, prompt }. Without this branch the
+  // detail view renders empty — only the title pill (name + summary) was shown.
+  const activity = str(input.activityKind)
+  if (activity) {
+    return renderCodexAgentActivity(input, activity)
+  }
+
   const description = str(input.description)
   const prompt = str(input.prompt)
   const subagentType = str(input.subagent_type) || str(input.mode)
@@ -609,6 +618,73 @@ function renderAgentCall(input: ToolInput): string {
     html += `<div class="agent-call-prompt">${rendered}</div>`
   }
 
+  html += '</div>'
+  return html
+}
+
+/** Human-readable label for a codex sub-agent lifecycle activity kind. */
+const CODEX_AGENT_ACTIVITY_LABELS: Record<string, string> = {
+  started: 'started',
+  interacted: 'interacted',
+  interrupted: 'interrupted',
+  completed: 'completed',
+}
+
+/**
+ * Render a codex sub-agent lifecycle control frame (Start/Complete/Interact/
+ * Interrupt subagent). These are ACP control frames, not ordinary delegation
+ * calls: they carry { activityKind, agentPath, agentThreadId } and the sub-agent
+ * runs in a separate thread whose content is not on the parent wire.
+ */
+function renderCodexAgentActivity(input: ToolInput, activity: string): string {
+  const label = CODEX_AGENT_ACTIVITY_LABELS[activity] || activity
+  const path = str(input.agentPath)
+  const threadId = str(input.agentThreadId)
+  const basename = path.split('/').filter(Boolean).pop() || path
+
+  let html = '<div class="agent-call-view codex-agent-activity">'
+  html += '<div class="agent-call-header">'
+  html += `<span class="agent-type-badge codex-activity-badge">${escapeHtml(label)}</span>`
+  if (basename) {
+    html += `<span class="agent-call-desc">${escapeHtml(basename)}</span>`
+  }
+  html += '</div>'
+
+  if (path) {
+    html += `<div class="codex-agent-path"><span class="codex-agent-path-label">agent</span><code>${escapeHtml(path)}</code></div>`
+  }
+  if (threadId) {
+    html += `<div class="codex-agent-thread"><span class="codex-agent-path-label">thread</span><code>${escapeHtml(threadId)}</code></div>`
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render a codex collaboration `wait` tool input.
+ * The parent thread blocks until a child agent's mailbox has activity
+ * (or timeout); the tool itself carries no child reference.
+ */
+function renderWaitCall(input: ToolInput): string {
+  const sender = str(input.senderThreadId)
+  const status = str(input.status)
+  const agentStates = input.agentsStates
+  const hasAgents = typeof agentStates === 'object' && agentStates !== null && Object.keys(agentStates as Record<string, unknown>).length > 0
+
+  let html = '<div class="wait-call-view">'
+  html += '<div class="wait-call-header">'
+  html += '<span class="wait-call-label">wait</span>'
+  if (status) {
+    html += `<span class="wait-call-status">${escapeHtml(status)}</span>`
+  }
+  html += '</div>'
+  if (hasAgents) {
+    html += '<div class="wait-call-agents">waiting for sub-agent</div>'
+  }
+  if (sender) {
+    html += `<div class="wait-call-sender"><span class="codex-agent-path-label">thread</span><code>${escapeHtml(sender)}</code></div>`
+  }
   html += '</div>'
   return html
 }
@@ -1599,6 +1675,7 @@ registerToolRenderer('WebFetch', renderWebFetch)
 
 // Agent/communication tools
 registerToolRenderer('Agent', renderAgentCall)
+registerToolRenderer('wait', renderWaitCall)         // codex collaboration wait (parent blocks on child mailbox)
 registerToolRenderer('SendMessage', renderSendMessage)
 registerToolRenderer('ComputerUse', renderComputerUse)
 registerToolRenderer('TeamCreate', renderTeamTool)

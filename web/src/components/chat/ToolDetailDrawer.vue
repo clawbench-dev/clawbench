@@ -359,6 +359,102 @@ function handleBodyInput(event) {
   margin: 6px 0;
 }
 
+/* Agent call view — shared (Agent/Task) and codex sub-agent lifecycle frames.
+   Mirrors .content-blocks .agent-call-* so the bottom-sheet detail shows the
+   same layout for claude-style delegations and codex control frames. */
+.tool-detail-body .agent-call-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .agent-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tool-detail-body .agent-type-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(236, 72, 153, 0.12);
+  color: #db2777;
+  font-weight: 600;
+  white-space: nowrap;
+}
+:root[data-theme-base="dark"] .tool-detail-body .agent-type-badge {
+  background: rgba(244, 114, 182, 0.15);
+  color: #f472b6;
+}
+.tool-detail-body .agent-call-desc {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Codex sub-agent lifecycle activity frame */
+.tool-detail-body .codex-activity-badge {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+:root[data-theme-base="dark"] .tool-detail-body .codex-activity-badge {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+.tool-detail-body .codex-agent-path,
+.tool-detail-body .codex-agent-thread,
+.tool-detail-body .wait-call-sender {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.tool-detail-body .codex-agent-path code,
+.tool-detail-body .codex-agent-thread code,
+.tool-detail-body .wait-call-sender code {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.tool-detail-body .codex-agent-path-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* Codex collaboration wait */
+.tool-detail-body .wait-call-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .wait-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .wait-call-label {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.tool-detail-body .wait-call-status {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.tool-detail-body .wait-call-agents {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body {
   overflow-x: auto;
 }

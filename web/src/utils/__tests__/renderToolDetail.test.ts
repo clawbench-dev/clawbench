@@ -193,6 +193,52 @@ describe('formatToolInput', () => {
     })
   })
 
+  // ── Codex sub-agent lifecycle frames (Agent tool with activityKind) ──
+  describe('Agent renderer — codex lifecycle frames', () => {
+    it('renders activity badge + agent basename when activityKind present', () => {
+      const html = formatToolInput(
+        { activityKind: 'started', agentPath: '/root/explore_backend', agentThreadId: '01a08187-7a45-7d53-9d0b-747f6c937c20' },
+        'Agent',
+      )
+      expect(contains(html, 'agent-call-view')).toBe(true)
+      expect(contains(html, 'codex-activity-badge')).toBe(true)
+      expect(contains(html, 'started')).toBe(true)
+      // basename rendered as description
+      expect(contains(html, 'explore_backend')).toBe(true)
+      // full path + thread id shown in mono rows
+      expect(contains(html, '/root/explore_backend')).toBe(true)
+      expect(contains(html, '01a08187-7a45-7d53-9d0b-747f6c937c20')).toBe(true)
+    })
+
+    it('renders interrupted/completed activities', () => {
+      const html = formatToolInput({ activityKind: 'interrupted', agentPath: '/root/explore_ops_docs' }, 'Agent')
+      expect(contains(html, 'interrupted')).toBe(true)
+      expect(contains(html, 'explore_ops_docs')).toBe(true)
+    })
+  })
+
+  // ── codex collaboration wait ──
+  describe('wait renderer', () => {
+    it('renders label and status when present', () => {
+      const html = formatToolInput(
+        { agentsStates: {}, senderThreadId: '01a08187-7a45-7d53-9d0b-747f6c937c20', receiverThreadIds: [], status: 'inProgress' },
+        'wait',
+      )
+      expect(contains(html, 'wait-call-view')).toBe(true)
+      expect(contains(html, 'wait-call-label')).toBe(true)
+      expect(contains(html, 'wait-call-sender')).toBe(true)
+      expect(contains(html, '01a08187-7a45-7d53-9d0b-747f6c937c20')).toBe(true)
+    })
+
+    it('renders waiting indicator when agentsStates is non-empty', () => {
+      const html = formatToolInput(
+        { agentsStates: { 'child-1': { status: 'running' } }, senderThreadId: 'root-1' },
+        'wait',
+      )
+      expect(contains(html, 'wait-call-agents')).toBe(true)
+    })
+  })
+
   // ── Skill ──
   describe('Skill renderer', () => {
     it('renders skill name with icon', () => {
