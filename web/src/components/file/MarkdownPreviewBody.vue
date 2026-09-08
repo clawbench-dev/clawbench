@@ -58,6 +58,8 @@
       <div
         class="markdown-body md-preview-body"
         :data-file-path="filePath"
+        @dragstart="onMdImageDragStart"
+        @dragend="onMdImageDragEnd"
       >
         <div class="markdown-content" v-html="renderedHtml" />
       </div>
@@ -104,6 +106,7 @@
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
+import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.

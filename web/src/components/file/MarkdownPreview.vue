@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMdImageDragStart" @dragend="onMdImageDragEnd">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -46,6 +46,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'

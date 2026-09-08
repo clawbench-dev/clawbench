@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
+import { ATTACH_DRAG_MIME } from '@/utils/attachDrag'
 
 const i18n = createI18n({
   legacy: false,
@@ -139,5 +140,42 @@ describe('MarkdownPreviewBody.vue', () => {
     // No-op helpers must not throw (the parent's bodyRef surface expects them).
     expect(() => exposed.scrollToTargetLine()).not.toThrow()
     expect(() => exposed.scrollLineIntoView(3)).not.toThrow()
+  })
+
+  it('writes the attach payload when dragging a local markdown image out', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="lightbox-expand-icon"></span></span></p>',
+    })
+
+    // A custom MIME payload is set on dragstart.
+    const store: Record<string, string> = {}
+    const types: string[] = []
+    const dataTransfer = {
+      effectAllowed: '',
+      setData(type: string, value: string) {
+        store[type] = value
+        if (!types.includes(type)) types.push(type)
+      },
+      setDragImage: vi.fn(),
+      get types() {
+        return Object.freeze([...types])
+      },
+    }
+    const img = wrapper.find('img.lightbox-img')
+    expect(img.exists()).toBe(true)
+    // bubble (default) so the container's delegated handler runs
+    await img.trigger('dragstart', { dataTransfer })
+    expect(dataTransfer.setDragImage).toHaveBeenCalledTimes(1)
+    expect(store[ATTACH_DRAG_MIME]).toBe('{"path":"docs/a.png","isDir":false}')
+    expect(store['text/plain']).toBe('docs/a.png')
+  })
+
+  it('does not write the attach payload for an external image', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<p><img class="lightbox-img" src="https://x.com/a.png"></p>',
+    })
+    const dataTransfer = { setData: vi.fn(), setDragImage: vi.fn() }
+    await wrapper.find('img.lightbox-img').trigger('dragstart', { dataTransfer })
+    expect(dataTransfer.setData).not.toHaveBeenCalled()
   })
 })

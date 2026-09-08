@@ -19,6 +19,7 @@
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '@/utils/path.ts'
+import { escapeHtml } from '@/utils/html.ts'
 import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
@@ -115,9 +116,20 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // it when the source file changes) and keep the full image for the lightbox.
             // Other formats (svg/webp/gif/… ) keep serving the original full-size file.
             const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, getThumbWidth(isPC)) : null
+            // data-attach-src carries the DECODED project-relative file path (resolved
+            // against the markdown file's dir) so the rendered view can re-drag the
+            // image out onto the chat column as a reference attachment. The decoded
+            // form matches the FileEntry.path convention used by the file manager /
+            // file header drags — the src URLs above keep the segment-encoded form.
+            // The decoded value is HTML-escaped before interpolation: decodeURIComponent
+            // can surface quote/angle characters (e.g. a literal %22 filename) that
+            // would otherwise break out of the attribute on the rendered page.
+            let attachPath = rel
+            try { attachPath = decodeURIComponent(rel) } catch { /* rel is always encodeURIComponent output, keep as-is */ }
+            const attachAttr = ` data-attach-src="${escapeHtml(attachPath)}"`
             const replacement = thumbSrc
-                ? `src="${thumbSrc}" data-full-src="${fullSrc}"`
-                : `src="${fullSrc}"`
+                ? `src="${thumbSrc}" data-full-src="${fullSrc}"${attachAttr}`
+                : `src="${fullSrc}"${attachAttr}`
             return match.replace(`src="${src}"`, replacement)
         })
         // Add lightbox-img class to all <img> tags for lightbox activation

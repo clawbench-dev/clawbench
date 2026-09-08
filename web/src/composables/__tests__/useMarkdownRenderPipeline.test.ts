@@ -17,6 +17,8 @@ describe('createFixLocalImagePaths', () => {
     const out = fix(html)
     expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&w=1200"')
     expect(out).toContain('data-full-src="/api/local-file/docs/assets/a.png?t=42"')
+    // data-attach-src carries the resolved project-relative path for re-drag
+    expect(out).toContain('data-attach-src="docs/assets/a.png"')
   })
 
   it('keeps external URLs untouched', () => {
@@ -25,6 +27,8 @@ describe('createFixLocalImagePaths', () => {
       const out = fix(`<img src="${src}">`)
       expect(out).toContain(`src="${src}"`)
       expect(out).not.toContain('/api/')
+      // External / data: images have no local file to re-drag — no attach data
+      expect(out).not.toContain('data-attach-src')
     }
   })
 
@@ -33,6 +37,7 @@ describe('createFixLocalImagePaths', () => {
     const out = fix('<img src="anim.gif">')
     expect(out).toContain('src="/api/local-file/docs/anim.gif?t=7"')
     expect(out).not.toContain('/api/file/thumb')
+    expect(out).toContain('data-attach-src="docs/anim.gif"')
     // Mobile width 640 for non-PC
     const pc = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: true })
     expect(pc('<img src="p.png">')).toContain('w=1200')
@@ -44,7 +49,8 @@ describe('createFixLocalImagePaths', () => {
     // ../ popped → a/c; CJK/space percent-encoded by segment.
     expect(out).toContain('path=a/c/%E5%9B%BE%20d.png')
     expect(out).not.toContain('../')
-    expect(out).not.toContain('图')
+    // data-attach-src is the DECODED project-relative path (FileEntry.path form)
+    expect(out).toContain('data-attach-src="a/c/图 d.png"')
   })
 
   it('wraps every image in a lightbox span', () => {
@@ -52,6 +58,18 @@ describe('createFixLocalImagePaths', () => {
     const out = fix('<img src="x.png"><img src="https://y.com/z.png">')
     expect(out).toContain('lightbox-img-wrap')
     expect(out.match(/lightbox-img-wrap/g)).toHaveLength(2)
+  })
+
+  it('HTML-escapes data-attach-src so decoded filenames cannot break the attribute', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    // A percent-encoded quote+onerror decodes into the path attribute. It must
+    // stay escaped inside data-attach-src — never break out into new attributes.
+    const out = fix('<img src="we%22onerror%3D%22alert(1).png">')
+    expect(out).toContain('data-attach-src="docs/we&quot;onerror=&quot;alert(1).png"')
+    // The src stays segment-encoded (quotes not present), so no literal
+    // attribute breakout can occur anywhere in the rewritten tag.
+    expect(out).toContain('src="/api/local-file/docs/we%22onerror%3D%22alert(1).png')
+    expect(out).not.toContain('onerror="')
   })
 
   it('emits token-scoped full-size URLs and skips thumbnails in share mode', () => {
@@ -137,6 +155,7 @@ describe('buildMarkdownPreviewDom', () => {
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
     expect(html).toContain('lightbox-img-wrap')
     expect(html).toContain('/api/file/thumb?path=img/x.png&amp;w=1200')
+    expect(html).toContain('data-attach-src="img/x.png"')
   })
 
   it('reports detected file paths for later verification', () => {
