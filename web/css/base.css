@@ -267,6 +267,17 @@ html.wallpaper-active .cm-viewer .code-editor-actions {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 
+/* Chat message bubbles — let the wallpaper show through the assistant strip
+   (bg-tertiary) and the user bubble (--user-msg-color) at the panel opacity.
+   Only the bubble body goes translucent: inner content canvases (code blocks,
+   tool cards, markdown tables) keep their own solid fills for readability. */
+html.wallpaper-active .chat-message.assistant {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .chat-message.user {
+    background: color-mix(in srgb, var(--user-msg-color) var(--panel-alpha), transparent);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 4px;
