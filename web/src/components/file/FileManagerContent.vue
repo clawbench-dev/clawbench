@@ -893,10 +893,17 @@ function openSearch() {
     nextTick(() => searchInputRef.value?.focus())
 }
 
-/** Enter in the search box opens the highlighted result (files keep search). */
+/** Enter in the search box opens the highlighted result (files keep search).
+ * With no arrow-key highlight yet, the first result is opened — matching the
+ * pre-fusion drawer's Enter-on-first-result behavior. */
 function confirmSelected() {
-    const path = selectedPath.value
-    if (!path) return
+    let path = selectedPath.value
+    if (!path || !entryByPath(path)) {
+        // No (valid) highlighted entry: fall back to the first result.
+        const first = displayEntries.value[0]
+        if (!first) return
+        path = pathOf(first)
+    }
     const entry = entryByPath(path)
     if (!entry) return
     openItem(entry.type === 'dir' ? 'dir' : 'file', path)
@@ -928,6 +935,13 @@ function toggleScope() {
 watch(() => search.state.query, () => {
     if (!searchMode.value) return
     search.startSearch(props.currentDir)
+})
+
+// Drop the stale arrow-key highlight whenever the result set is replaced, so
+// Enter never opens an entry that no longer belongs to the visible results.
+watch(() => search.state.results, () => {
+    if (!searchMode.value) return
+    if (search.state.query.trim()) selectedPath.value = ''
 })
 
 /**
@@ -1356,6 +1370,7 @@ async function doBatchDelete() {
     if (!confirmed) return
     emit('batchDelete', paths)
     exitMultiSelect()
+    refreshSearchResults() // drop deleted entries from an active search view
 }
 
 const allSelectedAreFiles = computed(() => {

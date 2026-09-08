@@ -778,6 +778,44 @@ describe('FileManagerContent — inline search', () => {
     await wrapper.find('.search-pill input').trigger('keydown', { key: 'Escape' })
     expect(wrapper.find('.fs-input-row').exists()).toBe(false)
   })
+
+  it('Enter in the search box opens the first result without a prior highlight', async () => {
+    searchState.query = 'go'
+    searchState.results = [
+      { name: 'a.go', path: 'root/a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    // No arrow key pressed yet — Enter should open the first result.
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('root/a.go')
+  })
+
+  it('replaces the stale highlight when the result set changes', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'a.go', path: 'root/a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    // Highlight the second result via ArrowDown twice
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'ArrowDown' })
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'ArrowDown' })
+    expect(wrapper.vm._getSelectedPath()).toBe('cmd/b.go')
+    // Replace results with a fresh set (as a new search round would)
+    searchState.results = [
+      { name: 'c.go', path: 'pkg/c.go', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+  })
 })
 
 // ── Hidden files ──
