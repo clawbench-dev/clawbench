@@ -196,6 +196,7 @@ import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
+import { sameFilePath } from '@/utils/path.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
@@ -467,14 +468,11 @@ const stream = useChatStream({
     // This is a defense-in-depth mechanism alongside the fsnotify-based file watcher.
     const currentFilePath = store.state.currentFile?.path
 
-    // Path matching: tool paths may be relative, absolute, or have different prefixes.
-    // Use suffix matching: if the current file path ends with the tool's file path,
-    // or vice versa, they match.
-    const normA = filePath.replace(/\\/g, '/')
-    const normB = (currentFilePath || '').replace(/\\/g, '/')
-    const isMatch = normA === normB ||
-      normA.endsWith('/' + normB) ||
-      normB.endsWith('/' + normA)
+    // Path matching: tool paths may be relative, absolute (project-internal or
+    // external), or have "./" prefixes. sameFilePath normalizes separators,
+    // relativizes project paths under the project root, then suffix-matches
+    // on "/" boundaries.
+    const isMatch = sameFilePath(filePath, currentFilePath || '', store.state.projectRoot)
 
     if (isMatch && currentFilePath) {
       // refreshCurrentFile handles both file content and directory listing

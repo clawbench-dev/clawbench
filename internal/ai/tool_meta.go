@@ -205,16 +205,97 @@ func ExtractDisplayName(name string, input map[string]any) string {
 }
 
 // ExtractFilePath extracts the file path from a tool call input.
-// Checks file_path first, then path as fallback.
+// Priority order for a direct string path field:
+//
+//	file_path > new_file_path > old_file_path > path > filename > file_name
+//
+// followed by camelCase variants of the same (filePath, newFilePath, …) for
+// inputs that bypassed normalizeToolInput. When no direct string field exists,
+// it digs into container fields that some backends use instead of a flat
+// path key:
+//
+//   - file_paths / filePaths (array) — first element (used for batch tools)
+//   - locations (array of {path|file_path}) — first element's path (ACP read/edit)
+//   - location (single {path|file_path}) — nested object path
+//
+// Container/array forms only yield a path when the element itself looks like a
+// file reference, so a command string never accidentally becomes a "path".
 func ExtractFilePath(name string, input map[string]any) string {
 	if input == nil {
 		return ""
 	}
-	if v, _ := input["file_path"].(string); v != "" {
-		return v
+
+	// 1. Flat string path fields — priority order, snake_case first then camelCase.
+	for _, key := range []string{
+		"file_path", "new_file_path", "old_file_path", "path", "filename", "file_name",
+		"filePath", "newFilePath", "oldFilePath", "fileName",
+	} {
+		if v, _ := input[key].(string); v != "" {
+			return v
+		}
 	}
-	if v, _ := input["path"].(string); v != "" {
-		return v
+
+	// 2. Array container fields — take the first element that carries a path.
+	for _, key := range []string{"file_paths", "filePaths"} {
+		if arr, ok := input[key].([]any); ok {
+			if p := firstPathFromArray(arr); p != "" {
+				return p
+			}
+		}
+	}
+
+	// 3. ACP-style location containers (read/edit tools report the target file).
+	if locs, ok := input["locations"].([]any); ok {
+		if p := firstPathFromLocations(locs); p != "" {
+			return p
+		}
+	}
+	if loc, ok := input["location"].(map[string]any); ok {
+		if p := pathFromLocationMap(loc); p != "" {
+			return p
+		}
+	}
+
+	return ""
+}
+
+// firstPathFromArray returns the first non-empty path string in a []any that
+// contains either plain path strings or {"path"/"file_path": …} objects.
+func firstPathFromArray(arr []any) string {
+	for _, item := range arr {
+		switch v := item.(type) {
+		case string:
+			if v != "" {
+				return v
+			}
+		case map[string]any:
+			if p := pathFromLocationMap(v); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// firstPathFromLocations returns the first non-empty path from an ACP-style
+// locations array (elements may be {"path": …} or {"file_path": …}).
+func firstPathFromLocations(locs []any) string {
+	for _, item := range locs {
+		if m, ok := item.(map[string]any); ok {
+			if p := pathFromLocationMap(m); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// pathFromLocationMap pulls the path key out of a single location-style map.
+func pathFromLocationMap(m map[string]any) string {
+	for _, key := range []string{"file_path", "path"} {
+		if v, _ := m[key].(string); v != "" {
+			return v
+		}
 	}
 	return ""
 }

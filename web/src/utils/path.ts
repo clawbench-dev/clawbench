@@ -104,3 +104,50 @@ export function toRelativePath(absPath: string, basePath: string): string {
     const rel = normAbs.slice(normBase.length).replace(/^\//, '')
     return rel || '/'
 }
+
+/**
+ * Normalize a path for file-identity comparison:
+ * forward slashes, no leading "./", no duplicate slashes, no trailing slash.
+ * Does NOT resolve project-relative vs absolute — that's handled by callers
+ * via toProjectRelative / sameFilePath.
+ */
+export function normalizeForCompare(path: string): string {
+    return normalizeSlashes(path)
+        .replace(/^\.\/+/, '') // strip one leading "./" segment
+        .replace(/\/+/g, '/') // collapse duplicate slashes
+        .replace(/\/+$/, '') // strip trailing slash
+}
+
+/**
+ * Decide whether a tool-reported file path (Write/Edit file_path, possibly
+ * absolute, project-relative, "./"-prefixed, or relative to a subdirectory)
+ * refers to the currently viewed file.
+ *
+ * Strategy:
+ * 1. Normalize both sides (slashes, "./", duplicates, trailing slash).
+ * 2. When a project root is known, relativize any path that lies under it.
+ *    This turns "E:/git/app/web/src/x.ts" and "web/src/x.ts" into the same
+ *    comparison key. Paths outside the root are left untouched (absolute).
+ * 3. Match by full equality OR by a "/"-boundary suffix match in either
+ *    direction (preserves the historical heuristic that tolerates tool paths
+ *    relative to a subdirectory of the project).
+ *
+ * The suffix match requires a "/" before the shorter path so a bare basename
+ * never collides with a deeper same-named file (e.g. "web/a.ts" vs "a.ts"
+ * only match when one is genuinely the other's suffix with a separator).
+ */
+export function sameFilePath(
+    a: string,
+    b: string,
+    projectRoot?: string,
+): boolean {
+    if (!a || !b) return false
+    let normA = normalizeForCompare(a)
+    let normB = normalizeForCompare(b)
+    if (projectRoot) {
+        normA = toProjectRelative(normA, projectRoot)
+        normB = toProjectRelative(normB, projectRoot)
+    }
+    if (normA === normB) return true
+    return normA.endsWith('/' + normB) || normB.endsWith('/' + normA)
+}

@@ -342,6 +342,66 @@ func TestExtractFilePath(t *testing.T) {
 			input:    nil,
 			want:     "",
 		},
+		{
+			name:     "new_file_path preferred over old_file_path",
+			toolName: "Edit",
+			input:    map[string]any{"old_file_path": "/src/old.go", "new_file_path": "/src/new.go"},
+			want:     "/src/new.go",
+		},
+		{
+			name:     "file_path still beats old_file_path",
+			toolName: "Edit",
+			input:    map[string]any{"file_path": "/src/a.go", "old_file_path": "/src/b.go"},
+			want:     "/src/a.go",
+		},
+		{
+			name:     "filename fallback",
+			toolName: "Write",
+			input:    map[string]any{"filename": "out.txt"},
+			want:     "out.txt",
+		},
+		{
+			name:     "camelCase filePath fallback",
+			toolName: "Edit",
+			input:    map[string]any{"filePath": "/src/camel.go"},
+			want:     "/src/camel.go",
+		},
+		{
+			name:     "file_paths array takes first string",
+			toolName: "Edit",
+			input:    map[string]any{"file_paths": []any{"/src/a.go", "/src/b.go"}},
+			want:     "/src/a.go",
+		},
+		{
+			name:     "locations array takes first object path",
+			toolName: "Edit",
+			input:    map[string]any{"locations": []any{map[string]any{"path": "/src/loc.go"}}},
+			want:     "/src/loc.go",
+		},
+		{
+			name:     "single location object with file_path",
+			toolName: "Edit",
+			input:    map[string]any{"location": map[string]any{"file_path": "/src/nest.go"}},
+			want:     "/src/nest.go",
+		},
+		{
+			name:     "empty array yields empty",
+			toolName: "Edit",
+			input:    map[string]any{"file_paths": []any{}},
+			want:     "",
+		},
+		{
+			name:     "non-path command string is not captured",
+			toolName: "Bash",
+			input:    map[string]any{"command": "node script.js x.ts"},
+			want:     "",
+		},
+		{
+			name:     "location without path yields empty",
+			toolName: "Edit",
+			input:    map[string]any{"location": map[string]any{"range": "1-5"}},
+			want:     "",
+		},
 	}
 
 	for _, tt := range tests {
