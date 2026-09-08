@@ -30,6 +30,10 @@ import (
 // kind-to-canonical fallback, which maps every `kind=other` tool to "Skill" —
 // mislabeling every sub-agent lifecycle call (observed in production: a codex
 // turn showed 9 bogus "Skill" pills for Start/Complete/Interact subagent).
+// acp_tool_names.go has since removed the ToolKindOther→Skill catch-all, but
+// codex still needs this branch: subagent frames must canonicalize to "Agent"
+// (frontend Bot icon + sub-agent category + threadId correlation), which title
+// passthrough alone would not produce, and `wait` must be preserved as-is.
 
 // codexMetaNamespace is the per-agent _meta namespace Codex reports tool
 // identity under (codex-acp bridge, createSubAgentActivityUpdate /

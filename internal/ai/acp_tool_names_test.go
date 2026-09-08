@@ -66,3 +66,34 @@ func TestExtractToolName_LegacyGlobalPrefix(t *testing.T) {
 	result := ExtractToolNameForTest("", acp.ToolKindRead, "", "read_file-123-4")
 	assert.Equal(t, "Read", result)
 }
+
+// TestExtractToolName_OtherKindNoSkillCatchAll locks in the root fix: kind=other
+// tools whose title is unrecognized must NOT be renamed to "Skill". This was the
+// shared catch-all that mislabeled every unknown/control tool as a Skill pill
+// (observed on codex subagent lifecycle frames across all ACP backends routed to
+// the generic parser, e.g. opencode/mimo/copilot/deepseek/grok/antigravity).
+func TestExtractToolName_OtherKindNoSkillCatchAll(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		want  string
+	}{
+		// Multi-word control/unknown frames previously collapsed to "Skill".
+		{"multi-word unknown preserved", "Start subagent codebase_research", "Start subagent codebase_research"},
+		{"multi-word unknown preserved 2", "Launch background task xyz", "Launch background task xyz"},
+		// Empty title + other falls through to the kind enum, not "Skill".
+		{"empty title other", "", "other"},
+		// Real Skill tools still resolve via the single-word alias table.
+		{"lowercase skill alias", "skill", "Skill"},
+		{"pascal skill alias", "Skill", "Skill"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, ExtractToolNameForTest(c.title, acp.ToolKindOther, ""))
+		})
+	}
+
+	// Non-other kinds keep their kind→canonical fallback for empty titles.
+	assert.Equal(t, "Bash", ExtractToolNameForTest("", acp.ToolKindExecute, ""))
+	assert.Equal(t, "Read", ExtractToolNameForTest("", acp.ToolKindRead, ""))
+}
