@@ -98,7 +98,8 @@ func TestCodebuddyACP_TaskTools_WireProbe(t *testing.T) {
 	defer cancel()
 
 	rec, _, newResp, _, notifications, promptErr := acpMetadataProbe(
-		t, ctx, strings.Fields("codebuddy --acp"), wireProbeTaskPrompt)
+		t, ctx, strings.Fields("codebuddy --acp"), wireProbeTaskPrompt,
+	)
 
 	t.Log("=== raw wire traffic (from agent) ===")
 	rec.dump(t)
@@ -133,7 +134,7 @@ func TestCodebuddyACP_TaskTools_WireProbe(t *testing.T) {
 	if len(rawResponses) == 0 {
 		// CodeBuddy may not have run task tools at all (mode/session). Report
 		// loudly instead of silently passing — same convention as the Flow test.
-		t.Logf("NOTE: no terminal task-tool result carried _meta.codebuddy.ai/rawResponse; "+
+		t.Logf("NOTE: no terminal task-tool result carried _meta.codebuddy.ai/rawResponse; " +
 			"CodeBuddy may not have invoked task tools in this run (see dumps above)")
 		return
 	}

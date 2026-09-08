@@ -107,6 +107,12 @@ func parseCodeBuddyTaskMetaTodos(meta map[string]any) ([]PlanEntry, bool) {
 			Status:   codebuddyTaskStatusToPlan(status),
 		})
 	}
+	// Fail closed when items exist but every one was skipped (missing content/
+	// subject): an unexpected shape should not wipe a real checklist with an
+	// empty plan_update. Only a genuinely empty todos array means "no tasks".
+	if len(items) > 0 && len(entries) == 0 {
+		return nil, false
+	}
 	return entries, true
 }
 
@@ -134,9 +140,13 @@ func codebuddyToolCallNameFromUpdate(tcu acp.SessionToolCallUpdate) string {
 // _meta carries a full todos snapshot.
 //
 // DEADLOCK SAFETY: runs on the SDK notification goroutine (same as the
-// update.Plan branch in mapACPSessionUpdate). It only uses the non-blocking
-// forwardACPEvent channel send and conn.SetCachedPlanState — the exact pattern
-// the existing update.Plan branch already exercises safely on this goroutine.
+// update.Plan branch in mapACPSessionUpdate). It only calls forwardACPEvent
+// (non-blocking channel send) and conn.SetCachedPlanState — the exact
+// code path the existing update.Plan branch already exercises safely on this
+// goroutine. Task* terminal results only arrive while the agent is running a
+// prompt (c.mu released before the Prompt RPC), never during a LoadSession/
+// ResumeSession RPC window (replays are buffered upstream and never reach
+// mapACPSessionUpdate), so acquiring c.mu here cannot deadlock.
 //
 // Returns the number of plan_update events forwarded (0 or 1).
 func bridgeCodeBuddyPlanFromToolUpdate(ch chan<- StreamEvent, conn *ACPConn, tcu acp.SessionToolCallUpdate) int {

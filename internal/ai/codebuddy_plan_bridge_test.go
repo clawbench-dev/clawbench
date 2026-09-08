@@ -33,11 +33,6 @@ func cbTaskMeta(rawResp map[string]any) map[string]any {
 	}
 }
 
-func cbCompletedStatus() *acp.ToolCallStatus {
-	s := acp.ToolCallStatusCompleted
-	return &s
-}
-
 // --- parseCodeBuddyTaskMetaTodos ---
 
 func TestParseCodeBuddyTaskMetaTodos_TaskCreate(t *testing.T) {
@@ -133,36 +128,46 @@ func TestParseCodeBuddyTaskMetaTodos_NoTodosArray(t *testing.T) {
 	assert.Empty(t, entries)
 }
 
+func TestParseCodeBuddyTaskMetaTodos_AllItemsSkipped(t *testing.T) {
+	// Non-empty todos where every item lacks content/subject is an unexpected
+	// shape — must fail closed (not ok), never wiping a real checklist with an
+	// empty plan_update.
+	meta := cbTaskMeta(map[string]any{
+		"todos": []any{
+			map[string]any{"id": "1"},
+			map[string]any{"id": "2", "status": "pending"},
+		},
+	})
+	entries, ok := parseCodeBuddyTaskMetaTodos(meta)
+	assert.False(t, ok, "items present but all skipped → not ok")
+	assert.Nil(t, entries)
+}
+
 // --- bridgeCodeBuddyPlanFromToolUpdate ---
 
+// codebuddyTcuForBridge builds a CodeBuddy task-tool ToolCallUpdate with the
+// given name/status and rawResponse snapshot, stamping the tool name into _meta
+// exactly as the wire does (verified by the wire probe).
 func codebuddyTcuForBridge(name, status string, rawResp map[string]any) acp.SessionToolCallUpdate {
 	st := acp.ToolCallStatus(status)
 	return acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("call_bridge"),
 		Status:     &st,
-		Meta:       cbTaskMeta(rawResp),
-		// add toolName in _meta for name resolution
+		Meta: map[string]any{
+			"codebuddy.ai/toolName":    name,
+			"codebuddy.ai/rawResponse": rawResp,
+		},
 	}
-}
-
-// setToolNameOnMeta stamps the codebuddy tool name into the _meta map of a
-// freshly built update (the wire always carries it).
-func setToolNameOnMeta(tcu acp.SessionToolCallUpdate, name string) acp.SessionToolCallUpdate {
-	if tcu.Meta == nil {
-		tcu.Meta = map[string]any{}
-	}
-	tcu.Meta["codebuddy.ai/toolName"] = name
-	return tcu
 }
 
 func TestBridgeCodeBuddyPlanFromToolUpdate_EmitsAndCaches(t *testing.T) {
 	conn := newACPConn(cbCodebuddyAgent(), "session-bridge-1")
 	ch := make(chan StreamEvent, 8)
 
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskCreate", "completed", map[string]any{
+	tcu := codebuddyTcuForBridge("TaskCreate", "completed", map[string]any{
 		"task":  map[string]any{"id": "1", "status": "pending", "subject": "probe"},
 		"todos": []any{map[string]any{"id": "1", "content": "probe", "status": "pending"}},
-	}), "TaskCreate")
+	})
 
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	require.Equal(t, 1, n, "one plan_update should be forwarded")
@@ -186,10 +191,10 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_TaskUpdateStatus(t *testing.T) {
 	conn := newACPConn(cbCodebuddyAgent(), "session-bridge-2")
 	ch := make(chan StreamEvent, 8)
 
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskUpdate", "completed", map[string]any{
+	tcu := codebuddyTcuForBridge("TaskUpdate", "completed", map[string]any{
 		"task":  map[string]any{"id": "1", "status": "in_progress", "subject": "probe"},
 		"todos": []any{map[string]any{"id": "1", "content": "probe", "status": "in_progress"}},
-	}), "TaskUpdate")
+	})
 
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	require.Equal(t, 1, n)
@@ -202,11 +207,11 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_DeleteLastEmitsEmptyPlan(t *testing.T
 	conn := newACPConn(cbCodebuddyAgent(), "session-bridge-3")
 	ch := make(chan StreamEvent, 8)
 
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskUpdate", "completed", map[string]any{
+	tcu := codebuddyTcuForBridge("TaskUpdate", "completed", map[string]any{
 		"taskId":  "1",
 		"deleted": true,
 		"todos":   []any{},
-	}), "TaskUpdate")
+	})
 
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	require.Equal(t, 1, n, "empty snapshot still forwarded to clear the panel")
@@ -224,9 +229,9 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_SkipsNonBridgedTool(t *testing.T) {
 	ch := make(chan StreamEvent, 8)
 
 	// TaskGet returns a single task — not a full snapshot — so it must NOT bridge.
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskGet", "completed", map[string]any{
+	tcu := codebuddyTcuForBridge("TaskGet", "completed", map[string]any{
 		"task": map[string]any{"id": "1", "status": "pending", "subject": "solo"},
-	}), "TaskGet")
+	})
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	assert.Zero(t, n)
 	assert.Nil(t, conn.GetCachedPlanState(), "TaskGet must not touch the plan cache")
@@ -237,9 +242,9 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_SkipsNonCompleted(t *testing.T) {
 	conn := newACPConn(cbCodebuddyAgent(), "session-bridge-5")
 	ch := make(chan StreamEvent, 8)
 
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskCreate", "in_progress", map[string]any{
+	tcu := codebuddyTcuForBridge("TaskCreate", "in_progress", map[string]any{
 		"task": map[string]any{"id": "1"}, "todos": []any{map[string]any{"id": "1", "content": "p"}},
-	}), "TaskCreate")
+	})
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	assert.Zero(t, n)
 	assertNoMoreACPEvents(ch, t)
@@ -249,7 +254,7 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_NoRawResponse(t *testing.T) {
 	conn := newACPConn(cbCodebuddyAgent(), "session-bridge-6")
 	ch := make(chan StreamEvent, 8)
 
-	tcu := setToolNameOnMeta(codebuddyTcuForBridge("TaskCreate", "completed", nil), "TaskCreate")
+	tcu := codebuddyTcuForBridge("TaskCreate", "completed", nil)
 	n := bridgeCodeBuddyPlanFromToolUpdate(ch, conn, tcu)
 	assert.Zero(t, n)
 	assert.Nil(t, conn.GetCachedPlanState())
@@ -271,7 +276,7 @@ func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T)
 			ToolCallId: acp.ToolCallId("call_map"),
 			Status:     &st,
 			Meta: map[string]any{
-				"codebuddy.ai/toolName":   "TaskCreate",
+				"codebuddy.ai/toolName": "TaskCreate",
 				"codebuddy.ai/rawResponse": map[string]any{
 					"task":  map[string]any{"id": "1", "subject": "map-probe", "status": "pending"},
 					"todos": []any{map[string]any{"id": "1", "content": "map-probe", "status": "pending"}},
@@ -288,25 +293,25 @@ func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T)
 	// Gather events skipping raw_output, look for plan_update.
 	planEvents := 0
 	toolEvents := 0
+drainLoop:
 	for {
 		select {
 		case ev := <-ch:
-			if ev.Type == "raw_output" {
+			switch ev.Type {
+			case "raw_output":
 				continue
-			}
-			if ev.Type == "plan_update" {
+			case "plan_update":
 				planEvents++
 				require.NotNil(t, ev.Plan)
 				assert.Len(t, ev.Plan.Entries, 1)
 				assert.Equal(t, "map-probe", ev.Plan.Entries[0].Content)
-			} else if ev.Type == "tool_use" || ev.Type == "tool_result" {
+			case "tool_use", "tool_result":
 				toolEvents++
 			}
 		default:
-			goto done
+			break drainLoop
 		}
 	}
-done:
 	assert.Equal(t, 1, planEvents, "exactly one plan_update should be bridged")
 	assert.GreaterOrEqual(t, toolEvents, 1, "the tool card event should also be present")
 	cached := conn.GetCachedPlanState()
@@ -327,7 +332,7 @@ func TestMapACPSessionUpdate_NonCodebuddy_NoBridge(t *testing.T) {
 			ToolCallId: acp.ToolCallId("call_claude"),
 			Status:     &st,
 			Meta: map[string]any{
-				"codebuddy.ai/toolName":   "TaskCreate",
+				"codebuddy.ai/toolName": "TaskCreate",
 				"codebuddy.ai/rawResponse": map[string]any{
 					"task":  map[string]any{"id": "1", "subject": "x"},
 					"todos": []any{map[string]any{"id": "1", "content": "x", "status": "pending"}},
@@ -338,6 +343,7 @@ func TestMapACPSessionUpdate_NonCodebuddy_NoBridge(t *testing.T) {
 	mapACPSessionUpdate(update, ch, ctx, conn, nil)
 
 	hasPlan := false
+drainLoop2:
 	for {
 		select {
 		case ev := <-ch:
@@ -345,10 +351,9 @@ func TestMapACPSessionUpdate_NonCodebuddy_NoBridge(t *testing.T) {
 				hasPlan = true
 			}
 		default:
-			goto done2
+			break drainLoop2
 		}
 	}
-done2:
 	assert.False(t, hasPlan, "non-codebuddy backend must not bridge task tools to plan")
 	assert.Nil(t, conn.GetCachedPlanState())
 }

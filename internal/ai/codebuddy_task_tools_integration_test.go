@@ -397,4 +397,3 @@ func TestCodebuddyACP_TaskTools_EmitsPlanUpdate(t *testing.T) {
 		t.Logf("NOTE: no live connection found for session %s (already closed)", sessionID)
 	}
 }
-

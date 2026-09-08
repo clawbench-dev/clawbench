@@ -132,8 +132,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// checklist. Placed before the debouncer because the debouncer's terminal
 		// path breaks out of the switch, and the bridge only fires for completed
 		// task-tool results (all other updates no-op). Runs on the notification
-		// goroutine; only non-blocking forwardACPEvent + SetCachedPlanState (the
-		// same pattern the update.Plan branch below uses).
+		// goroutine; the lock-safe pattern matches the update.Plan branch below
+		// (task tools never fire inside a LoadSession/ResumeSession RPC window,
+		// so SetCachedPlanState's c.mu acquisition cannot deadlock here).
 		if backendID == "codebuddy" && conn != nil && isCodeBuddyBackend(conn.agent) {
 			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
 		}
