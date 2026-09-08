@@ -182,6 +182,7 @@ vi.mock('@/utils/fileManager', () => ({
   isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
   isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
   isThumbable: () => false,
+  isThumbableExt: () => false,
   formatSize: (s: number) => {
     if (s >= 1024) return `${(s / 1024).toFixed(1)} KB`
     return `${s} B`
@@ -209,15 +210,6 @@ vi.mock('@/utils/fileManager', () => ({
   resolveClickAction: vi.fn(),
 }))
 
-vi.mock('@/components/file/FileSearchDrawer.vue', () => ({
-  default: defineComponent({
-    props: ['open', 'currentDir'],
-    emits: ['close', 'navigateDir', 'selectFile'],
-    methods: { focusSearchInput: () => {} },
-    template: '<div class="file-search-drawer-stub" v-if="open" @click="$emit(\'close\')" />',
-  }),
-}))
-
 vi.mock('@/components/file/DirBreadcrumb.vue', () => ({
   default: { template: '<div class="dir-breadcrumb-stub" />' },
 }))
@@ -227,6 +219,33 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
     props: ['open'],
     emits: ['close', 'confirm'],
     template: '<div v-if="open" class="jump-dialog-stub" />',
+  }),
+}))
+
+// Mock useFileSearch so the inline search mode can be driven from tests
+// without opening a real SSE connection.
+const searchState = reactive({
+  query: '',
+  recursive: true,
+  scope: 'global' as 'global' | 'current',
+  exact: false,
+  results: [] as Array<{ name: string; path: string; type: string; matchedIndices: number[] }>,
+  searching: false,
+  total: 0,
+  truncated: false,
+  searchBasePath: '',
+})
+const mockSearchStart = vi.hoisted(() => vi.fn())
+const mockSearchCancel = vi.hoisted(() => vi.fn())
+const mockSearchReset = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useFileSearch', () => ({
+  useFileSearch: () => ({
+    state: searchState,
+    effectiveDir: { value: '' },
+    startSearch: mockSearchStart,
+    cancelSearch: mockSearchCancel,
+    reset: mockSearchReset,
+    getDisplayLimit: () => 100,
   }),
 }))
 
@@ -256,7 +275,7 @@ const i18n = createI18n({
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
-        search: { title: '搜索文件' },
+        search: { title: '搜索文件', close: '关闭搜索', placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -313,6 +332,18 @@ beforeEach(() => {
   mockHasAttachedFile.mockReset()
   mockHasAttachedFile.mockReturnValue(false)
   mockToastShow.mockReset()
+  mockSearchStart.mockReset()
+  mockSearchCancel.mockReset()
+  mockSearchReset.mockReset()
+  searchState.query = ''
+  searchState.recursive = true
+  searchState.scope = 'global'
+  searchState.exact = false
+  searchState.results = []
+  searchState.searching = false
+  searchState.total = 0
+  searchState.truncated = false
+  searchState.searchBasePath = ''
   mockHandleFileSelectToDir.mockReset()
   mockHandleFileDropToDir.mockReset()
   mockHandleFileDropToDir.mockResolvedValue(undefined)
@@ -648,52 +679,104 @@ describe('FileManagerContent — sort', () => {
   })
 })
 
-// ── Search drawer ──
+// ── Inline search view (fused into the file manager) ──
 
-describe('FileManagerContent — search drawer', () => {
-  it('opens search drawer when search button is clicked', async () => {
-    const searchDrawerOpen = ref(false)
-    const searchDrawer = {
-      effectiveOpen: computed(() => searchDrawerOpen.value),
-      isOpen: readonly(searchDrawerOpen),
-      open: () => { searchDrawerOpen.value = true },
-      close: () => { searchDrawerOpen.value = false },
-      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
-    }
-    const wrapper = mountContent({ searchDrawer })
-    expect(searchDrawerOpen.value).toBe(false)
+describe('FileManagerContent — inline search', () => {
+  it('toolbar search button toggles the search view', async () => {
+    const wrapper = mountContent()
+    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
     // Find and click the search button by its title
     const allBtns = wrapper.findAll('.toolbar-btn')
-    const btn = allBtns.find(b => b.attributes('title')?.includes('Search'))
-    if (btn) {
-      await btn.trigger('click')
-      expect(searchDrawerOpen.value).toBe(true)
-    }
+    const btn = allBtns.find(b => b.attributes('title')?.includes('搜索文件'))
+    expect(btn).toBeTruthy()
+    await btn!.trigger('click')
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.vm.searchActive).toBe(true)
+    // Clicking the close button exits the search view
+    await wrapper.find('.fs-close-btn').trigger('click')
+    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
+    expect(wrapper.vm.searchActive).toBe(false)
   })
 
-  it('closes search drawer on directory change', async () => {
-    const searchDrawerOpen = ref(false)
-    const closeFn = vi.fn(() => { searchDrawerOpen.value = false })
-    const searchDrawer = {
-      effectiveOpen: computed(() => searchDrawerOpen.value),
-      isOpen: readonly(searchDrawerOpen),
-      open: () => { searchDrawerOpen.value = true },
-      close: closeFn,
-      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
-    }
-    searchDrawerOpen.value = true
-    const wrapper = mountContent({ searchDrawer })
-    await nextTick()
-    // Change directory — the watcher on currentDir should call searchDrawer.close()
+  it('exits search view on directory change', async () => {
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
     await wrapper.setProps({ currentDir: 'src' })
     await nextTick()
-    // setProps may not reliably trigger Vue watchers in all test environments
-    // (same pattern as ChatInputBar.test.ts). If the watcher fired, closeFn
-    // was already called. If not, simulate the watcher's effect.
-    if (!closeFn.mock.calls.length) {
-      searchDrawer.close()
-    }
-    expect(searchDrawerOpen.value).toBe(false)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
+  })
+
+  it('renders search results as file items with result paths', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+      { name: 'lib', path: 'pkg/lib', type: 'dir', matchedIndices: [0, 1, 2] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(2)
+    expect(items[0].attributes('data-path')).toBe('cmd/main.go')
+    expect(items[1].attributes('data-path')).toBe('pkg/lib')
+    expect(items[0].find('.file-name').text()).toContain('main.go')
+  })
+
+  it('double-clicking a file result emits selectFile and keeps search active', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    await wrapper.find('.file-item').trigger('dblclick')
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('cmd/main.go')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.vm.searchActive).toBe(true)
+  })
+
+  it('double-clicking a dir result emits navigateDir and exits search', async () => {
+    searchState.query = 'cmd'
+    searchState.results = [
+      { name: 'cmd', path: 'cmd', type: 'dir', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    await wrapper.find('.dir-item').trigger('dblclick')
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('cmd')
+    expect(wrapper.vm.searchActive).toBe(false)
+  })
+
+  it('right-clicking a search result exposes its result path in the context menu', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    await wrapper.find('.file-item').trigger('contextmenu')
+    expect(wrapper.find('.context-menu').exists()).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
+  })
+
+  it('Escape exits the search view', async () => {
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
   })
 })
 
@@ -2737,9 +2820,21 @@ describe('FileManagerContent — dropdowns', () => {
 // ── Thumbnails ──
 
 describe('FileManagerContent — thumbnails', () => {
-  it('thumbUrl builds a thumbnail URL from currentDir and name', () => {
+  it('thumbUrlFor builds a thumbnail URL from currentDir and name in browse mode', () => {
     const wrapper = mountContent({ currentDir: 'src' })
-    expect(wrapper.vm.thumbUrl({ name: 'a.png' })).toContain('/api/file/thumb')
+    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'src/a.png' })).toContain('/api/file/thumb')
+  })
+
+  it('thumbUrlFor builds a thumbnail URL from the result path in search mode', async () => {
+    searchState.query = 'a'
+    searchState.results = [
+      { name: 'a.png', path: 'nested/deep/a.png', type: 'image', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'nested/deep/a.png', type: 'file' })).toContain(encodeURIComponent('nested/deep/a.png'))
   })
 
   it('onThumbError marks the entry so isThumbLoaded returns false', () => {
@@ -2810,24 +2905,26 @@ describe('FileManagerContent — truncation', () => {
   })
 })
 
-// ── Search drawer navigation events ──
+// ── Search view open/close API (App Ctrl+F) ──
 
-describe('FileManagerContent — search drawer navigation', () => {
-  it('onSearchNavigateDir emits navigateDir', async () => {
+describe('FileManagerContent — search view API', () => {
+  it('openSearch activates the search view and focuses the input', async () => {
     const wrapper = mountContent()
-    await wrapper.vm.onSearchNavigateDir('src')
-    expect(wrapper.emitted('navigateDir')).toBeTruthy()
-    expect(wrapper.emitted('navigateDir')![0][0]).toBe('src')
+    await wrapper.vm.openSearch()
+    await nextTick()
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('onSearchSelectFile emits selectFile', async () => {
+  it('closeSearch exits the search view', async () => {
     const wrapper = mountContent()
-    await wrapper.vm.onSearchSelectFile('src/test.ts')
-    expect(wrapper.emitted('selectFile')).toBeTruthy()
-    expect(wrapper.emitted('selectFile')![0][0]).toBe('src/test.ts')
+    await wrapper.vm.openSearch()
+    await nextTick()
+    await wrapper.vm.closeSearch()
+    await nextTick()
+    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
   })
 
-  it('focusSearchInput does not throw when no search drawer is mounted', async () => {
+  it('focusSearchInput does not throw when the search view is closed', async () => {
     const wrapper = mountContent()
     expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
   })

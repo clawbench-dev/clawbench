@@ -599,7 +599,7 @@ describe('FileManagerContent — handleItemClick', () => {
 })
 
 describe('FileManagerContent — filteredEntries', () => {
-  it('returns all entries when no search filter (search moved to FileSearchDrawer)', async () => {
+  it('returns all entries when no search filter (search is a fused view state)', async () => {
     const wrapper = mountContent()
 
     const filtered = wrapper.vm._getFilteredEntries()

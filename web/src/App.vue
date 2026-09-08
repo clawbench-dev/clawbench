@@ -92,7 +92,6 @@
                       :sort-field="sortField"
                       :sort-dir="sortDir"
                       :dir-loading="store.state.dirLoading"
-                      :search-drawer="fileSearchDrawer"
                       :keyboard-active="fileManagerShortcutActive"
                       :has-origin="navigation.hasOrigin.value"
                       :origin-label="navigation.originLabel.value"
@@ -887,7 +886,6 @@ const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
 const searchDrawer = useTabDrawer('view')
 const fileHistoryDrawer = useTabDrawer('view')
-const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
 
 // Search-bar highlight state for the file header button. Separate from
 // searchDrawer (the SearchDrawer bottom sheet): the rendered markdown preview
@@ -2524,11 +2522,7 @@ function openChatSearchDrawer() {
   }
 }
 function openBrowseSearchDrawer() {
-  if (fileSearchDrawer.isOpen.value) {
-    fileManagerRef.value?.focusSearchInput()
-  } else {
-    fileSearchDrawer.open()
-  }
+  fileManagerRef.value?.openSearch()
 }
 function openFileViewSearchDrawer() {
   if (searchDrawer.isOpen.value) {
