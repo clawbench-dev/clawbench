@@ -2,11 +2,25 @@ package handler
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// testdataDir resolves the absolute path of this package's testdata directory.
+// It avoids relying on the process working directory (which is not guaranteed
+// to be the package dir on every platform/CI runner — Windows go test failed
+// to resolve relative "testdata/..." paths).
+func testdataDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(file), "testdata")
+}
 
 // stubSupervisorProbe points IsRunningUnderSupervisor' cgroup file and
 // systemctl stub at test-controlled fixtures, and returns a restore func.
@@ -28,21 +42,21 @@ func clearSupervisorEnv(t *testing.T) {
 // ---------- currentSystemdUnit ----------
 
 func TestCurrentSystemdUnit_ExtractsUnitFromCgroupPath(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-tat-agent", nil) // "0::/system.slice/tat_agent.service"
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-tat-agent"), nil) // "0::/system.slice/tat_agent.service"
 	defer restore()
 
 	assert.Equal(t, "tat_agent.service", currentSystemdUnit())
 }
 
 func TestCurrentSystemdUnit_NonServicePathReturnsEmpty(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-container-only", nil) // 纯容器路径，无 .service
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-container-only"), nil) // 纯容器路径，无 .service
 	defer restore()
 
 	assert.Equal(t, "", currentSystemdUnit())
 }
 
 func TestCurrentSystemdUnit_UnreadableFileReturnsEmpty(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/does-not-exist", nil)
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "does-not-exist"), nil)
 	defer restore()
 
 	assert.Equal(t, "", currentSystemdUnit())
@@ -78,7 +92,7 @@ func TestUnitMainPID_SpacesTrimmed(t *testing.T) {
 // 但自己不是该 unit MainPID（例如从 tat_agent shell setsid 起的进程），
 // 即使带 INVOCATION_ID 也必须判非托管。
 func TestIsRunningUnderSupervisor_InAgentShellNotMainPIDIsNotSupervised(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-tat-agent", func(unit string) string {
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-tat-agent"), func(unit string) string {
 		if unit == "tat_agent.service" {
 			return "8888" // 一个与当前测试进程不同的 MainPID
 		}
@@ -94,7 +108,7 @@ func TestIsRunningUnderSupervisor_InAgentShellNotMainPIDIsNotSupervised(t *testi
 
 // 真托管：systemd 服务 ExecStart 的 MainPID 即本进程。
 func TestIsRunningUnderSupervisor_IsMainPIDOfUnitIsSupervised(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-clawbench-service",
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-clawbench-service"),
 		func(string) string { return strconv.Itoa(os.Getpid()) })
 	defer restore()
 	clearSupervisorEnv(t)
@@ -107,7 +121,7 @@ func TestIsRunningUnderSupervisor_IsMainPIDOfUnitIsSupervised(t *testing.T) {
 // systemctl 不可用/unit inactive（MainPID 为空或 0）时，即使 cgroup 指向某 unit
 // 也判非托管 —— 失败方向安全，走哨兵自启。
 func TestIsRunningUnderSupervisor_UnitMainPIDUnknownIsNotSupervised(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-tat-agent", func(string) string { return "" })
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-tat-agent"), func(string) string { return "" })
 	defer restore()
 	clearSupervisorEnv(t)
 	t.Setenv("INVOCATION_ID", "some-id")
@@ -119,7 +133,7 @@ func TestIsRunningUnderSupervisor_UnitMainPIDUnknownIsNotSupervised(t *testing.T
 // ---------- 容器/无 cgroup 分支（回归保护） ----------
 
 func TestIsRunningUnderSupervisor_ContainerEnvStillSupervised(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-container-only", func(string) string { return "" })
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-container-only"), func(string) string { return "" })
 	defer restore()
 	clearSupervisorEnv(t)
 	t.Setenv("INVOCATION_ID", "")
@@ -129,7 +143,7 @@ func TestIsRunningUnderSupervisor_ContainerEnvStillSupervised(t *testing.T) {
 }
 
 func TestIsRunningUnderSupervisor_NoIndicatorsNoUnitReturnsFalse(t *testing.T) {
-	restore := stubSupervisorProbe("testdata/cgroup-empty", func(string) string { return "" })
+	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-empty"), func(string) string { return "" })
 	defer restore()
 	clearSupervisorEnv(t)
 	t.Setenv("INVOCATION_ID", "")

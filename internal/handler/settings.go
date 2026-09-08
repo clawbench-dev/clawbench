@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -1667,8 +1668,12 @@ func unitMainPID(unit string) string {
 }
 
 // systemctlShowMainPID shells out to `systemctl show` for a unit's MainPID.
+// It uses CommandContext with a short timeout so a hung systemctl (e.g. a
+// stalled DBus) cannot block the upgrade/restart path indefinitely.
 func systemctlShowMainPID(unit string) string {
-	out, err := exec.Command("systemctl", "show", "-p", "MainPID", "--value", unit).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "-p", "MainPID", "--value", unit).Output()
 	if err != nil {
 		return ""
 	}

@@ -29,7 +29,7 @@ func TestIsRunningUnderSupervisor_CLAWBENCH_NO_SUPERVISOR(t *testing.T) {
 // unit's MainPID, so systemd will not restart it. Regression test for the
 // upgrade "fake death" bug.
 func TestIsRunningUnderSupervisor_INVOCATION_ID(t *testing.T) {
-	systemdCgroupPath = "testdata/cgroup-empty" // not inside any .service unit
+	systemdCgroupPath = filepath.Join(testdataDir(), "cgroup-empty") // not inside any .service unit
 	systemctlShowFunc = func(string) string { return "" }
 	defer func() {
 		systemdCgroupPath = "/proc/self/cgroup"

@@ -1474,7 +1474,7 @@ func TestIsRunningUnderSupervisor_EnvOverride(t *testing.T) {
 // upgrade "fake death" bug where this made upgrades wait forever for a
 // supervisor restart that never came.
 func TestIsRunningUnderSupervisor_InvocationID(t *testing.T) {
-	systemdCgroupPath = "testdata/cgroup-empty" // not inside any .service unit
+	systemdCgroupPath = filepath.Join(testdataDir(), "cgroup-empty") // not inside any .service unit
 	systemctlShowFunc = func(string) string { return "" }
 	defer func() {
 		systemdCgroupPath = "/proc/self/cgroup"
