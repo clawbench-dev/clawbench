@@ -1214,6 +1214,15 @@ watch(sessionSidebarRef, (ref) => {
 // registerSessionDrawerRef above, which is independent.
 
 function handleSessionSelect(sessionId, _backend) {
+  // Selecting the ALREADY-ACTIVE session must be a no-op for the message list.
+  // Without this guard, an Enter keypress anywhere outside the chat input
+  // (document-level list navigation in SessionSidebar falls back to item 0,
+  // which is usually the current session) re-runs the full switchSession →
+  // clear messages → reloadHistory cycle, flashing/reloading the whole list.
+  if (sessionId && sessionId === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.sessionDrawer.close()
+    return
+  }
   sessionIdentity.switchSession(sessionId)
   sessionIdentity.sessionDrawer.close()
 }

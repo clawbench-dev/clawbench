@@ -70,6 +70,25 @@ describe('useListNav', () => {
     expect(confirmed).toEqual([0])
   })
 
+  it('confirmHighlighted does nothing when nothing is highlighted', () => {
+    // Document-level Enter (useListKeys) uses confirmHighlighted: a bare Enter
+    // with no prior ArrowUp/Down must NOT select item 0. The old fallback made
+    // an out-of-focus Enter re-select the already-active chat session and
+    // trigger a full switchSession reload (chat list flash).
+    const { nav, confirmed } = setup()
+    nav.confirmHighlighted()
+    expect(confirmed).toEqual([])
+    expect(nav.activeIndex.value).toBe(-1)
+  })
+
+  it('confirmHighlighted confirms the highlighted item', () => {
+    const { nav, confirmed } = setup()
+    nav.down()
+    nav.down()
+    nav.confirmHighlighted()
+    expect(confirmed).toEqual([1])
+  })
+
   it('confirm does nothing on an empty list', () => {
     const { nav, confirmed, setCount } = setup()
     setCount(0)

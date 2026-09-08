@@ -112,12 +112,29 @@ function onPointerDown(e) {
   emit('close')
 }
 
-// Escape closes the bar.
+// Escape closes the bar; Enter (while the bar is COLLAPSED and focus is not in
+// an editable field) expands it and focuses the quote input — same action as
+// clicking the collapsed row, so keyboard users can start a quote reply without
+// reaching for the mouse.
 function onKeyDown(e) {
   if (!props.visible) return
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('close')
+    return
+  }
+  if (e.key === 'Enter') {
+    // Already expanded → the textarea handles Enter itself (send).
+    if (expanded.value) return
+    // Don't hijack Enter while typing in an editable field / on interactive
+    // elements (they confirm via their own handlers).
+    const t = e.target
+    const tag = t?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return
+    if (t?.closest?.('button, a, [role="button"]')) return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    expand()
   }
 }
 
