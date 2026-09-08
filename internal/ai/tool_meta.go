@@ -68,17 +68,22 @@ func ExtractSummary(name string, input map[string]any) string {
 		return extractAskUserQuestionSummary(input)
 	}
 
+	// Agent / wait special cases before the generic priority chain.
+	if nameLower == "agent" {
+		if s := extractAgentSummary(input); s != "" {
+			return s
+		}
+	}
+	if nameLower == "wait" && len(input) > 0 {
+		if _, hasStates := input["agentsStates"]; hasStates {
+			return extractWaitSummary(input)
+		}
+	}
+
 	// Priority chain — check fields in order
 	for _, field := range summaryPriorityFields {
 		if v, _ := input[field.key].(string); v != "" {
 			return field.format(v)
-		}
-	}
-
-	// Agent-only: prompt field
-	if nameLower == "agent" {
-		if v, _ := input["prompt"].(string); v != "" {
-			return truncateStr(v)
 		}
 	}
 
@@ -96,6 +101,40 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
+	return ""
+}
+
+// extractAgentSummary summarizes an Agent/Agent-like tool call. Priority order
+// preserves the pre-existing UX:
+//   - description (claude Task / Agent delegation shows the short description)
+//   - prompt (sub-agent delegation instructions when no description)
+//   - Codex sub-agent lifecycle frames (Start/Complete/Interact/Interrupt
+//     subagent) carry {activityKind, agentPath, agentThreadId} — summarize
+//     deterministically as "<activity> <agent basename>" (e.g.
+//     "started codebase_research") instead of the random map-iteration fallback.
+func extractAgentSummary(input map[string]any) string {
+	if v, _ := input["description"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if v, _ := input["prompt"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if activity, _ := input["activityKind"].(string); activity != "" {
+		name := ""
+		if p, _ := input["agentPath"].(string); p != "" {
+			name = baseName(p)
+		}
+		return truncateStr(activity + " " + name)
+	}
+	return ""
+}
+
+// extractWaitSummary summarizes a Codex collaboration wait (title "wait"):
+// leave empty (deterministic) unless agentsStates carries child statuses.
+func extractWaitSummary(input map[string]any) string {
+	if states, ok := input["agentsStates"].(map[string]any); ok && len(states) > 0 {
+		return "waiting for subagent"
+	}
 	return ""
 }
 
@@ -142,6 +181,8 @@ func extractAskUserQuestionSummary(input map[string]any) string {
 
 // ExtractDisplayName extracts the display name for a tool call.
 // For Agent and DeepThink tools, returns the subagent_type (e.g., "Explore").
+// For Codex sub-agent lifecycle frames (activityKind present), returns the agent
+// basename (e.g. "codebase_research") so the Agent pill shows the child name.
 func ExtractDisplayName(name string, input map[string]any) string {
 	if input == nil {
 		return ""
@@ -149,6 +190,14 @@ func ExtractDisplayName(name string, input map[string]any) string {
 	nameLower := strings.ToLower(name)
 	if nameLower == "agent" || nameLower == "deepthink" {
 		if v, _ := input["subagent_type"].(string); v != "" {
+			return v
+		}
+	}
+	if nameLower == "agent" {
+		if v, _ := input["activityKind"].(string); v != "" {
+			if p, _ := input["agentPath"].(string); p != "" {
+				return baseName(p)
+			}
 			return v
 		}
 	}

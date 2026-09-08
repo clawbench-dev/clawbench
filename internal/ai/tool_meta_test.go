@@ -99,6 +99,52 @@ func TestExtractSummary(t *testing.T) {
 			want:     "Research the codebase",
 		},
 		{
+			name:     "agent description wins over prompt",
+			toolName: "Agent",
+			input: map[string]any{
+				"description": "Minimal reply task",
+				"prompt":      "Reply with exactly the single word DONE and nothing else.",
+			},
+			want: "Minimal reply task",
+		},
+		{
+			name:     "codex subagent lifecycle activity summary",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "started",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "started codebase_research",
+		},
+		{
+			name:     "codex subagent complete activity summary",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "completed",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "completed codebase_research",
+		},
+		{
+			name:     "codex subagent lifecycle without agentPath",
+			toolName: "Agent",
+			input:    map[string]any{"activityKind": "interrupted", "agentThreadId": "thr-01"},
+			want:     "interrupted ",
+		},
+		{
+			name:     "wait collab empty summary",
+			toolName: "wait",
+			input: map[string]any{
+				"agentsStates":      map[string]any{},
+				"senderThreadId":    "root-1",
+				"receiverThreadIds": []any{},
+				"status":            "inProgress",
+			},
+			want: "",
+		},
+		{
 			name:     "prompt ignored for non-agent tool",
 			toolName: "Bash",
 			input:    map[string]any{"prompt": "should be skipped", "command": "ls"},
@@ -203,6 +249,25 @@ func TestExtractDisplayName(t *testing.T) {
 			toolName: "Agent",
 			input:    map[string]any{"prompt": "research"},
 			want:     "",
+		},
+		{
+			name:     "codex Agent lifecycle frame display name from agentPath basename",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "started",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "codebase_research",
+		},
+		{
+			name:     "codex Agent lifecycle frame display name falls back to activity",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "interrupted",
+				"agentThreadId": "thr-01",
+			},
+			want: "interrupted",
 		},
 		{
 			name:     "non-Agent tool ignored",
