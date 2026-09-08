@@ -33,6 +33,8 @@ export function toDisplayEntry(r: FileSearchResult): DisplayEntry {
     path: r.path,
     parentDir: i > 0 ? r.path.slice(0, i) : '',
     matchedIndices: r.matchedIndices,
+    size: r.size,
+    modified: r.modified,
   }
 }
 

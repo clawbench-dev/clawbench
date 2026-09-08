@@ -28,6 +28,20 @@ describe('fileSearchMark — toDisplayEntry', () => {
     expect(toDisplayEntry(r).type).toBe('dir')
     expect(toDisplayEntry(r).parentDir).toBe('')
   })
+
+  it('carries size and modified from the search result into the display entry', () => {
+    const r = {
+      name: 'main.go',
+      path: 'cmd/main.go',
+      type: 'file' as const,
+      size: 1024,
+      modified: '2025-06-01T10:00:00Z',
+      matchedIndices: [],
+    }
+    const e = toDisplayEntry(r)
+    expect(e.size).toBe(1024)
+    expect(e.modified).toBe('2025-06-01T10:00:00Z')
+  })
 })
 
 describe('fileSearchMark — escapeHtml / highlightName', () => {

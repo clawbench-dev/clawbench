@@ -2,8 +2,9 @@
   <div class="file-manager-content" @paste="onPaste">
     <!-- Dir nav -->
     <div id="dirNav" class="dir-nav">
-      <!-- Browse toolbar (hidden while the search view is active) -->
-      <div v-if="!searchMode" ref="dirToolbarRef" class="dir-toolbar">
+      <!-- Browse toolbar (stays visible while searching; the search row is
+           appended below so directory context is never lost) -->
+      <div ref="dirToolbarRef" class="dir-toolbar">
         <div class="dir-toolbar-btns">
           <button class="toolbar-btn" :class="{ 'search-active': searchMode }" @click="toggleSearch()" :title="t('file.search.title')">
             <Search :size="16" />
@@ -161,37 +162,6 @@
         <span class="origin-banner-text">{{ originLabel }}</span>
       </div>
 
-      <!-- Search input row (fused view: replaces toolbar + breadcrumb while active) -->
-      <div v-if="searchMode && !multiSelect.active" class="dir-nav-bottom" @keydown.esc.stop="exitSearch">
-        <div class="fs-input-row">
-          <button class="fs-toggle-btn fs-close-btn" :title="t('file.search.close')" @click="exitSearch">
-            <X :size="15" />
-          </button>
-          <SearchInput
-            ref="searchInputRef"
-            v-model="search.state.query"
-            :placeholder="t('file.search.placeholder')"
-            @enter="confirmSelected"
-            @down="moveSelection(1)"
-            @up="moveSelection(-1)"
-          />
-          <button class="fs-toggle-btn" :class="{ active: search.state.recursive }" :title="t('file.search.recursive')" @click="toggleRecursive">
-            <FolderTree :size="15" />
-          </button>
-          <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
-            <WholeWord :size="15" />
-          </button>
-          <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
-            <Globe :size="15" />
-          </button>
-          <button class="fs-toggle-btn" :title="t('file.search.reset')" @click="search.reset()">
-            <RotateCcw :size="14" />
-          </button>
-        </div>
-        <div v-if="search.state.searchBasePath && search.state.scope === 'current'" class="fs-search-base">
-          {{ t('file.search.searchFrom', { path: search.state.searchBasePath }) }}
-        </div>
-      </div>
       <!-- Breadcrumb / Multi-select info bar -->
       <div v-if="multiSelect.active" class="dir-nav-bottom">
         <div class="ms-info-bar">
@@ -204,7 +174,7 @@
           </button>
         </div>
       </div>
-      <div v-else-if="!searchMode && currentDir" class="dir-nav-bottom">
+      <div v-else-if="currentDir" class="dir-nav-bottom">
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
       </div>
     </div>
@@ -246,10 +216,12 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <template v-if="searchMode">
+      <template v-if="searchHasQuery">
         <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
-        <div v-else-if="!search.state.query.trim()" class="empty-state fs-search-empty">{{ t('file.search.placeholder') }}</div>
-        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">{{ t('file.search.noResults') }}</div>
+        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
+          <FileX :size="56" class="fs-search-empty-icon" />
+          <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
+        </div>
       </template>
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
@@ -271,6 +243,7 @@
           }"
           :data-action="entry.type === 'dir' ? 'dir' : 'file'"
           :data-path="pathOf(entry)"
+          :title="searchHasQuery ? pathOf(entry) : undefined"
         >
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
             <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
@@ -282,13 +255,20 @@
               <Paperclip :size="12" />
             </span>
           </div>
-          <span class="file-name" v-if="searchMode" v-html="highlightName(entry.name, entry.matchedIndices)"></span>
+          <span class="file-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></span>
           <span class="file-name" v-else>{{ entry.name }}</span>
-          <span class="file-meta" v-if="searchMode">{{ entry.parentDir }}</span>
-          <span class="file-meta" v-else>{{ entry.type === 'dir' ? formatDate(entry.modified) : `${formatFileSize(entry.size)} · ${formatDate(entry.modified)}` }}</span>
+          <span class="file-meta">{{ metaText(entry) }}</span>
+          <button
+            v-if="searchHasQuery"
+            class="fs-result-dir-btn"
+            :title="t('chat.attach.openDirectory')"
+            @click.stop="onSearchRevealInDir(pathOf(entry))"
+          >
+            <LocateFixed :size="15" />
+          </button>
         </div>
       </template>
-      <div v-if="!searchMode && hasMoreEntries" class="truncate-hint">
+      <div v-if="!searchHasQuery && hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
       </div>
     </div>
@@ -305,10 +285,12 @@
       @drop.prevent="onDrop"
       @dragend="onDragEnd"
     >
-      <template v-if="searchMode">
+      <template v-if="searchHasQuery">
         <LoadingIndicator v-if="search.state.searching && search.state.results.length === 0" size="md" :label="t('file.search.searching')" />
-        <div v-else-if="!search.state.query.trim()" class="empty-state fs-search-empty">{{ t('file.search.placeholder') }}</div>
-        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">{{ t('file.search.noResults') }}</div>
+        <div v-else-if="search.state.results.length === 0 && !search.state.searching" class="empty-state fs-search-empty">
+          <FileX :size="56" class="fs-search-empty-icon" />
+          <p class="fs-search-empty-text">{{ t('file.search.noResults') }}</p>
+        </div>
       </template>
       <div v-else-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <FileIcon path="" :is-dir="true" :size="48" />
@@ -340,10 +322,10 @@
             <Paperclip :size="12" />
           </span>
         </div>
-        <div class="grid-name" v-if="searchMode" v-html="highlightName(entry.name, entry.matchedIndices)"></div>
+        <div class="grid-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></div>
         <div class="grid-name" v-else>{{ entry.name }}</div>
       </div>
-      <div v-if="!searchMode && hasMoreEntries" class="truncate-hint">
+      <div v-if="!searchHasQuery && hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
       </div>
     </div>
@@ -386,6 +368,35 @@
         <Trash2 :size="14" />
         {{ t('common.delete') }}
       </button>
+    </div>
+
+    <!-- Search bar (bottom dock; toolbar/breadcrumb/list stay visible) -->
+    <div v-if="searchMode && !multiSelect.active" class="fs-nav-bottom" @keydown.esc.stop="exitSearch">
+      <div class="fs-input-row">
+        <button class="fs-toggle-btn fs-close-btn" :title="t('file.search.close')" @click="exitSearch">
+          <X :size="15" />
+        </button>
+        <SearchInput
+          ref="searchInputRef"
+          v-model="search.state.query"
+          :placeholder="searchPlaceholder"
+          @enter="confirmSelected"
+          @down="moveSelection(1)"
+          @up="moveSelection(-1)"
+        />
+        <button class="fs-toggle-btn" :class="{ active: search.state.recursive }" :title="t('file.search.recursive')" @click="toggleRecursive">
+          <FolderTree :size="15" />
+        </button>
+        <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
+          <WholeWord :size="15" />
+        </button>
+        <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
+          <Globe :size="15" />
+        </button>
+        <button class="fs-toggle-btn" :title="t('file.search.reset')" @click="search.reset()">
+          <RotateCcw :size="14" />
+        </button>
+      </div>
     </div>
 
     <!-- Context menu -->
@@ -493,7 +504,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, RotateCcw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ArrowLeft } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, RotateCcw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -860,6 +871,35 @@ const searchMode = ref(false)
 const search = useFileSearch()
 const searchInputRef = ref(null)
 
+// Search-mode description used as the search box placeholder (no separate
+// prompt prefix). Word order and spacing follow the active locale, matching
+// the pre-refactor FileSearchDrawer header wording.
+const searchPlaceholder = computed(() => {
+    const s = search.state
+    const isEn = locale.value.toLowerCase().startsWith('en')
+    const scope = s.scope === 'global' ? t('file.search.wordGlobal') : t('file.search.wordCurrent')
+    const verb = t('file.search.wordVerb')
+
+    if (isEn) {
+        const words = []
+        if (s.exact) words.push(t('file.search.wordExact'))
+        if (s.recursive) {
+            const w = t('file.search.wordRecursive')
+            words.push(s.exact ? `${w.charAt(0).toLowerCase()}${w.slice(1)}` : w)
+        }
+        const hasMod = s.exact || s.recursive
+        const verbText = hasMod ? verb : `${verb.charAt(0).toUpperCase()}${verb.slice(1)}`
+        words.push(`${verbText} ${scope}`)
+        return words.join(' ')
+    }
+    // zh: [scope][exact][recursive][verb] concatenated without spaces
+    const parts = [scope]
+    if (s.exact) parts.push(t('file.search.wordExact'))
+    if (s.recursive) parts.push(t('file.search.wordRecursive'))
+    parts.push(verb)
+    return parts.join('')
+})
+
 function enterSearch() {
     if (searchMode.value) return
     searchMode.value = true
@@ -914,6 +954,14 @@ function refreshSearchResults() {
     if (searchMode.value && search.state.query.trim()) {
         search.startSearch(props.currentDir)
     }
+}
+
+/** Reveal a search result's containing directory in the file manager.
+ * Exits search and navigates to the result's parent dir (highlighting it). */
+async function onSearchRevealInDir(path) {
+    if (!path) return
+    if (searchMode.value) exitSearch()
+    await navToFileInManager(path)
 }
 
 function toggleRecursive() {
@@ -1010,17 +1058,40 @@ onUnmounted(() => {
 // All entry interactions (click/dblclick/ctx-menu/keyboard/multi-select) read
 // from displayEntries and resolve paths via pathOf(), so the same handlers
 // serve both browse and search views.
+//
+// While the search view is open but nothing has been typed yet, the current
+// directory listing is shown as-is — searching acts as a filter over the
+// files you are already looking at.
+const searchHasQuery = computed(() => searchMode.value && !!search.state.query.trim())
+
+function browseToDisplay(entry) {
+    return {
+        name: entry.name,
+        type: entry.type,
+        path: joinPath(props.currentDir, entry.name),
+        size: entry.size,
+        modified: entry.modified,
+        symlink: entry.symlink,
+        broken: entry.broken,
+    }
+}
+
 const displayEntries = computed(() => {
     if (!searchMode.value) return visibleEntries.value
-    return search.state.query.trim() ? search.state.results.map(toDisplayEntry) : []
+    if (search.state.query.trim()) {
+        const list = search.state.results.map(toDisplayEntry)
+        if (props.sortField) list.sort(compareEntries)
+        return list
+    }
+    return visibleEntries.value.map(browseToDisplay)
 })
 
 function pathOf(entry) {
-    return searchMode.value ? entry.path : joinPath(props.currentDir, entry.name)
+    return entry.path != null ? entry.path : joinPath(props.currentDir, entry.name)
 }
 
 function keyOf(entry) {
-    return searchMode.value ? entry.path : entry.name
+    return entry.path != null ? entry.path : entry.name
 }
 
 function entryByPath(path) {
@@ -1402,39 +1473,41 @@ function doBatchShare() {
 
 const MAX_VISIBLE_ENTRIES = 1000
 
+// Shared comparator: applies the active toolbar sort to a list of entries.
+// Search results reuse this so the toolbar sort affects the result page too.
+function compareEntries(a, b) {
+    // When sorting by type, directories participate normally
+    // When sorting by size, directories go to the end
+    // When sorting by name/time, directories float to top
+    if (props.sortField === 'size') {
+        if (a.type === 'dir' && b.type !== 'dir') return 1
+        if (a.type !== 'dir' && b.type === 'dir') return -1
+    } else if (props.sortField !== 'type') {
+        if (a.type === 'dir' && b.type !== 'dir') return -1
+        if (a.type !== 'dir' && b.type === 'dir') return 1
+    }
+    let cmp = 0
+    if (props.sortField === 'name') cmp = a.name.localeCompare(b.name)
+    else if (props.sortField === 'time') cmp = new Date(a.modified) - new Date(b.modified)
+    else if (props.sortField === 'size') {
+        const sizeA = a.size ?? 0
+        const sizeB = b.size ?? 0
+        cmp = sizeA - sizeB
+        if (cmp === 0) cmp = a.name.localeCompare(b.name)
+    }
+    else if (props.sortField === 'type') {
+        const extA = a.name.includes('.') ? a.name.split('.').pop().toLowerCase() : ''
+        const extB = b.name.includes('.') ? b.name.split('.').pop().toLowerCase() : ''
+        cmp = extA < extB ? -1 : extA > extB ? 1 : 0
+        if (cmp === 0) cmp = a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+    }
+    return props.sortDir === 'asc' ? cmp : -cmp
+}
+
 const filteredEntries = computed(() => {
     let entries = [...props.entries]
     if (!props.showHidden) entries = entries.filter(e => !e.name.startsWith('.'))
-    if (props.sortField) {
-        entries = entries.sort((a, b) => {
-            // When sorting by type, directories participate normally
-            // When sorting by size, directories go to the end
-            // When sorting by name/time, directories float to top
-            if (props.sortField === 'size') {
-                if (a.type === 'dir' && b.type !== 'dir') return 1
-                if (a.type !== 'dir' && b.type === 'dir') return -1
-            } else if (props.sortField !== 'type') {
-                if (a.type === 'dir' && b.type !== 'dir') return -1
-                if (a.type !== 'dir' && b.type === 'dir') return 1
-            }
-            let cmp = 0
-            if (props.sortField === 'name') cmp = a.name.localeCompare(b.name)
-            else if (props.sortField === 'time') cmp = new Date(a.modified) - new Date(b.modified)
-            else if (props.sortField === 'size') {
-                const sizeA = a.size ?? 0
-                const sizeB = b.size ?? 0
-                cmp = sizeA - sizeB
-                if (cmp === 0) cmp = a.name.localeCompare(b.name)
-            }
-            else if (props.sortField === 'type') {
-                const extA = a.name.includes('.') ? a.name.split('.').pop().toLowerCase() : ''
-                const extB = b.name.includes('.') ? b.name.split('.').pop().toLowerCase() : ''
-                cmp = extA < extB ? -1 : extA > extB ? 1 : 0
-                if (cmp === 0) cmp = a.name < b.name ? -1 : a.name > b.name ? 1 : 0
-            }
-            return props.sortDir === 'asc' ? cmp : -cmp
-        })
-    }
+    if (props.sortField) entries = entries.sort(compareEntries)
     return entries
 })
 
@@ -1512,6 +1585,14 @@ function formatDate(modified) {
     return isToday
         ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' })
         : d.toLocaleDateString(loc, { month: '2-digit', day: '2-digit' })
+}
+
+/** Secondary text shown next to an entry — mirrors the directory listing for
+ * both browse and search entries so results look identical to regular rows. */
+function metaText(entry) {
+    if (entry.type === 'dir') return formatDate(entry.modified)
+    if (entry.size != null) return `${formatFileSize(entry.size)} · ${formatDate(entry.modified)}`
+    return formatDate(entry.modified)
 }
 
 // Clamp menu position to stay within viewport on all sides
@@ -2781,6 +2862,16 @@ function scrollSelectedIntoView(path) {
 }
 
 /* ── Inline search view ── */
+.fs-nav-bottom {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-color, #e5e5e5);
+    background: var(--bg-primary, #fff);
+    padding: 5px 10px 4px;
+    gap: 2px;
+}
+
 .fs-input-row {
     display: flex;
     align-items: center;
@@ -2824,15 +2915,6 @@ function scrollSelectedIntoView(path) {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
-.fs-search-base {
-    padding: 2px 8px 4px;
-    font-size: 11px;
-    color: var(--text-muted, #999);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
 .fs-results-count {
     padding: 6px 14px;
     font-size: 11px;
@@ -2852,7 +2934,59 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-search-empty {
-    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 24px;
+    text-align: center;
+}
+
+.fs-search-empty-icon {
+    color: var(--text-muted, #999);
+    opacity: 0.6;
+}
+
+.fs-search-empty-text {
+    font-size: 13px;
+    color: var(--text-secondary, #666);
+    margin: 0;
+}
+
+.fs-search-empty-sub {
+    font-size: 12px;
+    color: var(--text-muted, #999);
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    padding: 0 12px;
+}
+
+.fs-result-dir-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.15s, color 0.15s;
+    margin-left: 4px;
+}
+
+@media (hover: hover) {
+    .fs-result-dir-btn:hover {
+        background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+        color: var(--accent-color, #4a90d9);
+    }
 }
 
 .file-name mark,

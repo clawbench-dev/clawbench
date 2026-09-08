@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 
@@ -83,6 +84,8 @@ type DirSearchResult struct {
 	Name           string `json:"name"`
 	Path           string `json:"path"`
 	Type           string `json:"type"`
+	Size           int64  `json:"size"`
+	Modified       string `json:"modified"`
 	MatchedIndices []int  `json:"matchedIndices"`
 }
 
@@ -203,7 +206,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	var totalMatchCount int
 	var truncated bool
 
-	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int) {
+	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int, info fs.FileInfo) {
 		totalMatchCount++
 		if sentCount >= params.limit {
 			truncated = true
@@ -221,6 +224,10 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 			Path:           relPathStr,
 			Type:           entryType,
 			MatchedIndices: matchedIndexes,
+		}
+		if info != nil {
+			result.Size = info.Size()
+			result.Modified = info.ModTime().Format(time.RFC3339)
 		}
 		data, _ := json.Marshal(result)
 		_, _ = fmt.Fprintf(w, "event: result\ndata: %s\n\n", data)
@@ -255,7 +262,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
 // On match, it calls onMatch. It respects context cancellation.
-func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int)) {
+func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo)) {
 	err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible entries
@@ -286,7 +293,11 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 		matchedIndexes := matchName(name, query, exact)
 		if len(matchedIndexes) > 0 {
 			entryType := classifyEntry(d, name)
-			onMatch(name, relPathSlash, entryType, matchedIndexes)
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				info = nil
+			}
+			onMatch(name, relPathSlash, entryType, matchedIndexes, info)
 		}
 
 		return nil
@@ -297,7 +308,7 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 }
 
 // walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
-func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int)) {
+func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo)) {
 	select {
 	case <-ctx.Done():
 		return
@@ -326,7 +337,11 @@ func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, quer
 		matchedIndexes := matchName(name, query, exact)
 		if len(matchedIndexes) > 0 {
 			entryType := classifyEntry(d, name)
-			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes)
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				info = nil
+			}
+			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes, info)
 		}
 	}
 }

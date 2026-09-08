@@ -6,6 +6,8 @@ export interface FileSearchResult {
   name: string
   path: string
   type: 'dir' | 'file' | 'image'
+  size?: number
+  modified?: string
   matchedIndices: number[]
 }
 
@@ -35,8 +37,8 @@ export function useFileSearch() {
 
   const state = reactive<FileSearchState>({
     query: '',
-    recursive: true,
-    scope: 'global',
+    recursive: false,
+    scope: 'current',
     exact: false,
     results: [],
     searching: false,

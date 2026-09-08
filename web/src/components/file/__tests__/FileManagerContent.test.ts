@@ -226,8 +226,8 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
 // without opening a real SSE connection.
 const searchState = reactive({
   query: '',
-  recursive: true,
-  scope: 'global' as 'global' | 'current',
+  recursive: false,
+  scope: 'current' as 'current' | 'global',
   exact: false,
   results: [] as Array<{ name: string; path: string; type: string; matchedIndices: number[] }>,
   searching: false,
@@ -275,7 +275,7 @@ const i18n = createI18n({
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
-        search: { title: '搜索文件', close: '关闭搜索', placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
+        search: { title: '搜索文件', close: '关闭搜索', placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -336,8 +336,8 @@ beforeEach(() => {
   mockSearchCancel.mockReset()
   mockSearchReset.mockReset()
   searchState.query = ''
-  searchState.recursive = true
-  searchState.scope = 'global'
+  searchState.recursive = false
+  searchState.scope = 'current'
   searchState.exact = false
   searchState.results = []
   searchState.searching = false
@@ -815,6 +815,89 @@ describe('FileManagerContent — inline search', () => {
     ]
     await nextTick()
     expect(wrapper.vm._getSelectedPath()).toBe('')
+  })
+
+  it('keeps the toolbar and breadcrumb visible while the search view is open', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.find('.dir-toolbar').exists()).toBe(true)
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    // Toolbar + breadcrumb remain; the search row is appended below them
+    expect(wrapper.find('.dir-toolbar').exists()).toBe(true)
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+  })
+
+  it('reflects the active search mode in the search box placeholder', async () => {
+    searchState.scope = 'current'
+    searchState.recursive = false
+    searchState.exact = false
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    // No separate hint line anymore — the mode description lives in the placeholder
+    expect(wrapper.find('.fs-mode-hint').exists()).toBe(false)
+    // zh wording concatenates scope + modifiers + verb without spaces
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前目录搜索')
+
+    searchState.recursive = true
+    searchState.exact = true
+    await nextTick()
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前目录精确递归搜索')
+
+    searchState.scope = 'global'
+    searchState.recursive = false
+    searchState.exact = false
+    await nextTick()
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前项目下搜索')
+  })
+
+  it('renders a reveal-in-directory button on each search result', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    const locateBtn = wrapper.find('.file-item .fs-result-dir-btn')
+    expect(locateBtn.exists()).toBe(true)
+  })
+
+  it('lists the current directory files while the search box is empty', async () => {
+    searchState.query = ''
+    searchState.results = []
+    const wrapper = mountContent() // default entries = sampleEntries (src dir, test.ts, readme.md)
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    // The whole current dir listing is shown even with no query typed
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(sampleEntries.length)
+    expect(items[0].text()).toContain('src')
+    // No reveal/locate buttons nor highlight while not actually filtering
+    expect(wrapper.find('.file-item .fs-result-dir-btn').exists()).toBe(false)
+    expect(wrapper.find('.file-name mark').exists()).toBe(false)
+  })
+
+  it('applies the toolbar sort to search results', async () => {
+    searchState.query = 'go'
+    searchState.results = [
+      { name: 'big.go', path: 'big.go', type: 'file', size: 5000, modified: '2025-01-01T00:00:00Z', matchedIndices: [] },
+      { name: 'a.go', path: 'a.go', type: 'file', size: 10, modified: '2025-01-01T00:00:00Z', matchedIndices: [] },
+    ]
+    const wrapper = mountContent({ sortField: 'size', sortDir: 'asc' })
+    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
+    await btn!.trigger('click')
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    // Sorted ascending by size → a.go (10) before big.go (5000)
+    expect(items[0].attributes('data-path')).toBe('a.go')
+    expect(items[1].attributes('data-path')).toBe('big.go')
   })
 })
 
