@@ -5,8 +5,10 @@
  *
  *  - Cross-file / reopen restore uses pixel scrollTop, persisted per path in the
  *    module-level fileScrollCache (so it survives FileViewer unmount/remount).
- *  - rendered↔raw / edit-toggle restore uses { anchor, ratio } because the two
- *    panes have different heights and must align on content coordinates.
+ *  - rendered↔raw / edit-toggle restore uses a source line anchor: rendered
+ *    blocks carry data-source-line and CodeMirror has real line numbers, so a
+ *    single 1-based line is the shared coordinate. Falls back to a scroll
+ *    ratio when no line anchor is available.
  *  - One shared 50ms poll drives both kinds of pending restore (previously two
  *    separate intervals in FileViewer).
  *
@@ -23,14 +25,9 @@
  * fileScrollCache it writes into is shared at module scope.
  */
 
-import { extractToc } from '@/utils/toc'
 import { EditorView } from '@codemirror/view'
-import {
-    pickPreviewAnchor,
-    pickCmAnchor,
-    relTopFor,
-    scrollTopFor,
-} from '@/utils/markdownScroll'
+import { ScrollAnchorState } from '@/utils/markdownScroll'
+import { renderedTopLine, renderedLineScrollTop } from '@/utils/scrollRenderedToLine'
 import { getFileScroll, setFileScroll } from '@/utils/fileScrollCache'
 
 /** Structural element shape — tests inject plain objects, no real DOM needed. */
@@ -45,12 +42,6 @@ export interface ScrollContainerLike {
     querySelectorAll?: (s: string) => ArrayLike<Element>
     querySelector?: (s: string) => Element | null
     getBoundingClientRect?: () => DOMRect
-}
-
-export interface ScrollAnchorState {
-    id: string
-    line: number
-    relTop: number
 }
 
 export interface SavedScroll {
@@ -97,12 +88,6 @@ const MAX_PX_ATTEMPTS = 100 // 100 * 50ms = 5s
 const MAX_ANCHOR_ATTEMPTS = 60 // 60 * 50ms = 3s
 const CANCEL_EVENT = 'cancel-scroll-restore'
 const RESTORE_EVENT = 'restore-file-scroll'
-
-/** CSS.escape with a fallback for environments without it (jsdom in tests). */
-function escapeCssIdentifier(id: string): string {
-    if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(id)
-    return id.replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`)
-}
 
 // Pure decision helpers — unit-testable without DOM.
 
@@ -213,13 +198,31 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         }
 
         // Anchor/ratio restore (rendered↔raw / edit toggle). No loading gate —
-        // it only needs a laid-out scrollable container.
+        // it only needs a laid-out scrollable container. When the target line
+        // exists but the content is not tall enough yet (async images), defer
+        // to the next tick instead of clamping to a wrong position.
         if (pendingAnchor) {
             if (++pendingAnchor.attempts > MAX_ANCHOR_ATTEMPTS) {
                 pendingAnchor = null
             } else if (el && isScrollable(el)) {
-                restoreScroll(pendingAnchor.saved, el)
-                pendingAnchor = null
+                const { anchor, ratio } = pendingAnchor.saved
+                let target: number | null = null
+                if (anchor && ctx.isMarkdown()) {
+                    if (el.classList?.contains('markdown-body')) target = renderedLineScrollTop(el, anchor.line)
+                    else if (el.classList?.contains('cm-scroller')) target = cmLineScrollTop(el, anchor.line)
+                }
+                if (target == null) {
+                    // No resolvable line anchor — fall back to ratio and stop.
+                    if (ratio) {
+                        const max = el.scrollHeight - el.clientHeight
+                        if (max > 0) el.scrollTop = Math.round(ratio.ratio * max)
+                    }
+                    pendingAnchor = null
+                } else if (pxCanApply(el, target)) {
+                    el.scrollTop = target
+                    pendingAnchor = null
+                }
+                // else: content not tall enough yet — wait for the next tick.
             }
         }
 
@@ -235,51 +238,44 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         if (pendingPx || pendingAnchor) startPoll()
     }
 
-    // ── anchor/ratio capture & restore ────────────────────────────────────
+    // ── line-anchor capture & restore ─────────────────────────────────────
+    // The anchor is a single 1-based source line — the shared coordinate
+    // between rendered (data-source-line) and raw (CodeMirror doc) panes.
+    //
+    // CodeMirror's scrollDOM.scrollTop is treated as content coordinates
+    // everywhere else in the app (CodeMirrorViewer.scrollToLine, the
+    // viewport-line dispatcher) — the editor's `.cm-content` has no top
+    // padding/offset. The `+1` on capture and matching `-1` on restore keep
+    // the round trip on the same visual line.
 
-    function capturePreviewAnchor(el: HTMLElement): ScrollAnchorState | null {
-        const content = ctx.file()?.content || ''
-        const toc = extractToc(content, 'markdown')
-        if (toc.length === 0) return null
-        const idToMeta = new Map(toc.map((i) => [i.id, i]))
-        const headings: { id: string; line: number; contentTop: number }[] = []
-        if (el.querySelectorAll) {
-            for (const h of el.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
-                const id = h.id
-                const meta = id ? idToMeta.get(id) : undefined
-                if (!meta) continue
-                const contentTop =
-                    (h as Element).getBoundingClientRect?.().top -
-                    (el as Element).getBoundingClientRect?.().top
-                headings.push({ id, line: meta.line, contentTop })
-            }
+    /** Top visible source line of a CodeMirror scroll container. */
+    function cmTopLine(el: HTMLElement): number | null {
+        const view = EditorView.findFromDOM(el)
+        if (!view) return null
+        try {
+            const topBlock = view.lineBlockAtHeight(el.scrollTop + 1)
+            return view.state.doc.lineAt(topBlock.from).number
+        } catch {
+            return null
         }
-        return pickPreviewAnchor(headings, el.scrollTop)
     }
 
-    function captureCmAnchor(el: HTMLElement): ScrollAnchorState | null {
-        const view = el instanceof Element ? EditorView.findFromDOM(el) : null
+    /**
+     * Ideal scrollTop that puts `line` at a CodeMirror container's viewport
+     * top — NOT clamped. Returns null when the editor cannot resolve (no view
+     * yet). Callers defer instead of clamping while async content grows.
+     */
+    function cmLineScrollTop(el: HTMLElement, line: number): number | null {
+        const view = EditorView.findFromDOM(el)
         if (!view) return null
-        const content = ctx.file()?.content || ''
-        const toc = extractToc(content, 'markdown')
-        if (toc.length === 0) return null
-        let topBlock
-        try {
-            topBlock = view.lineBlockAtHeight(el.scrollTop + 1)
-        } catch {
-            return null
-        }
-        const topLine = view.state.doc.lineAt(topBlock.from).number
-        const item = pickCmAnchor(toc, topLine)
-        if (!item) return null
-        const line = view.state.doc.line(Math.min(Math.max(1, item.line), view.state.doc.lines))
+        const target = Math.min(Math.max(1, line), view.state.doc.lines)
         let block
         try {
-            block = view.lineBlockAt(line.from)
+            block = view.lineBlockAt(view.state.doc.line(target).from)
         } catch {
             return null
         }
-        return { id: item.id, line: item.line, relTop: relTopFor(block.top, el.scrollTop) }
+        return Math.max(0, block.top - 1)
     }
 
     function captureScroll(el: HTMLElement | null): SavedScroll | null {
@@ -288,50 +284,14 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         const ratio = max > 0 ? { ratio: el.scrollTop / max } : null
         let anchor: ScrollAnchorState | null = null
         if (ctx.isMarkdown()) {
-            if (el.classList?.contains('markdown-body')) {
-                anchor = capturePreviewAnchor(el)
-            } else if (el.classList?.contains('cm-scroller')) {
-                anchor = captureCmAnchor(el)
-            }
+            const line = el.classList?.contains('markdown-body')
+                ? renderedTopLine(el)
+                : el.classList?.contains('cm-scroller')
+                    ? cmTopLine(el)
+                    : null
+            if (line != null) anchor = { line }
         }
         return { anchor, ratio }
-    }
-
-    function restorePreviewAnchor(el: HTMLElement, anchor: ScrollAnchorState): boolean {
-        const sel = `#${escapeCssIdentifier(anchor.id)}`
-        const target = el.querySelector?.(sel)
-        if (!target) return false
-        const contentTop =
-            (target as Element).getBoundingClientRect?.().top -
-            (el as Element).getBoundingClientRect?.().top
-        el.scrollTop = scrollTopFor(contentTop, anchor.relTop)
-        return true
-    }
-
-    function restoreCmAnchor(el: HTMLElement, anchor: ScrollAnchorState): boolean {
-        const view = el instanceof Element ? EditorView.findFromDOM(el) : null
-        if (!view) return false
-        const line = view.state.doc.line(Math.min(Math.max(1, anchor.line), view.state.doc.lines))
-        let block
-        try {
-            block = view.lineBlockAt(line.from)
-        } catch {
-            return false
-        }
-        el.scrollTop = scrollTopFor(block.top, anchor.relTop)
-        return true
-    }
-
-    function restoreScroll(saved: SavedScroll, el: HTMLElement): void {
-        // TOC heading alignment first, percentage ratio as fallback.
-        if (saved.anchor && ctx.isMarkdown()) {
-            if (el.classList?.contains('markdown-body') && restorePreviewAnchor(el, saved.anchor)) return
-            if (el.classList?.contains('cm-scroller') && restoreCmAnchor(el, saved.anchor)) return
-        }
-        if (saved.ratio) {
-            const max = el.scrollHeight - el.clientHeight
-            if (max > 0) el.scrollTop = Math.round(saved.ratio.ratio * max)
-        }
     }
 
     // ── window cancel-scroll-restore (scroll-to-line takes precedence) ────

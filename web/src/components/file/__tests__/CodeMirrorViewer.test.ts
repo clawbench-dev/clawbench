@@ -612,4 +612,38 @@ describe('CodeMirrorViewer — viewport line event (for TOC scroll-follow)', () 
     window.removeEventListener('cm-editor-viewport-line', listener)
     wrapper.unmount()
   })
+
+  it('reports the line at the viewport MIDDLE, not the top edge', async () => {
+    const content = Array.from({ length: 300 }, function(_, i) { return 'line ' + (i + 1) }).join('\n')
+    const wrapper = mountViewerLocal({ content, file: { path: '/tmp/big.ts', name: 'big.ts' } })
+    await sleep(120)
+    const view = wrapper.vm.getView()
+
+    const listener = vi.fn()
+    window.addEventListener('cm-editor-viewport-line', listener)
+
+    const scroller = view.scrollDOM
+    // Force a deterministic viewport height so the expected mid-viewport line
+    // is independent of jsdom's layout measurements.
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    scroller.scrollTop = 200
+    scroller.dispatchEvent(new Event('scroll', { bubbles: false }))
+
+    await sleep(80)
+    expect(listener).toHaveBeenCalled()
+    const detail = listener.mock.calls[0][0].detail
+    // The reported line must correspond to the block at scrollTop + half the
+    // viewport height — i.e. the vertical middle, NOT the top row.
+    const midBlock = view.lineBlockAtHeight(200 + 400 * 0.5)
+    const expectedMid = view.state.doc.lineAt(midBlock.from).number
+    expect(detail.line).toBe(expectedMid)
+
+    // And it must NOT be the line at the very top edge.
+    const topBlock = view.lineBlockAtHeight(200)
+    const expectedTop = view.state.doc.lineAt(topBlock.from).number
+    expect(detail.line).not.toBe(expectedTop)
+
+    window.removeEventListener('cm-editor-viewport-line', listener)
+    wrapper.unmount()
+  })
 })

@@ -5,6 +5,7 @@ import {
   buildMarkdownPreviewDom,
   createFixLocalImagePaths,
 } from '@/composables/useMarkdownRenderPipeline'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { setShareToken } from '@/share/shareMode'
 
 configureMarkedRenderer()
@@ -101,9 +102,10 @@ describe('buildMarkdownPreviewDom', () => {
   it('renders headings with deduplicated ids (like markedConfig)', () => {
     const md = '# Intro\n\n# Intro\n\n## Setup'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
-    expect(html).toContain('<h1 id="intro">')
-    expect(html).toContain('<h1 id="intro-2">')
-    expect(html).toContain('<h2 id="setup">')
+    // ids are preserved; opening tags may carry a data-source-line attribute
+    expect(html).toContain('id="intro"')
+    expect(html).toContain('id="intro-2"')
+    expect(html).toContain('id="setup"')
   })
 
   it('wraps tables and injects row attributes', () => {
@@ -126,7 +128,8 @@ describe('buildMarkdownPreviewDom', () => {
   it('renders mermaid fenced blocks as pre.mermaid', () => {
     const md = '```mermaid\ngraph TD; A-->B\n```'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
-    expect(html).toContain('<pre class="mermaid">')
+    // opening tag may carry a data-source-line attribute
+    expect(html).toMatch(/<pre class="mermaid"( data-source-line="\d+")?>/)
   })
 
   it('resolves relative image paths through fixImagePaths + lightbox wrap', () => {
@@ -172,5 +175,95 @@ describe('buildMarkdownPreviewDom', () => {
     } finally {
       setShareToken(null)
     }
+  })
+})
+
+describe('data-source-line through the full markdown preview pipeline', () => {
+  it('annotates block elements with their 1-based source lines', () => {
+    const md = [
+      '# 标题', '',
+      '第一段。', '',
+      '- 甲', '- 乙', '',
+      '| a | b |', '|---|---|', '| 1 | 2 |', '',
+      '```js', 'const x = 1', '```', '',
+      '尾部',
+    ].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'x.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('<p data-source-line="3">')
+    expect(html).toContain('<ul data-source-line="5">')
+    expect(html).toContain('table data-source-line="8"')
+    expect(html).toContain('<pre data-source-line="12">')
+    // table stays wrapped in .table-wrap despite carrying the attribute
+    expect(html).toMatch(/table-wrap"><table data-source-line="8"/)
+  })
+
+  it('preserves line anchors for content that protectMarkdown rewrites (math, code)', () => {
+    // fenced code and math are protected then restored with the same row count.
+    const md = ['第一行', '', '```', '$x_i$', '```', '', '公式 $a_{i}$ 结尾'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    // paragraph 1 at line 1, code block starts line 3, math paragraph at line 7
+    expect(html).toContain('<p data-source-line="1">')
+    expect(html).toContain('<pre data-source-line="3">')
+    expect(html).toContain('data-source-line="7"')
+    expect(html).not.toContain('\x00')
+    expect(html).not.toContain('MATH')
+  })
+
+  it('keeps line numbers correct after MULTI-LINE display math (row-count preservation)', () => {
+    // 8 source lines; the $$..$$ block spans lines 3-6.
+    const md = ['标题', '', '$$', 'a=b', 'c=d', '$$', '', '结尾段落'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<p data-source-line="1">')
+    // The block after the formula must be line 8 (not shifted by the 3 rows
+    // the placeholder would otherwise have collapsed).
+    expect(html).toContain('data-source-line="8"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('keeps line numbers correct after multi-line \\[...\\] display math', () => {
+    const md = ['a', '', '\\[', 'x=y', '\\]', '', 'b'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('data-source-line="7"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('keeps line numbers aligned with the file when the source starts with blank lines', () => {
+    // 2 leading blank lines: a real file line 3 is the first heading.
+    const md = ['', '', '# 标题', '', '第二行内容'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'lead.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<h1 id="标题" data-source-line="3">')
+    expect(html).toContain('<p data-source-line="5">')
+  })
+
+  it('keeps correct lines for fenced code that contains math (math inside code is not folded)', () => {
+    // The $$ inside a fenced code block is code text — protectMarkdown leaves it
+    // in the restored multi-line code, so following lines must not shift.
+    const md = ['a', '', '```', '$$x=y$$', 'b', '```', '', 'c'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'c.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<p data-source-line="1">')
+    expect(html).toContain('<pre data-source-line="3">')
+    // c is on file line 8 (paragraph 1, blank 2, code 3-7, blank, c)
+    expect(html).toContain('data-source-line="8"')
+  })
+
+  it('keeps correct lines for display math directly after a heading', () => {
+    const md = ['## H', '', '$$', 'x', 'y', '$$', '', 'z'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'd.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<h2 id="h" data-source-line="1">')
+    // z is on file line 8.
+    expect(html).toContain('data-source-line="8"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('skipKatex streaming keeps line anchors and leaks no NULs on multi-line display math', () => {
+    const md = ['a', '', '$$', 'x', 'y', '$$', '', 'b'].join('\n')
+    const html = renderMarkdownHtml(md, { skipKatex: true })
+    // Multi-line formula is restored to escaped source with row padding intact.
+    expect(html).not.toContain('\x00')
+    expect(html).not.toContain('MATH')
+    // The block after the formula is on file line 8 ($$..$$ spans lines 3-6).
+    expect(html).toContain('data-source-line="8"')
   })
 })

@@ -28,7 +28,9 @@ export interface ProtectResult {
      *
      * Row count equals the source row count: fenced blocks collapse to a single
      * placeholder row during protection but are restored (multi-line) at the
-     * end, so line numbers never shift.
+     * end, and display-math placeholders are padded with newlines to span the
+     * same rows the formula occupied — so line numbers never shift for either
+     * code or math.
      */
     protected: string
     /** Pre-extracted math blocks, in placeholder order. */
@@ -79,17 +81,22 @@ export function protectMarkdown(markdown: string): ProtectResult {
         return `\x00${prefix}${mathIdx++}\x00`
     }
 
-    // 2a. Display math: $$...$$
-    result = result.replace(/\$\$([\s\S]+?)\$\$/g, (_whole, math) => {
+    // Display math can span multiple source lines. Replacing the whole block
+    // with a single-line placeholder would drop those lines and shift every
+    // line number that follows (toc.ts, data-source-line, …). Pad the
+    // placeholder with (blockLines − 1) newlines so the protected text keeps
+    // the same row count as the source — mirroring what step 3 does for code.
+    const displayPh = (whole: string, math: string) => {
         mathEntries.push({ math: math.trim(), displayMode: true })
-        return ph(true)
-    })
+        const blockLines = whole.split('\n').length
+        return ph(true) + '\n'.repeat(blockLines - 1)
+    }
+
+    // 2a. Display math: $$...$$
+    result = result.replace(/\$\$([\s\S]+?)\$\$/g, (whole, math) => displayPh(whole, math))
 
     // 2b. Display math: \[...\]
-    result = result.replace(/\\\[([\s\S]+?)\\\]/g, (_whole, math) => {
-        mathEntries.push({ math: math.trim(), displayMode: true })
-        return ph(true)
-    })
+    result = result.replace(/\\\[([\s\S]+?)\\\]/g, (whole, math) => displayPh(whole, math))
 
     // 2c. Inline math: $...$ (excludes currency / escaped \$ / $$
     //     — same rules as the legacy INLINE_MATH_RE).

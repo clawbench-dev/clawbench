@@ -9,6 +9,21 @@ import {
     type ScrollContainerLike,
 } from '@/composables/useFileScrollRestore'
 
+// scrollRenderedToLine reads real layout (getBoundingClientRect), which jsdom
+// cannot measure — inject controllable fakes per test.
+const renderedTopLineMock = vi.fn()
+const renderedLineScrollTopMock = vi.fn()
+vi.mock('@/utils/scrollRenderedToLine', () => ({
+    renderedTopLine: (...a: unknown[]) => renderedTopLineMock(...a),
+    renderedLineScrollTop: (...a: unknown[]) => renderedLineScrollTopMock(...a),
+}))
+
+// CodeMirror EditorView.findFromDOM — faked to return a controllable view.
+let fakeView: unknown = null
+vi.mock('@codemirror/view', () => ({
+    EditorView: { findFromDOM: () => fakeView },
+}))
+
 // A controllable fake scroll container. Tests drive scrollHeight/clientHeight
 // and fire scroll events manually. offsetParent is settable so the visibility
 // guard can be exercised (jsdom never computes real layout).
@@ -57,6 +72,9 @@ describe('useFileScrollRestore', () => {
     beforeEach(() => {
         _resetFileScrollCache()
         vi.useFakeTimers()
+        renderedTopLineMock.mockReset()
+        renderedLineScrollTopMock.mockReset()
+        fakeView = null
     })
     afterEach(() => {
         vi.useRealTimers()
@@ -258,17 +276,9 @@ describe('useFileScrollRestore', () => {
     })
 
     describe('captureScroll markdown anchor branches', () => {
-        it('captures a preview heading anchor from the markdown-body pane', () => {
-            // Heading sits at content top 40, viewport scrolled past it (top 50):
-            // pickPreviewAnchor returns the heading as the anchor.
-            const headingEl = { id: 'intro', getBoundingClientRect: () => ({ top: 40 } as DOMRect) }
-            const el = makeEl({
-                scrollHeight: 300,
-                clientHeight: 50,
-                scrollTop: 50,
-                _classes: ['markdown-body'],
-            })
-            el.querySelectorAll = (sel: string) => (sel.startsWith('h1') ? [headingEl] : [])
+        it('captures the rendered source-line anchor from the markdown-body pane', () => {
+            const el = makeEl({ scrollHeight: 300, clientHeight: 50, scrollTop: 50, _classes: ['markdown-body'] })
+            renderedTopLineMock.mockReturnValue(42)
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
@@ -278,19 +288,35 @@ describe('useFileScrollRestore', () => {
 
             const saved = s.captureScroll(el)
             expect(saved).not.toBeNull()
-            // A heading is found at content top 40 (≤ scrollTop 50) → anchor.
-            expect(saved!.anchor).not.toBeNull()
-            expect(saved!.anchor!.id).toBe('intro')
+            // Viewport top maps to source line 42 → anchor { line }.
+            expect(saved!.anchor).toEqual({ line: 42 })
             expect(saved!.ratio).not.toBeNull()
         })
 
-        it('returns only ratio when the markdown has no headings', () => {
-            const el = makeEl({ scrollHeight: 200, clientHeight: 50, scrollTop: 50, _classes: ['markdown-body'] })
-            el.querySelectorAll = () => []
+        it('captures the top source line from a CodeMirror pane (no TOC involved)', () => {
+            const el = makeEl({ scrollHeight: 300, clientHeight: 50, scrollTop: 0, _classes: ['cm-scroller'] })
+            fakeView = {
+                lineBlockAtHeight: () => ({ from: 0 }),
+                state: { doc: { lineAt: () => ({ number: 12 }) } },
+            }
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
-                file: () => ({ path: 'a.md', content: 'plain text without headings' }),
+                file: () => ({ path: 'a.md', content: 'x' }),
+            })
+            const s = useFileScrollRestore(ctx)
+
+            const saved = s.captureScroll(el)
+            expect(saved!.anchor).toEqual({ line: 12 })
+        })
+
+        it('returns only ratio when the markdown pane exposes no source line', () => {
+            const el = makeEl({ scrollHeight: 200, clientHeight: 50, scrollTop: 50, _classes: ['markdown-body'] })
+            renderedTopLineMock.mockReturnValue(null)
+            const ctx = makeContext({
+                contentRoot: () => el,
+                isMarkdown: () => true,
+                file: () => ({ path: 'a.md', content: 'plain text' }),
             })
             const s = useFileScrollRestore(ctx)
 
@@ -301,7 +327,7 @@ describe('useFileScrollRestore', () => {
     })
 
     describe('anchor/ratio restore', () => {
-        it('falls back to ratio when there is no heading anchor', () => {
+        it('falls back to ratio when there is no line anchor', () => {
             const el = makeEl({ scrollHeight: 200, clientHeight: 50, scrollTop: 0 })
             const ctx = makeContext({
                 contentRoot: () => el,
@@ -315,31 +341,64 @@ describe('useFileScrollRestore', () => {
             expect(el.scrollTop).toBe(75) // 0.5 * (200 - 50)
         })
 
-        it('prefers the heading anchor over the ratio', () => {
-            const headingEl = { id: 'sec-1', getBoundingClientRect: () => ({ top: 100 } as DOMRect) }
-            const el = makeEl({
-                scrollHeight: 300,
-                clientHeight: 50,
-                scrollTop: 0,
-                _classes: ['markdown-body'],
+        it('prefers the line anchor over the ratio', () => {
+            const el = makeEl({ scrollHeight: 300, clientHeight: 50, scrollTop: 0, _classes: ['markdown-body'] })
+            renderedLineScrollTopMock.mockReturnValue(40)
+            const ctx = makeContext({
+                contentRoot: () => el,
+                isMarkdown: () => true,
+                file: () => ({ path: 'a.md', content: '# Section\n\nbody' }),
             })
-            el.querySelectorAll = (sel: string) => (sel.startsWith('h1') ? [headingEl] : [])
-            el.querySelector = (sel: string) => {
-                if (sel === '#sec-1') return headingEl
-                if (sel === '.markdown-body' || sel === '.cm-scroller') return el
-                return null
+            const s = useFileScrollRestore(ctx)
+
+            s.restoreAfterContainerSwitch({ anchor: { line: 40 }, ratio: { ratio: 0.9 } })
+            vi.advanceTimersByTime(50)
+            // The line restore scrolls to the anchor's content top (40), NOT to
+            // the ratio position (0.9 × 250 = 225).
+            expect(el.scrollTop).toBe(40)
+        })
+
+        it('defers the line restore while the content cannot yet hold the target line', () => {
+            const el = makeEl({ scrollHeight: 60, clientHeight: 50, scrollTop: 0, _classes: ['markdown-body'] })
+            // Target scrollTop 40 needs maxScroll >= 40; the container max is 10,
+            // so the first tick must NOT clamp to 10 — it defers.
+            renderedLineScrollTopMock.mockReturnValue(40)
+            const ctx = makeContext({
+                contentRoot: () => el,
+                isMarkdown: () => true,
+                file: () => ({ path: 'a.md', content: 'x' }),
+            })
+            const s = useFileScrollRestore(ctx)
+
+            s.restoreAfterContainerSwitch({ anchor: { line: 40 }, ratio: { ratio: 0.5 } })
+            vi.advanceTimersByTime(50)
+            // Deferred: scrollTop untouched (not clamped to 10).
+            expect(el.scrollTop).toBe(0)
+
+            // Content grows enough to hold 40 → next tick applies it.
+            el.scrollHeight = 200
+            vi.advanceTimersByTime(50)
+            expect(el.scrollTop).toBe(40)
+        })
+
+        it('restores a CodeMirror pane by scrolling the anchor line to the top', () => {
+            const el = makeEl({ scrollHeight: 300, clientHeight: 50, scrollTop: 0, _classes: ['cm-scroller'] })
+            fakeView = {
+                state: { doc: { lines: 100, line: () => ({ from: 200 }) } },
+                lineBlockAt: () => ({ top: 250 }),
             }
             const ctx = makeContext({
                 contentRoot: () => el,
                 isMarkdown: () => true,
-                file: () => ({ path: 'a.md', content: '# Section\n\nbody\n\n# Section 2' }),
+                file: () => ({ path: 'a.md', content: 'x' }),
             })
             const s = useFileScrollRestore(ctx)
 
-            s.restoreAfterContainerSwitch({ anchor: { id: 'sec-1', line: 1, relTop: 0 }, ratio: { ratio: 0.9 } })
+            s.restoreAfterContainerSwitch({ anchor: { line: 20 }, ratio: { ratio: 0.9 } })
             vi.advanceTimersByTime(50)
-            // heading top 100 relative to el, relTop 0 → scrollTop = 100 (not ratio 225)
-            expect(el.scrollTop).toBe(100)
+            // block.top 250 − 1, clamped to maxScroll (300−50=250) → 249? no:
+            // clamp(250-1=249) → min(250, max(0, 249)) = 249.
+            expect(el.scrollTop).toBe(249)
         })
 
         it('anchor restore is not gated by loading', () => {

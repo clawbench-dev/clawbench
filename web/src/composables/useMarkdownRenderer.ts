@@ -253,11 +253,17 @@ export function renderMarkdown(
     let detectedPaths: string[] = []
     let detectedSHAs: string[] = []
 
-    const trimmed = (content || '').trim()
+    const source = content || ''
+    // Leading blank lines are insignificant to markdown rendering (marked
+    // skips them) but DO shift source line numbers. Keep them in the text fed
+    // to marked so token positions (data-source-line) stay aligned with the
+    // original file — the rendered↔raw sync uses file lines as its coordinate.
+    const leadingBlank = source.match(/^(?:\r?\n)+/)?.[0] ?? ''
+    const trimmed = source.slice(leadingBlank.length).trim()
 
     // 0. Extract code spans/blocks and math blocks BEFORE marked.parse
     //    to protect _ and * from emphasis parsing (issue #384)
-    const { protected: protectedMarkdown, mathEntries } = protectMarkdown(trimmed)
+    const { protected: protectedMarkdown, mathEntries } = protectMarkdown(leadingBlank + trimmed)
 
     // 1. Parse markdown (reset heading ID counter for deduplication)
     resetHeadingIds()
@@ -282,9 +288,10 @@ export function renderMarkdown(
         html = fixImagePaths(html)
     }
 
-    // 5. Wrap tables
+    // 5. Wrap tables. `<table\b` (not `/g on literal `<table>`) so tables
+    //    carrying a data-source-line attribute are still wrapped.
     if (wrapTables) {
-        html = html.replace(/<table>/g, '<div class="table-wrap"><table>')
+        html = html.replace(/<table\b/g, '<div class="table-wrap"><table')
                    .replace(/<\/table>/g, '</table></div>')
     }
 

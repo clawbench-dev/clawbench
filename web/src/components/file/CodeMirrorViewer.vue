@@ -334,8 +334,8 @@ let pendingScrollRAF = null
 // ─── Viewport-line events (drives TOC scroll-follow in code view) ────────────
 // CodeMirror virtualizes its DOM — only visible lines exist as elements — so an
 // IntersectionObserver cannot reliably track the active line. Instead the
-// editor reports the top visible line on scroll via a window event, which the
-// TOC panel listens to for highlighting.
+// editor reports a line on scroll via a window event, which the TOC panel
+// listens to for highlighting.
 let viewportScroller = null
 let viewportScrollHandler = null
 let viewportScrollRAF = 0
@@ -351,8 +351,14 @@ function attachViewportLineDispatch() {
             const v = view.value
             const scroller = viewportScroller
             if (!v || !scroller) return
-            // Top visible line via CodeMirror's block layout (wrapped lines OK).
-            const block = v.lineBlockAtHeight(scroller.scrollTop)
+            // Report the line at the *vertical middle* of the viewport, not the
+            // top edge. The top edge is unreliable for scroll-follow: the
+            // sticky-scroll overlay pins an enclosing scope row there, and when
+            // a long section begins mid-viewport the "deepest symbol at the
+            // top" is usually ahead of what the user is reading. CodeMirror's
+            // block layout resolves wrapped lines correctly, so a line at
+            // mid-viewport height maps to the visible content anchor.
+            const block = v.lineBlockAtHeight(scroller.scrollTop + scroller.clientHeight * 0.5)
             const line = v.state.doc.lineAt(block.from).number
             window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', { detail: { line, path: props.file?.path } }))
         })

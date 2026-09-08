@@ -119,12 +119,16 @@ const { handleDblClick } = useDoubleClickCopy({
         }
         const block = el?.closest('.markdown-body') ?? null
         const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
+        // Block-level double-click (a paragraph/heading/etc.): the block's
+        // source start line is the best line anchor available.
+        const lineBlock = el?.closest('[data-source-line]') as HTMLElement | null
+        const lineNum = parseInt(lineBlock?.getAttribute('data-source-line') || '0', 10)
         quoteQuestion.showBar({
             text,
             filePath,
             language: '',
-            startLine: 0,
-            endLine: 0,
+            startLine: lineNum || 0,
+            endLine: lineNum || 0,
         })
     },
 })
