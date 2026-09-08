@@ -1152,7 +1152,6 @@ export default {
       resultCountPlus: '{limit}+ files found',
       truncated: 'Try a more specific query to find more files',
       searchFrom: 'From: {path}',
-      reset: 'Reset',
       wordExact: 'Exact',
       wordRecursive: 'Recursive',
       wordCurrent: 'current directory',

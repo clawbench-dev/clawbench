@@ -1152,7 +1152,6 @@ export default {
       resultCountPlus: '找到 {limit}+ 个文件',
       truncated: '如需找到更多文件，请输入更精确的关键词',
       searchFrom: '搜索范围: {path}',
-      reset: '重置',
       wordExact: '精确',
       wordRecursive: '递归',
       wordCurrent: '在当前目录',
