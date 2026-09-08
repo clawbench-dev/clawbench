@@ -380,9 +380,14 @@ defineExpose({
 
 /* Override height:100% from CodePreview's global .diff-marker-inline —
    Markdown markers use inline :style for height from DOM measurement */
-.markdown-body .diff-marker-inline {
+.markdown-preview .markdown-body .diff-marker-inline {
     position: absolute;
-    right: 0;
+    /* Keep markers at the right edge of the reading column. The capped
+       .markdown-body used to be centered with `margin: 0 auto`, so a marker at
+       right:0 sat at the element border — i.e. half the slack (W−900)/2 in from
+       the screen edge. Now the element is full-width (padding-based cap), so the
+       same visual spot is `right: max(0px, (100% − 900px)/2)`. */
+    right: max(0px, (100% - 900px) / 2);
     width: 20px;
     height: auto;
     z-index: 2;

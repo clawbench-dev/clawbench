@@ -152,6 +152,25 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
     expect(wrapper.find('.cm-viewer-stub').exists()).toBe(false)
   })
 
+  it('marks the content scroller for rendered markdown so wide screens lift the outer cap', async () => {
+    // Rendered markdown preview: the scroll container must be full-width so
+    // the scrollbar hugs the viewport edge (the 900px reading column is capped
+    // by the shared .markdown-body padding rule instead).
+    const wrapper = await mountShare({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nbody' })
+    expect(wrapper.find('.share-content').attributes('data-markdown-rendered')).toBeDefined()
+
+    // After toggling to the raw source view the attribute is removed — the
+    // CodeMirror pane keeps the generic wide-screen cap (no markdown column).
+    await wrapper.find('.share-view-toggle').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.share-content').attributes('data-markdown-rendered')).toBeUndefined()
+  })
+
+  it('does not lift the wide-screen cap for non-markdown files', async () => {
+    const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
+    expect(wrapper.find('.share-content').attributes('data-markdown-rendered')).toBeUndefined()
+  })
+
   it('does not expose the toggle for pure code/plain-text files', async () => {
     const wrapper = await mountShare({ name: 'main.go', path: '/repo/main.go', content: 'package main\n' })
     expect(wrapper.find('.share-view-toggle').exists()).toBe(false)

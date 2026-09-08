@@ -36,7 +36,11 @@
 
     <!-- Body: content + optional TOC -->
     <div class="share-body" :data-toc-open="tocOpen">
-      <div class="share-content" ref="contentRef">
+      <div
+        class="share-content"
+        :data-markdown-rendered="isMarkdownRenderedView || undefined"
+        ref="contentRef"
+      >
         <!-- Loading -->
         <div v-if="loading" class="share-center-hint">
           <LoadingIndicator size="md" />
@@ -250,6 +254,12 @@ const showRawSourceView = computed(() => {
   if (isMarkdown.value || isHtml.value || isOpenapi.value) return viewMode.value === 'raw'
   return true
 })
+
+/** Rendered markdown preview is active. Its reading column is capped at 900px
+ *  by the shared .markdown-preview .markdown-body rule (css/content.css), the
+ *  same as the in-app file viewer, so the wide-screen .share-content cap must
+ *  be lifted here to let the scrollbar hug the viewport edge. */
+const isMarkdownRenderedView = computed(() => isMarkdown.value && viewMode.value === 'rendered')
 
 const hasToc = computed(() => {
   if (!file.value || error.value) return false
@@ -493,6 +503,17 @@ onMounted(() => {
   .share-content {
     max-width: 1080px;
     margin: 0 auto;
+  }
+}
+
+/* Rendered markdown preview aligns with the in-app file viewer: the reading
+   column is capped at 900px by the shared .markdown-body padding rule, so the
+   .share-content wide-screen cap must NOT shrink the scroll container here —
+   otherwise the scrollbar would float mid-window instead of hugging the edge. */
+@media (min-width: 1100px) {
+  .share-content[data-markdown-rendered] {
+    max-width: none;
+    margin: 0;
   }
 }
 </style>
