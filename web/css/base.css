@@ -123,6 +123,14 @@ html.wallpaper-active .file-header-bar {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 
+/* The pinned session-sidebar header rides on the shared global .bs-header
+   (solid bg-secondary) which would otherwise cover the wallpaper already
+   showing through .session-sidebar — make it translucent at the same alpha. */
+html.wallpaper-active .session-sidebar-header {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+    box-shadow: none;
+}
+
 /* The file overlay fills its whole view TabPanel. If both were translucent the
    wallpaper would show through TWO scrim layers (nearly invisible); instead the
    overlay goes fully transparent so the panel beneath it (already at
@@ -289,6 +297,21 @@ html.wallpaper-active .chat-message.assistant {
 }
 html.wallpaper-active .chat-message.user {
     background: color-mix(in srgb, var(--user-msg-color) var(--panel-alpha), transparent);
+}
+
+/* Git history drill-down — the commit-meta bar (shared by the file-list view
+   and the file-diff view) and the interactive commit/file row highlights get
+   the translucent treatment so they sit consistently on the single
+   .tab-panel layer like the rest of the history tab content. */
+html.wallpaper-active .diff-meta-panel {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .diff-meta-sha:hover,
+html.wallpaper-active .drilldown-item:hover {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .drilldown-item:active {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
 }
 
 /* Scrollbar styling */
