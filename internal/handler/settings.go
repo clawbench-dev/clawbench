@@ -1644,7 +1644,12 @@ func currentSystemdUnit() string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, rawLine := range strings.Split(string(data), "\n") {
+		// e.g. "0::/system.slice/tat_agent.service". Trim a trailing \r so the
+		// parsing is robust when the input has CRLF line endings (e.g. cgroup
+		// fixture files checked out by git on Windows, which converts LF to
+		// CRLF when no .gitattributes pins them).
+		line := strings.TrimSuffix(rawLine, "\r")
 		// e.g. "0::/system.slice/tat_agent.service"
 		if idx := strings.LastIndex(line, "/"); idx >= 0 {
 			name := line[idx+1:]

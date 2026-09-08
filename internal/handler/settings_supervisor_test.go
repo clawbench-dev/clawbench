@@ -8,12 +8,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// testdataDir resolves the absolute path of this package's testdata directory.
-// It avoids relying on the process working directory (which is not guaranteed
-// to be the package dir on every platform/CI runner — Windows go test failed
-// to resolve relative "testdata/..." paths).
+// testdataDir resolves the absolute path of this package's testdata directory
+// so tests do not depend on the process working directory.
 func testdataDir() string {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -43,6 +42,18 @@ func clearSupervisorEnv(t *testing.T) {
 
 func TestCurrentSystemdUnit_ExtractsUnitFromCgroupPath(t *testing.T) {
 	restore := stubSupervisorProbe(filepath.Join(testdataDir(), "cgroup-tat-agent"), nil) // "0::/system.slice/tat_agent.service"
+	defer restore()
+
+	assert.Equal(t, "tat_agent.service", currentSystemdUnit())
+}
+
+// Regression test for Windows CI: git checks out fixture files with CRLF line
+// endings when no .gitattributes pins them, turning "….service\n" into
+// "….service\r\n". currentSystemdUnit must tolerate the trailing \r.
+func TestCurrentSystemdUnit_CRLFLineEnding(t *testing.T) {
+	cgroupFile := filepath.Join(t.TempDir(), "cgroup")
+	require.NoError(t, os.WriteFile(cgroupFile, []byte("0::/system.slice/tat_agent.service\r\n"), 0o644))
+	restore := stubSupervisorProbe(cgroupFile, nil)
 	defer restore()
 
 	assert.Equal(t, "tat_agent.service", currentSystemdUnit())
