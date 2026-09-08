@@ -346,7 +346,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
 let loadFilesSeq = 0 // monotonic counter to suppress stale concurrent loads
 let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loads
 
-async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false): Promise<void> {
+async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false): Promise<boolean> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
     // Normalize Windows backslashes to forward slashes so currentDir and item
     // data-path attributes use a consistent separator style (the Go backend
@@ -358,10 +358,10 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
     // must be converted to project-relative first. Without this the backend
     // rejects it (AccessDenied).
     dir = toProjectRelative(dir, state.projectRoot)
-    // Defensive: strip leading slashes so currentDir is always a project-relative path.
+    // Defensive: strip leading/trailing slashes so currentDir is always a clean project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
     // which causes 500 errors when they're not under configured root paths.
-    dir = dir.replace(/^\/+/, '')
+    dir = dir.replace(/^\/+/, '').replace(/\/+$/, '')
     const prevDir = state.currentDir
     const prevEntries = state.dirEntries.slice()
     // noLoading: skip the loading mask on refreshes (delete/rename/watch/git ops);
@@ -372,20 +372,20 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
         const data = await apiGet<{ items: DirEntry[] }>(url)
         // A newer loadFiles call started while we were awaiting — discard our result
         if (seq !== loadFilesSeq) {
-            return
+            return false
         }
         state.currentDir = dir
         state.dirEntries = data.items || []
         saveBrowseDir()
+        return true
     } catch (err: unknown) {
         // A newer loadFiles call started — don't corrupt its state
-        if (seq !== loadFilesSeq) return
+        if (seq !== loadFilesSeq) return false
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey === 'DirectoryNotFound' && prevDir !== '' && _depth < 10) {
             // Directory was deleted — navigate to parent instead of showing stale content
             const parent = dirName(prevDir)
-            await loadFiles(parent, silent, _depth + 1, noLoading)
-            return
+            return await loadFiles(parent, silent, _depth + 1, noLoading)
         }
         if (msgKey === 'DirectoryNotFound') {
             // Current directory (or every ancestor) was deleted — reset to the
@@ -393,13 +393,14 @@ async function loadFiles(dir = '', silent = false, _depth = 0, noLoading = false
             state.currentDir = ''
             state.dirEntries = []
             if (!silent) useToast().show(gt('file.toast.dirRemoved'), { icon: 'ℹ️', type: 'info', duration: 2000 })
-            return
+            return false
         }
         // Roll back to previous state on failure
         state.currentDir = prevDir
         state.dirEntries = prevEntries
         if (silent) throw err // let caller handle the error
         useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
+        return false
     } finally {
         // The latest call owns dirLoading — always clear if we're still current,
         // even if this call was noLoading. A noLoading call that supersedes a
@@ -613,16 +614,16 @@ async function renameFile(path: string, newName: string): Promise<void> {
 // Directory navigation
 // =============================================
 
-async function navigateToDir(path: string): Promise<void> {
-    if (state.dirLoading) return
-    await loadFiles(path)
+async function navigateToDir(path: string): Promise<boolean> {
+    if (state.dirLoading) return false
+    return await loadFiles(path)
 }
 
-async function navigateToParentDir(): Promise<void> {
-    if (state.dirLoading) return
-    if (state.currentDir === '') return // already at project root, nothing to go back to
+async function navigateToParentDir(): Promise<boolean> {
+    if (state.dirLoading) return false
+    if (state.currentDir === '') return false // already at project root, nothing to go back to
     const parent = dirName(state.currentDir)
-    await loadFiles(parent)
+    return await loadFiles(parent)
 }
 
 export const store = {

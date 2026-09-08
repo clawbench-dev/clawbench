@@ -204,7 +204,7 @@ const { handleDblClick } = useDoubleClickCopy()
 const { openFilePath } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
-const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef })
+const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 'chat' })
 
 // Whether a message is the most recent assistant reply (drives the 'mixed'
 // display mode: the last assistant reply renders as original text, older ones
@@ -350,7 +350,7 @@ async function handleChatClick(event) {
       } else if (filePath) {
         // Open directory
         codeLinkPreview.close()
-        const ok = await openFilePath(filePath)
+        const ok = await openFilePath(filePath, undefined, undefined, 'chat')
         if (ok) chatUI.navigateToFileViewer?.()
       }
     }
@@ -372,25 +372,28 @@ async function handleChatClick(event) {
     return
   }
 
-  // 5. File-path button handler
+  // 5. File open button OR directory path text click
   const btn = (event.target).closest('.chat-file-open-btn')
-  if (btn) {
+  const dirEl = (event.target).closest('.chat-file-path[data-path-type="dir"]')
+  const linkOrBtn = btn || dirEl
+  if (linkOrBtn) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = btn.getAttribute('data-file-path')
-    const lineStart = btn.getAttribute('data-line-start')
-    const lineEnd = btn.getAttribute('data-line-end')
+    const filePath = linkOrBtn.getAttribute('data-file-path')
+    const lineStart = linkOrBtn.getAttribute('data-line-start')
+    const lineEnd = linkOrBtn.getAttribute('data-line-end')
     if (filePath) {
-      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'chat')
       if (ok) chatUI.navigateToFileViewer?.()
     }
     return
   }
 
   handleDblClick(event, async (href, lineStart, lineEnd) => {
+    event.stopPropagation()
     codeLinkPreview.close()
-    const ok = await openFilePath(href, lineStart, lineEnd)
+    const ok = await openFilePath(href, lineStart, lineEnd, 'chat')
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }

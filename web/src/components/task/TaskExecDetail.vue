@@ -364,7 +364,7 @@ const {
   chatRender,
   tabId: 'tasks',
   onFileOpen: (path, lineStart, lineEnd) => {
-    openFilePath(path, lineStart, lineEnd)
+    openFilePath(path, lineStart, lineEnd, 'task')
     emit('open-file', { path, lineStart, lineEnd })
   },
   findLiveBlock: findLiveToolBlock,
@@ -451,7 +451,7 @@ function showMetadata() {
 const contentRef = ref(null)
 
 // Code link preview for annotated file paths in the execution content.
-const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef })
+const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef, source: 'task' })
 
 // ── Auto-follow scroll (mirrors chat streaming UX) ──
 // When live streaming output, keep pinned to the bottom unless the user
@@ -540,17 +540,19 @@ function handleContentClick(event) {
     return
   }
 
-  // 5. Handle file-open buttons
-  const btn = event.target.closest('.chat-file-open-btn')
-  if (!btn) return
+  // 5. Handle file-open buttons or directory path text
+  const btn = event.target.closest('.chat-file-open-btn[data-file-path]')
+  const dirEl = event.target.closest('.chat-file-path[data-file-path][data-path-type="dir"]')
+  const linkOrBtn = btn || dirEl
+  if (!linkOrBtn) return
   event.preventDefault()
   event.stopPropagation()
   codeLinkPreview.close()
-  const filePath = btn.getAttribute('data-file-path')
-  const lineStart = btn.getAttribute('data-line-start')
-  const lineEnd = btn.getAttribute('data-line-end')
+  const filePath = linkOrBtn.getAttribute('data-file-path')
+  const lineStart = linkOrBtn.getAttribute('data-line-start')
+  const lineEnd = linkOrBtn.getAttribute('data-line-end')
   if (filePath) {
-    openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+    openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
     emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
   }
 }

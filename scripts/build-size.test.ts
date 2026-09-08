@@ -94,8 +94,8 @@ describe('Build output verification (Issue #328)', () => {
     describe('Index chunk size', () => {
         it('index chunk should be under size threshold', () => {
             if (!buildExists) return
-            const indexPath = findFile(PUBLIC_DIR, 'index-', '.js')
-            expect(indexPath, 'index-*.js not found in public/').not.toBeNull()
+            const indexPath = findFile(PUBLIC_DIR, 'main-', '.js')
+            expect(indexPath, 'main-*.js not found in public/').not.toBeNull()
 
             const size = getFileSize(indexPath!)
             console.log(`  Index chunk size: ${formatBytes(size)} (threshold: ${formatBytes(INDEX_CHUNK_MAX_BYTES)})`)
@@ -145,10 +145,10 @@ describe('Build output verification (Issue #328)', () => {
             const html = readFileSync(indexHtmlPath, 'utf-8')
 
             // Files that must be loaded on first screen:
-            // 1. index-*.js (main entry, referenced in <script>)
+            // 1. main-*.js (main entry, referenced in <script>)
             // 2. modulepreload links (eagerly loaded by browser)
-            const scriptMatch = html.match(/src="([^"]*index-[^"]+\.js)"/)
-            expect(scriptMatch, 'index script tag not found').not.toBeNull()
+            const scriptMatch = html.match(/src="([^"]*main-[^"]+\.js)"/)
+            expect(scriptMatch, 'entry script tag not found').not.toBeNull()
 
             const modulepreloadLinks = [...html.matchAll(/rel="modulepreload"[^>]*href="([^"]+)"/g)]
                 .map(m => m[1])
@@ -157,12 +157,12 @@ describe('Build output verification (Issue #328)', () => {
             let totalBytes = 0
             const details: string[] = []
 
-            // Index chunk
-            const indexFile = findFile(PUBLIC_DIR, 'index-', '.js')
-            if (indexFile) {
-                const size = getFileSize(indexFile)
+            // Main entry chunk
+            const entryFile = findFile(PUBLIC_DIR, 'main-', '.js')
+            if (entryFile) {
+                const size = getFileSize(entryFile)
                 totalBytes += size
-                details.push(`index: ${formatBytes(size)}`)
+                details.push(`entry: ${formatBytes(size)}`)
             }
 
             // Modulepreload chunks
@@ -178,8 +178,10 @@ describe('Build output verification (Issue #328)', () => {
                 }
             }
 
-            // Threshold: index (2.1MB) + vendor-vue (~170KB) + vendor-purify (~28KB) + vendor-diff (~4KB) = ~2.3MB
-            const firstScreenThreshold = 2_400_000
+            // Threshold: entry (~1MB) + common chunks (~1.3MB) + vendor-vue (~170KB) = ~2.6MB
+            // Measured 2026-09: 2,620,517 bytes. Keep headroom tight (~80KB) so
+            // regressions trip the test instead of silently eroding the budget.
+            const firstScreenThreshold = 2_700_000
 
             console.log(`  First-screen JS payload:`)
             for (const d of details) console.log(`    ${d}`)

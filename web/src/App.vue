@@ -94,8 +94,11 @@
                       :dir-loading="store.state.dirLoading"
                       :search-drawer="fileSearchDrawer"
                       :keyboard-active="fileManagerShortcutActive"
+                      :has-origin="navigation.hasOrigin.value"
+                      :origin-label="navigation.originLabel.value"
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
+                      @return-origin="navigateBack('origin-bar')"
                       @select-file="handleBrowseSelectFile"
                       @toggle-sort="handleToggleSort"
                       @toggle-hidden="toggleHidden"
@@ -124,6 +127,8 @@
                       :file-history-open="fileHistoryDrawer.effectiveOpen.value"
                       :toc-file="tocFile"
                       :pdf-outline="pdfOutline"
+                      :can-navigate-back="canNavigateBackInView"
+                      :back-label="viewBackLabel"
                       @delete="handleDelete($event)"
                       @show-details="detailsDrawer.open()"
                       @open-git-history="openFileHistory"
@@ -141,6 +146,7 @@
                       @overlay-close="handleOverlayClose"
                       @navigate-back="handleFileHistoryBack"
                       @navigate-forward="handleFileHistoryForward"
+                      @capture-scroll="handleCaptureFileScroll"
                       @share-link="openShareLinkDialog"
                       @set-as-background="handleSetAsBackground"
                     />
@@ -246,7 +252,6 @@
                       :current-file="currentFile"
                       :current-dir="currentDir"
                       @open="switchTab('chat')"
-                      @open-file="handleSelectFile"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
                     />
@@ -462,7 +467,7 @@ import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
 import FileIcon from './components/common/FileIcon.vue'
-import { baseName, dirName, isAbsolutePath } from '@/utils/path.ts'
+import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
@@ -518,7 +523,7 @@ import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
 import { useFileEditor } from './composables/useFileEditor'
 import { useTocDockPreference } from './composables/useTocDockPreference'
-import { openRecentFile, removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
+import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -527,8 +532,12 @@ import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useCompletionPopover } from './composables/useCompletionPopover'
 import ConnectionOverlay from './components/common/ConnectionOverlay.vue'
 import { useUpgrade } from './composables/useUpgrade'
-import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
-import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
+import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
+import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
+import { useNavigationContext } from './composables/useNavigationContext'
+import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
+import { useAndroidBackPress } from './composables/useAndroidBackPress'
+import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -551,6 +560,8 @@ import {
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
+  PANE_LEFT,
+  PANE_RIGHT,
 } from './composables/useWideScreenLayout'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -573,8 +584,13 @@ watch(isAuthenticated, (v) => setAuthRedirectEnabled(v === true), { immediate: t
 // SPA hot project switch: key forces Vue to destroy/rebuild the app-container subtree
 const projectKey = ref('initial')
 const switchingProject = ref(false)
+const navigationByProject = new Map()
 
 async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav) {
+  const previousProjectPath = store.state.projectRoot
+  if (previousProjectPath) {
+    navigationByProject.set(previousProjectPath, navigation.snapshot())
+  }
   // ── Phase 1: Fade out ──
   switchingProject.value = true
   await nextTick()
@@ -584,8 +600,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   // Note: do NOT clearOpenFile() here. It runs before setProject(), so it would
   // delete the OLD project's persisted open-file record, breaking restore when
   // the user switches back to it. Per-project restore relies on that record.
+  let resolvedProjectPath
   try {
-    await store.setProject(newProjectPath)
+    resolvedProjectPath = await store.setProject(newProjectPath)
   } catch (err) {
     // Project doesn't exist — revert fade-out and show error
     switchingProject.value = false
@@ -613,7 +630,15 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   resetTabDrawerState()
   resetAllCrudLists()
   completionPopover.reset()
+  // Navigation context is a module-level singleton, so it survives the
+  // keyed project subtree replacement. Never carry a return target from the
+  // previous project into the newly selected project.
+  navigation.restore(navigationByProject.get(resolvedProjectPath) ?? navigationByProject.get(newProjectPath))
+  navCoordinator.invalidateDirectoryRequests()
+  directoryReturn.clear()
   fileNav.closeOverlay()
+  // A browse preview session belongs to the previous project's file manager.
+  browseFileSession.value = false
   activeTab.value = 'chat'
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
@@ -699,8 +724,8 @@ const panelIsActive = (tabId) =>
 
 // Focus-aware keyboard gating: a panel's global shortcuts only fire when the
 // user is actually working in that pane (wide-screen) or that tab (narrow).
-const chatShortcutActive = computed(() => (isWideScreen.value ? activePane.value === 'right' : activeTab.value === 'chat'))
-const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePane.value === 'left' : activeTab.value === 'browse'))
+const chatShortcutActive = computed(() => (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat'))
+const fileManagerShortcutActive = computed(() => (isWideScreen.value ? activePane.value === PANE_LEFT : activeTab.value === 'browse'))
 
 function onSplitRatioChange(ratio) {
   setSplitRatio(ratio)
@@ -713,7 +738,7 @@ function onSplitRatioChange(ratio) {
 function handleWideDockChatToggle() {
   const hiding = !chatCollapsed.value
   setChatCollapsed(hiding)
-  if (hiding) setActivePane('left')
+  if (hiding) setActivePane(PANE_LEFT)
 }
 
 // Clicking into the left pane must also move keyboard focus out of any text
@@ -723,7 +748,7 @@ function handleWideDockChatToggle() {
 // Skip blur for CodeMirror .cm-content — blurring it on mobile causes the
 // soft keyboard to dismiss then re-appear when CM re-focuses on mousedown.
 function onLeftPanePointerDown() {
-  setActivePane('left')
+  setActivePane(PANE_LEFT)
   const el = document.activeElement
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el.isContentEditable && !el.classList.contains('cm-content')))) {
     el.blur()
@@ -753,14 +778,33 @@ const dockIndicatorStyle = computed(() => ({
   transform: `translateX(${dockActiveIndex.value * DOCK_STEP}px)`,
 }))
 
-function switchTab(tab) {
+// Assigned later in setup (it needs handlers defined further below); every
+// consumer runs at event time, long after setup finished. All navigation
+// logic lives in useNavigationCoordinator.
+let navCoordinator = null
+
+const navigation = useNavigationContext()
+// A browse click starts an isolated preview session.  The file navigation
+// stack is shared by the app, so it must not decide Back for this session
+// based on files opened before the user entered the file manager.
+const browseFileSession = ref(false)
+const directoryReturn = useDirectoryReturn(browseFileSession)
+
+function switchTab(tab, force = false) {
+  // The user reached the surface a jump started from without using Back, so
+  // the return target is spent — settle it (skip when returnToOrigin() is
+  // driving the switch). Single implementation: useNavigationCoordinator.
+  if (!navCoordinator.isApplyingOriginReturn()) navCoordinator.settleOriginForTab(tab)
   if (isWideScreen.value) {
     // Wide-screen: chat is always visible; non-chat tabs route to the left column
     if (tab === 'chat') return
     switchLeftTab(tab)
     return
   }
-  if (activeTab.value === tab) return
+  // Directory jumps must still run the browse activation side effects even
+  // when the active tab value was already left at "browse" by a previous
+  // navigation. Callers can force that transition explicitly.
+  if (!force && activeTab.value === tab) return
   activeTab.value = tab
   // Auto-close all drawers not belonging to the new tab
   onTabSwitch(tab)
@@ -1112,46 +1156,15 @@ const handleReconnect = () => {
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
 useEdgeSwipeBack()
 
-// 文件浏览页的返回手势：优先于文件管理器，无论 mount 顺序如何
-useFeatureBackHandler(
-  'file-overlay',
-  () => panelIsActive('view') && fileNav.overlayOpen.value,
-  () => {
-    // 编辑模式下，屏幕边缘向内滑应先退出编辑（有未保存改动时弹出确认菜单），
-    // 而不是直接返回上一文件或关闭文件。退出手势在此被消费，用户停留在文件浏览态。
-    if (fileEditor.isEditing()) {
-      fileEditor.exitEdit()
-      return
-    }
-    if (fileNav.canGoBack.value) {
-      const prevPath = fileNav.goBack()
-      const location = fileNav.currentLocation.value
-      if (location?.viewMode) markdownViewMode.value = location.viewMode
-      if (prevPath) store.selectFile(prevPath)
-    } else {
-      closeOverlayAndSync()
-    }
-  },
-  PRIORITY_OVERLAY,
-)
-
-// Android hardware back button / predictive back gesture → delegate to JS
-window.addEventListener('clawbench-back-press', () => {
-    // If any feature can handle back, do it and prevent the default Android behavior
-    const handled = handleBackNavigation()
-    if (handled) {
-        window.__clawbenchBackHandled = true
-    } else {
-        // No back stack — double-back-to-exit pattern
-        if (requestExitConfirm()) {
-            // Second press within timeout → allow native exit
-            window.__clawbenchBackHandled = false
-        } else {
-            // First press → show tip, prevent exit
-            window.__clawbenchBackHandled = true
-            toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 })
-        }
-    }
+// Android hardware back button / predictive back gesture / web edge swipe →
+// unified state machine. The flag the native side reads back must be written
+// synchronously, so the decision and the navigation are kept apart here.
+// (navigateBack is defined further down; the listener only runs after setup.)
+const disposeAndroidBackPress = useAndroidBackPress({
+    canHandle: (reason) => canHandleBack(reason),
+    navigate: (reason) => navigateBack(reason),
+    requestExitConfirm,
+    showExitHint: () => toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 }),
 })
 window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref(null)
@@ -1339,6 +1352,7 @@ function registerAppEventListeners() {
   appEventListenersRegistered = true
   window.addEventListener('open-file-manager', handleOpenFileManager)
   window.addEventListener('open-file-overlay', handleOpenFileOverlay)
+  window.addEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
   window.addEventListener('close-file-overlay', handleOverlayClose)
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
   window.addEventListener('quote-sent', playQuoteEmitAnimation)
@@ -1606,40 +1620,92 @@ async function handleNavigateDir(path) {
     await store.navigateToDir(path)
 }
 
-async function handleNavigateBack() {
-    await store.navigateToParentDir()
+// Overlay closing is expressed as (predicate, action) pairs so the back state
+// machine can *ask* whether an overlay would absorb the press without closing
+// it. Android needs that answer synchronously, before any navigation runs.
+const topmostOverlayClosers = [
+  { open: () => shareLinkOpen.value, close: () => { shareLinkOpen.value = false } },
+  { open: () => detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value, close: () => detailsDrawer.close() },
+  { open: () => fileHistoryDrawer.effectiveOpen.value, close: () => fileHistoryDrawer.close() },
+  { open: () => viewSearchActive.value, close: () => closeViewSearch() },
+  {
+    open: () => effectiveTocOpen.value,
+    close: () => {
+      if (tocDockPref.effectiveOpen.value) tocDockPref.close()
+      if (tocDrawer.effectiveOpen.value) tocDrawer.close()
+    },
+  },
+  { open: () => searchDrawer.effectiveOpen.value, close: () => searchDrawer.close() },
+  { open: () => sessionIdentity.sessionDrawer.effectiveOpen.value, close: () => sessionIdentity.sessionDrawer.close() },
+  { open: () => sessionSearchDrawer.effectiveOpen.value, close: () => sessionSearchDrawer.close() },
+  { open: () => acpSessionDrawer.effectiveOpen.value, close: () => acpSessionDrawer.close() },
+]
+
+function hasTopmostOverlay() {
+  if (topmostOverlayClosers.some((overlay) => overlay.open())) return true
+  return canNavigateBackOverlay()
 }
 
-async function handleSelectFile(path) {
-    const ok = await store.selectFile(path)
-    if (ok) {
-        switchTab('view')
-        fileNav.openFile(path, { viewMode: markdownViewMode.value })
+function closeTopmostOverlay() {
+  for (const overlay of topmostOverlayClosers) {
+    if (overlay.open()) {
+      overlay.close()
+      return true
     }
+  }
+  return handleBackNavigationOverlay()
 }
 
-async function handleBrowseSelectFile(path) {
-    if (fileManagerRef.value?.multiSelectState?.active) return
-    const ok = await store.selectFile(path)
-    if (ok) {
-        fileNav.openFile(path, { viewMode: markdownViewMode.value })
-        switchTab('view')
-    }
-}
+navCoordinator = useNavigationCoordinator({
+  store,
+  fileNav,
+  navigation,
+  directoryReturn,
+  browseFileSession,
+  markdownViewMode,
+  layout: {
+    isWideScreen,
+    activePane,
+    activeTab,
+    leftPanelActive,
+    panelIsActive,
+    switchTab,
+    setActivePane,
+    setLeftCollapsed,
+  },
+  fileEditor,
+  viewActions: {
+    scrollToLine,
+    closeOverlayAndSync,
+    handleOpenFileManager,
+    isFileManagerMultiSelectActive: () => !!fileManagerRef.value?.multiSelectState?.active,
+  },
+  backHooks: {
+    hasTopmostOverlay,
+    closeTopmostOverlay,
+    canNavigateBack,
+    handleBackNavigation,
+  },
+  i18n: { t, gt },
+  toast,
+})
 
-async function handleTaskOpenFile(filePath, lineStart) {
-    const ok = await store.selectFile(filePath)
-    if (ok) {
-        switchTab('view')
-        if (lineStart) markdownViewMode.value = 'raw'
-        fileNav.openFile(filePath, { lineStart, viewMode: markdownViewMode.value })
-        if (lineStart) scrollToLine(lineStart, undefined, filePath)
-    }
-}
-
-function handleOverlayClose() {
-    closeOverlayAndSync()
-}
+const {
+  canNavigateBackInView,
+  viewBackLabel,
+  navigateBack,
+  canHandleBack,
+  handleNavigateBack,
+  handleCaptureFileScroll,
+  handleOpenDirectoryFromEvent,
+  handleSelectFile,
+  handleBrowseSelectFile,
+  handleTaskOpenFile,
+  handleOverlayClose,
+  handleOverlayOpenFile,
+  handleAppHeaderRecentFileSelect,
+  handleOpenFileOverlay,
+} = navCoordinator
 
 /** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
 async function handleSetAsBackground(path) {
@@ -1653,12 +1719,7 @@ async function handleSetAsBackground(path) {
 }
 
 async function handleFileHistoryBack() {
-    const path = fileNav.goBack()
-    const location = fileNav.currentLocation.value
-    if (!path || !location) return
-    if (location.viewMode) markdownViewMode.value = location.viewMode
-    const ok = await store.selectFile(path)
-    if (ok && location.lineStart) scrollToLine(location.lineStart, location.lineEnd, path)
+    await navigateBack('header')
 }
 
 async function handleFileHistoryForward() {
@@ -1670,54 +1731,7 @@ async function handleFileHistoryForward() {
     if (ok && location.lineStart) scrollToLine(location.lineStart, location.lineEnd, path)
 }
 
-async function handleOverlayOpenFile(payload) {
-    const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
-    // Try as directory first — navigate into dir and close overlay
-    if (!path.startsWith('/')) {
-        try {
-            const resp = await fetch(`/api/dir?path=${encodeURIComponent(path)}`)
-            if (resp.ok) {
-                await store.navigateToDir(path)
-                window.dispatchEvent(new CustomEvent('close-file-overlay'))
-                window.dispatchEvent(new CustomEvent('open-file-manager'))
-                return
-            }
-        } catch {
-            // Not a directory, fall through to open as file
-        }
-    }
-    // Open as file in the overlay nav stack
-    const isExternal = isAbsolutePath(path)
-    const ok = await store.selectFile(path)
-    if (ok) {
-        if (lineStart) markdownViewMode.value = 'raw'
-        fileNav.openFile(path, { lineStart, lineEnd, viewMode: markdownViewMode.value })
-        if (lineStart) scrollToLine(lineStart, lineEnd, path)
-        if (isExternal) {
-            toast.show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
-        }
-    }
-}
 
-async function handleAppHeaderRecentFileSelect(path) {
-    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
-    const ok = await openRecentFile(path, (p) => store.selectFile(p))
-    if (ok) {
-        switchTab('view')
-        fileNav.openFile(path, { viewMode: markdownViewMode.value })
-    }
-}
-
-function handleOpenFileOverlay(e) {
-    const { path, lineStart, lineEnd } = e.detail || {}
-    if (!path) return
-    fileNav.updateCurrent({ viewMode: markdownViewMode.value })
-    switchTab('view')
-    if (lineStart) markdownViewMode.value = 'raw'
-    fileNav.openFile(path, { lineStart, lineEnd, viewMode: markdownViewMode.value })
-    if (lineStart) scrollToLine(lineStart, lineEnd, path)
-}
 
 function onTaskCardClick(taskId) {
     navigateToTaskSettings(taskId)
@@ -1875,7 +1889,7 @@ watch(isWideScreen, (val) => {
     // If the chat pane is collapsed (persisted), focus must stay on the left
     // pane — the chat pane is invisible, so right-pane shortcuts would fire
     // against a hidden panel.
-    setActivePane(chatCollapsed.value ? 'left' : resolveActivePaneOnEnter(activeTab.value))
+    setActivePane(chatCollapsed.value ? PANE_LEFT : resolveActivePaneOnEnter(activeTab.value))
     // Wide-screen: the bottom dock is hidden, so bottom-sheet drawers must sit
     // flush with the screen bottom — don't let a stale --dock-height leave a gap.
     document.documentElement.style.setProperty('--dock-height', '0px')
@@ -1912,11 +1926,11 @@ function handleWideDockTabClick(tab) {
     setLeftCollapsed(collapsing)
     // When collapsing, the visible pane is chat — route focus there so its
     // global shortcuts (send, voice, etc.) stay active.
-    if (collapsing) setActivePane('right')
+    if (collapsing) setActivePane(PANE_RIGHT)
     return
   }
   // Clicking a dock item means the user intends to work in the left pane.
-  setActivePane('left')
+  setActivePane(PANE_LEFT)
   setLeftCollapsed(false)
   switchLeftTab(tab)
 }
@@ -2567,7 +2581,7 @@ function handleCtrlF(e) {
 
     if (isWideScreen.value) {
         // Focus-aware: route Ctrl+F to the pane the user is working in
-        if (activePane.value === 'right') {
+        if (activePane.value === PANE_RIGHT) {
             e.preventDefault()
             openChatSearchDrawer()
         } else if (panelIsActive('browse')) {
@@ -2593,8 +2607,13 @@ function handleCtrlF(e) {
 
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
-     stopLocalLinkGuard = initLocalLinkGuard((href) => {
-         openFilePath(href)
+     stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
+         const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
+           || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
+         const fromTask = !!anchor?.closest('.task-panel, .task-overview, .task-exec-detail') || panelIsActive('tasks')
+         const fromHistory = !!anchor?.closest('.history-panel') || panelIsActive('history')
+         const source = fromChat ? 'chat' : fromTask ? 'task' : fromHistory ? 'history' : undefined
+         openFilePath(href, undefined, undefined, source)
      })
      // Safety net: re-seed the full-screen height baseline once mounted and laid
      // out (no keyboard is open before the user opens the terminal).
@@ -2611,10 +2630,12 @@ onUnmounted(() => {
     removeTaskHandler()
     removeCompletionHandler()
     completionPopover.reset()
+    disposeAndroidBackPress()
     window.removeEventListener('clawbench-reconnect', handleReconnect)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)
     window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
+    window.removeEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
     window.removeEventListener('close-file-overlay', handleOverlayClose)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
     window.removeEventListener('quote-sent', playQuoteEmitAnimation)

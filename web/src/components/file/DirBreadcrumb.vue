@@ -1,5 +1,5 @@
 <template>
-  <div v-if="parts.length > 0" class="dir-breadcrumb">
+  <div v-if="parts.length > 0" class="dir-breadcrumb" data-horizontal-scroll="true">
     <span
       class="crumb crumb-home"
       :draggable="isWideScreen"

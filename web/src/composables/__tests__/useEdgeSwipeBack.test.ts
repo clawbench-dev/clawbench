@@ -55,15 +55,16 @@ class MockTouch {
 globalThis.Touch = MockTouch
 
 // Helper to dispatch touch events
-function dispatchTouch(type: string, touches: { clientX: number; clientY: number }[]) {
+function dispatchTouch(type: string, touches: { clientX: number; clientY: number }[], target: EventTarget = document) {
     const mockTouches = touches.map((t, i) =>
-        new MockTouch({ identifier: i, target: document, clientX: t.clientX, clientY: t.clientY })
+        new MockTouch({ identifier: i, target, clientX: t.clientX, clientY: t.clientY })
     )
     const event = new TouchEvent(type, {
         touches: mockTouches,
         changedTouches: mockTouches,
+        bubbles: true,
     })
-    document.dispatchEvent(event)
+    target.dispatchEvent(event)
 }
 
 // Track registered handlers to clean up between tests
@@ -102,6 +103,25 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchend', [{ clientX: endX, clientY: 210 }])
 
         expect(listener).toHaveBeenCalledTimes(1)
+
+        window.removeEventListener('clawbench-back-press', listener)
+    })
+
+    it('tags the back-press event with the edge-swipe reason', () => {
+        // The state machine needs to tell a web edge swipe from the Android
+        // hardware/predictive back, so the reason travels with the event.
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
+
+        useEdgeSwipeBack()
+        mountedCallbacks.forEach(cb => cb())
+
+        const startX = window.innerWidth - 10
+        dispatchTouch('touchstart', [{ clientX: startX, clientY: 200 }])
+        dispatchTouch('touchend', [{ clientX: startX - 80, clientY: 210 }])
+
+        expect(listener).toHaveBeenCalledTimes(1)
+        expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ reason: 'edge-swipe' })
 
         window.removeEventListener('clawbench-back-press', listener)
     })
@@ -210,6 +230,73 @@ describe('useEdgeSwipeBack', () => {
         expect(removeSpy).toHaveBeenCalledWith('touchend', expect.any(Function))
 
         removeSpy.mockRestore()
+    })
+
+    it('does not dispatch clawbench-back-press when touch starts on excluded elements', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
+
+        useEdgeSwipeBack()
+        mountedCallbacks.forEach(cb => cb())
+
+        const container = document.createElement('div')
+        const input = document.createElement('input')
+        const cmContent = document.createElement('div')
+        cmContent.className = 'cm-content'
+        const horizontalScroll = document.createElement('div')
+        horizontalScroll.setAttribute('data-horizontal-scroll', 'true')
+        const dragHandle = document.createElement('div')
+        dragHandle.className = 'bs-handle'
+
+        container.appendChild(input)
+        container.appendChild(cmContent)
+        container.appendChild(horizontalScroll)
+        container.appendChild(dragHandle)
+        document.body.appendChild(container)
+
+        const innerWidth = window.innerWidth
+        const startX = innerWidth - 10
+        const endX = startX - 80
+
+        for (const el of [input, cmContent, horizontalScroll, dragHandle]) {
+            dispatchTouch('touchstart', [{ clientX: startX, clientY: 100 }], el)
+            dispatchTouch('touchend', [{ clientX: endX, clientY: 100 }], el)
+            expect(listener).not.toHaveBeenCalled()
+        }
+
+        document.body.removeChild(container)
+        window.removeEventListener('clawbench-back-press', listener)
+    })
+})
+
+describe('isExcludedFromEdgeSwipe', () => {
+    let isExcludedFromEdgeSwipe: typeof import('../useEdgeSwipeBack')['isExcludedFromEdgeSwipe']
+
+    beforeEach(async () => {
+        const mod = await import('../useEdgeSwipeBack')
+        isExcludedFromEdgeSwipe = mod.isExcludedFromEdgeSwipe
+    })
+
+    it('identifies excluded elements', () => {
+        const input = document.createElement('input')
+        const textarea = document.createElement('textarea')
+        const select = document.createElement('select')
+        const cm = document.createElement('div')
+        cm.className = 'cm-scroller'
+        const hScroll = document.createElement('div')
+        hScroll.setAttribute('data-horizontal-scroll', 'true')
+        const handle = document.createElement('div')
+        handle.className = 'drag-handle'
+        const regular = document.createElement('div')
+
+        expect(isExcludedFromEdgeSwipe(input)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(textarea)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(select)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(cm)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(hScroll)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(handle)).toBe(true)
+        expect(isExcludedFromEdgeSwipe(regular)).toBe(false)
+        expect(isExcludedFromEdgeSwipe(null)).toBe(false)
     })
 })
 

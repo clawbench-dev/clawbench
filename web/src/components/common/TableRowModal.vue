@@ -158,8 +158,8 @@ async function handleValueClick(event) {
     return
   }
 
-  // 6. File-open button
-  const fileBtn = target.closest('.chat-file-open-btn')
+  // 6. File-open button or path text
+  const fileBtn = target.closest('.chat-file-open-btn') || target.closest('.chat-file-path')
   if (fileBtn) {
     event.preventDefault()
     event.stopPropagation()

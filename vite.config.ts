@@ -247,6 +247,7 @@ export default defineConfig({
         share: resolve(__dirname, 'web/share.html'),
       },
       output: {
+        entryFileNames: '[name]-[hash].js',
         manualChunks: {
           'vendor-vue': ['vue', 'vue-i18n'],
           // Legacy subpath must be in the same chunk so the library stays

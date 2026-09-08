@@ -12,6 +12,10 @@
       :sticky-scroll="stickyScroll"
       :overlay-open="fileNav.overlayOpen.value"
       :editing="editing"
+      :can-navigate-back="canNavigateBack"
+      :can-go-back-file="fileNav.canGoBack.value"
+      :can-go-forward-file="fileNav.canGoForward.value"
+      :back-label="backLabel"
       @delete="handleDeleteRequest(file.path)"
       @toggle-view="handleToggleViewRequest"
       @toggle-edit="handleToggleEdit"
@@ -25,6 +29,8 @@
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
       @overlay-close="handleOverlayCloseRequest"
+      @navigate-back="handleNavBack"
+      @navigate-forward="handleNavForward"
       @share-external="emit('shareExternal')"
       @share-link="emit('shareLink')"
       @export-html="handleExportHtml"
@@ -250,20 +256,22 @@
       />
     </div>
 
-    <!-- Floating history nav (back/forward) over the content area -->
+    <!-- Touch-layout nav: floating bar at the bottom-center of the content area.
+         Semi-transparent at rest; fully opaque on hover/focus. Wide screens get
+         the same actions in the header instead, so this stays mobile-only. -->
     <div
-      v-if="fileNav.overlayOpen.value && !textSelecting && (fileNav.canGoBack.value || fileNav.canGoForward.value)"
+      v-if="floatingNavVisible"
       class="file-nav-float"
     >
       <button
-        v-if="fileNav.canGoBack.value"
+        v-if="canNavigateBack || fileNav.canGoBack.value"
         class="file-nav-btn"
         type="button"
-        :title="t('file.overlay.back')"
-        :aria-label="t('file.overlay.back')"
+        :title="backLabel || t('file.overlay.back')"
+        :aria-label="backLabel || t('file.overlay.back')"
         @click.stop="handleNavBack"
       >
-        <ChevronLeft :size="18" />
+        <ArrowLeft :size="18" />
       </button>
       <button
         v-if="fileNav.canGoForward.value"
@@ -273,7 +281,7 @@
         :aria-label="t('file.overlay.forward')"
         @click.stop="handleNavForward"
       >
-        <ChevronRight :size="18" />
+        <ArrowRight :size="18" />
       </button>
     </div>
 
@@ -292,7 +300,7 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { Download, Code2, AlertTriangle, Share2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { Download, Code2, AlertTriangle, Share2, ArrowLeft, ArrowRight } from 'lucide-vue-next'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
@@ -318,6 +326,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
+import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -326,6 +335,7 @@ import { getNative } from '@/utils/clawbenchNative'
 
 const { t, locale } = useI18n()
 const { isAppMode } = useAppMode()
+const { isWideScreen } = getWideScreenState()
 const toast = useToast()
 const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
 // diffDrawer is imported from useMarkdownDiff (encapsulated TabDrawer)
@@ -341,11 +351,20 @@ const props = defineProps({
     pdfOutline: { type: Array, default: () => [] },
     /** Wide-screen layout — renders the inline TOC dock vs narrow drawer. */
     docked: { type: Boolean, default: false },
+    canNavigateBack: Boolean,
+    backLabel: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll'])
 
 const fileNav = useFileNavStack()
 const { active: textSelecting } = useTextSelectionActive()
+// Navigation lives in the header on wide screens; the floating bar is for touch.
+const floatingNavVisible = computed(() =>
+  !isWideScreen.value
+  && fileNav.overlayOpen.value
+  && !textSelecting.value
+  && (props.canNavigateBack || fileNav.canGoBack.value || fileNav.canGoForward.value)
+)
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
@@ -491,6 +510,10 @@ function handleToggleViewRequest() {
 // File navigation / closing all leave the current edit view, so they go through
 // the same dirty-save confirmation as the back gesture and toggle-view.
 function handleNavBack() {
+    const el = scrollRestore.currentScrollEl()
+    if (el && typeof el.scrollTop === 'number') {
+        emit('captureScroll', el.scrollTop)
+    }
     return guardExitEdit(() => emit('navigateBack'))
 }
 function handleNavForward() {

@@ -103,8 +103,8 @@ function handleBodyClick(event) {
     }
     return
   }
-  // Handle file-open buttons
-  const fileBtn = event.target.closest('.chat-file-open-btn')
+  // Handle file-open buttons or path
+  const fileBtn = event.target.closest('.chat-file-open-btn, .chat-file-path')
   if (fileBtn) {
     const filePath = fileBtn.getAttribute('data-file-path')
     const lineStart = fileBtn.getAttribute('data-line-start')

@@ -16,6 +16,16 @@
   word-break: break-all;
 }
 
+.chat-file-path[data-file-path] {
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chat-file-path[data-file-path]:hover {
+  background: color-mix(in srgb, var(--text-muted, #999) 18%, transparent);
+  color: var(--text-primary, #333);
+}
+
 /* ── File open button ── */
 
 .chat-file-open-btn {

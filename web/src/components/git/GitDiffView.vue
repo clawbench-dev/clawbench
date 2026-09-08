@@ -30,7 +30,7 @@ function onDiffClick(event: MouseEvent) {
     if (line) {
       event.preventDefault()
       event.stopPropagation()
-      openFilePath(props.filePath, parseInt(line, 10))
+      openFilePath(props.filePath, parseInt(line, 10), undefined, 'history')
       return
     }
   }

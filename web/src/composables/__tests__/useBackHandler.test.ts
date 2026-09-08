@@ -197,6 +197,44 @@ describe('useBackHandler', () => {
         unregOverlay()
         unregBrowse()
     })
+
+    it('filters handlers by minPriority and supports overlay helpers', () => {
+        const pageGoBack = vi.fn()
+        const overlayGoBack = vi.fn()
+
+        const unregPage = registerBackHandler({
+            id: 'page',
+            canGoBack: () => true,
+            goBack: pageGoBack,
+            priority: PRIORITY_PAGE,
+        })
+
+        const unregOverlay = registerBackHandler({
+            id: 'overlay',
+            canGoBack: () => true,
+            goBack: overlayGoBack,
+            priority: PRIORITY_OVERLAY,
+        })
+
+        // Overlay check
+        expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(true)
+        const handledOverlay = handleBackNavigation(PRIORITY_OVERLAY)
+        expect(handledOverlay).toBe(true)
+        expect(overlayGoBack).toHaveBeenCalledTimes(1)
+        expect(pageGoBack).not.toHaveBeenCalled()
+
+        // After overlay is un-registered or cannot go back
+        unregOverlay()
+        expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(false)
+        expect(handleBackNavigation(PRIORITY_OVERLAY)).toBe(false)
+
+        // Page level handler still works with default/0 minPriority
+        expect(canNavigateBack()).toBe(true)
+        expect(handleBackNavigation()).toBe(true)
+        expect(pageGoBack).toHaveBeenCalledTimes(1)
+
+        unregPage()
+    })
 })
 
 describe('requestExitConfirm', () => {

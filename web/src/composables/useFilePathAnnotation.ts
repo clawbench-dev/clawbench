@@ -3,6 +3,7 @@ import { splitPath, dirName, normalizeSlashes, isAbsolutePath, toProjectRelative
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
+import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
 // that creates a circular dependency (useFilePathAnnotation ↔ useWorktreeAnnotation).
 // Instead, we use a lazy indirection registered at init time.
@@ -835,7 +836,7 @@ export function tryResolveCodeString(
  * If it's a file, selects it in the store.
  * If the file doesn't exist, shows a toast and does not navigate.
  */
-export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number): Promise<boolean> {
+export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface): Promise<boolean> {
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
     if (!targetPath) return false
@@ -857,9 +858,9 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         try {
             const resp = await fetch(`/api/dir?path=${encodeURIComponent(targetPath)}`)
             if (resp.ok) {
-                await store.navigateToDir(targetPath)
-                window.dispatchEvent(new CustomEvent('close-file-overlay'))
-                window.dispatchEvent(new CustomEvent('open-file-manager'))
+                window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+                    detail: { path: targetPath, source },
+                }))
                 return true
             }
         } catch {
@@ -889,10 +890,10 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
                 return false
             }
             if (type === 'dir') {
-                // Path is a directory — navigate into it instead of opening as file
-                await store.navigateToDir(targetPath)
-                window.dispatchEvent(new CustomEvent('close-file-overlay'))
-                window.dispatchEvent(new CustomEvent('open-file-manager'))
+                // Path is a directory — dispatch unified directory jump
+                window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+                    detail: { path: targetPath, source },
+                }))
                 return true
             }
         }
@@ -902,7 +903,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 
     const ok = await store.selectFile(targetPath)
     if (ok) {
-        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd } }))
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd, source } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
             useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
@@ -964,8 +965,12 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
         return false
     }
 
-    // Close any file overlay, switch to browse tab first
-    window.dispatchEvent(new CustomEvent('close-file-overlay'))
+    // Dismiss any file overlay purely visually before revealing the file in the
+    // manager. `force: true` bypasses the back-navigation state machine: going
+    // through it would resolve to the `origin` step whenever a jump origin is
+    // active, bouncing the user back to the chat surface and consuming the
+    // origin that the reveal-in-manager action should leave untouched.
+    window.dispatchEvent(new CustomEvent('close-file-overlay', { detail: { force: true } }))
     window.dispatchEvent(new CustomEvent('open-file-manager'))
 
     // Wait for any in-flight directory load to finish before navigating

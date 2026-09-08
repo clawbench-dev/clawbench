@@ -568,7 +568,7 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
   it('instantiates useCodeLinkPreview with containerRef bound to messagesRef', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    expect(source).toContain('const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef })')
+    expect(source).toContain("const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 'chat' })")
   })
 
   it('renders CodeLinkPreview conditioned on codeLinkPreview.enabled.value', async () => {
@@ -602,6 +602,14 @@ describe('ChatMessageList — CodeLinkPreview integration', () => {
     const source = typeof mod.default === 'string' ? mod.default : ''
     const sessionWatch = source.slice(source.indexOf('watch(() => props.currentSessionId'))
     expect(sessionWatch.slice(0, 1000)).toContain('codeLinkPreview.close()')
+  })
+
+  it('handles clicking both file-open button and directory chat-file-path text', async () => {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const openSection = source.slice(source.indexOf("closest('.chat-file-open-btn')"))
+    expect(openSection).toContain("closest('.chat-file-path[data-path-type=\"dir\"]')")
+    expect(openSection.slice(0, 500)).toContain('openFilePath(filePath')
   })
 
   it('exposes closeCodePreview in defineExpose', async () => {

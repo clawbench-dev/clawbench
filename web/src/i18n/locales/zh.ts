@@ -1019,6 +1019,7 @@ export default {
       dirLoadFailed: '目录不存在或无法访问',
       dirRemoved: '当前目录已被移除',
       fileNotFound: '文件不存在',
+      fileNotFoundReturned: '文件已不存在，已返回来源页面',
       fileRemoved: '文件不存在，可能已被移除',
       externalFile: '此文件位于项目目录之外',
       externalPathNotSupported: '仅支持项目内的路径跳转',
@@ -1128,6 +1129,12 @@ export default {
     overlay: {
       back: '返回',
       forward: '前进',
+    },
+    nav: {
+      backToChat: '返回对话',
+      backToTask: '返回任务',
+      backToFile: '返回 {name}',
+      back: '返回',
     },
     recent: {
       title: '最近文件',

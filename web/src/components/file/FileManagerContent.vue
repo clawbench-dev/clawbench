@@ -146,6 +146,19 @@
           </template>
         </div>
       </div>
+      <!-- Origin return banner -->
+      <div
+        v-if="hasOrigin && originLabel"
+        class="origin-banner"
+        role="button"
+        tabindex="0"
+        :aria-label="originLabel"
+        @click="$emit('returnOrigin')"
+        @keydown.enter="$emit('returnOrigin')"
+      >
+        <ArrowLeft :size="16" class="origin-banner-icon" />
+        <span class="origin-banner-text">{{ originLabel }}</span>
+      </div>
       <!-- Breadcrumb / Multi-select info bar -->
       <div v-if="multiSelect.active" class="dir-nav-bottom">
         <div class="ms-info-bar">
@@ -434,7 +447,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FolderDown, FolderSearch, Link2 } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FolderDown, FolderSearch, Link2, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -447,7 +460,6 @@ import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/co
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
-import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
@@ -668,16 +680,6 @@ const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
 
-// Register back handler for file browser directory navigation
-// PRIORITY_PAGE < PRIORITY_OVERLAY, so file-view always wins when open.
-// canGoBack: true when not at project root (currentDir !== '')
-useFeatureBackHandler(
-  'browse',
-  () => activeTab.value === 'browse' && props.currentDir !== '',
-  () => emit('navigateBack'),
-  PRIORITY_PAGE,
-)
-
 const props = defineProps({
     entries: Array,
     currentDir: String,
@@ -688,9 +690,11 @@ const props = defineProps({
     dirLoading: Boolean,
     searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
+    originLabel: { type: String, default: null },
+    hasOrigin: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete', 'returnOrigin'])
 
 
 const sortMenuOpen = ref(false)
@@ -1826,6 +1830,43 @@ function scrollSelectedIntoView(path) {
     min-height: 28px;
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     flex-shrink: 0;
+}
+
+.origin-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    color: var(--accent-color);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+@media (hover: hover) {
+    .origin-banner:hover {
+        background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    }
+}
+.origin-banner:active {
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.2));
+}
+.origin-banner-icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+}
+.origin-banner-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .dir-toolbar {
