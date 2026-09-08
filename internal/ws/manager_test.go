@@ -1368,3 +1368,131 @@ func TestSubscribe_PreservesEventBufferForReplay(t *testing.T) {
 		t.Errorf("expected empty buffer after replay consumption, got %d events", len(got))
 	}
 }
+
+// TestDisconnectClientIfCurrent_ReplacedConnNoOp is the regression test for
+// the connection-replace cleanup race. When a client reconnects, Subscribe
+// installs the new connection. The OLD EventsHandler's deferred teardown then
+// runs — potentially AFTER the new connection was installed and its session
+// subscribed. Without an identity guard that teardown would:
+//   - null the NEW connection's sub.conn (DisconnectClient), and
+//   - wipe the client's StreamHub session subscription (UnsubscribeAll),
+//
+// leaving the socket alive but every stream event dropped server-side — the
+// silent streaming stall. The teardown must only take effect while the conn it
+// belongs to is STILL the subscription's current connection.
+func TestDisconnectClientIfCurrent_ReplacedConnNoOp(t *testing.T) {
+	mgr := NewManagerForTest()
+
+	// Real server-side connections: each handler accepts one socket, registers
+	// it under the shared clientID, then blocks on a channel. This mirrors the
+	// EventsHandler shape where each connection holds its OWN accepted conn and
+	// runs teardown on exit.
+	type connInfo struct {
+		conn    *websocket.Conn
+		writeMu *sync.Mutex
+	}
+	accepted := make(chan *connInfo, 2)
+	release := make(chan struct{}, 2)
+	// teardownDone signals that a handler's teardown has fully completed, so
+	// assertions never race the teardown goroutine.
+	teardownDone := make(chan struct{}, 2)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		wmu := &sync.Mutex{}
+		sub := mgr.Subscribe(conn, wmu, "race-client", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		accepted <- &connInfo{conn: conn, writeMu: wmu}
+		<-release
+		// Late teardown, exactly like the EventsHandler defer. DisconnectClient
+		// is what EventsHandler calls — DisconnectClientIfCurrent is the guarded
+		// replacement it now uses.
+		mgr.StopWriter("race-client", conn)
+		if mgr.DisconnectClientIfCurrent("race-client", conn) {
+			mgr.StreamHub().UnsubscribeAll("race-client")
+		}
+		teardownDone <- struct{}{}
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + server.URL[4:]
+
+	// Connection A connects.
+	clientA, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial A failed: %v", err)
+	}
+	defer func() { _ = clientA.CloseNow() }()
+	infoA := <-accepted
+	// A subscribes to the session it is viewing (s1).
+	mgr.StreamHub().Subscribe("race-client", "s1")
+
+	// Connection B (same clientID) replaces A — a reconnect. The frontend
+	// re-subscribes to the SAME session it was viewing.
+	clientB, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial B failed: %v", err)
+	}
+	defer func() { _ = clientB.CloseNow() }()
+	infoB := <-accepted
+	mgr.StreamHub().Subscribe("race-client", "s1")
+	if !mgr.StreamHub().HasSubscribers("s1") {
+		t.Fatal("s1 should have a subscriber after B connects")
+	}
+
+	// Now release connection A's handler so its (late) teardown runs against
+	// the shared subscription whose current conn is B's. The guarded teardown
+	// must be a no-op for A's stale conn — otherwise it would wipe the
+	// subscription B just re-established and the live stream events die.
+	release <- struct{}{}
+	select {
+	case <-teardownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection A's teardown never completed")
+	}
+
+	// After A's FULLY-completed late teardown, B's connection and its session
+	// subscription must still be intact.
+	subB := mgr.subscriptions["race-client"]
+	subB.mu.Lock()
+	cur := subB.conn
+	subB.mu.Unlock()
+	if cur == nil {
+		t.Fatal("REGRESSION: replaced connection A's teardown nulled connection B")
+	}
+	if cur != infoB.conn {
+		t.Fatal("REGRESSION: replaced connection A's teardown swapped connection B's conn")
+	}
+	if !mgr.StreamHub().HasSubscribers("s1") {
+		t.Fatal("REGRESSION: replaced connection A's teardown wiped session s1 subscription")
+	}
+
+	// Release B's handler so its own teardown (current conn) still works —
+	// it must disconnect B and clear the session subscription.
+	release <- struct{}{}
+	select {
+	case <-teardownDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection B's teardown never completed")
+	}
+	subB.mu.Lock()
+	cur = subB.conn
+	subB.mu.Unlock()
+	if cur != nil {
+		t.Error("expected sub.conn to be null after the current connection disconnects")
+	}
+	if mgr.StreamHub().HasSubscribers("s1") {
+		t.Error("expected s1 subscription cleared after the current connection disconnects")
+	}
+	_ = infoA.conn.CloseNow()
+	_ = infoB.conn.CloseNow()
+}

@@ -83,6 +83,11 @@ export interface UseChatSessionOptions {
    *  arrives while loading is false but the stream_start event hasn't created
    *  one yet (delayed/lost). The placeholder is normally event-driven. */
   onEnsureStreamingPlaceholder?: () => void
+  /** Re-establish the WS stream subscription for a session. subscribe() dedupes
+   *  the same session, so an authoritative resync (manual refresh / foreground
+   *  return) that must repair a server-side-dropped subscription needs this
+   *  force re-subscribe instead. */
+  onResubscribeStream?: (sessionId: string) => void
 }
 
 export function useChatSession(options: UseChatSessionOptions) {
@@ -101,6 +106,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     onScrollBottom,
     onDisconnectStream,
     onEnsureStreamingPlaceholder,
+    onResubscribeStream,
   } = options
 
   const toast = useToast()
@@ -1202,6 +1208,18 @@ export function useChatSession(options: UseChatSessionOptions) {
         try {
           await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
           onRenderUpdate(true)
+          // A manual refresh must also re-establish the WS stream subscription:
+          // the backend may have dropped it while the app was backgrounded (App
+          // mode disconnects the WS, and the StreamHub subscriber list dies with
+          // it). subscribe() dedupes the same session, so only an explicit
+          // resubscribe re-triggers the server's OnSubscribe → stream_start
+          // re-emit that resumes the live stream. The WS-reconnect path
+          // (force=false) is excluded — watch(connected) already re-subscribes
+          // there and a duplicate would be harmless but wasteful.
+          if (force) {
+            appLog.i(TAG, `${source}: re-subscribing stream for running session ${currentSessionId.value}`)
+            onResubscribeStream?.(currentSessionId.value)
+          }
         } catch {
           loading.value = false
         }
@@ -1225,9 +1243,23 @@ export function useChatSession(options: UseChatSessionOptions) {
       // disconnected. skipIfUnchanged avoids UI churn when nothing changed;
       // a manual refresh forces the reload (skipIfUnchanged=false) so the UI
       // always re-renders against the latest server state.
+      const wasIdle = !loading.value
       try {
         await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
+        // The session was idle but the authoritative loadHistory just revealed
+        // a run is in progress (loading flipped true — a run started server-side
+        // while we were backgrounded): re-establish the WS subscription so the
+        // live stream events (stream_start re-emit → content) reach us. A plain
+        // subscribe() would dedup against the stale "already subscribed" flag,
+        // so use the force resubscribe — mirroring a session switch. Gate on the
+        // loadHistory's own loading transition (the freshest signal) rather than
+        // the runningSessions snapshot taken at the top of runReload, which can
+        // be stale for a run that just began.
+        if (force && wasIdle && loading.value) {
+          appLog.i(TAG, `${source}: re-subscribing stream for running session ${currentSessionId.value} (idle path)`)
+          onResubscribeStream?.(currentSessionId.value)
+        }
       } catch {
         // Non-critical — keep current view on failure.
       }
@@ -1257,7 +1289,9 @@ export function useChatSession(options: UseChatSessionOptions) {
    * return). Mirrors the WS reconnect resync flow but ALWAYS forces a
    * loadHistory so every refresh re-renders against the authoritative server
    * state — messages, stream subscription, mode/usage/commands all stay
-   * consistent with the backend.
+   * consistent with the backend. When the session is (still) running it also
+   * re-subscribes the WS stream (onResubscribeStream), repairing a
+   * server-side-dropped subscription that a plain HTTP reload cannot heal.
    */
   const handleManualRefresh = () => syncCurrentSessionOnReconnect(true)
 

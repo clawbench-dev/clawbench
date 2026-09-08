@@ -206,21 +206,46 @@ func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID,
 // is preserved so that buffered events can be replayed on reconnect.
 // Stale subscriptions are eventually cleaned up by CleanupStale.
 func (m *Manager) DisconnectClient(clientID string) {
+	m.disconnectClient(clientID, nil)
+}
+
+// DisconnectClientIfCurrent disconnects the client ONLY when conn is still its
+// current live connection. Returns true when the disconnect happened.
+//
+// This guards the connection-replace race: when a client reconnects, Subscribe
+// installs the new connection and closes the old one. The OLD EventsHandler's
+// deferred teardown then runs — potentially AFTER the new connection was
+// installed. Without an identity check it would null the NEW connection's
+// sub.conn and wipe the client's StreamHub session subscriptions, leaving the
+// socket alive (heartbeat keeps flowing) but every stream event dropped on the
+// server side — a state only a fresh subscribe / session switch can repair.
+func (m *Manager) DisconnectClientIfCurrent(clientID string, conn *websocket.Conn) bool {
+	return m.disconnectClient(clientID, conn)
+}
+
+func (m *Manager) disconnectClient(clientID string, conn *websocket.Conn) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	sub, ok := m.subscriptions[clientID]
 	if !ok {
-		return
+		return false
 	}
 
 	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	// Identity guard: when conn is non-nil, only disconnect if it is still the
+	// subscription's current connection (an old replaced handler must not wipe
+	// a freshly installed one).
+	if conn != nil && sub.conn != conn {
+		return false
+	}
 	sub.conn = nil
 	sub.writeMu = nil
 	sub.bufferStart = time.Now() // start buffer window
-	sub.mu.Unlock()
 
 	slog.Info("ws: client disconnected (subscription preserved)", "client_id", clientID)
+	return true
 }
 
 // SendToClient sends a ServerMessage to a specific client by clientID.

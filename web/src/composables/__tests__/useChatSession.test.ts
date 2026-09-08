@@ -4479,6 +4479,7 @@ describe('handleManualRefresh', () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onConnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
     const onRenderUpdate = vi.fn()
     const options = {
       currentSessionId: ref('s1'),
@@ -4495,6 +4496,7 @@ describe('handleManualRefresh', () => {
       onScrollBottom: vi.fn(),
       onConnectStream,
       onDisconnectStream,
+      onResubscribeStream,
       onOpen: vi.fn(),
     }
     lastSessionOptions = options
@@ -4526,13 +4528,18 @@ describe('handleManualRefresh', () => {
     expect(onConnectStream).not.toHaveBeenCalled()
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
+    // A manual refresh must re-establish the WS stream subscription (a plain
+    // loadHistory cannot heal a server-side-dropped StreamHub subscription).
+    expect(onResubscribeStream).toHaveBeenCalledTimes(1)
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session no longer running: cleans up stuck loading, then reloads history', async () => {
+  it('when loading=true and session no longer running: cleans up stuck loading, then reloads history (no resubscribe)', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
     const onRenderUpdate = vi.fn()
     const onExtractScheduledTasks = vi.fn()
     const options = {
@@ -4550,6 +4557,7 @@ describe('handleManualRefresh', () => {
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
       onDisconnectStream,
+      onResubscribeStream,
       onOpen: vi.fn(),
     }
     lastSessionOptions = options
@@ -4577,6 +4585,8 @@ describe('handleManualRefresh', () => {
     expect(onDisconnectStream).toHaveBeenCalled()
     expect(mockForceCleanupStreamingState).toHaveBeenCalled()
     expect(loading.value).toBe(false)
+    // Session finished — nothing to re-subscribe to.
+    expect(onResubscribeStream).not.toHaveBeenCalled()
     // The forced history reload must actually fire after the cleanup.
     await vi.waitFor(() => {
       const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
@@ -4590,6 +4600,7 @@ describe('handleManualRefresh', () => {
   it('when loading=false (idle): forces history reload even when the message snapshot is unchanged', async () => {
     const loading = ref(false)
     const onRenderUpdate = vi.fn()
+    const onResubscribeStream = vi.fn()
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
@@ -4605,6 +4616,7 @@ describe('handleManualRefresh', () => {
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
       onDisconnectStream: vi.fn(),
+      onResubscribeStream,
       onOpen: vi.fn(),
     }
     lastSessionOptions = options
@@ -4643,6 +4655,61 @@ describe('handleManualRefresh', () => {
       const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
       expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
     })
+    // Session idle and not running — nothing to re-subscribe.
+    expect(onResubscribeStream).not.toHaveBeenCalled()
+
+    vi.restoreAllMocks()
+  })
+
+  it('when loading=false but the session IS running: idle refresh also re-subscribes the stream', async () => {
+    const loading = ref(false)
+    const onRenderUpdate = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate,
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    // loadSessionsOnce reports s1 as running (a run started server-side while
+    // loading was still false — the exact "stuck stream" recovery case), and
+    // the chat fetch confirms it with running:true.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ id: 's1', running: true }],
+          totalCount: 1,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's1', messages: [], total: 0, running: true,
+        }),
+      })
+
+    await session.handleManualRefresh()
+
+    // Even though the UI was idle (loading=false), a running session must get
+    // its WS subscription re-established so live stream events reach the UI.
+    expect(onResubscribeStream).toHaveBeenCalledTimes(1)
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
