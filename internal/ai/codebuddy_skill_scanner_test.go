@@ -473,7 +473,7 @@ func TestSkillsToCommands(t *testing.T) {
 			skills: []SkillInfo{
 				{Name: "skill-creator", Description: "Guide for creating skills"},
 			},
-			wantNames: []string{"/skill-creator"},
+			wantNames: []string{"skill-creator"},
 			wantDescs: []string{"Guide for creating skills"},
 			wantLen:   1,
 		},
@@ -482,7 +482,7 @@ func TestSkillsToCommands(t *testing.T) {
 			skills: []SkillInfo{
 				{Name: "/skill-creator", Description: "Guide for creating skills"},
 			},
-			wantNames: []string{"/skill-creator"},
+			wantNames: []string{"skill-creator"},
 			wantDescs: []string{"Guide for creating skills"},
 			wantLen:   1,
 		},
@@ -492,7 +492,7 @@ func TestSkillsToCommands(t *testing.T) {
 				{Name: "skill-creator", Description: "Guide for creating skills"},
 				{Name: "docx", Description: "Word doc manipulation"},
 			},
-			wantNames: []string{"/skill-creator", "/docx"},
+			wantNames: []string{"skill-creator", "docx"},
 			wantDescs: []string{"Guide for creating skills", "Word doc manipulation"},
 			wantLen:   2,
 		},

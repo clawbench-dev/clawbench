@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMergeCommands_NoOverlap(t *testing.T) {
@@ -81,4 +82,27 @@ func TestMergeCommands_MultipleOverlaps(t *testing.T) {
 	assert.Equal(t, "ACP review", result[1].Description)
 	assert.Equal(t, "brainstorm", result[2].Name)
 	assert.Equal(t, "execute-plan", result[3].Name)
+}
+
+func TestMergeCommands_SlashInconsistencyDedupes(t *testing.T) {
+	// CodeBuddy's own AvailableCommandsUpdate strips the leading slash from
+	// skill commands ("mmx-cli"), while our pre-scan (SkillsToCommands) emits
+	// "/mmx-cli". The merge must treat them as the same command so the slash
+	// menu does not show a double-slash duplicate.
+	acp := []AvailableCommandInfo{
+		{Name: "mmx-cli", Description: "ACP skill: mmx-cli"}, // no slash (CodeBuddy ACP)
+		{Name: "/compact", Description: "ACP compact"},       // slash present (built-in)
+	}
+	plugin := []AvailableCommandInfo{
+		{Name: "/mmx-cli", Description: "Pre-scanned skill: mmx-cli"}, // slash (our scan)
+		{Name: "compact", Description: "Plugin compact"},              // no slash (our scan)
+		{Name: "brainstorm", Description: "Brainstorm ideas"},
+	}
+
+	result := MergeCommands(acp, plugin)
+	require.Len(t, result, 3)
+	// ACP versions win; neither skill nor compact is duplicated
+	assert.Equal(t, "mmx-cli", result[0].Name)
+	assert.Equal(t, "/compact", result[1].Name)
+	assert.Equal(t, "brainstorm", result[2].Name)
 }

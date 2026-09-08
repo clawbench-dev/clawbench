@@ -814,23 +814,29 @@ const slashMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
   const query = text.slice(1) // strip leading '/'
-  if (!query) return availableCommands.value.map(cmd => ({
-    key: '/' + cmd.name,
-    label: '/' + cmd.name,
-    description: cmd.description,
-    inputHint: cmd.inputHint || '',
-    query: '',
-  }))
-  const lowerQ = query.toLowerCase()
-  return availableCommands.value
-    .filter(cmd => cmd.name.toLowerCase().includes(lowerQ))
-    .map(cmd => ({
-      key: '/' + cmd.name,
-      label: '/' + cmd.name,
+  // Command names arrive inconsistently: CodeBuddy ACP reports skills slashless
+  // ("mmx-cli"), while pre-scanned names may keep a leading "/". Normalize for
+  // display and dedupe on the canonical (slash-stripped) name so the same
+  // command cannot appear twice — otherwise each duplicate renders as a
+  // double-slash entry.
+  const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
+  const seen = new Set()
+  const items = []
+  for (const cmd of availableCommands.value) {
+    const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
+    if (!canonical || seen.has(canonical)) continue
+    seen.add(canonical)
+    items.push({
+      key: toSlash(cmd.name),
+      label: toSlash(cmd.name),
       description: cmd.description,
       inputHint: cmd.inputHint || '',
-      query,
-    }))
+      query: query.toLowerCase(),
+    })
+  }
+  if (!query) return items
+  const lowerQ = query.toLowerCase()
+  return items.filter(item => item.label.toLowerCase().includes(lowerQ))
 })
 
 // Directly control menu visibility from inputText changes

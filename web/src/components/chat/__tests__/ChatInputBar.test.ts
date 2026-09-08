@@ -1270,6 +1270,31 @@ describe('ChatInputBar', () => {
     mockSupportsACP.mockReturnValue(false)
   })
 
+  it('slash menu dedupes commands that differ only by slash prefix', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    // Same skill reported slashless by CodeBuddy ACP and slash-prefixed by the
+    // pre-scan ("mmx-cli" vs "/mmx-cli"). Only one menu entry may render, with
+    // exactly one leading slash — otherwise the user sees a "//mmx-cli".
+    mockAvailableCommands.value = [
+      { name: 'mmx-cli', description: 'MMX CLI', inputHint: '' },
+      { name: '/mmx-cli', description: 'MMX CLI (pre-scan)', inputHint: '' },
+      { name: '/buddy-sings', description: 'Buddy sings', inputHint: '' },
+    ]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.at-menu-item')
+    expect(items).toHaveLength(2)
+    const labels = items.map(i => i.text())
+    expect(labels.some(l => l.startsWith('//'))).toBe(false)
+    expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
+    expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
   it('quick menu opening triggers menu exclusion watcher', async () => {
     const wrapper = mountBar()
     // First open the quick menu by clicking send with empty input

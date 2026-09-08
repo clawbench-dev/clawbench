@@ -178,20 +178,21 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Build set of existing command names from ACP
+	// Build set of existing command names from ACP (canonical — leading "/"
+	// ignored, see canonicalCommandName).
 	existing := make(map[string]struct{}, len(c.commands))
 	for _, cmd := range c.commands {
-		existing[cmd.Name] = struct{}{}
+		existing[canonicalCommandName(cmd.Name)] = struct{}{}
 	}
 
 	// Add plugin commands not already present
 	for _, info := range pluginCmds {
-		if _, found := existing[info.Name]; !found {
+		if _, found := existing[canonicalCommandName(info.Name)]; !found {
 			c.commands = append(c.commands, acp.AvailableCommand{
 				Name:        info.Name,
 				Description: info.Description,
 			})
-			existing[info.Name] = struct{}{}
+			existing[canonicalCommandName(info.Name)] = struct{}{}
 		}
 	}
 }
@@ -256,15 +257,18 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 func (c *ClawBenchACPClient) mergeAndSyncCommands(acpCmds []acp.AvailableCommand) {
 	c.mu.Lock()
 	if len(c.commands) > 0 {
-		// Merge: ACP commands first, then pre-scanned commands not in ACP
+		// Merge: ACP commands first, then pre-scanned commands not in ACP.
+		// Canonical (slash-stripped) names are used for the dedupe key so a
+		// slashless ACP skill ("mmx-cli") and our pre-scanned "/mmx-cli" do not
+		// both survive (issue: double slash in the input menu).
 		acpNames := make(map[string]struct{}, len(acpCmds))
 		for _, cmd := range acpCmds {
-			acpNames[cmd.Name] = struct{}{}
+			acpNames[canonicalCommandName(cmd.Name)] = struct{}{}
 		}
 		merged := make([]acp.AvailableCommand, 0, len(acpCmds)+len(c.commands))
 		merged = append(merged, acpCmds...)
 		for _, cmd := range c.commands {
-			if _, inACP := acpNames[cmd.Name]; !inACP {
+			if _, inACP := acpNames[canonicalCommandName(cmd.Name)]; !inACP {
 				merged = append(merged, cmd)
 			}
 		}
