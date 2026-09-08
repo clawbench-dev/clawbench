@@ -6,6 +6,10 @@
   <img src="docs/screenshots/product_hero.en.png" alt="ClawBench" width="960">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/pc-desktop.png" alt="ClawBench PC Desktop" width="960">
+</p>
+
 **From Palm to Desktop** — An AI workbench for every screen.
 
 Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, scheduled tasks, one app does it all, whether you're on the go or at your desk.
