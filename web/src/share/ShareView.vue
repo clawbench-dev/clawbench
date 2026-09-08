@@ -6,8 +6,20 @@
       <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
       <span v-else-if="error" class="share-status share-error">{{ error }}</span>
       <span v-else class="share-spacer" />
-      <div v-if="hasToc && !error" class="share-top-actions">
-        <button class="share-btn" type="button" :title="t('share.toggleToc')" @click="tocOpen = !tocOpen">
+      <div v-if="(hasToc || showToggleView) && !error" class="share-top-actions">
+        <!-- Toggle between rendered preview and source (markdown/html/openapi) -->
+        <button
+          v-if="showToggleView"
+          class="share-btn share-view-toggle"
+          :class="{ active: viewMode === 'rendered' }"
+          type="button"
+          :title="viewMode === 'rendered' ? t('share.sourceView') : t('share.renderedView')"
+          :aria-pressed="viewMode === 'rendered'"
+          @click="toggleViewMode"
+        >
+          <Eye :size="16" />
+        </button>
+        <button v-if="hasToc" class="share-btn" type="button" :title="t('share.toggleToc')" @click="tocOpen = !tocOpen">
           <List :size="16" />
         </button>
       </div>
@@ -38,9 +50,9 @@
         </div>
 
         <template v-else-if="file">
-          <!-- Markdown rendered -->
+          <!-- Markdown rendered preview (default) -->
           <MarkdownPreview
-            v-if="isMarkdown"
+            v-if="isMarkdown && viewMode === 'rendered'"
             :file="file"
             view-mode="rendered"
             :word-wrap="wordWrap"
@@ -78,26 +90,30 @@
           />
 
           <!-- OpenAPI / Swagger spec (rendered docs) -->
-          <div v-else-if="file.subtype === 'openapi'" class="share-fill-viewer">
+          <div v-else-if="isOpenapi && viewMode === 'rendered'" class="share-fill-viewer">
             <OpenApiPreview :file="file" />
           </div>
 
           <!-- HTML rendered -->
           <iframe
-            v-else-if="file.isHtml"
+            v-else-if="isHtml && viewMode === 'rendered'"
             class="share-html-iframe"
             :srcdoc="file.content"
             sandbox="allow-scripts"
           />
 
-          <!-- Code / plain text -->
+          <!-- Raw source view for markdown/html/openapi after the view toggle,
+               and code/plain text files which have no rendered preview.
+               stickyScroll is disabled: the share SPA has no auth for the
+               backend symbol API the sticky overlay would query. -->
           <CodeMirrorViewer
-            v-else-if="isTextContent"
+            v-else-if="showRawSourceView"
             :file="file"
             :content="file.content"
             :language="rawLanguage"
             :editable="false"
             :word-wrap="wordWrap"
+            :sticky-scroll="false"
           />
 
           <!-- Binary / too-large / unsupported fallback: download -->
@@ -122,7 +138,7 @@
           :data-level="item.level"
           :style="{ paddingLeft: (8 + (item.level - 1) * 14) + 'px' }"
           :title="item.text"
-          @click="scrollToHeading(item.id)"
+          @click="scrollToTocItem(item)"
         >{{ item.text }}</button>
       </div>
     </div>
@@ -132,7 +148,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, defineAsyncComponent, provide, readonly } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Download, FileX2, List } from 'lucide-vue-next'
+import { Download, Eye, FileX2, List } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
@@ -183,6 +199,9 @@ const tocOpen = ref(true)
 const wordWrap = ref(false)
 const contentRef = ref<HTMLElement | null>(null)
 const tocItems = ref<TocItem[]>([])
+/** 'rendered' (preview) | 'raw' (source code). Only used by file types that
+ *  have both a rendered preview and a viewable source (markdown/html/openapi). */
+const viewMode = ref<'rendered' | 'raw'>('rendered')
 
 // ─── Parse token from /share/{token} ───
 function parseTokenFromPath(): string {
@@ -205,10 +224,31 @@ const isMarkdown = computed(() => {
   return !!getFileType(file.value.name)?.isMarkdown
 })
 
+const isHtml = computed(() => {
+  if (!file.value) return false
+  return !!getFileType(file.value.name)?.isHtml
+})
+
+const isOpenapi = computed(() => file.value?.subtype === 'openapi' || false)
+
 const isTextContent = computed(() => {
   if (!file.value) return false
   if (file.value.isBinary || file.value.tooLarge) return false
   return typeof file.value.content === 'string' && file.value.content.length > 0
+})
+
+/** Whether the file has a rendered preview AND a readable source (markdown
+ *  rendered preview, HTML rendered iframe, OpenAPI/Swagger docs) — i.e. the
+ *  source/rendered toggle button is shown. */
+const showToggleView = computed(() => isTextContent.value && (isMarkdown.value || isHtml.value || isOpenapi.value))
+
+/** Whether the current file body is rendered through CodeMirrorViewer (the raw
+ *  source view). True for code/plain text files and for markdown/html/openapi
+ *  after the user toggles to source. Drives the toggle button + TOC line jumps. */
+const showRawSourceView = computed(() => {
+  if (!isTextContent.value) return false
+  if (isMarkdown.value || isHtml.value || isOpenapi.value) return viewMode.value === 'raw'
+  return true
 })
 
 const hasToc = computed(() => {
@@ -242,6 +282,10 @@ function decorateFile(data: ShareFile): ShareFile {
 async function loadFile() {
   loading.value = true
   error.value = ''
+  // A fresh file always opens in its rendered/preview view. (Mirrors the App's
+  // file-view reset on file change — guards against reusing this instance for
+  // another file while still toggled to source.)
+  viewMode.value = 'rendered'
   try {
     const resp = await fetch(shareApiUrl('file'))
     if (!resp.ok) {
@@ -282,6 +326,76 @@ function scrollToHeading(id: string) {
   }
 }
 
+// ─── View toggle ───
+
+function toggleViewMode() {
+  viewMode.value = viewMode.value === 'rendered' ? 'raw' : 'rendered'
+}
+
+// ─── TOC jump routing ───
+// CodeMirror-rendered bodies (pure code files, or markdown/html/openapi toggled
+// to source) have no heading DOM, so TOC entries jump by line through the
+// `cm-scroll-to-line` window event CodeMirrorViewer listens for. Rendered
+// markdown previews keep the old heading-anchor jump.
+
+// The CodeMirror viewer is an async chunk (defineAsyncComponent). A user can
+// click a TOC entry right after toggling to source, while the editor is still
+// loading and its window listener is not yet registered. The first dispatch is
+// synchronous (lowest latency when the editor is already mounted); if the
+// editor has not acknowledged it via `cm-scroll-to-line-handled`, retry every
+// animation frame until it does (or a frame budget runs out), so an
+// immediately-after-toggle click is never lost.
+const LINE_SCROLL_MAX_ATTEMPTS = 60
+let lineScrollRequestId = 0
+let activeLineScrollCancel: (() => void) | null = null
+
+function scrollToCodeLine(line: number) {
+  const f = file.value
+  if (!f?.path) return
+  // Capture for use inside the rAF-retry closure (narrowing is lost there).
+  const filePath = f.path
+  const requestId = ++lineScrollRequestId
+  let attempts = 0
+  let handled = false
+
+  activeLineScrollCancel?.()
+
+  function onHandled(e: Event) {
+    if ((e as CustomEvent).detail?.requestId !== requestId) return
+    handled = true
+    cleanup()
+  }
+
+  function cleanup() {
+    window.removeEventListener('cm-scroll-to-line-handled', onHandled)
+    if (activeLineScrollCancel === cleanup) activeLineScrollCancel = null
+  }
+
+  activeLineScrollCancel = cleanup
+  window.addEventListener('cm-scroll-to-line-handled', onHandled)
+
+  function tryScroll() {
+    attempts += 1
+    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
+      detail: { line, path: filePath, requestId },
+    }))
+    if (!handled && attempts < LINE_SCROLL_MAX_ATTEMPTS) {
+      requestAnimationFrame(tryScroll)
+    } else {
+      cleanup()
+    }
+  }
+  tryScroll()
+}
+
+function scrollToTocItem(item: TocItem) {
+  if (showRawSourceView.value) {
+    if (item.line) scrollToCodeLine(item.line)
+    return
+  }
+  scrollToHeading(item.id)
+}
+
 onMounted(() => {
   const token = parseTokenFromPath()
   if (!token) {
@@ -301,6 +415,12 @@ onMounted(() => {
 
 .share-status { font-size: 12px; color: var(--text-muted, #656d76); }
 .share-error { color: #cf222e; }
+
+/* Active (rendered preview shown) state for the view toggle */
+.share-btn.active {
+  background: var(--bg-tertiary, #eaeef2);
+  color: var(--accent-color, #0969da);
+}
 
 .share-center-hint {
   display: flex;
