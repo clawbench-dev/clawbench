@@ -1799,7 +1799,8 @@ function handleBodyInput(event) {
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  /* Sharp, hard corners — terminal-like command block. */
+  border-radius: 0;
   padding: 5px 8px;
   white-space: pre-wrap;
   word-break: break-word;
