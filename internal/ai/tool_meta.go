@@ -148,7 +148,10 @@ func extractTaskUpdateSummary(input map[string]any) string {
 	if status == "" {
 		return "#" + truncateStr(id)
 	}
-	return "#" + truncateStr(id) + " · " + status
+	// Truncate the composed label as a whole: id and status can each be long
+	// (status is usually an enum, but nothing prevents a long value), so a
+	// per-field truncateStr alone could still exceed maxSummaryLen.
+	return truncateStr("#" + truncateStr(id) + " · " + status)
 }
 
 // extractAgentSummary summarizes an Agent/Agent-like tool call. Priority order

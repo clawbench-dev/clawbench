@@ -409,6 +409,22 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ name: 'TaskUpdate', input: { foo: 'bar' } })).toBe('bar')
   })
 
+  it('TaskUpdate with pre-extracted summary keeps the stored value (new-calls-only scope)', () => {
+    // DB rows written before the fix carry a random stored summary; block.summary
+    // must win so old messages are not re-derived. Same contract as Go's
+    // DB upsert (only fresh calls run ExtractSummary).
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      summary: 'in_progress',
+      input: { status: 'in_progress', taskId: '3' },
+    })).toBe('in_progress')
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      summary: '3',
+      input: { status: 'in_progress', taskId: '3' },
+    })).toBe('3')
+  })
+
   it('shows first value regardless of length', () => {
     expect(toolCallSummary({ input: { data: 'X'.repeat(80) } })).toBe('X'.repeat(80))
   })

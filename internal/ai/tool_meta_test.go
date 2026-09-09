@@ -240,10 +240,16 @@ func TestExtractSummary(t *testing.T) {
 			want: "Roll back config",
 		},
 		{
-			name:     "case-insensitive taskupdate special case",
+			name:     "taskupdate case-insensitive special case",
 			toolName: "taskupdate",
 			input:    map[string]any{"status": "in_progress", "taskId": "3"},
 			want:     "#3 · in_progress",
+		},
+		{
+			name:     "taskupdate composed label truncates to 200 runes",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": repeatStr("s", 250), "taskId": "3"},
+			want:     "#3 · " + repeatStr("s", 250)[:195], // 5 ("#3 · ") + 195 = 200
 		},
 		{
 			name:     "deterministic fallback picks lexicographically first key",
