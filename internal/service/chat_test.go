@@ -193,6 +193,12 @@ func setupDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
+	// Required for :memory: SQLite — every pooled connection is a separate
+	// in-memory database. Without pinning to a single connection, any service
+	// background goroutine that touches the DB (scheduler, cleanup worker,
+	// pending-events queue) can open a second connection backed by an empty
+	// database, surfacing as intermittent "no such table: chat_sessions".
+	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(schema)
 	assert.NoError(t, err)
