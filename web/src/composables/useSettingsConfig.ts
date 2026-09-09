@@ -332,7 +332,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
   wallpaperBlur: 0,
-  wallpaperEdgeFade: false,
+  // Edge fade is ON by default: users who never touched the toggle (or never
+  // migrated a legacy value) get the soft blended border out of the box.
+  // Previously persisted `false` values are left untouched (no forced override).
+  wallpaperEdgeFade: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults
