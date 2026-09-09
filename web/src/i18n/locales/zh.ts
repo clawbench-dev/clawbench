@@ -122,6 +122,7 @@ export default {
     colDeleted: '删除行数',
     colNet: '净增行数',
     colCommits: '提交数',
+    allAuthors: '全部作者',
     notGitRepo: '当前项目不是 Git 仓库，无法统计代码量',
     noData: '所选时间段内暂无代码提交',
     loadFailed: '代码统计加载失败',

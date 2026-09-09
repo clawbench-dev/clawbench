@@ -48,6 +48,7 @@ const zhMessages = {
     colDeleted: '删除行数',
     colNet: '净增行数',
     colCommits: '提交数',
+    allAuthors: '全部作者',
     notGitRepo: '当前项目不是 Git 仓库，无法统计代码量',
     noData: '所选时间段内暂无代码提交',
     loadFailed: '代码统计加载失败',
@@ -180,6 +181,39 @@ describe('GitCodeStatsPanel', () => {
     expect(option.xAxis?.data).toEqual(['2026-09-01', '2026-09-02'])
     expect(option.series?.[0]?.data).toEqual([6, 4])
     expect(option.series?.[1]?.data).toEqual([1, 1])
+  })
+
+  it('lets the trend chart be scoped to a single author', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { added: 30, deleted: 5, net: 25, commitCnt: 3 },
+      rows: [
+        { author: 'Ann', added: 20, deleted: 3, net: 17, commitCnt: 2 },
+        { author: 'Bob', added: 10, deleted: 2, net: 8, commitCnt: 1 },
+      ],
+      trend: [
+        { day: '2026-09-01', author: 'Ann', added: 12, deleted: 2, net: 10, commitCnt: 1 },
+        { day: '2026-09-01', author: 'Bob', added: 10, deleted: 2, net: 8, commitCnt: 1 },
+        { day: '2026-09-02', author: 'Ann', added: 8, deleted: 1, net: 7, commitCnt: 1 },
+      ],
+    }))
+    const wrapper = await mountPanel()
+    // Two authors → the author-scope chips (plus the "all authors" default) render.
+    const chips = wrapper.findAll('.stats-chip').map(c => c.text())
+    expect(chips).toEqual(expect.arrayContaining(['全部作者', 'Ann', 'Bob']))
+
+    // Default "all authors": per-day sums across Ann+Bob.
+    const lastOption = (): { series?: { data: number[] }[]; xAxis?: { data: string[] } } =>
+      chartOptions[chartOptions.length - 1] as never
+    expect(lastOption().series?.[0]?.data).toEqual([22, 8])
+
+    // Click "Bob" → the trend lines now only carry Bob's own daily values.
+    // (Days come from the filtered rows, so only days where Bob committed stay.)
+    const bobChip = wrapper.findAll('.stats-chip').find(c => c.text() === 'Bob')
+    await bobChip!.trigger('click')
+    await nextTick()
+    await flushPromises()
+    expect(lastOption().series?.[0]?.data).toEqual([10])
+    expect(lastOption().xAxis?.data).toEqual(['2026-09-01'])
   })
 
   it('shows the server error message on failure', async () => {

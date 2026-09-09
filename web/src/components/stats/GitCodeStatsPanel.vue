@@ -122,6 +122,18 @@
               <ChartLine :size="13" class="stats-card-title-icon" />
               <span>{{ t('gitStats.trendTitle') }}</span>
             </div>
+            <!-- Author scope: all authors (summed) or one author's own lines. -->
+            <div v-if="authorOptions.length > 1" class="stats-chip-scroll">
+              <button
+                v-for="a in authorOptions"
+                :key="a.id"
+                class="stats-chip"
+                :class="{ active: trendAuthor === a.id }"
+                @click="trendAuthor = a.id"
+              >
+                {{ a.label }}
+              </button>
+            </div>
             <UsageChart :option="trendOption" class="git-chart" />
           </section>
         </template>
@@ -163,6 +175,20 @@ const customEnd = ref<string>('')
 // Sorting is client-side over the author rows (rows are few); default by added
 // lines desc. Clicking the added/deleted header cycles the sort column.
 const sortBy = ref<'added' | 'deleted'>('added')
+
+// Trend chart author scope. 'all' sums every author's commits per day (the
+// project-wide view); selecting an author narrows the lines to that author.
+const ALL_AUTHORS = '__all__'
+const trendAuthor = ref<string>(ALL_AUTHORS)
+
+const authorOptions = computed(() => {
+  const authors = [...new Set(tableRows.value.map(r => r.author))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+  const opts: { id: string; label: string }[] = [{ id: ALL_AUTHORS, label: t('gitStats.allAuthors') }]
+  for (const a of authors) opts.push({ id: a, label: a })
+  return opts
+})
 
 const isGit = computed(() => raw.value?.isGit === true)
 const rawLoaded = computed(() => raw.value !== null)
@@ -219,11 +245,15 @@ onBeforeUnmount(() => {
 
 const trendOption = computed(() => {
   void themeTick.value
-  // Backend trend rows are (day × author); fold across authors per day so the
-  // chart is not overwhelmed by a large contributor set.
-  const days = [...new Set(trend.value.map(r => r.day).filter(Boolean))] as string[]
-  const added = days.map(day => trend.value.filter(r => r.day === day).reduce((s, r) => s + r.added, 0))
-  const deleted = days.map(day => trend.value.filter(r => r.day === day).reduce((s, r) => s + r.deleted, 0))
+  // Backend trend rows are (day × author). "All authors" folds across authors
+  // per day for the project-wide view; a selected author only shows that
+  // author's own rows.
+  const rows = trendAuthor.value === ALL_AUTHORS
+    ? trend.value
+    : trend.value.filter(r => r.author === trendAuthor.value)
+  const days = [...new Set(rows.map(r => r.day).filter(Boolean))] as string[]
+  const added = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.added, 0))
+  const deleted = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.deleted, 0))
   return buildGitTrendOption(days, added, deleted, t('gitStats.colAdded'), t('gitStats.colDeleted'))
 })
 

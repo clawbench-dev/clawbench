@@ -122,6 +122,7 @@ export default {
     colDeleted: 'Lines deleted',
     colNet: 'Net lines',
     colCommits: 'Commits',
+    allAuthors: 'All authors',
     notGitRepo: 'The current project is not a Git repository — code stats unavailable',
     noData: 'No code commits in the selected period',
     loadFailed: 'Failed to load code statistics',
