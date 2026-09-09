@@ -75,11 +75,11 @@ describe('FileAttachmentList', () => {
     expect(wrapper.find('.attachment-ref').exists()).toBe(true)
   })
 
-  it('emits file-tag-click on click', async () => {
+  it('emits file-tag-click on click with the full entry', async () => {
     const wrapper = mountList([{ path: 'src/main.ts' }])
     await wrapper.find('.chat-file-attachment').trigger('click')
     expect(wrapper.emitted('file-tag-click')).toBeTruthy()
-    expect(wrapper.emitted('file-tag-click')![0]).toEqual(['src/main.ts'])
+    expect(wrapper.emitted('file-tag-click')![0]).toEqual([{ path: 'src/main.ts' }])
   })
 
   it('renders multiple files', () => {

@@ -39,26 +39,44 @@ interface AttachmentSnapshot {
 
 const attachmentDrafts = new Map<string, AttachmentSnapshot>()
 
+/**
+ * Identity of an attached file entry. A path may carry MULTIPLE independent
+ * references: a plain whole-file attach (no lines), and one or more distinct
+ * line ranges (e.g. quoting a Mermaid diagram's source fence). The composite
+ * key (path, startLine ?? 0, endLine ?? 0) keeps them separate, so attaching a
+ * diagram range to a file that is already attached as a whole keeps both.
+ */
+function sameEntry(a: FileEntry, b: FileEntry): boolean {
+  return a.path === b.path
+    && (a.startLine ?? 0) === (b.startLine ?? 0)
+    && (a.endLine ?? 0) === (b.endLine ?? 0)
+}
+
 function addAttachedFile(path: string, isDir: boolean = false, startLine?: number, endLine?: number) {
   if (!path) return
-  const existing = attachedFiles.value.find(f => f.path === path)
-  if (existing) {
-    // Upgrade with line info if the existing entry lacks it
-    if (startLine !== undefined && existing.startLine === undefined) {
-      existing.startLine = startLine
-      existing.endLine = endLine
-    }
-    return
-  }
-  attachedFiles.value.push({ path, isDir, startLine, endLine })
+  const candidate: FileEntry = { path, isDir, startLine, endLine }
+  if (attachedFiles.value.some(f => sameEntry(f, candidate))) return
+  attachedFiles.value.push(candidate)
 }
 
 function removeAttachedFile(index: number) {
   attachedFiles.value.splice(index, 1)
 }
 
-function removeAttachedFileByPath(path: string) {
-  const idx = attachedFiles.value.findIndex(f => f.path === path)
+/**
+ * Remove an attached file entry.
+ * With a line range, only the entry whose range matches exactly is removed
+ * (a whole-file entry for the same path stays). Without lines, the first
+ * path match is removed (legacy whole-file semantics; a path shown as
+ * "attached" via hasAttachedFile(path) is detached here even when what is
+ * attached is actually a diagram line-range).
+ */
+function removeAttachedFileByPath(path: string, startLine?: number, endLine?: number) {
+  if (!path) return
+  const idx = attachedFiles.value.findIndex(f =>
+    startLine === undefined
+      ? f.path === path
+      : sameEntry(f, { path, startLine, endLine }))
   if (idx >= 0) attachedFiles.value.splice(idx, 1)
 }
 
@@ -72,8 +90,17 @@ function toggleAttachedFile(path: string, isDir: boolean = false) {
   }
 }
 
-function hasAttachedFile(path: string): boolean {
-  return attachedFiles.value.some(f => f.path === path)
+/**
+ * Whether a path (or a specific line range of it) is attached.
+ * With a range, only an exact range match counts; without, any entry for the
+ * path counts (a whole-file / image attach remains truthy when only a diagram
+ * range is attached).
+ */
+function hasAttachedFile(path: string, startLine?: number, endLine?: number): boolean {
+  return attachedFiles.value.some(f =>
+    startLine === undefined
+      ? f.path === path
+      : sameEntry(f, { path, startLine, endLine }))
 }
 
 function setQuoteData(data: QuoteData | null) {

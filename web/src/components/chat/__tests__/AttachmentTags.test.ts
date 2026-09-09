@@ -22,6 +22,41 @@ describe('AttachmentTags', () => {
     expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
   })
 
+  it('renders the line range suffix on a ranged reference card', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 8 }],
+      },
+    })
+    expect(wrapper.find('.attachment-filename').text()).toContain('guide.md')
+    expect(wrapper.find('.attachment-filename .attachment-range').text()).toBe(':5-8')
+  })
+
+  it('emits the full entry on card click and on remove', async () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 8 }],
+      },
+    })
+    await wrapper.find('.attachment-ref').trigger('click')
+    expect(wrapper.emitted('file-click')![0]).toEqual([{ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 8 }])
+
+    await wrapper.find('.attachment-ref .attachment-close-btn').trigger('click')
+    expect(wrapper.emitted('remove')![0]).toEqual([{ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 8 }])
+  })
+
+  it('uses a composite key so two ranges of one file render as separate cards', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [
+          { path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 8 },
+          { path: 'docs/guide.md', isDir: false, startLine: 20, endLine: 30 },
+        ],
+      },
+    })
+    expect(wrapper.findAll('.attachment-ref')).toHaveLength(2)
+  })
+
   it('renders pending files with local Blob image preview and progress overlay', () => {
     const wrapper = mount(AttachmentTags, {
       props: {

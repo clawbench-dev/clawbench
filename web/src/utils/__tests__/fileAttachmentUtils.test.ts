@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, folderRelPath, isDirUploadFile } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, folderRelPath, isDirUploadFile } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -98,55 +98,69 @@ describe('dedupeFiles', () => {
     ])
   })
 
-  it('prefers entry with line-range metadata over simpler entry', () => {
+  it('keeps distinct line ranges of one file separate', () => {
     const files = [
-      { path: '/a.go', isDir: false },                                    // simple (no line info)
-      { path: '/b.go', isDir: false },
-      { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },       // richer (has line info)
+      { path: '/a.go', isDir: false },
+      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
+      { path: '/a.go', isDir: false, startLine: 20, endLine: 30 },
+    ]
+    expect(dedupeFiles(files)).toEqual([
+      { path: '/a.go', isDir: false },
+      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
+      { path: '/a.go', isDir: false, startLine: 20, endLine: 30 },
+    ])
+  })
+
+  it('collapses exact duplicates (same path and range)', () => {
+    const files = [
+      { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },
+      { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },
     ]
     expect(dedupeFiles(files)).toEqual([
       { path: '/a.go', isDir: false, startLine: 10, endLine: 20 },
+    ])
+  })
+
+  it('normalizes string entries', () => {
+    expect(dedupeFiles(['/a.go' as unknown as { path: string }])).toEqual([
+      { path: '/a.go', isDir: false },
+    ])
+  })
+})
+
+describe('buildSendChannels', () => {
+  it('sends plain files through filePaths', () => {
+    const { filePaths, entries } = buildSendChannels([
+      { path: '/a.go', isDir: false },
       { path: '/b.go', isDir: false },
     ])
+    expect(filePaths).toEqual(['/a.go', '/b.go'])
+    expect(entries).toEqual([])
   })
 
-  it('keeps simpler entry when richer entry comes first', () => {
-    // If the first occurrence already has line info, keep it
-    const files = [
-      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
-      { path: '/a.go', isDir: false },  // simpler, later — not replaced
-    ]
-    expect(dedupeFiles(files)).toEqual([
-      { path: '/a.go', isDir: false, startLine: 5, endLine: 15 },
+  it('routes every entry of a ranged path through entries and excludes the path from filePaths', () => {
+    const { filePaths, entries } = buildSendChannels([
+      { path: '/md/guide.md', isDir: false },                               // whole-file attach
+      { path: '/md/guide.md', isDir: false, startLine: 5, endLine: 15 },    // diagram range
+      { path: '/md/other.md', isDir: false },
+    ])
+    // guide.md carries a range → ALL its entries go through entries channel,
+    // and guide.md never appears in filePaths (backend would strip the ranged
+    // entry otherwise).
+    expect(filePaths).toEqual(['/md/other.md'])
+    expect(entries).toEqual([
+      { path: '/md/guide.md', isDir: false },
+      { path: '/md/guide.md', isDir: false, startLine: 5, endLine: 15 },
     ])
   })
 
-  it('does not replace when both entries have line info', () => {
-    const files = [
-      { path: '/a.go', isDir: false, startLine: 1, endLine: 10 },
-      { path: '/a.go', isDir: false, startLine: 20, endLine: 30 },
-    ]
-    // Keeps the first entry (already has line info)
-    expect(dedupeFiles(files)).toEqual([
-      { path: '/a.go', isDir: false, startLine: 1, endLine: 10 },
+  it('keeps multiple distinct ranges of one path together in entries', () => {
+    const { filePaths, entries } = buildSendChannels([
+      { path: '/md/guide.md', isDir: false, startLine: 5, endLine: 15 },
+      { path: '/md/guide.md', isDir: false, startLine: 30, endLine: 40 },
     ])
-  })
-
-  it('handles mixed uploaded + project files dedup', () => {
-    // Simulates sendMessage merge: uploaded file (no line info) + project file (with line info)
-    const uploaded = [{ path: '.clawbench/uploads/img.png', isDir: false }]
-    const project = [{ path: '/src/main.go', isDir: false, startLine: 42, endLine: 50 }]
-    // No overlap — both kept
-    expect(dedupeFiles([...uploaded, ...project])).toEqual([...uploaded, ...project])
-  })
-
-  it('dedupes auto-attached upload path that also appears as project reference', () => {
-    // A file auto-attached from upload AND manually attached as project reference
-    const uploaded = [{ path: '/src/main.go', isDir: false }]                          // from pendingFiles (no line info)
-    const project = [{ path: '/src/main.go', isDir: false, startLine: 10, endLine: 20 }] // from attachedFiles (has line info)
-    expect(dedupeFiles([...uploaded, ...project])).toEqual([
-      { path: '/src/main.go', isDir: false, startLine: 10, endLine: 20 },
-    ])
+    expect(filePaths).toEqual([])
+    expect(entries).toHaveLength(2)
   })
 })
 

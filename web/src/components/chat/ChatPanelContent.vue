@@ -91,7 +91,7 @@
       @cancel="stream.cancelStream"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
-      @remove-attached-by-path="removeAttachedFileByPath"
+      @remove-attached-by-path="handleRemoveAttachedEntry"
       @remove-quote="removeStagedQuote($event)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
@@ -192,7 +192,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { dedupeFiles } from '@/utils/fileAttachmentUtils.ts'
+import { dedupeFiles, buildSendChannels } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -293,14 +293,28 @@ const autoSpeech = useAutoSpeech()
 const theme = inject('theme', ref('light'))
 const { openFilePath } = useFilePathAnnotation()
 
-async function handleFileTagClick(filePath) {
+async function handleFileTagClick(fileEntry) {
+    // AttachmentTags emits the full FileEntry; history file cards may pass a path string.
+    const filePath = typeof fileEntry === 'string' ? fileEntry : fileEntry?.path
+    const startLine = typeof fileEntry === 'string' ? undefined : fileEntry?.startLine
+    const endLine = typeof fileEntry === 'string' ? undefined : fileEntry?.endLine
     if (filePath) {
         // Attachment paths from backend are absolute; strip projectRoot prefix
         // so openFilePath doesn't treat in-project files as external.
         const relPath = relativizeProjectPath(filePath, store.state.projectRoot)
         // openFilePath decides the destination tab itself (file → view, dir → browse).
-        await openFilePath(relPath, undefined, undefined, 'chat')
+        await openFilePath(relPath, startLine, endLine, 'chat')
     }
+}
+
+/** Remove an attached reference entry (from AttachmentTags cards or AttachDrawer
+ *  whole-file toggles). Ranged references remove only their own range. */
+function handleRemoveAttachedEntry(entry) {
+    const path = typeof entry === 'string' ? entry : entry?.path
+    if (!path) return
+    const startLine = typeof entry === 'string' ? undefined : entry?.startLine
+    const endLine = typeof entry === 'string' ? undefined : entry?.endLine
+    removeAttachedFileByPath(path, startLine, endLine)
 }
 
 async function handleQuoteClick(q) {
@@ -830,11 +844,14 @@ async function sendMessage(text) {
        return
      }
 
-    // Build file paths and entries from attachedFiles (unified channel)
-    const filePaths = attachedFiles.value.map(f => f.path)
-     const uploadedFiles = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
+    // Build file paths and entries from attachedFiles (unified channel).
+    // Paths carrying a line-range reference must go through the entries
+    // channel ONLY (never filePaths) or the backend would strip their ranges.
+    // Uploaded files always travel through the entries channel.
+    const uploadedFiles = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
     const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
     const allFiles = dedupeFiles([...uploadedFiles, ...projectFiles])
+    const { filePaths } = buildSendChannels(projectFiles)
 
     // Clear input state before async request
     clearAll()

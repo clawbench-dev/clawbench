@@ -218,4 +218,26 @@ describe('MarkdownPreviewBody.vue', () => {
     await wrapper.find('img.lightbox-img').trigger('click')
     expect(attachedFiles.value).toEqual([])
   })
+
+  it('attaches a markdown line range when a mermaid attach badge is tapped', async () => {
+    addTestAttachment('docs/guide.md')
+    const { wrapper } = mountBody({
+      renderedHtml: '<div class="markdown-content"><div class="mermaid" data-source-line="5" data-mermaid="graph TD; A-->B"><svg></svg><span class="mermaid-attach-badge"><svg></svg></span></div></div>',
+    })
+    // The component template renders its own .markdown-body.md-preview-body
+    // (data-file-path from the filePath prop) around .markdown-content.
+    const body = wrapper.find('.markdown-body.md-preview-body')
+    expect(body.exists()).toBe(true)
+    expect(body.attributes('data-file-path')).toBe('docs/guide.md')
+    const badge = body.find('.mermaid-attach-badge')
+    expect(badge.exists()).toBe(true)
+    await badge.trigger('click')
+    // docs/guide.md was already attached whole → adding a range keeps both.
+    const entry = attachedFiles.value.find(f => f.startLine === 5)
+    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 7 })
+    // Tapping again removes only that range.
+    await badge.trigger('click')
+    expect(attachedFiles.value.some(f => f.startLine === 5)).toBe(false)
+    expect(attachedFiles.value.some(f => f.path === 'docs/guide.md' && f.startLine === undefined)).toBe(true)
+  })
 })

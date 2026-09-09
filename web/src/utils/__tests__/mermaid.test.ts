@@ -307,6 +307,68 @@ describe('mermaid', () => {
             expect(el.querySelectorAll('div.mermaid').length).toBe(3)
         })
 
+        it('should not arm the attach badge in share mode even inside a file preview', async () => {
+            // Import the real shareMode singleton so we can toggle it.
+            const { setShareToken } = await import('@/share/shareMode')
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            setShareToken('tok-share')
+            try {
+                const mdBody = document.createElement('div')
+                mdBody.className = 'markdown-body'
+                mdBody.setAttribute('data-file-path', 'docs/guide.md')
+                const pre = document.createElement('pre')
+                pre.className = 'mermaid'
+                pre.setAttribute('data-source-line', '5')
+                pre.textContent = 'graph TD; A-->B'
+                mdBody.appendChild(pre)
+                await renderMermaidInElement(mdBody)
+                const diagram = mdBody.querySelector('div.mermaid')!
+                expect(diagram.querySelector('.mermaid-attach-badge')).toBeNull()
+            } finally {
+                setShareToken(null)
+            }
+        })
+
+        it('should re-arm the attach badge after reRenderMermaid wipes innerHTML', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>first</svg>' })
+            // Keep the diagram inside its .markdown-body[data-file-path] and
+            // mount that subtree on document.body so reRenderMermaid (which
+            // queries document-level div.mermaid[data-mermaid]) finds it.
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            document.body.appendChild(mdBody)
+            addedElements.push(mdBody)
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.textContent = 'graph TD; A-->B'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const diagram = mdBody.querySelector('div.mermaid')!
+            expect(diagram.querySelector('.mermaid-attach-badge')).not.toBeNull()
+
+            mockRender.mockResolvedValue({ svg: '<svg>second</svg>' })
+            await reRenderMermaid()
+            expect(diagram.querySelector('.mermaid-attach-badge')).not.toBeNull()
+        })
+
+        it('should arm the attach badge with the localized aria label', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.textContent = 'graph TD; A-->B'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const badge = mdBody.querySelector('.mermaid-attach-badge')!
+            expect(badge.getAttribute('aria-label')).toBeTruthy()
+            expect(badge.getAttribute('role')).toBe('button')
+        })
+
         it('should not leave raw source when mermaid lazy-load fails (chunk fetch error)', async () => {
             // Simulate the observed root cause: the dynamic import of the mermaid
             // chunk fails (e.g. "Failed to fetch dynamically imported module" over

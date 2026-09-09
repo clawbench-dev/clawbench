@@ -139,7 +139,7 @@
         @close="attachDrawer.close()"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
-        @file-open="(path) => emit('file-tag-click', path)"
+        @file-open="(entry) => emit('file-tag-click', entry)"
       />
       <!-- Teleported quick-send menu -->
       <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
@@ -1491,8 +1491,12 @@ function handleAttachFile(filePath, isDir) {
   emit('add-attached', filePath, isDir)
 }
 
-function handleRemoveAttached(filePath) {
-  emit('remove-attached-by-path', filePath)
+/** Remove an attached reference card. Payload is either the full FileEntry
+ *  (AttachmentTags cards — a line-range reference removes only its own range)
+ *  or a bare path string (AttachDrawer whole-file toggles). */
+function handleRemoveAttached(entryOrPath) {
+  const entry = typeof entryOrPath === 'string' ? { path: entryOrPath } : entryOrPath
+  emit('remove-attached-by-path', entry)
 }
 
 async function toggleAttachMenu() {

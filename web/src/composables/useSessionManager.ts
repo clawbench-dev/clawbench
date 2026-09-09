@@ -3,7 +3,7 @@ import { useSessionIdentity, runningSessions } from '@/composables/useSessionIde
 import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 
 /**
@@ -89,7 +89,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    *  boundary. */
   async function enqueueMessage(sessionId: string, text: string, attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = [], queueId?: string): Promise<boolean> {
     const inputText = text !== undefined ? text : ''
-    const filePaths = attachedFiles.map(f => f.path)
+    // Split the REFERENCE attachments into the two backend channels: any path
+    // carrying a line-range reference must travel through `files` only (the
+    // backend cross-dedup would strip ranged entries whose path is also in
+    // filePaths). Pending upload paths always go through `files`.
+    const { filePaths } = buildSendChannels(attachedFiles)
     const allFileEntries: FileEntry[] = [
       ...(pendingFilePaths || []).map(p => ({ path: p, isDir: false })),
       ...attachedFiles,

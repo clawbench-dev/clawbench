@@ -2,6 +2,8 @@
 import { getMermaid } from './lazyMermaid.ts'
 import { appLog } from '@/utils/appLog'
 import { isDarkTheme } from './themeMeta'
+import { gt } from '@/composables/useLocale'
+import { isShareMode } from '@/share/shareMode'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -111,6 +113,37 @@ async function ensureInit(): Promise<void> {
 /** Build error fallback HTML with retry button */
 function mermaidErrorHtml(errorMessage: string): string {
     return `<pre class="mermaid-error-pre">Mermaid Error: ${errorMessage}</pre><button class="mermaid-retry-btn" type="button" aria-label="Retry rendering diagram">Retry</button>`
+}
+
+/** Minimal paperclip glyph for the mermaid attach-to-chat badge (no font deps). */
+const ATTACH_BADGE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
+
+/**
+ * Arm the touch "attach to chat" badge on a rendered diagram.
+ *
+ * Only meaningful in a FILE-PREVIEW context where the diagram belongs to a
+ * markdown file the user can reference: the container must sit inside a
+ * `.markdown-body[data-file-path]` with a non-empty path, and the page must
+ * not be the public share SPA (share viewers have no chat to attach to).
+ * Chat messages and the static HTML exporter never match those conditions, so
+ * they stay plain. Idempotent: re-renders (theme change / retry) that wipe the
+ * container's innerHTML re-add the badge on the next successful render.
+ */
+function maybeArmMermaidAttachBadge(container: HTMLElement): void {
+    if (container.querySelector(':scope > .mermaid-attach-badge')) return
+    if (isShareMode()) return
+    const mdBody = container.closest<HTMLElement>('.markdown-body[data-file-path]')
+    const mdPath = mdBody?.getAttribute('data-file-path') || ''
+    if (!mdPath) return
+    const label = escapeHtml(gt('chat.attach.attachDiagramToChat'))
+    const badge = document.createElement('span')
+    badge.className = 'mermaid-attach-badge'
+    badge.setAttribute('role', 'button')
+    badge.setAttribute('tabindex', '-1')
+    badge.setAttribute('title', label)
+    badge.setAttribute('aria-label', label)
+    badge.innerHTML = ATTACH_BADGE_SVG
+    container.appendChild(badge)
 }
 
 /** Replace a mermaid container with a <pre class="mermaid"> for re-rendering */
@@ -225,6 +258,8 @@ export async function renderMermaidInElement(
                 const expandIcon = document.createElement('span')
                 expandIcon.className = 'lightbox-expand-icon'
                 container.appendChild(expandIcon)
+                // Add touch attach-to-chat badge in file-preview contexts
+                maybeArmMermaidAttachBadge(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div into the DOM
                 // with the render id before throwing — remove them so they don't
@@ -269,6 +304,8 @@ export async function reRenderMermaid(): Promise<void> {
                 const expandIcon = document.createElement('span')
                 expandIcon.className = 'lightbox-expand-icon'
                 container.appendChild(expandIcon)
+                // Re-arm the touch attach-to-chat badge after the wipe
+                maybeArmMermaidAttachBadge(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div before throwing
                 cleanupMermaidOrphan(renderId)

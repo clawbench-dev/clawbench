@@ -22,18 +22,47 @@ describe('useChatContext', () => {
       expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 }])
     })
 
-    it('addAttachedFile upgrades existing entry with line info', () => {
+    it('addAttachedFile keeps a whole-file and a ranged entry for the same path separate', () => {
       ctx.addAttachedFile('/src/foo.ts')
-      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false }])
-
       ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
-      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 }])
+      expect(ctx.attachedFiles.value).toEqual([
+        { path: '/src/foo.ts', isDir: false },
+        { path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 },
+      ])
     })
 
-    it('addAttachedFile does not overwrite existing line info', () => {
+    it('addAttachedFile keeps two distinct line ranges of one file separate', () => {
       ctx.addAttachedFile('/src/foo.ts', false, 5, 15)
       ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
-      expect(ctx.attachedFiles.value).toEqual([{ path: '/src/foo.ts', isDir: false, startLine: 5, endLine: 15 }])
+      expect(ctx.attachedFiles.value).toEqual([
+        { path: '/src/foo.ts', isDir: false, startLine: 5, endLine: 15 },
+        { path: '/src/foo.ts', isDir: false, startLine: 10, endLine: 20 },
+      ])
+    })
+
+    it('addAttachedFile is a no-op when the exact same range is already attached', () => {
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('removeAttachedFileByPath with a range removes only that range', () => {
+      ctx.addAttachedFile('/src/foo.ts')
+      ctx.addAttachedFile('/src/foo.ts', false, 5, 15)
+      ctx.addAttachedFile('/src/foo.ts', false, 10, 20)
+      ctx.removeAttachedFileByPath('/src/foo.ts', 10, 20)
+      expect(ctx.attachedFiles.value).toEqual([
+        { path: '/src/foo.ts', isDir: false },
+        { path: '/src/foo.ts', isDir: false, startLine: 5, endLine: 15 },
+      ])
+    })
+
+    it('hasAttachedFile with a range matches only that exact range', () => {
+      ctx.addAttachedFile('/src/foo.ts')
+      ctx.addAttachedFile('/src/foo.ts', false, 5, 15)
+      expect(ctx.hasAttachedFile('/src/foo.ts')).toBe(true)
+      expect(ctx.hasAttachedFile('/src/foo.ts', 5, 15)).toBe(true)
+      expect(ctx.hasAttachedFile('/src/foo.ts', 10, 20)).toBe(false)
     })
 
     it('addAttachedFile adds a directory entry', () => {

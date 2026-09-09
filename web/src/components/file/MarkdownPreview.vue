@@ -48,6 +48,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -157,10 +158,25 @@ const mdImageAttachActions: MdImageAttachActions = {
     },
 }
 
+// Mermaid range-reference badge: same singletons, ranged identity.
+const mermaidAttachActions: MermaidAttachActions = {
+    add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+    remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
+    has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
 function handleClick(event: MouseEvent) {
     // Touch image attach badge — first in the chain so its stopPropagation
     // prevents the click from reaching the image/lightbox handlers below.
     if (handleMdImageAttachClick(event, mdImageAttachActions)) return
+
+    // Touch mermaid range-reference badge (same rationale).
+    if (handleMermaidAttachClick(event, mermaidAttachActions)) return
 
     // Code block header buttons (copy/wrap)
     if (handleCodeBlockClick(event)) return

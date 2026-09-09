@@ -868,11 +868,18 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('add-attached')![0]).toEqual(['/path/to/file.ts', undefined])
   })
 
-  it('handleRemoveAttached emits remove-attached-by-path', async () => {
+  it('handleRemoveAttached emits remove-attached-by-path with the entry', async () => {
     const wrapper = mountBar()
     wrapper.vm.handleRemoveAttached('/path/to/file.ts')
     expect(wrapper.emitted('remove-attached-by-path')).toBeTruthy()
-    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual(['/path/to/file.ts'])
+    // A bare path is normalized to an entry; ranged entries pass through whole.
+    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual([{ path: '/path/to/file.ts' }])
+  })
+
+  it('handleRemoveAttached passes a ranged entry through unchanged', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.handleRemoveAttached({ path: 'md/guide.md', startLine: 5, endLine: 7 })
+    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual([{ path: 'md/guide.md', startLine: 5, endLine: 7 }])
   })
 
   it('handleSwitchModel emits switch-model', async () => {

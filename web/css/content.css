@@ -121,7 +121,8 @@
    expand affordance; shown persistently on touch / coarse-pointer devices
    where HTML5 drag-and-drop does not exist. Tapping it attaches the image file
    to the chat as a reference attachment. */
-.markdown-body .lightbox-img-wrap .img-attach-badge {
+.markdown-body .lightbox-img-wrap .img-attach-badge,
+.markdown-body .mermaid .mermaid-attach-badge {
     display: none;
     position: absolute;
     top: 4px;
@@ -138,19 +139,28 @@
     pointer-events: auto;
 }
 
-.markdown-body .lightbox-img-wrap .img-attach-badge svg {
+.markdown-body .lightbox-img-wrap .img-attach-badge svg,
+.markdown-body .mermaid .mermaid-attach-badge svg {
     width: 13px;
     height: 13px;
 }
 
+/* Mermaid containers need a positioning context for the absolute badge /
+   expand icon overlays. */
+.markdown-body .mermaid {
+    position: relative;
+}
+
 @media (hover: none), (pointer: coarse) {
-    .markdown-body .lightbox-img-wrap .img-attach-badge {
+    .markdown-body .lightbox-img-wrap .img-attach-badge,
+    .markdown-body .mermaid .mermaid-attach-badge {
         display: flex;
     }
-    /* Coarse/touch devices: the badge owns the top-right corner, so the
-       hover-only expand icon must never appear there — not even on hybrid
-       touchscreens that also report hover:hover. Hide it unconditionally. */
-    .markdown-body .lightbox-img-wrap .lightbox-expand-icon {
+    /* Coarse/touch devices: the badges own the top-right corner, so the
+       hover-only expand icons must never appear there — not even on hybrid
+       touchscreens that also report hover:hover. Hide them unconditionally. */
+    .markdown-body .lightbox-img-wrap .lightbox-expand-icon,
+    .markdown-body .mermaid .lightbox-expand-icon {
         display: none;
     }
 }

@@ -109,6 +109,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -178,10 +179,23 @@ const mdImageAttachActions: MdImageAttachActions = {
   },
 }
 
-/** Delegated click: only the image attach badge reacts; everything else in the
-    read-only document view is left untouched (the parent / lightbox handle it). */
+// Mermaid range-reference badge: same singletons, ranged identity.
+const mermaidAttachActions: MermaidAttachActions = {
+  add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+  remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
+  has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
+  toast: (msg, opts) => showToast(msg, opts),
+  messages: {
+    added: gt('chat.attach.addedToChat'),
+    removed: gt('chat.attach.removedFromChat'),
+  },
+}
+
+/** Delegated click: only the image/mermaid attach badges react; everything else
+    in the read-only document view is left untouched (parent / lightbox handles). */
 function handleBodyClick(e: MouseEvent) {
   handleMdImageAttachClick(e, mdImageAttachActions)
+  handleMermaidAttachClick(e, mermaidAttachActions)
 }
 
 // ── Mermaid ────────────────────────────────────────────────────────────────

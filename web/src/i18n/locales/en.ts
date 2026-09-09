@@ -460,6 +460,7 @@ export default {
       removedFromChat: 'Removed from chat attachments',
       removeFromChat: 'Remove attachment',
       attachImageToChat: 'Add image to chat',
+      attachDiagramToChat: 'Add diagram to chat',
     },
     quickSend: {
       title: 'Quick Send Message',

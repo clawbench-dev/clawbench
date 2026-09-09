@@ -18,17 +18,19 @@
     </template>
 
     <!-- Attached file reference cards -->
-    <span v-for="fileEntry in files" :key="'att-' + fileEntry.path"
+    <span v-for="fileEntry in files" :key="'att-' + entryKey(fileEntry)"
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': isImageFile(fileEntry.path) && (isThumbableExt(fileEntry.path) || thumbErrors.has(fileEntry.path)) }"
-      @click="$emit('file-click', fileEntry.path)"
+      @click="$emit('file-click', fileEntry)"
       :title="t('chat.attach.openFile')">
       <img v-if="isImageFile(fileEntry.path) && isThumbableExt(fileEntry.path) && !thumbErrors.has(fileEntry.path)"
         class="attachment-thumb-img"
         :src="thumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
       <FileIcon v-if="!isImageFile(fileEntry.path)" :path="fileEntry.path" :is-dir="fileEntry.isDir" :size="22" class="attachment-file-icon" />
-      <span v-if="!isImageFile(fileEntry.path)" class="attachment-filename">{{ getFileName(fileEntry.path) }}</span>
-      <button class="attachment-close-btn" @click.stop="$emit('remove', fileEntry.path)" :title="t('common.remove')">×</button>
+      <span v-if="!isImageFile(fileEntry.path)" class="attachment-filename">
+        {{ getFileName(fileEntry.path) }}<template v-if="fileEntry.startLine !== undefined"><span class="attachment-range">{{ lineRangeLabel(fileEntry) }}</span></template>
+      </span>
+      <button class="attachment-close-btn" @click.stop="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
     </span>
   </div>
 </template>
@@ -53,13 +55,25 @@ const props = withDefaults(defineProps<{
 })
 
 defineEmits<{
-  'file-click': [path: string]
-  'remove': [path: string]
+  'file-click': [entry: FileEntry]
+  'remove': [entry: FileEntry]
   'remove-pending': [index: number]
 }>()
 
 const { t } = useI18n()
 const thumbUrl = buildPathThumbUrl
+
+/** Composite key so distinct line-range references of one file stay separate. */
+function entryKey(entry: FileEntry): string {
+  return `${entry.path}|${entry.startLine ?? 0}|${entry.endLine ?? 0}`
+}
+
+/** "N" for a single line or "N-M" for a range. */
+function lineRangeLabel(entry: FileEntry): string {
+  if (entry.startLine === undefined) return ''
+  if (entry.endLine === undefined || entry.endLine === entry.startLine) return `:${entry.startLine}`
+  return `:${entry.startLine}-${entry.endLine}`
+}
 
 const thumbErrors = ref(new Set<string>())
 function onThumbError(path: string) {
