@@ -58,7 +58,7 @@ export function buildBarOption(categories: string[], values: number[], metric: U
     const many = categories.length > 8
     const opt: Record<string, unknown> = {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-      grid: { left: 4, right: 4, top: 18, bottom: many ? 28 : 0, containLabel: true },
+      grid: { left: 4, right: 4, top: 18, bottom: 0, containLabel: true },
       xAxis: {
         type: 'category',
         data: categories,
@@ -66,12 +66,10 @@ export function buildBarOption(categories: string[], values: number[], metric: U
           color: p.textSecondary,
           fontSize: 10,
           interval: 0,
-          // Long "model × agent" names rotate so they do not overlap, but stay
-          // as horizontal as possible to keep the chart short.
-          rotate: many ? 40 : 0,
-          width: many ? 70 : undefined,
-          overflow: 'truncate',
-          hideOverlap: false,
+          // Long "model × agent" names overlap when horizontal — tilt them so
+          // each stays readable without truncation. containLabel reserves the
+          // tilted text space automatically.
+          rotate: 40,
         },
         axisLine: { lineStyle: { color: p.axisLine } },
       },

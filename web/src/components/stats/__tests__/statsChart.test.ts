@@ -24,12 +24,12 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(isNarrowScreen()).toBe(false)
   })
 
-  it('bar: mobile renders vertical bars with bottom category axis', () => {
+  it('bar: mobile renders vertical bars with tilted bottom category axis', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
     setInnerWidth(800)
     const narrow = buildBarOption(cats, vals, 'total') as {
-      xAxis: { type: string; data?: string[] }
+      xAxis: { type: string; data?: string[]; axisLabel: { rotate?: number } }
       yAxis: { type: string; show?: boolean }
       series: { type: string; data: number[] }[]
     }
@@ -41,6 +41,9 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(narrow.xAxis.data).toEqual(cats)
     expect(narrow.yAxis.type).toBe('value')
     expect(narrow.yAxis.show).toBe(false)
+    // Bottom category labels are tilted so long names stay readable without
+    // truncation.
+    expect(narrow.xAxis.axisLabel.rotate).toBe(40)
 
     setInnerWidth(1440)
     const wide = buildBarOption(cats, vals, 'total') as {
