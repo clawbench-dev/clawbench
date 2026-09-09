@@ -45,42 +45,6 @@ function buildImageUrl(): string {
   return `/api/file/theme-background?v=${Date.now()}-${imageUrlNonce}`
 }
 
-// ── Share-page (public /share/{token}) wallpaper URLs ───────────────────────
-// The share SPA is unauthenticated, so its wallpaper fetches must go through
-// the token-scoped public endpoints instead of the auth-protected
-// /api/file/theme-background. The capability token is the sole credential.
-
-/** Relative base of the token-scoped wallpaper endpoints. */
-export function shareWallpaperApiBase(token: string): string {
-  return `/api/share/${encodeURIComponent(token)}`
-}
-
-/** Public appearance-config endpoint (wallpaper_file / panel_opacity). */
-export function shareAppearanceUrl(token: string): string {
-  return `${shareWallpaperApiBase(token)}/appearance`
-}
-
-/**
- * Public wallpaper image URL for the share page, with a cache-busting query.
- * Returns an empty string when `token` is blank.
- */
-export function resolveShareWallpaperUrl(token: string): string {
-  if (!token) return ''
-  imageUrlNonce += 1
-  return `${shareWallpaperApiBase(token)}/theme-background?v=${Date.now()}-${imageUrlNonce}`
-}
-
-/**
- * Shape of GET /api/share/{token}/appearance — the public wallpaper subset of
- * the server config (snake_case mirrors /api/config's appearance section).
- */
-export interface ShareAppearance {
-  appearance?: {
-    wallpaper_file?: string
-    panel_opacity?: number
-  }
-}
-
 /** URL of the served wallpaper image, including a version query for cache busting. */
 export function wallpaperImageUrl(): string {
   return buildImageUrl()
@@ -133,47 +97,14 @@ export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark
 
   el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
   el.style.setProperty('--wallpaper-scrim', active ? wallpaperScrim(dark) : 'transparent')
+
+  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
   // Store the panel opacity as a <percentage> so the CSS color-mix stops are
   // plain percentages (calc() inside color-mix trips some CSS minifiers).
-  el.style.setProperty('--panel-alpha', resolvePanelAlphaCss(panelOpacity))
+  el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)
 
   el.classList.toggle('wallpaper-active', active)
-  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} alpha=${panelOpacity} dark=${dark} url=${url || 'none'}`)
-}
-
-/**
- * Clamp + format the panel-opacity as a percentage string for --panel-alpha.
- * Kept separate so the share-page applier and the tests reuse the exact same
- * clamp/rounding as applyWallpaper.
- */
-export function resolvePanelAlphaCss(panelOpacity: number): string {
-  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
-  return `${Math.round(alpha * 1000) / 10}%`
-}
-
-/**
- * Apply (or clear) the wallpaper effect on the public share SPA.
- * `token`         — share capability token (must be non-empty to fetch images).
- * `wallpaperFile` — active file name from the share appearance endpoint ('' = none).
- * `panelOpacity`  — 0.5..1.0 opacity multiplier (clamped).
- * `dark`          — current resolved theme is dark (drives scrim strength).
- *
- * Same document-level side effects as applyWallpaper (scrim / --panel-alpha /
- * wallpaper-active class), but the <img> src is bound separately via
- * resolveShareWallpaperUrl(token) because the share SPA renders on the
- * unauthenticated /share/{token} origin.
- */
-export function applyShareWallpaper(token: string, wallpaperFile: string, panelOpacity: number, dark: boolean): void {
-  const el = document.documentElement
-  const active = !!wallpaperFile && !!token
-  const url = active ? resolveShareWallpaperUrl(token) : ''
-
-  el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
-  el.style.setProperty('--wallpaper-scrim', active ? wallpaperScrim(dark) : 'transparent')
-  el.style.setProperty('--panel-alpha', active ? resolvePanelAlphaCss(panelOpacity) : '100%')
-
-  el.classList.toggle('wallpaper-active', active)
-  appLog.d('ThemeBg', `applyShareWallpaper token=${!!token} file=${wallpaperFile || '(none)'} alpha=${panelOpacity} dark=${dark}`)
+  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} alpha=${alpha} dark=${dark} url=${url || 'none'}`)
 }
 
 /** Reset the cached image URL/file state (used when the wallpaper is removed). */

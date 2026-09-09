@@ -251,34 +251,7 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
-	absPath, info, ok := resolveThemeWallpaperPath(w, r)
-	if !ok {
-		return
-	}
-	serveThemeWallpaperFile(w, r, absPath, info)
-}
 
-// serveShareThemeBackgroundGet is the token-scoped public twin of
-// ServeThemeBackgroundGet, mounted under /api/share/{token}/theme-background.
-// It reuses the exact same path validation + serve logic so the security
-// posture (containment, nosniff, SVG CSP) cannot drift between the two
-// serving paths. The caller has already confirmed the share token is valid.
-func serveShareThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
-		return
-	}
-	absPath, info, ok := resolveThemeWallpaperPath(w, r)
-	if !ok {
-		return
-	}
-	serveThemeWallpaperFile(w, r, absPath, info)
-}
-
-// resolveThemeWallpaperPath validates the configured wallpaper file name
-// (bare name, extension whitelist, symlink-safe under-dir guard) and resolves
-// it to an existing file. On any failure it writes a 404 and returns ok=false,
-// so a corrupted config value can never escape the theme dir.
-func resolveThemeWallpaperPath(w http.ResponseWriter, r *http.Request) (string, os.FileInfo, bool) {
 	configMutex.RLock()
 	cfg := model.ConfigInstance
 	configMutex.RUnlock()
@@ -286,43 +259,36 @@ func resolveThemeWallpaperPath(w http.ResponseWriter, r *http.Request) (string, 
 	name := cfg.Appearance.WallpaperFile
 	if name == "" {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
 
 	// Strict containment: must be a bare file name with a whitelisted ext.
 	if name != filepath.Base(name) || strings.ContainsAny(name, "/\\") {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
+	ext := strings.ToLower(filepath.Ext(name))
 	if !model.IsThemeAllowedExt(name) {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
 
 	themeDir := model.DefaultThemeDir()
 	if themeDir == "" {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
 	absPath := filepath.Join(themeDir, name)
 	if !isPathUnderBase(absPath, themeDir) {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil || info.IsDir() {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return "", nil, false
+		return
 	}
-	return absPath, info, true
-}
-
-// serveThemeWallpaperFile streams a validated wallpaper file with the full
-// security header policy shared by the authed and share-served endpoints.
-func serveThemeWallpaperFile(w http.ResponseWriter, r *http.Request, absPath string, info os.FileInfo) {
-	name := filepath.Base(absPath)
-	ext := strings.ToLower(filepath.Ext(name))
 
 	mime := wallpaperMimeTypes[ext]
 	if mime == "" {
@@ -330,8 +296,8 @@ func serveThemeWallpaperFile(w http.ResponseWriter, r *http.Request, absPath str
 	}
 	w.Header().Set("Content-Type", mime)
 	// nosniff: never let a browser content-sniff a wallpaper into HTML/SVG.
-	// The wallpaper is stored on the server origin, so sniffed active content
-	// would be an XSS vector.
+	// The wallpaper is stored on the authenticated server origin, so sniffed
+	// active content would be a session-level XSS vector.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	if ext == ".svg" {

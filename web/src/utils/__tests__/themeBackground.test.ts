@@ -1,18 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   applyWallpaper,
-  applyShareWallpaper,
   applyWallpaperScrim,
   resolveWallpaperState,
   resolvePanelOpacity,
-  resolvePanelAlphaCss,
   resolveWallpaperUrl,
   resetWallpaperUrlCache,
   currentThemeIsDark,
   wallpaperImageUrl,
-  shareWallpaperApiBase,
-  shareAppearanceUrl,
-  resolveShareWallpaperUrl,
 } from '../themeBackground'
 
 // appLog relays to native/server; keep it inert in unit tests.
@@ -183,73 +178,6 @@ describe('themeBackground', () => {
       const a = resolveWallpaperUrl('background.png')
       expect(a).toBeTruthy()
       expect(resolveWallpaperUrl('')).toBe('')
-    })
-  })
-
-  describe('share wallpaper helpers', () => {
-    it('builds token-scoped API URLs', () => {
-      expect(shareWallpaperApiBase('tok123')).toBe('/api/share/tok123')
-      expect(shareAppearanceUrl('tok123')).toBe('/api/share/tok123/appearance')
-    })
-
-    it('escapes tokens that need URL encoding', () => {
-      expect(shareWallpaperApiBase('a b/c')).toBe('/api/share/a%20b%2Fc')
-    })
-
-    it('resolveShareWallpaperUrl points at the token-scoped theme-background endpoint', () => {
-      const url = resolveShareWallpaperUrl('tok123')
-      expect(url).toContain('/api/share/tok123/theme-background?v=')
-      // A fresh URL is generated per call (cache-busting).
-      expect(resolveShareWallpaperUrl('tok123')).not.toBe(url)
-    })
-
-    it('resolveShareWallpaperUrl returns empty for a blank token', () => {
-      expect(resolveShareWallpaperUrl('')).toBe('')
-    })
-  })
-
-  describe('resolvePanelAlphaCss', () => {
-    it('formats the alpha as a percentage string', () => {
-      expect(resolvePanelAlphaCss(0.9)).toBe('90%')
-      expect(resolvePanelAlphaCss(0.85)).toBe('85%')
-    })
-
-    it('clamps to the valid range and defaults on non-finite input', () => {
-      expect(resolvePanelAlphaCss(5)).toBe('100%')
-      expect(resolvePanelAlphaCss(0.1)).toBe('50%')
-      expect(resolvePanelAlphaCss(Number.NaN)).toBe('85%')
-    })
-  })
-
-  describe('applyShareWallpaper', () => {
-    beforeEach(() => {
-      resetWallpaperUrlCache()
-    })
-
-    it('activates wallpaper-active with the token-scoped URL + scrim + alpha', () => {
-      applyShareWallpaper('tok123', 'background.png', 0.9, false)
-      const html = document.documentElement
-      expect(html.classList.contains('wallpaper-active')).toBe(true)
-      expect(html.style.getPropertyValue('--panel-alpha')).toBe('90%')
-      expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.12)')
-      // The share page renders the <img> src separately via
-      // resolveShareWallpaperUrl — the CSS var also carries the token URL.
-      expect(html.style.getPropertyValue('--wallpaper-url')).toContain('/api/share/tok123/theme-background')
-    })
-
-    it('is inert when the token is blank even if a file name is present', () => {
-      applyShareWallpaper('', 'background.png', 0.85, false)
-      const html = document.documentElement
-      expect(html.classList.contains('wallpaper-active')).toBe(false)
-      expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('transparent')
-    })
-
-    it('clears the effect when the wallpaper file is empty', () => {
-      applyShareWallpaper('tok123', 'background.png', 0.85, false)
-      applyShareWallpaper('tok123', '', 0.85, false)
-      const html = document.documentElement
-      expect(html.classList.contains('wallpaper-active')).toBe(false)
-      expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
     })
   })
 })
