@@ -369,6 +369,26 @@ describe('mermaid', () => {
             expect(badge.getAttribute('role')).toBe('button')
         })
 
+        it('should carry data-source-end onto the rendered container', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.setAttribute('data-source-end', '9')
+            pre.textContent = 'graph TD\n  A-->B\n'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const container = mdBody.querySelector('div.mermaid')!
+            // The attach badge resolves the closing-fence line from this attr —
+            // dropping it made the range one short whenever the fence body had a
+            // trailing blank line (textContent.trim() removes it).
+            expect(container.getAttribute('data-source-line')).toBe('5')
+            expect(container.getAttribute('data-source-end')).toBe('9')
+        })
+
         it('should not leave raw source when mermaid lazy-load fails (chunk fetch error)', async () => {
             // Simulate the observed root cause: the dynamic import of the mermaid
             // chunk fails (e.g. "Failed to fetch dynamically imported module" over
@@ -481,6 +501,36 @@ describe('mermaid', () => {
             expect(el.querySelector('div.mermaid[data-mermaid-error]')).toBeNull()
             const rendered = el.querySelector('div.mermaid')
             expect(rendered?.innerHTML).toContain('<svg>retried</svg>')
+        })
+
+        it('should preserve data-source-end across a retry round-trip', async () => {
+            // First render fails → error div; retry rebuilds a <pre> then renders
+            // again. data-source-end must survive both hops or the attach badge
+            // loses the authoritative closing-fence line.
+            mockRender.mockRejectedValueOnce(new Error('Transient error'))
+            mockRender.mockResolvedValue({ svg: '<svg>retried</svg>' })
+
+            const el = document.createElement('div')
+            document.body.appendChild(el)
+            addedElements.push(el)
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.setAttribute('data-source-end', '9')
+            pre.textContent = 'graph TD; A-->B'
+            el.appendChild(pre)
+
+            await renderMermaidInElement(el)
+            const errorDiv = el.querySelector('div.mermaid[data-mermaid-error]')!
+            expect(errorDiv.getAttribute('data-source-end')).toBe('9')
+
+            errorDiv.querySelector('.mermaid-retry-btn')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+            await vi.waitFor(() => {
+                expect(el.querySelector('div.mermaid[data-mermaid-error]')).toBeNull()
+            }, { timeout: 3000 })
+            const rendered = el.querySelector('div.mermaid')!
+            expect(rendered.getAttribute('data-source-line')).toBe('5')
+            expect(rendered.getAttribute('data-source-end')).toBe('9')
         })
 
         it('should retry and reset init state for init-error containers', async () => {

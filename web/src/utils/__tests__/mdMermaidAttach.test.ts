@@ -10,6 +10,7 @@ import {
 function makeMdBody(opts: {
   mdPath?: string
   srcLine?: string
+  srcEnd?: string
   body?: string
 } = {}): { md: HTMLElement; container: HTMLElement; badge: HTMLElement } {
   const md = document.createElement('div')
@@ -18,6 +19,7 @@ function makeMdBody(opts: {
   const container = document.createElement('div')
   container.className = 'mermaid'
   if (opts.srcLine) container.setAttribute('data-source-line', opts.srcLine)
+  if (opts.srcEnd) container.setAttribute('data-source-end', opts.srcEnd)
   if (opts.body !== undefined) container.dataset.mermaid = opts.body
   const badge = document.createElement('span')
   badge.className = 'mermaid-attach-badge'
@@ -80,6 +82,22 @@ describe('resolveMermaidBadgeClick', () => {
   it('returns null when the container has no data-source-line', () => {
     const { badge } = makeMdBody({ body: 'A-->B' })
     expect(resolveMermaidBadgeClick(clickOn(badge))).toBeNull()
+  })
+
+  it('prefers the authoritative data-source-end over a body-derived fence line', () => {
+    // Body ends with a blank line that textContent.trim() would drop, so the
+    // recomputed end (5+1+1=7) is one short of the true closing fence (8).
+    // The renderer-stamped data-source-end="8" must win.
+    const { container, badge } = makeMdBody({ srcLine: '5', srcEnd: '8', body: 'graph TD\n  A-->B\n' })
+    const hit = resolveMermaidBadgeClick(clickOn(badge))
+    expect(hit).toEqual({ path: 'docs/guide.md', startLine: 5, endLine: 8, container })
+  })
+
+  it('falls back to a body-derived fence line when data-source-end is absent', () => {
+    // Hand-built container / pre-fix render without the attr → recompute.
+    const { container, badge } = makeMdBody({ srcLine: '5', body: 'graph TD\nA-->B' })
+    const hit = resolveMermaidBadgeClick(clickOn(badge))
+    expect(hit).toEqual({ path: 'docs/guide.md', startLine: 5, endLine: 8, container })
   })
 })
 

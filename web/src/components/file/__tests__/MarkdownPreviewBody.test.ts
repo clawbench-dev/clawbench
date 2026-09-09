@@ -241,6 +241,21 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(attachedFiles.value.some(f => f.path === 'docs/guide.md' && f.startLine === undefined)).toBe(true)
   })
 
+  it('attaches the authoritative range when the rendered container carries data-source-end', async () => {
+    addTestAttachment('docs/guide.md')
+    const { wrapper } = mountBody({
+      // Real render pipeline output: the mermaid div carries the closing-fence
+      // line (9). The body's trailing blank line makes a body-derived end (7)
+      // too short, so the stamped attr must win.
+      renderedHtml: '<div class="markdown-content"><div class="mermaid" data-source-line="5" data-source-end="9" data-mermaid="graph TD; A-->B\n"><svg></svg><span class="mermaid-attach-badge"><svg></svg></span></div></div>',
+    })
+    const badge = wrapper.find('.mermaid-attach-badge')
+    expect(badge.exists()).toBe(true)
+    await badge.trigger('click')
+    const entry = attachedFiles.value.find(f => f.startLine === 5)
+    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 5, endLine: 9 })
+  })
+
   it('attaches a code block md line range when its header attach button is tapped', async () => {
     const { wrapper } = mountBody({
       renderedHtml: '<div class="markdown-content"><div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-header-actions"><button class="code-block-attach-btn" data-action="attach"></button></span></div><pre data-source-line="9" data-source-end="12"><code>const a=1</code></pre></div></div>',

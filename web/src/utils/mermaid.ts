@@ -151,10 +151,12 @@ function retryMermaidBlock(container: HTMLElement): void {
     const pre = document.createElement('pre')
     pre.className = 'mermaid'
     pre.textContent = source
-    // Preserve the source-line anchor so a retried diagram stays in sync
-    // with the markdown source line after it re-renders.
+    // Preserve the source-line range so a retried diagram stays in sync
+    // with the markdown source lines after it re-renders.
     const srcLine = container.getAttribute('data-source-line')
     if (srcLine) pre.setAttribute('data-source-line', srcLine)
+    const srcEnd = container.getAttribute('data-source-end')
+    if (srcEnd) pre.setAttribute('data-source-end', srcEnd)
     container.replaceWith(pre)
 }
 
@@ -213,10 +215,15 @@ export async function renderMermaidInElement(
         container.className = 'mermaid'
         container.dataset.mermaid = source
         container.id = `${prefix}-${_idCounter++}`
-        // Preserve the source-line anchor from the original <pre> so the
-        // rendered diagram still participates in line-based scroll sync.
+        // Preserve the source-line range anchor from the original <pre> so the
+        // rendered diagram still participates in line-based scroll sync and the
+        // attach-to-chat range reference keeps the authoritative closing-fence
+        // line (data-source-end is dropped by textContent.trim() below, so it
+        // must be carried over explicitly rather than recomputed from the body).
         const srcLine = (block as HTMLElement).getAttribute('data-source-line')
         if (srcLine) container.setAttribute('data-source-line', srcLine)
+        const srcEnd = (block as HTMLElement).getAttribute('data-source-end')
+        if (srcEnd) container.setAttribute('data-source-end', srcEnd)
         container.innerHTML = '<div class="mermaid-loading"><span class="mermaid-spinner"></span></div>'
         ;(block as Element).replaceWith(container)
         containers.push({ container, source })

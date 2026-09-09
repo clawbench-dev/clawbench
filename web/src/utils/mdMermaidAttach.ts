@@ -63,7 +63,15 @@ export function resolveMermaidBadgeClick(e: Event): MermaidRangeHit | null {
   const startLine = parseInt(container?.getAttribute('data-source-line') || '', 10)
   const bodySource = container?.dataset.mermaid || ''
   if (!container || !path || !Number.isFinite(startLine)) return null
-  return { path, startLine, endLine: mermaidFenceEndLine(startLine, bodySource), container }
+  // Prefer the authoritative closing-fence line stamped by the renderer —
+  // it survives body whitespace that textContent.trim() drops when the
+  // diagram body is stored. Only fall back to recomputing from the body when
+  // no data-source-end is present (hand-built container or pre-fix render).
+  const endRaw = container.getAttribute('data-source-end')
+  const endLine = endRaw && Number.isFinite(parseInt(endRaw, 10))
+    ? parseInt(endRaw, 10)
+    : mermaidFenceEndLine(startLine, bodySource)
+  return { path, startLine, endLine, container }
 }
 
 /**
