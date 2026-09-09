@@ -236,4 +236,31 @@ describe('useFileNavStack', () => {
       expect(back).toBe('/src/a.ts')
     })
   })
+
+  describe('scrollTop and previousLocation', () => {
+    it('records and updates scrollTop via updateCurrent', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/a.ts')
+      expect(nav.currentLocation.value?.scrollTop).toBeUndefined()
+
+      nav.updateCurrent({ scrollTop: 450, viewMode: 'rendered' })
+      expect(nav.currentLocation.value?.scrollTop).toBe(450)
+      expect(nav.currentLocation.value?.viewMode).toBe('rendered')
+    })
+
+    it('previousLocation returns null when canGoBack is false, and previous item when canGoBack is true', () => {
+      const nav = useFileNavStack()
+      expect(nav.previousLocation.value).toBeNull()
+
+      nav.openFile('/src/a.ts', { scrollTop: 100 })
+      expect(nav.previousLocation.value).toBeNull()
+
+      nav.openFile('/src/b.ts')
+      expect(nav.previousLocation.value).toEqual({ path: '/src/a.ts', scrollTop: 100 })
+
+      nav.goBack()
+      expect(nav.previousLocation.value).toBeNull()
+      expect(nav.currentLocation.value?.scrollTop).toBe(100)
+    })
+  })
 })

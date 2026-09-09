@@ -52,6 +52,12 @@ export default tseslint.config(
         rules: {
             'vue/multi-word-component-names': 'off',
             'vue/no-v-html': 'off',
+            // typescript-eslint's `eslint-recommended` turns no-undef off on the
+            // assumption that tsc will catch it — but only ~half of the .vue
+            // files here declare `lang="ts"`, so vue-tsc silently skips the rest
+            // (App.vue among them). Without this rule a renamed-but-not-updated
+            // reference is a runtime ReferenceError, not a build failure.
+            'no-undef': 'error',
         },
     },
 

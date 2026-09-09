@@ -23,7 +23,7 @@ describe('TaskOverviewTab — CodeLinkPreview integration', () => {
 
   it('instantiates useCodeLinkPreview with containerRef bound to promptBodyRef', async () => {
     const source = await getSource()
-    expect(source).toContain('const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef })')
+    expect(source).toContain("const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef, source: 'task' })")
   })
 
   it('renders CodeLinkPreview conditioned on codeLinkPreview.enabled.value', async () => {
@@ -53,7 +53,7 @@ describe('TaskExecDetail — CodeLinkPreview integration', () => {
 
   it('instantiates useCodeLinkPreview with containerRef bound to contentRef', async () => {
     const source = await getSource()
-    expect(source).toContain('const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef })')
+    expect(source).toContain("const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef, source: 'task' })")
   })
 
   it('renders CodeLinkPreview conditioned on codeLinkPreview.enabled.value', async () => {

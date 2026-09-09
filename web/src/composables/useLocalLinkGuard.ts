@@ -30,7 +30,7 @@ function shouldIntercept(anchor: HTMLAnchorElement, href: string): boolean {
  * site-specific handler, modified clicks (ctrl/cmd to open in a new tab),
  * downloads, backend endpoints, and external/anchor links.
  */
-export function initLocalLinkGuard(onOpenLocal: (href: string) => void): () => void {
+export function initLocalLinkGuard(onOpenLocal: (href: string, anchor?: HTMLAnchorElement) => void): () => void {
     function handler(e: MouseEvent) {
         if (e.defaultPrevented) return
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
@@ -42,7 +42,7 @@ export function initLocalLinkGuard(onOpenLocal: (href: string) => void): () => v
         if (!shouldIntercept(anchor, href)) return
         // Local / relative / file link that no site handler opened.
         e.preventDefault()
-        onOpenLocal(href)
+        onOpenLocal(href, anchor)
     }
 
     document.addEventListener('click', handler)

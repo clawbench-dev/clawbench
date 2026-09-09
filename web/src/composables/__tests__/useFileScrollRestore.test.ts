@@ -383,4 +383,32 @@ describe('useFileScrollRestore', () => {
             expect(getFileScroll('a.go')).toBe(700)
         })
     })
+
+    describe('restore-file-scroll event', () => {
+        it('restores scrollTop when event is dispatched', () => {
+            const el = makeEl({ scrollHeight: 1000, clientHeight: 100, scrollTop: 0 })
+            const ctx = makeContext({ contentRoot: () => el })
+            const s = useFileScrollRestore(ctx)
+            s.start()
+            s.onFileChanged({ path: 'a.go' }, true)
+            s.onContentReady()
+
+            window.dispatchEvent(new CustomEvent('restore-file-scroll', { detail: { scrollTop: 350 } }))
+            expect(el.scrollTop).toBe(350)
+            s.dispose()
+        })
+
+        it('does not restore scrollTop after dispose', () => {
+            const el = makeEl({ scrollHeight: 1000, clientHeight: 100, scrollTop: 0 })
+            const ctx = makeContext({ contentRoot: () => el })
+            const s = useFileScrollRestore(ctx)
+            s.start()
+            s.onFileChanged({ path: 'a.go' }, true)
+            s.onContentReady()
+            s.dispose()
+
+            window.dispatchEvent(new CustomEvent('restore-file-scroll', { detail: { scrollTop: 350 } }))
+            expect(el.scrollTop).toBe(0)
+        })
+    })
 })

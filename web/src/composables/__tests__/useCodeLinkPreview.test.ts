@@ -661,7 +661,7 @@ describe('useCodeLinkPreview', () => {
     expect(preview.isPinned.value).toBe(false)
   })
 
-  it('opens full file and closes preview', async () => {
+  it('opens full file and closes preview with undefined source when none provided', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: 'hello world',
       name: 'test.ts',
@@ -676,6 +676,45 @@ describe('useCodeLinkPreview', () => {
     await Promise.resolve()
 
     preview.openFull()
+    expect(mockOpenFilePath).toHaveBeenCalledWith('test.ts', 5, 10, undefined)
+    expect(preview.visible.value).toBe(false)
+  })
+
+  it('opens full file with custom source when provided', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'hello world',
+      name: 'test.ts',
+      path: 'test.ts',
+      supported: true,
+      size: 11,
+    })
+
+    const preview = useCodeLinkPreview({ source: 'chat' })
+    preview.showPreview({ filePath: 'test.ts', lineStart: 5, lineEnd: 10 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    preview.openFull()
+    expect(mockOpenFilePath).toHaveBeenCalledWith('test.ts', 5, 10, 'chat')
+    expect(preview.visible.value).toBe(false)
+  })
+
+  it('opens full file with file source when explicitly configured', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'hello world',
+      name: 'test.ts',
+      path: 'test.ts',
+      supported: true,
+      size: 11,
+    })
+
+    const preview = useCodeLinkPreview({ source: 'file' })
+    preview.showPreview({ filePath: 'test.ts', lineStart: 5, lineEnd: 10 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    preview.openFull()
+    expect(mockOpenFilePath).toHaveBeenCalledWith('test.ts', 5, 10, 'file')
     expect(preview.visible.value).toBe(false)
   })
 

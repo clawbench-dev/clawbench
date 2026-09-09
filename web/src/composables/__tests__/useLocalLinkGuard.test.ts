@@ -26,7 +26,7 @@ describe('initLocalLinkGuard', () => {
     const a = appendLink('src/main.go')
 
     fireClick(a)
-    expect(onOpen).toHaveBeenCalledWith('src/main.go')
+    expect(onOpen).toHaveBeenCalledWith('src/main.go', a)
 
     stop()
   })
@@ -37,7 +37,7 @@ describe('initLocalLinkGuard', () => {
     const a = appendLink('file:///workspace/src/main.go#L10-L20')
 
     fireClick(a)
-    expect(onOpen).toHaveBeenCalledWith('file:///workspace/src/main.go#L10-L20')
+    expect(onOpen).toHaveBeenCalledWith('file:///workspace/src/main.go#L10-L20', a)
 
     stop()
   })

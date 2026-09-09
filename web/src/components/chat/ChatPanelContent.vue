@@ -220,7 +220,7 @@ const props = defineProps({
     currentFile: Object,
     currentDir: String,
 })
-const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click', 'open-session-search'])
+const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
 
 // ── Singletons ──
 const identity = useSessionIdentity()
@@ -298,7 +298,7 @@ async function handleFileTagClick(filePath) {
         // so openFilePath doesn't treat in-project files as external.
         const relPath = relativizeProjectPath(filePath, store.state.projectRoot)
         // openFilePath decides the destination tab itself (file → view, dir → browse).
-        await openFilePath(relPath)
+        await openFilePath(relPath, undefined, undefined, 'chat')
     }
 }
 
@@ -309,7 +309,7 @@ async function handleQuoteClick(q) {
     const relPath = relativizeProjectPath(q.filePath, store.state.projectRoot)
     // openFilePath opens the file (→ view tab) and dispatches open-file-overlay
     // with the line range, so the quoted selection is scrolled into view and flashed.
-    await openFilePath(relPath, q.startLine, q.endLine)
+    await openFilePath(relPath, q.startLine, q.endLine, 'chat')
 }
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
@@ -340,7 +340,7 @@ const {
   tabId: 'chat',
   onFileOpen: async (path, lineStart, lineEnd) => {
     // openFilePath decides the destination tab itself (file → view, dir → browse).
-    await openFilePath(path, lineStart, lineEnd)
+    await openFilePath(path, lineStart, lineEnd, 'chat')
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })

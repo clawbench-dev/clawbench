@@ -156,8 +156,12 @@ describe('toProjectRelative', () => {
     expect(toProjectRelative('/home/user/project/src/main.go', '/home/user/project')).toBe('src/main.go')
   })
 
-  it('does not relativize a path that merely shares a prefix without boundary', () => {
-    expect(toProjectRelative('E:/git/vllm-input-other/app', 'E:/git/vllm-input')).toBe('E:/git/vllm-input-other/app')
+  it('returns empty string when path equals root with or without trailing slash', () => {
+    expect(toProjectRelative('/home/user/project', '/home/user/project')).toBe('')
+    expect(toProjectRelative('/home/user/project/', '/home/user/project')).toBe('')
+    expect(toProjectRelative('/home/user/project', '/home/user/project/')).toBe('')
+    expect(toProjectRelative('E:/git/vllm-input/', 'E:/git/vllm-input')).toBe('')
+    expect(toProjectRelative('e:/git/vllm-input', 'E:/git/vllm-input/')).toBe('')
   })
 })
 

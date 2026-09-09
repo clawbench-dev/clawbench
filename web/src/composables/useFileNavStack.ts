@@ -12,6 +12,7 @@ export interface FileNavLocation {
   lineStart?: number
   lineEnd?: number
   viewMode?: string
+  scrollTop?: number
 }
 
 const _overlayOpen = ref(false)
@@ -21,6 +22,11 @@ const _historyIndex = ref(-1)
 const _currentLocation = computed(() => {
   const index = _historyIndex.value
   return index >= 0 ? _history.value[index] ?? null : null
+})
+
+const _previousLocation = computed(() => {
+  const index = _historyIndex.value
+  return index > 0 ? _history.value[index - 1] ?? null : null
 })
 
 const _currentFilePath = computed(() => _currentLocation.value?.path ?? null)
@@ -99,6 +105,7 @@ export function useFileNavStack() {
     overlayOpen: _overlayOpen,
     currentFilePath: _currentFilePath as ComputedRef<string | null>,
     currentLocation: _currentLocation as ComputedRef<FileNavLocation | null>,
+    previousLocation: _previousLocation as ComputedRef<FileNavLocation | null>,
     canGoBack: _canGoBack,
     canGoForward: _canGoForward,
     openFile,
@@ -107,5 +114,15 @@ export function useFileNavStack() {
     goForward,
     closeOverlay,
     removePath,
+    snapshot: () => ({
+      overlayOpen: _overlayOpen.value,
+      history: _history.value.map(entry => ({ ...entry })),
+      historyIndex: _historyIndex.value,
+    }),
+    restore: (state: { overlayOpen: boolean; history: FileNavLocation[]; historyIndex: number }) => {
+      _overlayOpen.value = state.overlayOpen
+      _history.value = state.history.map(entry => ({ ...entry }))
+      _historyIndex.value = state.historyIndex
+    },
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { registerBackHandler, handleBackNavigation, canNavigateBack, _resetHandlers, _resetExitConfirm, requestExitConfirm, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
+import { registerBackHandler, handleBackNavigation, canNavigateBack, canNavigateBackOverlay, handleBackNavigationOverlay, _resetHandlers, _resetExitConfirm, requestExitConfirm, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
 
 describe('useBackHandler', () => {
     beforeEach(() => {
@@ -196,6 +196,47 @@ describe('useBackHandler', () => {
 
         unregOverlay()
         unregBrowse()
+    })
+
+    it('filters handlers by minPriority and supports overlay helpers', () => {
+        const pageGoBack = vi.fn()
+        const overlayGoBack = vi.fn()
+
+        const unregPage = registerBackHandler({
+            id: 'page',
+            canGoBack: () => true,
+            goBack: pageGoBack,
+            priority: PRIORITY_PAGE,
+        })
+
+        const unregOverlay = registerBackHandler({
+            id: 'overlay',
+            canGoBack: () => true,
+            goBack: overlayGoBack,
+            priority: PRIORITY_OVERLAY,
+        })
+
+        // Overlay check
+        expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(true)
+        expect(canNavigateBackOverlay()).toBe(true)
+        const handledOverlay = handleBackNavigationOverlay()
+        expect(handledOverlay).toBe(true)
+        expect(overlayGoBack).toHaveBeenCalledTimes(1)
+        expect(pageGoBack).not.toHaveBeenCalled()
+
+        // After overlay is un-registered or cannot go back
+        unregOverlay()
+        expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(false)
+        expect(canNavigateBackOverlay()).toBe(false)
+        expect(handleBackNavigation(PRIORITY_OVERLAY)).toBe(false)
+        expect(handleBackNavigationOverlay()).toBe(false)
+
+        // Page level handler still works with default/0 minPriority
+        expect(canNavigateBack()).toBe(true)
+        expect(handleBackNavigation()).toBe(true)
+        expect(pageGoBack).toHaveBeenCalledTimes(1)
+
+        unregPage()
     })
 })
 

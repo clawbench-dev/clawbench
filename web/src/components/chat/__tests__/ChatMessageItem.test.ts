@@ -421,7 +421,7 @@ describe('ChatMessageItem', () => {
       const fd = wrapper.findComponent({ name: 'FileDiffsDrawer' })
       fd.vm.$emit('file-open', { path: '/home/user/project/a.ts', lineStart: 3 })
       await wrapper.vm.$nextTick()
-      expect(openFilePath).toHaveBeenCalledWith('a.ts', 3, undefined)
+      expect(openFilePath).toHaveBeenCalledWith('a.ts', 3, undefined, 'chat')
     })
 
     it('opens a plain string file path (no line range) from the file changes drawer', async () => {
@@ -433,7 +433,7 @@ describe('ChatMessageItem', () => {
       const fc = wrapper.findComponent({ name: 'FileChangesDrawer' })
       fc.vm.$emit('open-file', '/home/user/project/plain.ts')
       await wrapper.vm.$nextTick()
-      expect(openFilePath).toHaveBeenCalledWith('plain.ts', undefined, undefined)
+      expect(openFilePath).toHaveBeenCalledWith('plain.ts', undefined, undefined, 'chat')
     })
 
     it('returns from the diffs drawer back to the file changes drawer', async () => {

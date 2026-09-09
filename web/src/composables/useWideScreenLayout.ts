@@ -42,8 +42,12 @@ export function computeIsWideScreen(cssWidth: number, screenWidth: number, scree
 const isWideScreen = ref(false)
 const leftTab = ref<string>('browse')
 const splitRatio = ref(0.5)
+export const PANE_LEFT = 'left' as const
+export const PANE_RIGHT = 'right' as const
+export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
+
 /** Wide-screen focus tracking: which pane the user is currently working in. */
-const activePane = ref<'left' | 'right'>('right')
+const activePane = ref<ActivePane>(PANE_RIGHT)
 /**
  * Wide-screen left pane collapsed state. When true, the left column is hidden
  * and the chat (right) pane takes the full width. Toggled by clicking the

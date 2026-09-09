@@ -1,5 +1,31 @@
 <template>
   <div class="file-header-bar">
+    <!-- Wide-screen only: navigation cluster at the top-left, where desktop users
+         expect a back affordance. Touch layouts keep these on the bottom-center
+         floating bar instead (thumb reach + no room in the header). -->
+    <div v-if="isWideScreen && (canNavigateBack || canGoBackFile || canGoForwardFile)" class="file-header-nav">
+      <button
+        v-if="canNavigateBack || canGoBackFile"
+        class="file-header-btn file-header-back-btn"
+        type="button"
+        :title="backLabel || t('file.overlay.back')"
+        :aria-label="backLabel || t('file.overlay.back')"
+        @click.stop="$emit('navigateBack')"
+      >
+        <ArrowLeft :size="14" />
+      </button>
+      <button
+        v-if="canGoForwardFile"
+        class="file-header-btn"
+        type="button"
+        :title="t('file.overlay.forward')"
+        :aria-label="t('file.overlay.forward')"
+        @click.stop="$emit('navigateForward')"
+      >
+        <ArrowRight :size="14" />
+      </button>
+    </div>
+
     <!-- Region 1: File name -->
     <div class="file-name-wrap">
       <span class="file-path-hint" :class="{ 'file-path-draggable': isWideScreen }" :draggable="isWideScreen" @click="$emit('showDetails')" @dragstart="handleFileNameDragStart" @dragend="handleFileNameDragEnd" :title="file.name">{{ file.name }}</span>
@@ -222,7 +248,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -247,8 +273,14 @@ const props = defineProps({
     stickyScroll: Boolean,
     overlayOpen: Boolean,
     editing: Boolean,
+    /** Wide-screen header back button: view-back target exists. */
+    canNavigateBack: Boolean,
+    /** Wide-screen header back button: in-file jump history has a previous entry. */
+    canGoBackFile: Boolean,
+    canGoForwardFile: Boolean,
+    backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -569,6 +601,18 @@ onBeforeUnmount(() => {
     top: 0;
     left: 0;
     min-width: 0;
+}
+
+/* Wide-screen navigation cluster (back / forward) pinned to the top-left. */
+.file-header-nav {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    margin-right: 2px;
+}
+.file-header-back-btn {
+    color: var(--text-primary);
 }
 
 /* Region 1: File name — shrinks when toolbar needs space, but has a minimum width */

@@ -326,7 +326,7 @@ function handleOpenFilePayload(payload) {
   // Strip projectRoot prefix so openFilePath doesn't treat them as external.
   const root = store.state.projectRoot
   const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
-  openFilePath(relPath, lineStart, lineEnd)
+  openFilePath(relPath, lineStart, lineEnd, 'chat')
 }
 
 // Copy message markdown — only the final conclusion (last text block)

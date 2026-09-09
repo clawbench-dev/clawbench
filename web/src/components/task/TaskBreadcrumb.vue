@@ -1,5 +1,5 @@
 <template>
-  <div class="task-breadcrumb">
+  <div class="task-breadcrumb" data-horizontal-scroll="true">
     <!-- Root crumb: 任务列表 -->
     <span
       class="crumb"

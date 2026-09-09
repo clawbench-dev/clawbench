@@ -62,8 +62,11 @@ export function isAbsolutePath(path: string): boolean {
  */
 export function toProjectRelative(path: string, root: string): string {
     if (!root) return path
-    const normPath = normalizeSlashes(path)
-    const normRoot = normalizeSlashes(root)
+    const normPath = normalizeSlashes(path).replace(/\/+$/, '')
+    const normRoot = normalizeSlashes(root).replace(/\/+$/, '')
+    if (normPath.toLowerCase() === normRoot.toLowerCase()) {
+        return ''
+    }
     const prefix = normRoot + '/'
     if (normPath.toLowerCase().startsWith(prefix.toLowerCase())) {
         return normPath.slice(normRoot.length + 1)

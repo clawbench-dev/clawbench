@@ -1019,6 +1019,7 @@ export default {
       dirLoadFailed: 'Directory not found or inaccessible',
       dirRemoved: 'The current directory may have been removed',
       fileNotFound: 'File not found',
+      fileNotFoundReturned: 'File no longer exists; returned to the origin page',
       fileRemoved: 'File does not exist; it may have been removed',
       externalFile: 'This file is outside the project directory',
       externalPathNotSupported: 'Only paths inside the project can be navigated to',
@@ -1128,6 +1129,12 @@ export default {
     overlay: {
       back: 'Back',
       forward: 'Forward',
+    },
+    nav: {
+      backToChat: 'Back to Chat',
+      backToTask: 'Back to Task',
+      backToFile: 'Back to {name}',
+      back: 'Back',
     },
     recent: {
       title: 'Recent Files',
