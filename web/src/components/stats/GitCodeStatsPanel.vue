@@ -4,78 +4,6 @@
        top of the sibling usage panel and block switching back to it. -->
   <div v-show="active" class="git-code-stats-panel">
     <div class="git-body">
-      <!-- Code-inventory (cloc) card — a snapshot of the working tree that is
-           independent of the git range below and of whether the project is
-           even a git repository. -->
-      <section class="stats-card-panel">
-        <div class="stats-card-title">
-          <Files :size="13" class="stats-card-title-icon" />
-          <span>{{ t('gitStats.clocTitle') }}</span>
-        </div>
-
-        <div v-if="clocError" class="stats-error">{{ clocErrorText }}</div>
-        <div v-else-if="!clocLoaded" class="stats-loading">
-          <LoadingIndicator size="sm" inline />
-          <span>{{ t('common.loading') }}</span>
-        </div>
-        <div v-else-if="clocLanguages.length === 0" class="stats-empty">
-          <FileCode2 :size="30" class="stats-empty-icon" />
-          <span>{{ t('gitStats.clocNoData') }}</span>
-        </div>
-        <template v-else>
-          <div class="cloc-totals">
-            <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColCode') }}</span>
-              <span class="stats-total-value">{{ formatLineCount(clocTotal.code) }}</span>
-            </div>
-            <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColComment') }}</span>
-              <span class="stats-total-value">{{ formatLineCount(clocTotal.comment) }}</span>
-            </div>
-            <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColBlank') }}</span>
-              <span class="stats-total-value">{{ formatLineCount(clocTotal.blank) }}</span>
-            </div>
-            <div class="stats-total">
-              <span class="stats-total-label">{{ t('gitStats.clocColFiles') }}</span>
-              <span class="stats-total-value">{{ clocTotal.files.toLocaleString() }}</span>
-            </div>
-          </div>
-
-          <UsageChart :option="clocBarOption" class="cloc-chart" />
-
-          <div class="stats-table-wrap">
-            <table class="stats-table">
-              <thead>
-                <tr>
-                  <th class="stats-th-dim">{{ t('gitStats.clocColLang') }}</th>
-                  <th class="stats-th-num">{{ t('gitStats.clocColFiles') }}</th>
-                  <th class="stats-th-num">{{ t('gitStats.clocColCode') }}</th>
-                  <th class="stats-th-num">{{ t('gitStats.clocColComment') }}</th>
-                  <th class="stats-th-num">{{ t('gitStats.clocColBlank') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(row, i) in clocLanguages" :key="i">
-                  <td class="stats-td-dim">{{ row.name }}</td>
-                  <td class="stats-td-num">{{ row.files.toLocaleString() }}</td>
-                  <td class="stats-td-num">{{ formatLineCount(row.code) }}</td>
-                  <td class="stats-td-num">{{ formatLineCount(row.comment) }}</td>
-                  <td class="stats-td-num">{{ formatLineCount(row.blank) }}</td>
-                </tr>
-                <tr>
-                  <td class="stats-td-dim"><strong>{{ t('gitStats.clocTotalLabel') }}</strong></td>
-                  <td class="stats-td-num"><strong>{{ clocTotal.files.toLocaleString() }}</strong></td>
-                  <td class="stats-td-num"><strong>{{ formatLineCount(clocTotal.code) }}</strong></td>
-                  <td class="stats-td-num"><strong>{{ formatLineCount(clocTotal.comment) }}</strong></td>
-                  <td class="stats-td-num"><strong>{{ formatLineCount(clocTotal.blank) }}</strong></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </template>
-      </section>
-
       <!-- Range card -->
       <section class="stats-card-panel">
         <div class="stats-card-title">
@@ -154,24 +82,35 @@
               <table class="stats-table">
                 <thead>
                   <tr>
-                    <th class="stats-th-dim">{{ t('gitStats.colAuthor') }}</th>
-                    <th class="stats-th-num" @click="cycleSort">
+                    <th class="stats-th-dim stats-th-sortable" @click="cycleSort('author')">
+                      <span class="stats-th-inner">
+                        {{ t('gitStats.colAuthor') }}
+                        <span v-if="sortBy === 'author'" class="stats-sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                      </span>
+                    </th>
+                    <th class="stats-th-num stats-th-sortable" @click="cycleSort('added')">
                       <span class="stats-th-inner">
                         {{ t('gitStats.colAdded') }}
-                        <span v-if="sortBy === 'added'" class="stats-sort-arrow">↓</span>
+                        <span v-if="sortBy === 'added'" class="stats-sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
                       </span>
                     </th>
-                    <th class="stats-th-num" @click="cycleSort">
+                    <th class="stats-th-num stats-th-sortable" @click="cycleSort('deleted')">
                       <span class="stats-th-inner">
                         {{ t('gitStats.colDeleted') }}
-                        <span v-if="sortBy === 'deleted'" class="stats-sort-arrow">↓</span>
+                        <span v-if="sortBy === 'deleted'" class="stats-sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
                       </span>
                     </th>
-                    <th class="stats-th-num">
-                      <span class="stats-th-inner">{{ t('gitStats.colNet') }}</span>
+                    <th class="stats-th-num stats-th-sortable" @click="cycleSort('net')">
+                      <span class="stats-th-inner">
+                        {{ t('gitStats.colNet') }}
+                        <span v-if="sortBy === 'net'" class="stats-sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                      </span>
                     </th>
-                    <th class="stats-th-num">
-                      <span class="stats-th-inner">{{ t('gitStats.colCommits') }}</span>
+                    <th class="stats-th-num stats-th-sortable" @click="cycleSort('commitCnt')">
+                      <span class="stats-th-inner">
+                        {{ t('gitStats.colCommits') }}
+                        <span v-if="sortBy === 'commitCnt'" class="stats-sort-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                      </span>
                     </th>
                   </tr>
                 </thead>
@@ -225,14 +164,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Gauge, Table, ChartLine, GitBranch, Code2, Files, FileCode2 } from 'lucide-vue-next'
+import { Clock, Gauge, Table, ChartLine, GitBranch, Code2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
-import type { ClocLanguageRow } from '@/composables/useGitCodeStats'
 import type { UsageRangeKey } from '@/composables/useUsageStats'
 import { formatLineCount, formatNetDelta } from '@/components/stats/gitStatsFormat'
-import { buildGitTrendOption, buildClocBarOption } from '@/components/stats/gitStatsChart'
+import { buildGitTrendOption } from '@/components/stats/gitStatsChart'
 import { store } from '@/stores/app'
 
 const props = defineProps<{
@@ -244,20 +182,6 @@ const stats = useGitCodeStats()
 const range = stats.range
 const { raw, error, visibleTotals, tableRows, trend } = stats
 
-// --- Code-inventory (cloc) state ---
-const clocRaw = stats.clocRaw
-const clocError = stats.clocError
-
-const clocLoaded = computed(() => clocRaw.value !== null)
-const clocLanguages = computed<ClocLanguageRow[]>(() => clocRaw.value?.languages ?? [])
-const clocTotal = computed<ClocLanguageRow>(() => clocRaw.value?.total ?? { name: '', files: 0, code: 0, comment: 0, blank: 0 })
-
-const clocErrorText = computed(() => {
-  if (!clocError.value) return ''
-  if (clocError.value.message) return clocError.value.message
-  return clocError.value.status ? `${t('gitStats.clocLoadFailed')} (${clocError.value.status})` : t('gitStats.clocLoadFailed')
-})
-
 const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '24h', labelKey: 'gitStats.range24h' },
   { key: '7d', labelKey: 'gitStats.range7d' },
@@ -267,9 +191,12 @@ const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
 const customStart = ref<string>('')
 const customEnd = ref<string>('')
 
-// Sorting is client-side over the author rows (rows are few); default by added
-// lines desc. Clicking the added/deleted header cycles the sort column.
-const sortBy = ref<'added' | 'deleted'>('added')
+// Sorting is client-side over the author rows (rows are few). Every column is
+// sortable; clicking a new column picks it (numeric desc, author asc), clicking
+// the same column toggles the direction.
+type AuthorSortCol = 'author' | 'added' | 'deleted' | 'net' | 'commitCnt'
+const sortBy = ref<AuthorSortCol>('added')
+const sortDir = ref<'asc' | 'desc'>('desc')
 
 // Trend chart author scope — multi-select. An empty selection means "all
 // authors" (the project-wide sum); checking authors narrows the daily lines to
@@ -306,14 +233,28 @@ const totalsPresent = computed(() => {
 })
 
 const sortedRows = computed(() => {
-  const field = sortBy.value
-  return [...tableRows.value].sort(
-    (a, b) => b[field] - a[field] || a.author.localeCompare(b.author),
-  )
+  const col = sortBy.value
+  const dir = sortDir.value
+  return [...tableRows.value].sort((a, b) => {
+    let cmp: number
+    if (col === 'author') {
+      cmp = a.author.localeCompare(b.author)
+    } else {
+      cmp = a[col] - b[col]
+    }
+    if (dir === 'desc' && col !== 'author') return -cmp
+    return cmp
+  })
 })
 
-function cycleSort() {
-  sortBy.value = sortBy.value === 'added' ? 'deleted' : 'added'
+function cycleSort(col: AuthorSortCol) {
+  if (sortBy.value === col) {
+    // Numeric columns default desc, author asc — same column toggles.
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortBy.value = col
+    sortDir.value = col === 'author' ? 'asc' : 'desc'
+  }
 }
 
 function gitMetricLabelKey(m: string): string {
@@ -366,11 +307,6 @@ const trendOption = computed(() => {
   return buildGitTrendOption(days, added, deleted, t('gitStats.colAdded'), t('gitStats.colDeleted'), net, t('gitStats.colNet'))
 })
 
-const clocBarOption = computed(() => {
-  void themeTick.value
-  return buildClocBarOption(clocLanguages.value)
-})
-
 // --- Range ---
 function selectRangePreset(key: UsageRangeKey) {
   if (key === 'custom') {
@@ -411,23 +347,18 @@ watch(() => store.state.projectRoot, (p) => {
   if (p !== projectRoot && props.active) {
     projectRoot = p
     void stats.loadGitStats()
-    void stats.loadCloc()
   }
 })
 
 watch(() => props.active, (nowActive, was) => {
   if (nowActive && !was) {
     void stats.loadGitStats()
-    // Reload cloc too — the request hits the backend's 60s cache, so the
-    // repeated scan is cheap while still reflecting a changed working tree.
-    void stats.loadCloc()
   }
 })
 
 onMounted(() => {
   if (props.active) {
     void stats.loadGitStats()
-    void stats.loadCloc()
   }
 })
 </script>
@@ -639,17 +570,5 @@ onMounted(() => {
 .git-chart {
   width: 100%;
   height: 220px;
-}
-
-/* ── Code inventory (cloc) ── */
-.cloc-totals {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-.cloc-chart {
-  width: 100%;
-  height: 260px;
 }
 </style>

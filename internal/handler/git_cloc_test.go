@@ -66,6 +66,39 @@ func TestCollectClocMultiLanguageAndExcludes(t *testing.T) {
 	assert.True(t, res.Total.Code > 0)
 }
 
+func TestCollectClocExcludesToolAndEnvDirs(t *testing.T) {
+	dir := t.TempDir()
+
+	// Real project source that must be counted.
+	writeClocFile(t, dir, "main.go", "package main\nfunc main() {}\n")
+	// Third-party / env / data dirs that used to make the inventory look
+	// machine-global rather than project-scoped.
+	writeClocFile(t, dir, ".venv/lib/python3.11/site-packages/numpy/arr.py", "x = 1\n")
+	writeClocFile(t, dir, "venv/lib/python2.7/site-packages/pkg/mod.py", "y = 2\n")
+	writeClocFile(t, dir, "models/weights/model.py", "z = 3\n")
+	writeClocFile(t, dir, ".clawbench/sessions/x.py", "w = 4\n")
+	writeClocFile(t, dir, ".worktrees/other-repo/main.go", "package other\nfunc other() {}\n")
+	writeClocFile(t, dir, "android-lib/__pycache__/cache.py", "c = 5\n")
+
+	res, err := collectCloc(dir)
+	require.NoError(t, err)
+
+	// No Python from virtualenvs / models / data dirs.
+	for _, l := range res.Languages {
+		assert.NotEqual(t, "Python", l.Name, "virtualenv/model/data python must be excluded")
+	}
+	// Only the real Go source survives.
+	var goLang *clocLanguageSummary
+	for i := range res.Languages {
+		if res.Languages[i].Name == "Go" {
+			goLang = &res.Languages[i]
+		}
+	}
+	require.NotNil(t, goLang)
+	assert.Equal(t, 1, goLang.Files)
+	assert.Equal(t, int64(2), goLang.Code)
+}
+
 func TestCollectClocSortedByCodeDesc(t *testing.T) {
 	dir := t.TempDir()
 	// Bigger TS file should rank above the smaller Go file.

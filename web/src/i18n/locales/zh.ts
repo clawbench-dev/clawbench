@@ -107,7 +107,8 @@ export default {
   },
   gitStats: {
     tabUsage: '用量统计',
-    tabCode: '代码统计',
+    tabCloc: '代码存量',
+    tabDelta: '代码增量',
     panelTitle: '代码量统计',
     range24h: '近 24 小时',
     range7d: '近 7 天',

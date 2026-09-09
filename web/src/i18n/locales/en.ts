@@ -107,7 +107,8 @@ export default {
   },
   gitStats: {
     tabUsage: 'Usage',
-    tabCode: 'Code',
+    tabCloc: 'Inventory',
+    tabDelta: 'Changes',
     panelTitle: 'Code Statistics',
     range24h: '24h',
     range7d: '7d',

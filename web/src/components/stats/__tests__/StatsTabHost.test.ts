@@ -24,7 +24,7 @@ import { resetGitStats } from '@/composables/useGitCodeStats'
 const zhMessages = {
   common: { loading: '加载中' },
   nav: { refresh: '刷新' },
-  gitStats: { tabUsage: '用量统计', tabCode: '代码统计' },
+  gitStats: { tabUsage: '用量统计', tabCloc: '代码存量', tabDelta: '代码增量' },
   stats: { rangeTitle: 'x' },
 }
 
@@ -51,6 +51,7 @@ async function mountHost() {
       plugins: [makeI18n()],
       stubs: {
         UsageStatsPanel: stubChild('usage-panel'),
+        ClocStatsPanel: stubChild('cloc-panel'),
         GitCodeStatsPanel: stubChild('git-panel'),
         AsyncComponentLoader: { template: '<span />' },
         RefreshButton: { template: '<button class="refresh-stub" @click="$emit(\'click\')" />' },
@@ -67,28 +68,46 @@ describe('StatsTabHost', () => {
     vi.clearAllMocks()
     resetUsageStats()
     resetGitStats()
-    mockApiGet.mockResolvedValue({ totals: {}, rows: [] })
+    mockApiGet.mockResolvedValue({ totals: {}, rows: [], languages: [] })
   })
 
-  it('renders both page tabs and defaults to the usage panel active', async () => {
+  it('renders three page tabs and defaults to the usage panel active', async () => {
     const wrapper = await mountHost()
     const btns = wrapper.findAll('.stats-tab').map(b => b.text())
-    expect(btns).toEqual(['用量统计', '代码统计'])
+    expect(btns).toEqual(['用量统计', '代码存量', '代码增量'])
     const usage = wrapper.findComponent({ name: 'usage-panel' })
+    const cloc = wrapper.findComponent({ name: 'cloc-panel' })
     const git = wrapper.findComponent({ name: 'git-panel' })
     expect(usage.props('active')).toBe(true)
+    expect(cloc.props('active')).toBe(false)
     expect(git.props('active')).toBe(false)
   })
 
-  it('switches to the code panel when its tab is clicked', async () => {
+  it('switches to the cloc panel when its tab is clicked', async () => {
     const wrapper = await mountHost()
-    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
-    expect(codeTab).toBeTruthy()
-    await codeTab!.trigger('click')
+    const clocTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码存量')
+    expect(clocTab).toBeTruthy()
+    await clocTab!.trigger('click')
     await nextTick()
     const usage = wrapper.findComponent({ name: 'usage-panel' })
+    const cloc = wrapper.findComponent({ name: 'cloc-panel' })
     const git = wrapper.findComponent({ name: 'git-panel' })
     expect(usage.props('active')).toBe(false)
+    expect(cloc.props('active')).toBe(true)
+    expect(git.props('active')).toBe(false)
+  })
+
+  it('switches to the git delta panel when its tab is clicked', async () => {
+    const wrapper = await mountHost()
+    const gitTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')
+    expect(gitTab).toBeTruthy()
+    await gitTab!.trigger('click')
+    await nextTick()
+    const usage = wrapper.findComponent({ name: 'usage-panel' })
+    const cloc = wrapper.findComponent({ name: 'cloc-panel' })
+    const git = wrapper.findComponent({ name: 'git-panel' })
+    expect(usage.props('active')).toBe(false)
+    expect(cloc.props('active')).toBe(false)
     expect(git.props('active')).toBe(true)
   })
 
@@ -96,26 +115,29 @@ describe('StatsTabHost', () => {
     const wrapper = await mountHost()
     let activeTabs = wrapper.findAll('.stats-tab.active')
     expect(activeTabs.map(b => b.text())).toEqual(['用量统计'])
-    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
-    await codeTab!.trigger('click')
+    const gitTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')
+    await gitTab!.trigger('click')
     await nextTick()
     activeTabs = wrapper.findAll('.stats-tab.active')
-    expect(activeTabs.map(b => b.text())).toEqual(['代码统计'])
+    expect(activeTabs.map(b => b.text())).toEqual(['代码增量'])
   })
 
-  it('passes active=false to both children when the host is inactive', async () => {
+  it('passes active=false to all children when the host is inactive', async () => {
     const wrapper = await mountHost()
     await wrapper.setProps({ active: false })
     await nextTick()
     const usage = wrapper.findComponent({ name: 'usage-panel' })
+    const cloc = wrapper.findComponent({ name: 'cloc-panel' })
     const git = wrapper.findComponent({ name: 'git-panel' })
     expect(usage.props('active')).toBe(false)
+    expect(cloc.props('active')).toBe(false)
     expect(git.props('active')).toBe(false)
   })
 
   it('refresh button triggers a reload of the active panel', async () => {
     const wrapper = await mountHost()
     const countUsage = () => mockApiGet.mock.calls.filter(c => String(c[0]).includes('/api/usage/stats')).length
+    const countCloc = () => mockApiGet.mock.calls.filter(c => String(c[0]).includes('/api/git/cloc')).length
     const countGit = () => mockApiGet.mock.calls.filter(c => String(c[0]).includes('/api/git/stats')).length
 
     const usageBefore = countUsage()
@@ -124,9 +146,18 @@ describe('StatsTabHost', () => {
     await flushPromises()
     expect(countUsage()).toBeGreaterThan(usageBefore)
 
-    // Switch to code tab → refresh now issues a git-stats request.
-    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
-    await codeTab!.trigger('click')
+    // Switch to cloc tab → refresh issues a /api/git/cloc request.
+    const clocTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码存量')
+    await clocTab!.trigger('click')
+    await nextTick()
+    const clocBefore = countCloc()
+    await wrapper.find('.refresh-stub').trigger('click')
+    await flushPromises()
+    expect(countCloc()).toBeGreaterThan(clocBefore)
+
+    // Switch to git delta tab → refresh issues a /api/git/stats request.
+    const gitTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码增量')
+    await gitTab!.trigger('click')
     await nextTick()
     const gitBefore = countGit()
     await wrapper.find('.refresh-stub').trigger('click')

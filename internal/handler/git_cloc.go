@@ -19,10 +19,15 @@ import (
 // directory tree. The frontend shows this block regardless of isGit.
 
 // gitClocDefaultExclude matches directory components that are never source
-// code: build artifacts, vendored deps, VCS internals and hidden dirs. The
-// regex runs against the file's parent dir (gocloc ReNotMatchDir), so it must
-// match a path segment like "/node_modules/..." .
-var gitClocDefaultExclude = regexp.MustCompile(`(^|/)(\.git|\.hg|\.svn|\.bzr|node_modules|vendor|dist|public|coverage|build|out|target|\.cache)(/|$)`)
+// code: build artifacts, vendored deps, VCS internals, virtualenvs, tool data
+// dirs and hidden dirs. The regex runs against the file's parent dir (gocloc
+// ReNotMatchDir), so it must match a path segment like "/node_modules/..." .
+//
+// This mirrors the repo-level .gitignore intent: without it a project tree
+// containing e.g. .venv/ (Python env), models/ or a data dir would pull in
+// hundreds of thousands of third-party lines and make the inventory look like
+// it covers the whole machine rather than the project sources.
+var gitClocDefaultExclude = regexp.MustCompile(`(^|/)(\.git|\.hg|\.svn|\.bzr|\.cache|\.venv|venv|__pycache__|\.idea|\.vscode|\.clawbench|\.clawbench-ci|\.worktrees|\.agents|\.codebuddy|node_modules|vendor|dist|build|out|target|coverage|public|models)(/|$)`)
 
 type clocLanguageSummary struct {
 	Name    string `json:"name"`

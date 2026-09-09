@@ -174,6 +174,43 @@ describe('GitCodeStatsPanel', () => {
     expect(wrapper.findAll('.stats-td-dim').length).toBe(2)
   })
 
+  it('sorts the per-author table by each column', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { added: 30, deleted: 5, net: 25, commitCnt: 3 },
+      rows: [
+        { author: 'A', added: 6, deleted: 1, net: 5, commitCnt: 2 },
+        { author: 'B', added: 10, deleted: 2, net: 8, commitCnt: 1 },
+        { author: 'C', added: 14, deleted: 2, net: 12, commitCnt: 0 },
+      ],
+    }))
+    const wrapper = await mountPanel()
+    const firstAuthor = () => wrapper.findAll('.stats-td-dim')[0].text()
+    const headerText = (name: string) => wrapper.findAll('.stats-table th').find(h => h.text().includes(name))!
+
+    // Default: added desc → C (14) first.
+    expect(firstAuthor()).toBe('C')
+
+    // Click commits header → commitCnt desc → A (2) first.
+    await headerText('提交数').trigger('click')
+    await nextTick()
+    expect(firstAuthor()).toBe('A')
+
+    // Click commits again → asc → C (0) first.
+    await headerText('提交数').trigger('click')
+    await nextTick()
+    expect(firstAuthor()).toBe('C')
+
+    // Click net header → net desc → C (12).
+    await headerText('净增行数').trigger('click')
+    await nextTick()
+    expect(firstAuthor()).toBe('C')
+
+    // Click author header → name asc → A.
+    await headerText('作者').trigger('click')
+    await nextTick()
+    expect(firstAuthor()).toBe('A')
+  })
+
   it('renders the trend chart from per-day rows folded across authors', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { added: 10, deleted: 2, net: 8, commitCnt: 2 },
@@ -258,44 +295,5 @@ describe('GitCodeStatsPanel', () => {
     mockApiGet.mockRejectedValue({ message: 'git 统计失败', status: 500 })
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('git 统计失败')
-  })
-
-  it('renders the code-inventory (cloc) card with per-language rows', async () => {
-    // git-stats + cloc are fetched on mount; route by URL.
-    mockApiGet.mockImplementation((url: string) => {
-      if (String(url).includes('/cloc')) {
-        return Promise.resolve({
-          languages: [
-            { name: 'Go', files: 2, code: 150, comment: 10, blank: 20 },
-            { name: 'Vue', files: 1, code: 50, comment: 5, blank: 5 },
-          ],
-          total: { name: '', files: 3, code: 200, comment: 15, blank: 25 },
-          scannedAt: '2026-09-09T00:00:00Z',
-        })
-      }
-      return Promise.resolve(mockResponse({ rows: [] }))
-    })
-    const wrapper = await mountPanel()
-    const text = wrapper.text()
-    expect(text).toContain('代码存量')
-    expect(text).toContain('Go')
-    expect(text).toContain('Vue')
-    expect(text).toContain('200') // total code
-    expect(text).toContain('合计')
-    // Total code formatted in M/K tier — 200 stays raw.
-    const codes = wrapper.findAll('.stats-td-num').map(td => td.text())
-    expect(codes).toContain('150')
-    expect(codes).toContain('50')
-  })
-
-  it('shows a hint when the workspace has no source files', async () => {
-    mockApiGet.mockImplementation((url: string) => {
-      if (String(url).includes('/cloc')) {
-        return Promise.resolve({ languages: [], total: { files: 0, code: 0, comment: 0, blank: 0 }, scannedAt: '2026-09-09T00:00:00Z' })
-      }
-      return Promise.resolve(mockResponse({ rows: [] }))
-    })
-    const wrapper = await mountPanel()
-    expect(wrapper.text()).toContain('当前工作区暂无源码文件')
   })
 })

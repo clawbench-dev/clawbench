@@ -31,6 +31,7 @@
 
     <div class="stats-tab-body">
       <UsageStatsPanel :active="active && section === 'usage'" class="stats-pane" />
+      <ClocStatsPanel :active="active && section === 'cloc'" class="stats-pane" />
       <GitCodeStatsPanel :active="active && section === 'git'" class="stats-pane" />
     </div>
   </div>
@@ -51,11 +52,15 @@ defineProps<{
 
 const { t } = useI18n()
 
-// Lazy-load both child panels so the echarts bundle only arrives when the
+// Lazy-load the child panels so the echarts bundle only arrives when the
 // stats tab is first opened (keeps the App.vue initial-chunk behaviour that
 // used to lazy-load UsageStatsPanel on its own).
 const UsageStatsPanel = defineAsyncComponent({
   loader: () => import('@/components/stats/UsageStatsPanel.vue'),
+  loadingComponent: AsyncComponentLoader,
+})
+const ClocStatsPanel = defineAsyncComponent({
+  loader: () => import('@/components/stats/ClocStatsPanel.vue'),
   loadingComponent: AsyncComponentLoader,
 })
 const GitCodeStatsPanel = defineAsyncComponent({
@@ -63,10 +68,11 @@ const GitCodeStatsPanel = defineAsyncComponent({
   loadingComponent: AsyncComponentLoader,
 })
 
-type StatsSection = 'usage' | 'git'
+type StatsSection = 'usage' | 'cloc' | 'git'
 const sections: { id: StatsSection; labelKey: string }[] = [
   { id: 'usage', labelKey: 'gitStats.tabUsage' },
-  { id: 'git', labelKey: 'gitStats.tabCode' },
+  { id: 'cloc', labelKey: 'gitStats.tabCloc' },
+  { id: 'git', labelKey: 'gitStats.tabDelta' },
 ]
 
 const section = ref<StatsSection>('usage')
@@ -74,11 +80,17 @@ const section = ref<StatsSection>('usage')
 // The shared refresh button drives whichever panel is active.
 const usageStats = useUsageStats()
 const gitStats = useGitCodeStats()
-const refreshing = computed(() => (section.value === 'usage' ? usageStats.loading.value : gitStats.loading.value))
+const refreshing = computed(() => {
+  if (section.value === 'usage') return usageStats.loading.value
+  if (section.value === 'cloc') return gitStats.clocLoading.value
+  return gitStats.loading.value
+})
 
 function onRefresh() {
   if (section.value === 'usage') {
     void usageStats.loadStats()
+  } else if (section.value === 'cloc') {
+    void gitStats.loadCloc()
   } else {
     void gitStats.loadGitStats()
   }
