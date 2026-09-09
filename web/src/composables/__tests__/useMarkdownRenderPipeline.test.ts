@@ -157,8 +157,8 @@ describe('buildMarkdownPreviewDom', () => {
   it('renders mermaid fenced blocks as pre.mermaid', () => {
     const md = '```mermaid\ngraph TD; A-->B\n```'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
-    // opening tag may carry a data-source-line attribute
-    expect(html).toMatch(/<pre class="mermaid"( data-source-line="\d+")?>/)
+    // opening tag may carry a data-source-line / data-source-end attribute
+    expect(html).toMatch(/<pre class="mermaid"( data-source-line="\d+")?( data-source-end="\d+")?>/)
   })
 
   it('resolves relative image paths through fixImagePaths + lightbox wrap', () => {
@@ -223,7 +223,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
     expect(html).toContain('<p data-source-line="3">')
     expect(html).toContain('<ul data-source-line="5">')
     expect(html).toContain('table data-source-line="8"')
-    expect(html).toContain('<pre data-source-line="12">')
+    expect(html).toContain('<pre data-source-line="12" data-source-end="14">')
     // table stays wrapped in .table-wrap despite carrying the attribute
     expect(html).toMatch(/table-wrap"><table data-source-line="8"/)
   })
@@ -232,9 +232,9 @@ describe('data-source-line through the full markdown preview pipeline', () => {
     // fenced code and math are protected then restored with the same row count.
     const md = ['第一行', '', '```', '$x_i$', '```', '', '公式 $a_{i}$ 结尾'].join('\n')
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
-    // paragraph 1 at line 1, code block starts line 3, math paragraph at line 7
+    // paragraph 1 at line 1, code block starts line 3 (ends line 5), math paragraph at line 7
     expect(html).toContain('<p data-source-line="1">')
-    expect(html).toContain('<pre data-source-line="3">')
+    expect(html).toContain('<pre data-source-line="3" data-source-end="5">')
     expect(html).toContain('data-source-line="7"')
     expect(html).not.toContain('\x00')
     expect(html).not.toContain('MATH')
@@ -273,8 +273,8 @@ describe('data-source-line through the full markdown preview pipeline', () => {
     const md = ['a', '', '```', '$$x=y$$', 'b', '```', '', 'c'].join('\n')
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'c.md' }, { isPC: true, imageTimestamp: 1 })
     expect(html).toContain('<p data-source-line="1">')
-    expect(html).toContain('<pre data-source-line="3">')
-    // c is on file line 8 (paragraph 1, blank 2, code 3-7, blank, c)
+    expect(html).toContain('<pre data-source-line="3" data-source-end="6">')
+    // c is on file line 8 (paragraph 1, blank 2, code 3-6, blank, c)
     expect(html).toContain('data-source-line="8"')
   })
 
