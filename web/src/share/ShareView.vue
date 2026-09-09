@@ -1,5 +1,14 @@
 <template>
   <div class="share-view">
+    <!-- Server wallpaper layer for share viewers (valid capability token only).
+         Mirrors the main app's .wallpaper-layer DOM so the shared base.css
+         rules render it identically. The <img> src is the token-scoped public
+         endpoint — the share SPA has no session cookie. -->
+    <div v-if="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+      <img :src="wallpaperUrl" class="wallpaper-image" alt="" draggable="false" />
+      <div class="wallpaper-scrim"></div>
+    </div>
+
     <!-- Read-only top bar (not the app FileHeader) -->
     <div class="share-topbar">
       <span class="share-file-name" :title="file?.name || ''">{{ file?.name || '' }}</span>
@@ -169,6 +178,13 @@ import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
 import { store } from '@/stores/app.ts'
+import {
+  applyShareWallpaper,
+  shareAppearanceUrl,
+  resolveShareWallpaperUrl,
+  type ShareAppearance,
+} from '@/utils/themeBackground'
+import { isDarkTheme } from '@/utils/themeMeta'
 
 // Share the resolved theme id with child components (OpenApiPreview reads it via
 // inject('theme') to pick Swagger UI colors). share.html sets data-theme on <html>.
@@ -206,6 +222,44 @@ const tocItems = ref<TocItem[]>([])
 /** 'rendered' (preview) | 'raw' (source code). Only used by file types that
  *  have both a rendered preview and a viewable source (markdown/html/openapi). */
 const viewMode = ref<'rendered' | 'raw'>('rendered')
+
+// ─── Server wallpaper (share-token-scoped appearance) ───
+// The share SPA is unauthenticated: wallpaper config + image come from the
+// public /api/share/{token}/{appearance,theme-background} endpoints. Any
+// failure (no wallpaper configured, missing image, revoked token) silently
+// renders no background — never an error that disturbs the document preview.
+const wallpaperActive = ref(false)
+const wallpaperUrl = ref('')
+/** Share token captured from the URL, used as the wallpaper fetch credential. */
+const shareToken = ref('')
+
+/** Resolve whether the share page is viewing under a dark theme (scrim strength). */
+function shareThemeIsDark(): boolean {
+  const stored = document.documentElement.getAttribute('data-theme') || 'github-dark'
+  return isDarkTheme(stored)
+}
+
+/**
+ * Load the token-scoped wallpaper appearance and apply it when a wallpaper is
+ * set. Failures are swallowed — the wallpaper is progressive enhancement.
+ */
+async function loadShareWallpaper() {
+  const token = shareToken.value
+  if (!token) return
+  try {
+    const resp = await fetch(shareAppearanceUrl(token))
+    if (!resp.ok) return
+    const data = (await resp.json()) as ShareAppearance
+    const appearance = data.appearance
+    const file = appearance?.wallpaper_file ?? ''
+    const panelOpacity = typeof appearance?.panel_opacity === 'number' ? appearance.panel_opacity : 0.85
+    applyShareWallpaper(token, file, panelOpacity, shareThemeIsDark())
+    wallpaperActive.value = !!file
+    wallpaperUrl.value = wallpaperActive.value ? resolveShareWallpaperUrl(token) : ''
+  } catch {
+    // Network / parse failure — no wallpaper, no error surface.
+  }
+}
 
 // ─── Parse token from /share/{token} ───
 function parseTokenFromPath(): string {
@@ -414,7 +468,9 @@ onMounted(() => {
     return
   }
   setShareToken(token)
+  shareToken.value = token
   void loadFile()
+  void loadShareWallpaper()
 })
 </script>
 

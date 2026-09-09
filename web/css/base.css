@@ -229,6 +229,22 @@ html.wallpaper-active .dir-nav-bottom {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
 
+/* Share SPA (public /share/{token}) — the server wallpaper layer is mounted
+   under .share-view. Following the .file-overlay precedent, .share-view goes
+   fully transparent (it is the single container behind the wallpaper) while
+   its chrome bars take the translucent --panel-alpha tint so content sits on
+   one consistent translucent surface, mirroring the in-app file viewer. The
+   scoped .markdown-body / .cm-viewer / preview-canvas rules above apply here
+   unchanged because the share SPA mounts the very same components. */
+html.wallpaper-active .share-view {
+    background: transparent;
+}
+html.wallpaper-active .share-topbar,
+html.wallpaper-active .share-content,
+html.wallpaper-active .share-toc {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
 /* Section-title bands inside settings cards keep a translucent tint so the
    grouping is still visible without blocking the wallpaper. */
 html.wallpaper-active .settings-card__header,

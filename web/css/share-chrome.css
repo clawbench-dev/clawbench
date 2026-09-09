@@ -26,6 +26,9 @@
   height: 100%;
   width: 100%;
   overflow: hidden;
+  /* Anchors the share SPA's optional server-wallpaper layer (.wallpaper-layer,
+     mounted as its first child). Inert when no wallpaper is present. */
+  position: relative;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1f2328);
 }
@@ -40,6 +43,23 @@
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, .25));
   background: var(--bg-secondary, #f6f8fa);
+}
+
+/* Body: content column + TOC rail */
+.share-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The share SPA paints a server-wallpaper layer at the root; the chrome above
+   it must sit on its own z-index plane so in-flow content is never occluded.
+   The offline markdown export never mounts the layer, so these stay inert. */
+.share-topbar,
+.share-body {
+  position: relative;
+  z-index: 1;
 }
 
 .share-file-name {
@@ -76,14 +96,6 @@
     background: var(--bg-tertiary, #eaeef2);
     color: var(--accent-color, #0969da);
   }
-}
-
-/* Body: content column + TOC rail */
-.share-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
 }
 
 .share-content {

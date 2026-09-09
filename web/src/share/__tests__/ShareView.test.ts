@@ -85,6 +85,12 @@ beforeEach(() => {
     ok: true,
     json: async () => ({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' }),
   })
+  // Ensure a clean <html> state (wallpaper-active class / CSS vars are applied
+  // as document side-effects by the wallpaper applier).
+  document.documentElement.classList.remove('wallpaper-active')
+  document.documentElement.style.removeProperty('--wallpaper-url')
+  document.documentElement.style.removeProperty('--wallpaper-scrim')
+  document.documentElement.style.removeProperty('--panel-alpha')
 })
 
 afterEach(() => {
@@ -92,12 +98,27 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
   for (const w of mountedWrappers.splice(0)) w.unmount()
+  document.documentElement.classList.remove('wallpaper-active')
+  document.documentElement.style.removeProperty('--wallpaper-url')
+  document.documentElement.style.removeProperty('--wallpaper-scrim')
+  document.documentElement.style.removeProperty('--panel-alpha')
 })
 
-async function mountShare(file: Record<string, unknown>) {
-  ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-    ok: true,
-    json: async () => file,
+async function mountShare(file: Record<string, unknown>, appearance?: { wallpaper_file?: string; panel_opacity?: number }) {
+  // Route the two share fetches: the file payload under /file, the wallpaper
+  // appearance config under /appearance (defaults to "no wallpaper set").
+  ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
+    const path = typeof url === 'string' ? url : url instanceof URL ? url.pathname : new URL(url.url).pathname
+    if (path.endsWith('/appearance')) {
+      return {
+        ok: true,
+        json: async () => ({ appearance: { wallpaper_file: appearance?.wallpaper_file ?? '', panel_opacity: appearance?.panel_opacity ?? 0.85 } }),
+      }
+    }
+    return {
+      ok: true,
+      json: async () => file,
+    }
   })
   const wrapper = mount(ShareView, {
     global: { plugins: [i18n], stubs: asyncComponentStubs },
@@ -291,5 +312,56 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
       window.removeEventListener('cm-scroll-to-line', listener)
       stopAck()
     }
+  })
+})
+
+describe('ShareView — server wallpaper background', () => {
+  it('renders the wallpaper layer when the token-scoped appearance has a file', async () => {
+    const wrapper = await mountShare(
+      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
+      { wallpaper_file: 'background.png', panel_opacity: 0.7 },
+    )
+    const layer = wrapper.find('.wallpaper-layer')
+    expect(layer.exists()).toBe(true)
+    // The <img> src is the token-scoped public endpoint (share SPA has no auth).
+    const img = layer.find('img.wallpaper-image')
+    expect(img.attributes('src')).toContain('/api/share/tokShareTest/theme-background?v=')
+    // Document side-effects mirror the main app: scrim/alpha + active class.
+    const html = document.documentElement
+    expect(html.classList.contains('wallpaper-active')).toBe(true)
+    expect(html.style.getPropertyValue('--panel-alpha')).toBe('70%')
+    expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.35)')
+  })
+
+  it('keeps the content document visible alongside the wallpaper', async () => {
+    const wrapper = await mountShare(
+      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
+      { wallpaper_file: 'background.png', panel_opacity: 0.85 },
+    )
+    expect(wrapper.find('.markdown-preview-stub').exists()).toBe(true)
+  })
+
+  it('renders no wallpaper layer when the server reports no wallpaper', async () => {
+    const wrapper = await mountShare(
+      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
+      { wallpaper_file: '', panel_opacity: 0.85 },
+    )
+    expect(wrapper.find('.wallpaper-layer').exists()).toBe(false)
+    expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
+  })
+
+  it('silently shows no wallpaper when the appearance fetch fails', async () => {
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
+      const path = typeof url === 'string' ? url : url instanceof URL ? url.pathname : new URL(url.url).pathname
+      if (path.endsWith('/appearance')) return { ok: false, json: async () => ({}) }
+      return { ok: true, json: async () => ({ name: 'a.md', path: '/a.md', content: '# a' }) }
+    })
+    const wrapper = mount(ShareView, { global: { plugins: [i18n], stubs: asyncComponentStubs } })
+    mountedWrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.find('.wallpaper-layer').exists()).toBe(false)
+    // No wallpaper-active side-effects and no error surfaced to the user.
+    expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
+    expect(wrapper.find('.share-error').exists()).toBe(false)
   })
 })

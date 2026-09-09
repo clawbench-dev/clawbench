@@ -102,3 +102,24 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(edit).toContain('var(--code-bg)')
   })
 })
+
+describe('wallpaper-active share-SPA chrome (public /share/{token})', () => {
+  it('keeps .share-view fully transparent so the wallpaper layer is the single surface', () => {
+    const rule = ruleContaining('html.wallpaper-active .share-view')
+    expect(rule).toContain('background: transparent;')
+    // Must not stack a second translucent color-mix layer over the wallpaper.
+    expect(rule).not.toContain('color-mix')
+  })
+
+  it('applies one translucent layer to the share top bar, content column and TOC rail', () => {
+    const rule = ruleContaining('html.wallpaper-active .share-topbar')
+    expect(rule).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-secondary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+    // The content column mirrors the in-app .tab-panel translucent surface,
+    // so the reading column and the TOC rail share the same single layer.
+    for (const sel of ['.share-content', '.share-toc']) {
+      expect(rule).toContain(`html.wallpaper-active ${sel}`)
+    }
+  })
+})

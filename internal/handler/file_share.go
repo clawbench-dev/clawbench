@@ -271,10 +271,17 @@ func parseSharePublicPath(urlPath string) (token, rest string, ok bool) {
 }
 
 // ServeSharePublic serves the unauthenticated token-scoped data endpoints:
-//   - GET /api/share/{token}/file        → FileContent JSON
-//   - GET /api/share/{token}/download    → raw bytes with Content-Disposition
-//   - GET /api/share/{token}/local/{rel} → raw bytes resolved against the shared
+//   - GET /api/share/{token}/file             → FileContent JSON
+//   - GET /api/share/{token}/download         → raw bytes with Content-Disposition
+//   - GET /api/share/{token}/local/{rel}      → raw bytes resolved against the shared
 //     file's directory (or ?path= absolute)
+//   - GET /api/share/{token}/appearance       → server wallpaper appearance config
+//     (wallpaper_file / panel_opacity); NO secrets from /api/config
+//   - GET /api/share/{token}/theme-background → active wallpaper image bytes
+//
+// The appearance + wallpaper endpoints are gated on the same capability token
+// as the file itself, so a shared doc carries its server-side theme look only
+// to whoever already holds the link.
 func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -302,11 +309,77 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		serveShareFileContent(w, r, absPath)
 	case rest == "download":
 		serveShareRaw(w, r, absPath, name, true)
+	case rest == "appearance":
+		serveShareAppearance(w, r)
+	case rest == "theme-background":
+		serveShareThemeBackgroundGet(w, r)
 	case rest == "local" || strings.HasPrefix(rest, "local/"):
 		serveShareLocal(w, r, absPath, rest)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// shareAppearanceResponse is the public wallpaper appearance subset exposed to
+// share viewers. Deliberately NOT the full /api/config response — no secrets.
+type shareAppearanceResponse struct {
+	Appearance shareAppearance `json:"appearance"`
+}
+
+// shareAppearance mirrors the snake_case appearance section the frontend's
+// resolveWallpaperState / resolvePanelOpacity already consume.
+type shareAppearance struct {
+	WallpaperFile string  `json:"wallpaper_file"`
+	PanelOpacity  float64 `json:"panel_opacity"`
+}
+
+// serveShareAppearance serves GET /api/share/{token}/appearance. When no
+// wallpaper is configured (or its file has gone missing) the response still
+// carries an empty wallpaper_file so the share SPA cleanly renders no
+// background — never an error that could disturb the document preview.
+func serveShareAppearance(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	cfg := model.ConfigInstance
+	configMutex.RUnlock()
+
+	file := cfg.Appearance.WallpaperFile
+	if file != "" {
+		// Only report the wallpaper when its file is actually present, so a
+		// stale config entry (file removed out-of-band) never leaves the share
+		// view pointing at a broken image URL.
+		if !themeWallpaperIsServed(file) {
+			file = ""
+		}
+	}
+
+	writeJSON(w, http.StatusOK, shareAppearanceResponse{
+		Appearance: shareAppearance{
+			WallpaperFile: file,
+			PanelOpacity:  cfg.Appearance.PanelOpacity,
+		},
+	})
+}
+
+// themeWallpaperIsServed reports whether name is a bare, whitelisted wallpaper
+// file name that resolves to an existing regular file inside the theme dir —
+// the same containment the serve endpoint enforces (see resolveThemeWallpaperPath).
+func themeWallpaperIsServed(name string) bool {
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	if !model.IsThemeAllowedExt(name) {
+		return false
+	}
+	themeDir := model.DefaultThemeDir()
+	if themeDir == "" {
+		return false
+	}
+	absPath := filepath.Join(themeDir, name)
+	if !isPathUnderBase(absPath, themeDir) {
+		return false
+	}
+	info, err := os.Stat(absPath)
+	return err == nil && !info.IsDir()
 }
 
 // serveShareFileContent responds with the FileContent JSON for the shared file.
