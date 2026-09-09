@@ -473,7 +473,10 @@ func TestSkillsToCommands(t *testing.T) {
 			skills: []SkillInfo{
 				{Name: "skill-creator", Description: "Guide for creating skills"},
 			},
-			wantNames: []string{"/skill-creator"},
+			// Bare frontmatter name must be delivered as-is — the frontend adds
+			// the "/" prefix when rendering the slash menu. A backend-added "/"
+			// would double up to "//" in the menu and break IsACPSlashCommand.
+			wantNames: []string{"skill-creator"},
 			wantDescs: []string{"Guide for creating skills"},
 			wantLen:   1,
 		},
@@ -482,6 +485,9 @@ func TestSkillsToCommands(t *testing.T) {
 			skills: []SkillInfo{
 				{Name: "/skill-creator", Description: "Guide for creating skills"},
 			},
+			// A name that already carries a slash is preserved verbatim (no
+			// stripping, no re-adding). The frontend is responsible for
+			// rendering a single leading slash either way.
 			wantNames: []string{"/skill-creator"},
 			wantDescs: []string{"Guide for creating skills"},
 			wantLen:   1,
@@ -492,7 +498,7 @@ func TestSkillsToCommands(t *testing.T) {
 				{Name: "skill-creator", Description: "Guide for creating skills"},
 				{Name: "docx", Description: "Word doc manipulation"},
 			},
-			wantNames: []string{"/skill-creator", "/docx"},
+			wantNames: []string{"skill-creator", "docx"},
 			wantDescs: []string{"Guide for creating skills", "Word doc manipulation"},
 			wantLen:   2,
 		},

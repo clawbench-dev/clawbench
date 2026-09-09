@@ -160,20 +160,20 @@ func collapseWhitespace(s string) string {
 }
 
 // SkillsToCommands converts SkillInfo slices to AvailableCommandInfo so skills
-// appear in the slash command menu (/) just like plugin commands. CodeBuddy
-// TUI mode exposes skills this way; we mirror it in ACP mode.
+// appear in the slash command menu (/) just like plugin commands.
+//
+// Command names are delivered as the RAW frontmatter name — no "/" prefix is
+// added here. The frontend prepends "/" when rendering the slash menu, exactly
+// as it does for plugin-command names. Adding "/" in both places would produce
+// "//name" in the menu and break IsACPSlashCommand on send.
 func SkillsToCommands(skills []SkillInfo) []AvailableCommandInfo {
 	if len(skills) == 0 {
 		return nil
 	}
 	cmds := make([]AvailableCommandInfo, 0, len(skills))
 	for _, s := range skills {
-		name := s.Name
-		if !strings.HasPrefix(name, "/") {
-			name = "/" + name
-		}
 		cmds = append(cmds, AvailableCommandInfo{
-			Name:        name,
+			Name:        s.Name,
 			Description: s.Description,
 		})
 	}

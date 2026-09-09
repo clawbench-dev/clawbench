@@ -1221,6 +1221,49 @@ describe('ChatInputBar', () => {
     mockSupportsACP.mockReturnValue(false)
   })
 
+  it('Enter confirms a slash-prefixed skill name with a single slash', async () => {
+    // Skill commands carry their frontmatter name. A user skill whose SKILL.md
+    // name already starts with "/" (as pre-scanned skill commands used to) must
+    // NOT gain a second "/" in the slash menu — that would produce "//skill"
+    // and fail IsACPSlashCommand on send.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: '/my-skill', description: 'My skill', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0; Enter should confirm it
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/my-skill ')
+    expect(wrapper.vm.showSlashMenu).toBe(false)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('slash menu keeps a single slash when a bare-name and slash-prefixed command coexist', async () => {
+    // Plugin-command names are bare ("help"); skill names may already carry a
+    // slash ("/my-skill"). Both must render with exactly one leading slash.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [
+      { name: 'help', description: 'Show help', inputHint: '' },
+      { name: '/my-skill', description: 'My skill', inputHint: '' },
+    ]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const labels = (wrapper.vm.slashMenuItems as Array<{ key: string; label: string }>).map(i => i.label)
+    expect(labels).toContain('/help')
+    expect(labels).toContain('/my-skill')
+    expect(labels.some(l => l.startsWith('//'))).toBe(false)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
   it('ArrowUp from pre-selected first @ item wraps to last item', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '@'

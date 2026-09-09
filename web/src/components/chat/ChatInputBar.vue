@@ -810,13 +810,22 @@ const atMenuItems = computed(() => {
     .map(cmd => ({ ...cmd, query }))
 })
 
+// Slash-command menu item key/label: names arrive WITHOUT a leading slash
+// (plugin-command files, ACP built-ins), but pre-scanned user skills carry
+// their raw frontmatter name, which may ALREADY start with "/". Prepending
+// "/" unconditionally would render "//name" and break IsACPSlashCommand on
+// send — only add the slash when the name doesn't already have one.
+function slashCommandKey(name) {
+  return name.startsWith('/') ? name : '/' + name
+}
+
 const slashMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
   const query = text.slice(1) // strip leading '/'
   if (!query) return availableCommands.value.map(cmd => ({
-    key: '/' + cmd.name,
-    label: '/' + cmd.name,
+    key: slashCommandKey(cmd.name),
+    label: slashCommandKey(cmd.name),
     description: cmd.description,
     inputHint: cmd.inputHint || '',
     query: '',
@@ -825,8 +834,8 @@ const slashMenuItems = computed(() => {
   return availableCommands.value
     .filter(cmd => cmd.name.toLowerCase().includes(lowerQ))
     .map(cmd => ({
-      key: '/' + cmd.name,
-      label: '/' + cmd.name,
+      key: slashCommandKey(cmd.name),
+      label: slashCommandKey(cmd.name),
       description: cmd.description,
       inputHint: cmd.inputHint || '',
       query,
