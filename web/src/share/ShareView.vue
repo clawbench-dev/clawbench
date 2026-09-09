@@ -584,20 +584,18 @@ onBeforeUnmount(() => {
 }
 
 /* The global .image-block-wrapper is width:fit-content for markdown text flow;
-   inside the full-screen share host it must stretch to the available space and
-   constrain the image height (header keeps its own height). */
+   inside the full-screen share host it must fit the available space and center
+   the image (the action toolbar now floats over the image top-right corner). */
 .share-image-view .image-block-wrapper {
   margin: 0;
   max-width: 100%;
   max-height: 100%;
-  display: flex;
-  flex-direction: column;
 }
 
 .share-image-view .share-image-img {
   display: block;
   max-width: 100%;
-  max-height: calc(100% - 26px);
+  max-height: 100%;
   object-fit: contain;
 }
 

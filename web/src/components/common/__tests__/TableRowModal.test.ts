@@ -5,7 +5,7 @@ import { createI18n } from 'vue-i18n'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
 const CELL_HTML = (src: string, fullSrc: string) =>
-  `<span class="lightbox-img-wrap"><img class="lightbox-img" src="${src}" data-full-src="${fullSrc}" alt="a"><span class="lightbox-expand-icon"></span></span>`
+  `<div class="image-block-wrapper"><div class="image-block-header"><span class="image-block-header-actions"><button type="button" class="image-block-view-btn" title="View image" aria-label="View image"></button></span></div><span class="lightbox-img-wrap"><img class="lightbox-img" src="${src}" data-full-src="${fullSrc}" alt="a"></span></div>`
 
 async function mountModal(cellHtml: string) {
   // Fresh i18n per mount — avoids vue-i18n devtools install flake on repeat mounts.
@@ -38,11 +38,11 @@ describe('TableRowModal image lightbox', () => {
     expect(openLightbox).toHaveBeenCalledWith('/api/local-file/img/logo.png')
   })
 
-  it('opens the lightbox with the full-size src when the expand icon is clicked', async () => {
+  it('opens the lightbox with the full-size src when the figure view button is clicked', async () => {
     const { openLightbox } = await mountModal(CELL_HTML('/api/file/thumb?path=img/logo.png&w=800', '/api/local-file/img/logo.png'))
-    const icon = document.querySelector('.table-row-value .lightbox-expand-icon') as HTMLElement | null
-    expect(icon).toBeTruthy()
-    icon!.click()
+    const btn = document.querySelector('.table-row-value .image-block-view-btn') as HTMLElement | null
+    expect(btn).toBeTruthy()
+    btn!.click()
     await nextTick()
     expect(openLightbox).toHaveBeenCalledTimes(1)
     expect(openLightbox).toHaveBeenCalledWith('/api/local-file/img/logo.png')

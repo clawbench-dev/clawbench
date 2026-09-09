@@ -61,10 +61,10 @@ export function resolveMermaidBadgeClick(e: Event): MermaidRangeHit | null {
   if (!target || !target.closest(MERMAID_ATTACH_BADGE)) return null
   // The container is either an ANCESTOR (legacy badge sits inside div.mermaid)
   // or a SIBLING child of the block wrapper (header attach button sits before
-  // div.mermaid inside .mermaid-block-wrapper).
+  // div.mermaid inside the unified .image-block-wrapper).
   let container = target.closest<HTMLElement>('div.mermaid[data-mermaid]')
   if (!container) {
-    const wrapper = target.closest<HTMLElement>('.mermaid-block-wrapper')
+    const wrapper = target.closest<HTMLElement>('.image-block-wrapper')
     container = wrapper?.querySelector<HTMLElement>('div.mermaid[data-mermaid]') || null
   }
   const mdBody = target.closest<HTMLElement>('.markdown-body[data-file-path]')

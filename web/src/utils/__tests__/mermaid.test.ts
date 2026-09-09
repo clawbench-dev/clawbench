@@ -132,7 +132,10 @@ describe('mermaid', () => {
             const rendered = el.querySelector('div.mermaid')
             expect(rendered).not.toBeNull()
             expect(rendered?.innerHTML).toContain('<svg>rendered</svg>')
-            expect(rendered?.querySelector('.lightbox-expand-icon')).not.toBeNull()
+            // Non file-preview diagrams get a view-only unified figure.
+            expect(rendered?.parentElement?.classList.contains('image-block-wrapper')).toBe(true)
+            expect(rendered?.parentElement?.querySelector('.image-block-view-btn')).not.toBeNull()
+            expect(rendered?.parentElement?.querySelector('.image-block-attach-btn')).toBeNull()
             expect(rendered?.dataset.mermaid).toBe('graph TD; A-->B')
         })
 
@@ -322,8 +325,10 @@ describe('mermaid', () => {
                 pre.textContent = 'graph TD; A-->B'
                 mdBody.appendChild(pre)
                 await renderMermaidInElement(mdBody)
-                expect(mdBody.querySelector('.mermaid-block-wrapper')).toBeNull()
-                expect(mdBody.querySelector('.mermaid-block-attach-btn')).toBeNull()
+                // Share mode still gets the unified figure, but view-only (no
+                // attach — it needs a non-share md file ancestor).
+                expect(mdBody.querySelector('.image-block-wrapper')).not.toBeNull()
+                expect(mdBody.querySelector('.image-block-attach-btn')).toBeNull()
             } finally {
                 setShareToken(null)
             }
@@ -350,8 +355,8 @@ describe('mermaid', () => {
 
             mockRender.mockResolvedValue({ svg: '<svg>second</svg>' })
             await reRenderMermaid()
-            expect(mdBody.querySelector('.mermaid-block-attach-btn')).not.toBeNull()
-            expect(diagram.parentElement?.classList.contains('mermaid-block-wrapper')).toBe(true)
+            expect(mdBody.querySelector('.image-block-attach-btn')).not.toBeNull()
+            expect(diagram.parentElement?.classList.contains('image-block-wrapper')).toBe(true)
         })
 
         it('should arm the attach header with the localized aria label', async () => {
@@ -369,7 +374,7 @@ describe('mermaid', () => {
             expect(btn.getAttribute('aria-label')).toBeTruthy()
             expect(btn.getAttribute('title')).toBeTruthy()
             // View button is also present.
-            expect(mdBody.querySelector('.mermaid-block-view-btn')).not.toBeNull()
+            expect(mdBody.querySelector('.image-block-view-btn')).not.toBeNull()
         })
 
         it('should carry data-source-end onto the rendered container', async () => {

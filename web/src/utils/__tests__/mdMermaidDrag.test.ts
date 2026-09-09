@@ -96,14 +96,18 @@ describe('resolveMermaidDragTarget', () => {
     expect(resolveMermaidDragTarget(dragFrom(el))).toBeNull()
   })
 
-  it('ignores drags starting on the header buttons / expand icon', () => {
+  it('ignores drags starting on the header buttons', () => {
     const { md, svg } = makePreviewMermaid({ start: '5', end: '8' })
-    // Header button lives next to the container inside a wrapper.
+    // The diagram's figure header lives next to the container inside the
+    // shared .image-block-wrapper.
     const wrapper = document.createElement('div')
-    wrapper.className = 'mermaid-block-wrapper'
+    wrapper.className = 'image-block-wrapper'
+    const header = document.createElement('div')
+    header.className = 'image-block-header'
     const btn = document.createElement('button')
-    btn.className = 'mermaid-block-attach-btn'
-    wrapper.appendChild(btn)
+    btn.className = 'image-block-attach-btn mermaid-block-attach-btn'
+    header.appendChild(btn)
+    wrapper.appendChild(header)
     md.insertBefore(wrapper, md.querySelector('.mermaid'))
     expect(resolveMermaidDragTarget(dragFrom(btn))).toBeNull()
     // svg body still resolves

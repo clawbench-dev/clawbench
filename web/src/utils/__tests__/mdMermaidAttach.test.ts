@@ -101,17 +101,17 @@ describe('resolveMermaidBadgeClick', () => {
   })
 
   it('resolves a header attach button whose container is a wrapper sibling', () => {
-    // File-preview diagrams sit in .mermaid-block-wrapper where the header
+    // File-preview diagrams sit in .image-block-wrapper where the header
     // (attach button) precedes the div.mermaid container — not an ancestor.
     const md = document.createElement('div')
     md.className = 'markdown-body'
     md.setAttribute('data-file-path', 'docs/guide.md')
     const wrapper = document.createElement('div')
-    wrapper.className = 'mermaid-block-wrapper'
+    wrapper.className = 'image-block-wrapper'
     const header = document.createElement('div')
-    header.className = 'mermaid-block-header'
+    header.className = 'image-block-header'
     const btn = document.createElement('button')
-    btn.className = 'mermaid-block-attach-btn'
+    btn.className = 'image-block-attach-btn mermaid-block-attach-btn'
     header.appendChild(btn)
     wrapper.appendChild(header)
     const container = document.createElement('div')

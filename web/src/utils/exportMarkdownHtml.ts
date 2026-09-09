@@ -1050,26 +1050,23 @@ function buildLightboxJs(): string {
     }
 
     document.addEventListener('click', function(e) {
-        var expandAffordance = e.target.closest('.lightbox-expand-icon, .image-block-view-btn');
+        var expandAffordance = e.target.closest('.image-block-view-btn');
         if (expandAffordance) {
-            // Check if the expand icon is inside a mermaid container
-            var mermaidContainer = expandAffordance.closest('.mermaid');
-            if (mermaidContainer) {
-                var svg = mermaidContainer.querySelector('svg');
-                if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
-                return;
-            }
-            // Otherwise it's an image expand affordance — open the full-size image.
-            // .lightbox-expand-icon sits in .lightbox-img-wrap; .image-block-view-btn
-            // sits in the figure header above .lightbox-img-wrap.
-            var wrap = expandAffordance.closest('.image-block-wrapper, .lightbox-img-wrap');
+            e.preventDefault();
+            // .image-block-view-btn sits in the figure header above the content:
+            // the figure content may be an image, a rendered mermaid diagram or
+            // a bare inline <svg>. Resolve in that order from the shared wrapper.
+            var wrap = expandAffordance.closest('.image-block-wrapper');
             var img = wrap ? wrap.querySelector('.lightbox-img') : null;
             if (img) {
-                e.preventDefault();
                 var fullSrc = img.getAttribute('data-full-src') || img.src;
                 openLightbox(fullSrc, false);
+                return;
             }
-            return;
+            var svgEl = wrap ? wrap.querySelector('.mermaid svg, svg.lightbox-svg') : null;
+            if (svgEl) {
+                openLightbox(svgEl.outerHTML, true);
+            }
         }
     });
 })();`
@@ -1241,17 +1238,6 @@ ${shareChromeCss}
 
 /* ─── Export-only chrome overrides (see buildTocStandalone tocCss) ─── */
 ${tocCss}
-
-/* ─── Lightbox expand icon (hover overlay on images/mermaid) ─── */
-.markdown-body .lightbox-img-wrap { position: relative; display: inline-block; }
-.markdown-body .lightbox-img-wrap .lightbox-img { cursor: default; }
-.markdown-body .lightbox-img-wrap .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; cursor: pointer; z-index: 2; pointer-events: auto; }
-@media (hover: hover) { .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon { display: flex; align-items: center; justify-content: center; } }
-.markdown-body .lightbox-img-wrap .lightbox-expand-icon::after { content: '\\2922'; font-size: 14px; line-height: 1; }
-.markdown-body .mermaid { position: relative; }
-.markdown-body .mermaid .lightbox-expand-icon { display: none; position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 4px; background: rgba(0,0,0,0.5); color: #fff; font-size: 14px; line-height: 24px; text-align: center; cursor: pointer; z-index: 2; align-items: center; justify-content: center; }
-.markdown-body .mermaid .lightbox-expand-icon::after { content: '\\2922'; }
-@media (hover: hover) { .markdown-body .mermaid:hover .lightbox-expand-icon { display: flex; } }
 
 /* ─── Lightbox overlay ─── */
 .export-lightbox { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; overflow: hidden; touch-action: none; }

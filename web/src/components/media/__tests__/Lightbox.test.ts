@@ -1050,7 +1050,7 @@ describe('Lightbox', () => {
       const container = document.createElement('div')
       container.innerHTML =
         '<img src="a.png" alt="Image A">' +
-        '<span class="lightbox-svg-wrap"><svg class="lightbox-svg" viewBox="0 0 100 50"><rect></rect></svg><span class="lightbox-expand-icon"></span></span>' +
+        '<span class="lightbox-svg-wrap"><svg class="lightbox-svg" viewBox="0 0 100 50"><rect></rect></svg></span>' +
         '<img src="b.png" alt="Image B">'
       document.body.appendChild(container)
 

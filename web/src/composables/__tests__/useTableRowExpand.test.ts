@@ -133,12 +133,12 @@ describe('useTableRowExpand', () => {
     table.remove()
   })
 
-  it('handleTableRowClick does not open the row viewer when clicking the lightbox expand icon', () => {
+  it('handleTableRowClick does not open the row viewer when clicking the figure view button', () => {
     const { handleTableRowClick, tableRowModal } = useTableRowExpand()
     const tr = document.createElement('tr')
     tr.setAttribute('data-row-idx', '0')
-    const icon = document.createElement('span')
-    icon.className = 'lightbox-expand-icon'
+    const icon = document.createElement('button')
+    icon.className = 'image-block-view-btn'
     tr.appendChild(icon)
     document.body.appendChild(tr)
 

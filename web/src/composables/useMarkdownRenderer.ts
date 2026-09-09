@@ -2,7 +2,8 @@ import { marked, katex, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
-import { rewriteImageUrls, wrapInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { rewriteImageUrls, markInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -230,7 +231,8 @@ const DOMPURIFY_ALLOWED_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|
  *       → DOMPurify → fixImagePaths → table-wrap → injectTableRowAttrs
  *       → annotateCodeBlockHeaders → annotateTableBlockHeaders
  *       → [rewriteImageUrls → convertAudioLinks → convertVideoLinks → annotateWorktreePaths
- *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls]
+ *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls
+ *          → markInlineSvgs → annotateMediaBlocks]
  *
  * 方括号内的步骤在 skipEnhancements=true 时跳过（流式模式用）。
  *
@@ -330,10 +332,16 @@ export function renderMarkdown(
         html = annotateLocalhostUrls(html)
 
         // MUST run after all <a href>-anchored regex steps (audio/video links,
-        // path/commit/localhost annotations). Wrapping an inline <svg> in a
-        // <span> breaks those regexes' structural matches across its content,
-        // so any markup they would inject inside the svg must already be in place.
-        html = wrapInlineSvgs(html)
+        // path/commit/localhost annotations). Marking inline <svg> (no new
+        // wrapper span) keeps those regexes' structural matches intact; the
+        // media-block figure step below is a DOM parse so it is unaffected.
+        html = markInlineSvgs(html)
+
+        // Unified media figure: lift every <img> / bare inline <svg> into the
+        // bordered block figure with a header bar (same factory as file
+        // previews). Mermaid is still a <pre> code block at this stage and is
+        // armed separately by mermaid.ts after DOM rendering. Idempotent.
+        html = annotateMediaBlocks(html)
     }
 
     return { html, detectedPaths, detectedSHAs }

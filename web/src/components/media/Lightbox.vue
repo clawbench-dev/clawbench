@@ -739,18 +739,21 @@ watch(lightboxVisible, (visible) => {
 
 function handleLightboxClick(e) {
     // Touch mode: direct click on .lightbox-img, .mermaid or .lightbox-svg opens lightbox
-    // PC mode: only click on .lightbox-expand-icon / image header view button opens lightbox
-    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon, .image-block-view-btn, .mermaid-block-view-btn')
-    // PC mode: only the expand affordances open lightbox (not the image/mermaid/svg itself)
-    if (!isExpandIcon && e.pointerType !== 'touch') return
+    // PC mode: only click on the figure header view button opens lightbox
+    const isViewBtn = !!e.target.closest('.image-block-view-btn')
+    // PC mode: only the view button opens lightbox (not the image/mermaid/svg itself)
+    if (!isViewBtn && e.pointerType !== 'touch') return
 
-    // When clicking an expand affordance, find the image from its wrapper:
-    //   - .lightbox-expand-icon sits inside .lightbox-img-wrap (sibling of the img)
-    //   - .image-block-view-btn sits in the figure header; the img is in the
-    //     figure's .lightbox-img-wrap child
+    // When clicking a view button, find the media from its shared figure wrapper
+    // (`.image-block-wrapper`); the content may be an image, a rendered mermaid
+    // diagram or a bare inline <svg> — resolve in that order.
+    const wrap = isViewBtn
+        ? e.target.closest('.image-block-wrapper, .lightbox-img-wrap')
+        : e.target.closest('.image-block-wrapper, .lightbox-img-wrap, .lightbox-svg-wrap')
+
+    // 1. Raster image
     let img
-    if (isExpandIcon) {
-        const wrap = e.target.closest('.image-block-wrapper, .lightbox-img-wrap')
+    if (isViewBtn) {
         img = wrap ? wrap.querySelector('.lightbox-img') : null
     } else {
         img = e.target.closest('.lightbox-img')
@@ -769,8 +772,10 @@ function handleLightboxClick(e) {
         open(fullImgSrc(img))
         return
     }
+
+    // 2. Rendered mermaid diagram (content cell of the figure, or standalone)
     const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')
-      || (e.target.closest('.mermaid-block-wrapper')?.querySelector('.mermaid') ?? null)
+      || (wrap?.querySelector('.mermaid') ?? null)
     if (mermaidDiv) {
         e.preventDefault()
         const svg = mermaidDiv.querySelector('svg')
@@ -787,22 +792,20 @@ function handleLightboxClick(e) {
         }
         return
     }
-    // Inline SVG (non-mermaid) returned directly by the AI
-    const svgWrap = e.target.closest('.lightbox-svg-wrap')
-    if (svgWrap) {
+
+    // 3. Bare inline SVG (non-mermaid) returned directly by the AI
+    const svgEl = wrap?.querySelector('svg.lightbox-svg') || e.target.closest('.lightbox-svg')
+    if (svgEl) {
         e.preventDefault()
-        const svg = svgWrap.querySelector('svg.lightbox-svg') || svgWrap.querySelector('svg')
-        if (svg) {
-            const mdContainer = svgWrap.closest('.markdown-body, .chat-message')
-            if (mdContainer) {
-                const { list, startIdx } = collectMdImages(mdContainer, null, null, svg)
-                if (list.length > 1) {
-                    openMdImages(list, startIdx)
-                    return
-                }
+        const mdContainer = svgEl.closest('.markdown-body, .chat-message')
+        if (mdContainer) {
+            const { list, startIdx } = collectMdImages(mdContainer, null, null, svgEl)
+            if (list.length > 1) {
+                openMdImages(list, startIdx)
+                return
             }
-            openSvg(svg.outerHTML)
         }
+        openSvg(svgEl.outerHTML)
     }
 }
 

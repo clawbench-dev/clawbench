@@ -131,15 +131,11 @@ watch(
   ([prompt]) => {
     const renderId = ++promptRenderId
     // Unified pipeline: renderMarkdown handles KaTeX, DOMPurify, code/table headers,
-    // path/commit/localhost annotations, and image/audio conversion automatically.
+    // path/commit/localhost annotations, image/audio conversion, and the media
+    // figure wrapping (lightbox activation via .image-block-wrapper) automatically.
     const { html, detectedPaths, detectedSHAs } = renderMarkdown(prompt || '', { sanitize: true })
-    // Add lightbox-img class to all <img> tags for lightbox activation
-    const finalHtml = html.replace(/<img(\s+[^>]*?)>/gi, (_match, attrs) => {
-      const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-      return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span></span>`
-    })
 
-    renderedPrompt.value = finalHtml
+    renderedPrompt.value = html
 
     // Async verify file paths after DOM update
     if (detectedPaths.length > 0) {
@@ -475,45 +471,4 @@ function handlePromptClick(event: MouseEvent) {
   font-size: 12px;
 }
 
-</style>
-
-<style>
-/* Lightbox image wrapper and expand icon (non-scoped for v-html content) */
-.task-overview .lightbox-img-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.task-overview .lightbox-img-wrap .lightbox-img {
-  cursor: default;
-}
-
-.task-overview .lightbox-img-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-@media (hover: hover) {
-  .task-overview .lightbox-img-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-.task-overview .lightbox-img-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 1;
-}
 </style>

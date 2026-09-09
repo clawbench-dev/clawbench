@@ -2,9 +2,8 @@
 import { getMermaid } from './lazyMermaid.ts'
 import { appLog } from '@/utils/appLog'
 import { isDarkTheme } from './themeMeta'
-import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
-import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
+import { armMermaidFigure } from '@/utils/mediaBlockFactory.ts'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -140,48 +139,16 @@ function isMermaidFilePreview(container: HTMLElement): boolean {
     return !!mdPath
 }
 
-/** Maximize glyph for the mermaid header view button (matches image header). */
-const MERMAID_VIEW_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
-
-/** Build a header action button inside the mermaid header actions row. */
-function makeMermaidHeaderButton(cls: string, action: string, i18nKey: string, svg: string): HTMLButtonElement {
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.className = cls
-    btn.dataset.action = action
-    const label = gt(i18nKey)
-    btn.title = label
-    btn.setAttribute('aria-label', label)
-    btn.innerHTML = svg
-    return btn
-}
-
 /**
- * Arm the block-level header bar (view / attach) around a rendered diagram in
- * a FILE-PREVIEW context — uniform across mobile and PC, mirroring the image
- * and code/table headers. Chat messages, shares and the exporter never match
- * `isMermaidFilePreview`, so they stay bare (with their hover expand icon).
- * Idempotent: re-renders that wipe/replace the container re-arm via the parent
- * guard.
+ * Arm the unified bordered block figure around a rendered diagram. Every
+ * context (file preview / chat / share / export) gets the same
+ * `.image-block-wrapper > .image-block-header` shell with a view button; only
+ * a file-preview context (non-share, has an md file ancestor) additionally
+ * gets the range-reference attach button. Idempotent: re-renders that
+ * wipe/replace the container re-arm via the parent guard.
  */
-function maybeArmMermaidHeader(container: HTMLElement): void {
-    if (container.parentElement?.classList.contains('mermaid-block-wrapper')) return
-    if (!isMermaidFilePreview(container)) return
-
-    const wrapper = document.createElement('div')
-    wrapper.className = 'mermaid-block-wrapper'
-
-    const header = document.createElement('div')
-    header.className = 'mermaid-block-header'
-    const actions = document.createElement('span')
-    actions.className = 'mermaid-block-header-actions'
-    actions.appendChild(makeMermaidHeaderButton('mermaid-block-view-btn', 'view', 'imageBlock.view', MERMAID_VIEW_ICON_SVG))
-    actions.appendChild(makeMermaidHeaderButton('mermaid-block-attach-btn', 'attach', 'chat.attach.attachDiagramToChat', ATTACH_BADGE_SVG))
-    header.appendChild(actions)
-
-    container.parentNode?.insertBefore(wrapper, container)
-    wrapper.appendChild(header)
-    wrapper.appendChild(container)
+function armMermaidFigureForContext(container: HTMLElement): void {
+    armMermaidFigure(container, { attach: isMermaidFilePreview(container) })
 }
 
 /** Set up event delegation for mermaid retry buttons (called once on module load) */
@@ -283,16 +250,9 @@ export async function renderMermaidInElement(
             try {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
-                if (isMermaidFilePreview(container)) {
-                    // File preview: a block-level header (view / attach) replaces
-                    // the corner expand icon + touch badge — uniform mobile/PC.
-                    maybeArmMermaidHeader(container)
-                } else {
-                    // Chat / share / export stay bare with the hover expand icon.
-                    const expandIcon = document.createElement('span')
-                    expandIcon.className = 'lightbox-expand-icon'
-                    container.appendChild(expandIcon)
-                }
+                // Uniform bordered figure: header view button always; attach
+                // button only inside a file-preview markdown body.
+                armMermaidFigureForContext(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div into the DOM
                 // with the render id before throwing — remove them so they don't
@@ -333,15 +293,8 @@ export async function reRenderMermaid(): Promise<void> {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
                 container.id = id
-                if (isMermaidFilePreview(container)) {
-                    // Re-arm the block header after the innerHTML wipe.
-                    maybeArmMermaidHeader(container)
-                } else {
-                    // Bare (chat/share/export): re-add the hover expand icon.
-                    const expandIcon = document.createElement('span')
-                    expandIcon.className = 'lightbox-expand-icon'
-                    container.appendChild(expandIcon)
-                }
+                // Re-arm the bordered figure after the innerHTML wipe.
+                armMermaidFigureForContext(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div before throwing
                 cleanupMermaidOrphan(renderId)

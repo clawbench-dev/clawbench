@@ -52,11 +52,32 @@ vi.mock('@/composables/useCodeBlockHeader', () => ({
 
 vi.mock('@/utils/chatRenderUtils', () => ({
   rewriteImageUrls: (html: string) => html,
+  markInlineSvgs: (html: string) => html,
   wrapInlineSvgs: (html: string) => html,
   convertAudioLinks: (html: string) => html,
   convertVideoLinks: (html: string) => html,
   getThumbWidth: () => 800,
   parseAskQuestionContent: vi.fn(),
+}))
+
+vi.mock('@/utils/mediaBlockFactory', () => ({
+  annotateMediaBlocks: (html: string) => html,
+  armMermaidFigure: vi.fn(),
+  IMAGE_VIEW_ICON_SVG: '<svg></svg>',
+}))
+
+vi.mock('@/composables/useLocale', () => ({
+  gt: (k: string) => k,
+}))
+
+vi.mock('@/share/shareMode', () => ({
+  isShareMode: () => false,
+  shareApiUrl: (p: string) => p,
+  setShareToken: vi.fn(),
+}))
+
+vi.mock('@/utils/attachSvg', () => ({
+  ATTACH_BADGE_SVG: '<svg></svg>',
 }))
 
 vi.mock('@/composables/useFilePathAnnotation', () => ({

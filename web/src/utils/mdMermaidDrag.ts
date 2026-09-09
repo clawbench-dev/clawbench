@@ -42,8 +42,8 @@ export function resolveMermaidDragTarget(e: DragEvent): MermaidDragHit | null {
   const container = target.closest<HTMLElement>('div.mermaid[data-mermaid]')
   if (!container) return null
   // Only the diagram body itself (svg subtree) starts the drag — the header
-  // buttons and expand icon should not.
-  if (target.closest('.lightbox-expand-icon, .mermaid-block-header')) return null
+  // buttons should not.
+  if (target.closest('.image-block-header')) return null
   const mdBody = target.closest<HTMLElement>('.markdown-body[data-file-path]')
   const path = mdBody?.getAttribute('data-file-path') || ''
   if (!path) return null

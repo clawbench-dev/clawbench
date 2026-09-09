@@ -159,7 +159,7 @@ describe('MarkdownPreviewBody.vue', () => {
 
   it('writes the attach payload when dragging a local markdown image out', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="lightbox-expand-icon"></span></span></p>',
+      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span></p>',
     })
 
     // A custom MIME payload is set on dragstart.

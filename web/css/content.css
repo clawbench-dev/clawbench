@@ -105,66 +105,6 @@
     margin: 6px 0;
 }
 
-/* Image lightbox wrapper — anchors the expand icon and the touch attach badge.
-   Defined globally because rendered markdown appears in the file preview
-   (MarkdownPreview.vue), the code-link preview card / bottom sheet
-   (MarkdownPreviewBody.vue), the HTML exporter and shared previews. */
-.markdown-body .lightbox-img-wrap {
-    position: relative;
-    display: inline-block;
-}
-
-/* Image attach-to-chat badge — a touch-only overlay in the top-right corner of
-   every LOCAL image in a rendered markdown view. Injected by the render
-   pipeline (createFixLocalImagePaths) next to the desktop-only, hover-shown
-   expand icon. Hidden by default so desktop keeps the plain drag + hover
-   expand affordance; shown persistently on touch / coarse-pointer devices
-   where HTML5 drag-and-drop does not exist. Tapping it attaches the image file
-   to the chat as a reference attachment. */
-.markdown-body .lightbox-img-wrap .img-attach-badge,
-.markdown-body .mermaid .mermaid-attach-badge {
-    display: none;
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: rgba(0, 0, 0, 0.45);
-    color: #fff;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    z-index: 3;
-    pointer-events: auto;
-}
-
-.markdown-body .lightbox-img-wrap .img-attach-badge svg,
-.markdown-body .mermaid .mermaid-attach-badge svg {
-    width: 13px;
-    height: 13px;
-}
-
-/* Mermaid containers need a positioning context for the absolute badge /
-   expand icon overlays. */
-.markdown-body .mermaid {
-    position: relative;
-}
-
-@media (hover: none), (pointer: coarse) {
-    .markdown-body .lightbox-img-wrap .img-attach-badge,
-    .markdown-body .mermaid .mermaid-attach-badge {
-        display: flex;
-    }
-    /* Coarse/touch devices: the badges own the top-right corner, so the
-       hover-only expand icons must never appear there — not even on hybrid
-       touchscreens that also report hover:hover. Hide them unconditionally. */
-    .markdown-body .lightbox-img-wrap .lightbox-expand-icon,
-    .markdown-body .mermaid .lightbox-expand-icon {
-        display: none;
-    }
-}
-
 .markdown-body hr {
     margin: 2em 0;
 }
