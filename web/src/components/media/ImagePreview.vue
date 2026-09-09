@@ -3,6 +3,30 @@
     @keydown="handleKeyDown"
     tabindex="0"
     ref="containerRef">
+    <!-- Inline action header (file-browsing image/svg) — mirrors the markdown
+         image block header. Hidden in the share SPA (no chat / lightbox). -->
+    <div v-if="showHeader" class="file-image-header">
+      <span class="file-image-header-actions">
+        <button
+          class="file-image-view-btn"
+          type="button"
+          :title="viewLabel"
+          :aria-label="viewLabel"
+          @click.stop="onView">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        </button>
+        <button
+          ref="attachBtnRef"
+          class="file-image-attach-btn"
+          type="button"
+          :title="attachLabel"
+          :aria-label="attachLabel"
+          :class="{ 'is-attached': isAttached }"
+          @click.stop="onToggleAttach"
+          v-html="ATTACH_BADGE_SVG">
+        </button>
+      </span>
+    </div>
     <div class="image-preview-body"
       @mousedown="handleMouseDown"
       @touchstart.passive="handleTouchStart"
@@ -27,11 +51,16 @@
 
 <script setup>
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, inject } from 'vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { buildLocalFileUrl } from '@/utils/download.ts'
+import { isShareMode } from '@/share/shareMode'
+import { gt } from '@/composables/useLocale'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 
 const props = defineProps({
     file: Object,
@@ -47,6 +76,52 @@ const mediaUrl = computed(() => {
     return base + (base.includes('?') ? '&' : '?') + `t=${mediaTimestamp.value}`
   }
 )
+
+// ── Inline action header (view / attach) ───────────────────────────────
+const showHeader = computed(() => !isShareMode())
+const viewLabel = gt('imageBlock.view')
+const attachLabel = gt('chat.attach.attachImageToChat')
+const addedLabel = gt('chat.attach.addedToChat')
+const removedLabel = gt('chat.attach.removedFromChat')
+
+const openLightbox = inject('openLightbox', null)
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+
+const attachBtnRef = ref(null)
+const isAttached = computed(() => !!(props.file?.path && hasAttachedFile(props.file.path)))
+
+function onView() {
+    if (typeof openLightbox === 'function') {
+        openLightbox(mediaUrl.value)
+    }
+}
+
+function onToggleAttach() {
+    const path = props.file?.path
+    if (!path) return
+    if (hasAttachedFile(path)) {
+        removeAttachedFileByPath(path)
+        showToast(removedLabel, { icon: '📎', type: 'info', duration: 1500 })
+        return
+    }
+    addAttachedFile(path)
+    showToast(addedLabel, { icon: '📎', type: 'success', duration: 1500 })
+    // Fly-to-chat particle from the attach button (App listens; silent when the
+    // chat dock is not on screen, e.g. wide-screen layout without a dock button).
+    const btn = attachBtnRef.value
+    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
+    const from = btn?.getBoundingClientRect() ?? null
+    const to = dockChatBtn?.getBoundingClientRect() ?? null
+    if (from && to) {
+        window.dispatchEvent(new CustomEvent('attach-to-chat', {
+            detail: {
+                from: { x: from.left + from.width / 2, y: from.top + from.height / 2 },
+                to: { x: to.left + to.width / 2, y: to.top + to.height / 2 },
+            },
+        }))
+    }
+}
 
 const containerRef = ref(null)
 const dragOffsetX = ref(0)
@@ -92,6 +167,10 @@ function goNext() {
 
 // Keyboard navigation
 function handleKeyDown(e) {
+    // Ignore when focus is on the header buttons (their space/arrow handling
+    // must not switch the image underneath).
+    const kTarget = e.target instanceof Element ? e.target : null
+    if (kTarget?.closest('.file-image-header button')) return
     if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev() }
     else if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
 }
@@ -99,6 +178,9 @@ function handleKeyDown(e) {
 // Mouse drag
 function handleMouseDown(e) {
     if (e.button !== 0) return
+    // Header buttons must not start a swipe-drag.
+    const mTarget = e.target instanceof Element ? e.target : null
+    if (mTarget?.closest('.file-image-header')) return
     isDragging.value = true
     dragStartX.value = e.clientX
     dragLastX.value = e.clientX
@@ -131,6 +213,9 @@ function handleGlobalMouseUp() {
 // Touch swipe
 function handleTouchStart(e) {
     if (e.touches.length !== 1) return
+    // Header buttons must not start a swipe-drag.
+    const tTarget = e.target instanceof Element ? e.target : null
+    if (tTarget?.closest('.file-image-header')) return
     isDragging.value = true
     touchStartX.value = e.touches[0].clientX
     touchLastX.value = e.touches[0].clientX
@@ -185,6 +270,63 @@ watch(() => props.file, () => {
     padding: 0;
     position: relative;
     outline: none;
+}
+
+/* Inline action header above the image — mirrors the markdown image block
+   header visual (view + attach). Only rendered outside the share SPA. */
+.file-image-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 2px 8px;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    min-height: 22px;
+    user-select: none;
+}
+
+.file-image-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.file-image-view-btn,
+.file-image-attach-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    outline: none;
+    box-shadow: none;
+}
+
+.file-image-view-btn:hover,
+.file-image-attach-btn:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+}
+
+.file-image-view-btn svg,
+.file-image-attach-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.file-image-attach-btn.is-attached {
+    opacity: 1;
+    color: var(--accent-color);
 }
 
 .image-preview-body {
