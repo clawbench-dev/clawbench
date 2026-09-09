@@ -517,6 +517,94 @@ describe('FileViewer', () => {
     })
   })
 
+  describe('captureScroll', () => {
+    const mdFile = {
+      name: 'readme.md',
+      path: '/tmp/readme.md',
+      content: '# Title\n\nsome text',
+      isMarkdown: true,
+      isHtml: false,
+      isImage: false,
+      isAudio: false,
+      isVideo: false,
+      isPdf: false,
+      isOffice: false,
+      isBinary: false,
+      tooLarge: false,
+    }
+
+    const mockCaptureCurrentScrollState = vi.fn(() => ({
+      scrollTop: 777,
+      anchor: null,
+      blockAnchor: null,
+      ratio: null,
+    }))
+
+    // MarkdownPreview owns the authoritative capture for rendered markdown —
+    // it holds the live .markdown-body and refreshes the cache itself.
+    const markdownPreviewStub = {
+      name: 'MarkdownPreview',
+      props: ['file', 'viewMode', 'searchOpen', 'wordWrap', 'showLineNumbers'],
+      emits: ['delete', 'showDetails', 'openGitHistory', 'closeSearch', 'captureScroll'],
+      template: '<div class="md-stub" />',
+      methods: {
+        captureCurrentScrollState: (...args: unknown[]) => mockCaptureCurrentScrollState(...args),
+        focusSearchInput: () => {},
+      },
+    }
+
+    // Renders a .cm-scroller so the generic capture path can resolve a
+    // container in raw mode.
+    const codeMirrorStubWithScroller = {
+      name: 'CodeMirrorViewer',
+      template: '<div class="cm-stub"><div class="cm-scroller" /></div>',
+      methods: {
+        handleExit: (...args: unknown[]) => mockHandleExit(...args),
+        openSearch: (...args: unknown[]) => mockOpenSearch(...args),
+      },
+    }
+
+    function mountMdViewer(props = {}) {
+      return mount(FileViewer, {
+        props: {
+          file: mdFile,
+          tocOpen: false,
+          searchOpen: false,
+          markdownViewMode: 'rendered',
+          externalLoading: false,
+          ...props,
+        },
+        global: {
+          plugins: [i18n],
+          stubs: { ...stubs, MarkdownPreview: markdownPreviewStub, CodeMirrorViewer: codeMirrorStubWithScroller },
+        },
+      })
+    }
+
+    it('delegates to MarkdownPreview for rendered markdown instead of capturing twice', () => {
+      mockCaptureCurrentScrollState.mockClear()
+      const wrapper = mountMdViewer()
+
+      const entry = (wrapper.vm as any).captureScroll()
+
+      expect(mockCaptureCurrentScrollState).toHaveBeenCalledTimes(1)
+      expect(entry).toEqual({ scrollTop: 777, anchor: null, blockAnchor: null, ratio: null })
+      // MarkdownPreview emits on its own; FileViewer must not emit again or the
+      // capture would be banked twice.
+      expect(wrapper.emitted('captureScroll')).toBeUndefined()
+    })
+
+    it('falls back to the generic capture when the preview is not mounted', () => {
+      mockCaptureCurrentScrollState.mockClear()
+      const wrapper = mountMdViewer({ markdownViewMode: 'raw' })
+
+      ;(wrapper.vm as any).captureScroll()
+
+      expect(mockCaptureCurrentScrollState).not.toHaveBeenCalled()
+      expect(wrapper.emitted('captureScroll')).toBeTruthy()
+    })
+  })
+
   describe('preview request while editing markdown', () => {
     const mdFile = {
       name: 'readme.md',

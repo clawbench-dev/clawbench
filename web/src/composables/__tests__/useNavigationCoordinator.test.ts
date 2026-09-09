@@ -5,6 +5,7 @@ import { useFileNavStack, _resetForTesting as resetFileNavStack } from '../useFi
 import { useDirectoryReturn, _resetForTesting as resetDirectoryReturn } from '../useDirectoryReturn'
 import { useNavigationCoordinator } from '../useNavigationCoordinator'
 import { PANE_LEFT, PANE_RIGHT, type ActivePane } from '../useWideScreenLayout'
+import { setFileScroll } from '@/utils/fileScrollCache'
 
 describe('useNavigationCoordinator', () => {
   const navigation = useNavigationContext()
@@ -34,6 +35,7 @@ describe('useNavigationCoordinator', () => {
     closeOverlayAndSync: vi.fn(),
     handleOpenFileManager: vi.fn(),
     isFileManagerMultiSelectActive: vi.fn().mockReturnValue(false),
+    requestScrollCapture: vi.fn(),
   }
 
   const mockBackHooks = {
@@ -238,6 +240,27 @@ describe('useNavigationCoordinator', () => {
       expect(handled).toBe(true)
       expect(mockToast.show).toHaveBeenCalled()
       expect(navigation.hasOrigin.value).toBe(false)
+    })
+
+    it('keeps the origin line when the banked position is 0', async () => {
+      // Opened from a line link, jumped away before scroll-to-line landed.
+      navigation.start({
+        surface: 'file',
+        tab: 'view',
+        label: 'Back to A.md',
+        filePath: 'src/A.md',
+        lineStart: 42,
+        viewMode: 'raw',
+        scrollTop: 0,
+      })
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      await coord.returnToOrigin()
+      const dispatched = spy.mock.calls.some(([e]) => (e as CustomEvent).type === 'restore-file-scroll')
+      spy.mockRestore()
+
+      expect(dispatched).toBe(false)
+      expect(mockViewActions.scrollToLine).toHaveBeenCalledWith(42, undefined, 'src/A.md')
     })
   })
 
@@ -595,6 +618,182 @@ describe('useNavigationCoordinator', () => {
       expect(coord.canHandleBack('header')).toBe(true)
       await coord.handleNavigateBack()
       expect(mockBackHooks.handleBackNavigation).toHaveBeenCalled()
+    })
+  })
+
+  describe('scroll capture on jump', () => {
+    it('snapshots the live viewer before pushing a linked file', async () => {
+      fakeStore.state.currentFile = { name: 'A.md', path: 'src/A.md' }
+      activeTab.value = 'view'
+      fileNav.openFile('src/A.md', { viewMode: 'rendered' })
+
+      const coord = createCoordinator()
+      await coord.handleOpenFileOverlay({ path: 'src/B.md', source: 'file' })
+
+      expect(mockViewActions.requestScrollCapture).toHaveBeenCalled()
+      expect(fileNav.previousLocation.value?.path).toBe('src/A.md')
+    })
+
+    it('banks the position the live capture reported, not a stale cache read', async () => {
+      fakeStore.state.currentFile = { name: 'A.md', path: 'src/A.md' }
+      activeTab.value = 'view'
+      // Cache holds an old offset from an earlier moment in the file.
+      fileNav.openFile('src/A.md', { viewMode: 'rendered', scrollTop: 40 })
+      setFileScroll('src/A.md', 40)
+
+      const coord = createCoordinator()
+      // Mirrors the real wiring: FileViewer captures the live pane, FileOverlay
+      // re-emits it, App forwards it back into the coordinator.
+      mockViewActions.requestScrollCapture.mockImplementation(() => {
+        coord.handleCaptureFileScroll({
+          scrollTop: 2400,
+          anchor: { id: 'sec-two', line: 12, relTop: -30 },
+          blockAnchor: null,
+          ratio: null,
+        })
+      })
+
+      await coord.handleOpenFileOverlay({ path: 'src/B.md', source: 'file' })
+
+      expect(fileNav.previousLocation.value?.scrollTop).toBe(2400)
+      expect(fileNav.previousLocation.value?.scrollEntry?.scrollTop).toBe(2400)
+      expect(fileNav.previousLocation.value?.scrollEntry?.anchor).toEqual({ id: 'sec-two', line: 12, relTop: -30 })
+    })
+  })
+
+  describe('return restore strategy', () => {
+    function restoreDetailFrom(spy: ReturnType<typeof vi.spyOn>) {
+      const call = spy.mock.calls.find(([e]) => (e as CustomEvent).type === 'restore-file-scroll')
+      return (call?.[0] as CustomEvent | undefined)?.detail
+    }
+
+    it('leads with the pixel offset when the view mode is unchanged', async () => {
+      fakeStore.state.currentFile = { name: 'B.md', path: 'src/B.md' }
+      activeTab.value = 'view'
+      fileNav.openFile('src/A.md', { viewMode: 'rendered', scrollTop: 1200 })
+      fileNav.openFile('src/B.md', { viewMode: 'rendered' })
+      markdownViewMode.value = 'rendered'
+
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      const ok = await coord.goBackFile()
+      const detail = restoreDetailFrom(spy)
+      spy.mockRestore()
+
+      expect(ok).toBe(true)
+      expect(detail).toEqual(expect.objectContaining({ scrollTop: 1200, preferPx: true }))
+    })
+
+    it('leads with the pixel offset when returning from a raw file back to a rendered file', async () => {
+      fakeStore.state.currentFile = { name: 'B.md', path: 'src/B.md' }
+      activeTab.value = 'view'
+      fileNav.openFile('src/A.md', { viewMode: 'rendered', scrollTop: 1200 })
+      fileNav.openFile('src/B.md', { viewMode: 'raw' })
+      markdownViewMode.value = 'raw'
+
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      await coord.goBackFile()
+      const detail = restoreDetailFrom(spy)
+      spy.mockRestore()
+
+      // A is restored in rendered mode, so pixels match and preferPx is true.
+      expect(markdownViewMode.value).toBe('rendered')
+      expect(detail).toEqual(expect.objectContaining({ scrollTop: 1200, preferPx: true }))
+    })
+
+    it('sets markdownViewMode before store.selectFile on return so no spurious mode switch occurs', async () => {
+      fakeStore.state.currentFile = { name: 'target.go', path: 'src/target.go' }
+      activeTab.value = 'view'
+      fileNav.openFile('README.md', { viewMode: 'rendered', scrollTop: 1800 })
+      fileNav.openFile('src/target.go', { lineStart: 50, lineEnd: 60, viewMode: 'raw' })
+      markdownViewMode.value = 'raw'
+
+      let viewModeDuringSelectFile: string | undefined
+      fakeStore.selectFile = vi.fn(async () => {
+        viewModeDuringSelectFile = markdownViewMode.value
+        return true
+      })
+
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      const ok = await coord.goBackFile()
+      const detail = restoreDetailFrom(spy)
+      spy.mockRestore()
+
+      expect(ok).toBe(true)
+      expect(viewModeDuringSelectFile).toBe('rendered')
+      expect(markdownViewMode.value).toBe('rendered')
+      expect(detail).toEqual(expect.objectContaining({ scrollTop: 1800, preferPx: true }))
+    })
+
+    it('does not request live scroll capture or overwrite currentLocation when pathOverride is not currentFile', async () => {
+      fakeStore.state.currentFile = { name: 'B.go', path: 'src/B.go' }
+      activeTab.value = 'view'
+      fileNav.openFile('src/A.md', { viewMode: 'rendered', scrollTop: 1500 })
+      setFileScroll('src/A.md', 1500)
+
+      mockViewActions.requestScrollCapture.mockClear()
+      const coord = createCoordinator()
+
+      // In openFilePath, store.selectFile('src/B.go') runs before open-file-overlay.
+      // So currentFile is already B.go, but handleOpenFileOverlay is called with prevPath = A.md.
+      await coord.handleOpenFileOverlay({ path: 'src/B.go', source: 'file' })
+
+      // Live capture on B.go DOM must NOT be requested for A.md
+      expect(mockViewActions.requestScrollCapture).not.toHaveBeenCalled()
+      // A.md's saved position must NOT have been corrupted
+      expect(fileNav.previousLocation.value?.scrollTop).toBe(1500)
+    })
+
+    it('restores the reading position instead of the original line for a line-linked visit', async () => {
+      fakeStore.state.currentFile = { name: 'B.md', path: 'src/B.md' }
+      activeTab.value = 'view'
+      // A was opened via a line-numbered link (line 42), then the user read on.
+      fileNav.openFile('src/A.md', { lineStart: 42, viewMode: 'raw', scrollTop: 2400 })
+      fileNav.openFile('src/B.md', { viewMode: 'rendered' })
+      markdownViewMode.value = 'rendered'
+
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      await coord.goBackFile()
+      const detail = restoreDetailFrom(spy)
+      spy.mockRestore()
+
+      expect(detail).toEqual(expect.objectContaining({ scrollTop: 2400 }))
+      expect(mockViewActions.scrollToLine).not.toHaveBeenCalled()
+    })
+
+    it('falls back to scrollToLine when no position was ever recorded', async () => {
+      fakeStore.state.currentFile = { name: 'B.md', path: 'src/B.md' }
+      activeTab.value = 'view'
+      fileNav.openFile('src/A.md', { lineStart: 42, viewMode: 'raw' })
+      fileNav.openFile('src/B.md', { viewMode: 'rendered' })
+      markdownViewMode.value = 'rendered'
+
+      const coord = createCoordinator()
+      await coord.goBackFile()
+
+      expect(mockViewActions.scrollToLine).toHaveBeenCalledWith(42, undefined, 'src/A.md')
+    })
+
+    it('treats a recorded 0 as "not captured" and keeps the line', async () => {
+      fakeStore.state.currentFile = { name: 'B.md', path: 'src/B.md' }
+      activeTab.value = 'view'
+      // A was opened via a line link; the async scroll-to-line had not landed
+      // when the user jumped away, so the capture banked 0.
+      fileNav.openFile('src/A.md', { lineStart: 42, viewMode: 'raw', scrollTop: 0 })
+      fileNav.openFile('src/B.md', { viewMode: 'rendered' })
+      markdownViewMode.value = 'rendered'
+
+      const coord = createCoordinator()
+      const spy = vi.spyOn(window, 'dispatchEvent')
+      await coord.goBackFile()
+      const detail = restoreDetailFrom(spy)
+      spy.mockRestore()
+
+      expect(detail).toBeUndefined()
+      expect(mockViewActions.scrollToLine).toHaveBeenCalledWith(42, undefined, 'src/A.md')
     })
   })
 
