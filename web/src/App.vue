@@ -1685,6 +1685,9 @@ navCoordinator = useNavigationCoordinator({
     closeOverlayAndSync,
     handleOpenFileManager,
     isFileManagerMultiSelectActive: () => !!fileManagerRef.value?.multiSelectState?.active,
+    isFileManagerSearchActive: () => !!fileManagerRef.value?.searchActive?.value,
+    closeFileManagerSearch: () => fileManagerRef.value?.closeSearch(),
+    exitFileManagerMultiSelect: () => fileManagerRef.value?.exitMultiSelect(),
   },
   backHooks: {
     hasTopmostOverlay,

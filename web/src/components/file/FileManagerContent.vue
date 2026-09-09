@@ -501,7 +501,6 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ArrowLeft } from 'lucide-vue-next'
 import {
   buildThumbUrl,
@@ -743,20 +742,6 @@ const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
 
 const activeTab = inject('activeTab', ref(''))
-
-// Register back handler for file browser navigation.
-// PRIORITY_PAGE < PRIORITY_OVERLAY, so file-view always wins when open.
-// Search view consumes back first (exits search); otherwise back goes to the
-// parent directory when not at the project root.
-useFeatureBackHandler(
-  'browse',
-  () => activeTab.value === 'browse' && (searchMode.value || props.currentDir !== ''),
-  () => {
-    if (searchMode.value) exitSearch()
-    else emit('navigateBack')
-  },
-  PRIORITY_PAGE,
-)
 
 const props = defineProps({
     entries: Array,
@@ -1137,6 +1122,7 @@ defineExpose({
     _setIsDragOver(val) { isDragOver.value = val },
     openSearch,
     closeSearch: exitSearch,
+    exitMultiSelect,
     focusSearchInput() { searchInputRef.value?.focus() },
 })
 

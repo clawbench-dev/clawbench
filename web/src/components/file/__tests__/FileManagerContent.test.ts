@@ -79,14 +79,6 @@ vi.mock('@/utils/clipboard', () => ({
 vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
-const mockBackHandlerRegistrations = vi.hoisted(() => [] as Array<{ id: string; canGoBack: () => boolean; goBack: () => void; priority: number }>)
-vi.mock('@/composables/useEdgeSwipeBack', () => ({
-  useFeatureBackHandler: (id: string, canGoBack: () => boolean, goBack: () => void, priority: number) => {
-    mockBackHandlerRegistrations.push({ id, canGoBack, goBack, priority })
-  },
-  PRIORITY_PAGE: 0,
-}))
-
 const mockIsPC = { value: false }
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({ isPC: mockIsPC }),
@@ -338,7 +330,6 @@ beforeEach(() => {
   mockHasAttachedFile.mockReset()
   mockHasAttachedFile.mockReturnValue(false)
   mockToastShow.mockReset()
-  mockBackHandlerRegistrations.length = 0
   mockSearchStart.mockReset()
   mockSearchCancel.mockReset()
   mockSearchReset.mockReset()
@@ -905,27 +896,6 @@ describe('FileManagerContent — inline search', () => {
     // Sorted ascending by size → a.go (10) before big.go (5000)
     expect(items[0].attributes('data-path')).toBe('a.go')
     expect(items[1].attributes('data-path')).toBe('big.go')
-  })
-
-  it('back gesture while searching exits the search view instead of navigating up', async () => {
-    const wrapper = mountContent({ currentDir: 'src' })
-    const browse = mockBackHandlerRegistrations.find(h => h.id === 'browse')
-    expect(browse).toBeTruthy()
-    // Not searching → back goes to the parent directory
-    expect(browse!.canGoBack()).toBe(true)
-    browse!.goBack()
-    expect(wrapper.emitted('navigateBack')).toBeTruthy()
-
-    // Enter search mode → back now exits search instead
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
-    await nextTick()
-    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
-    expect(browse!.canGoBack()).toBe(true)
-    browse!.goBack()
-    await nextTick()
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
-    expect(wrapper.emitted('navigateBack')).toHaveLength(1) // not triggered again
   })
 })
 

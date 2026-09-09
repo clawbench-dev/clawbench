@@ -4,7 +4,7 @@ import { useNavigationContext } from './useNavigationContext'
 export type BackReason = 'header' | 'android' | 'edge-swipe' | 'origin-bar' | 'close'
 
 /** The step a back press resolves to. `null` means "nothing to handle". */
-export type BackStep = 'overlay' | 'edit' | 'file' | 'origin' | 'close-overlay' | 'dir' | 'other'
+export type BackStep = 'overlay' | 'edit' | 'search' | 'multi' | 'file' | 'origin' | 'close-overlay' | 'dir' | 'other'
 
 export interface BackStateMachineHooks {
   /** Pure predicate — must not mutate state. */
@@ -12,6 +12,12 @@ export interface BackStateMachineHooks {
   closeTopmostOverlay: () => boolean
   isEditing: () => boolean
   exitEdit: () => void
+  /** Browse search overlay — pure predicate, must not mutate state. */
+  canExitSearch?: () => boolean
+  exitSearch?: () => void
+  /** Browse multi-select mode — pure predicate, must not mutate state. */
+  canExitMultiSelect?: () => boolean
+  exitMultiSelect?: () => void
   canGoBackFile: () => boolean
   goBackFile: () => Promise<boolean>
   hasOrigin: () => boolean
@@ -57,19 +63,25 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
       return null
     }
 
-    // 3. fileNav.canGoBack 为 true 时恢复上一个文件
+    // 3. Browse 面板的瞬态层：搜索框激活时先退出搜索（纯关闭，不导航）。
+    //    Browse 内搜索与多选互斥（enterSearch/exitSearch 会自动退出多选），
+    //    所以两条路径可各自独立命中，互不重叠。
+    if (hooks.canExitSearch?.()) return 'search'
+    if (hooks.canExitMultiSelect?.()) return 'multi'
+
+    // 4. fileNav.canGoBack 为 true 时恢复上一个文件
     if (hooks.canGoBackFile()) return 'file'
 
-    // 4. navigation.hasOrigin 为 true 时恢复来源
+    // 5. navigation.hasOrigin 为 true 时恢复来源
     if (hooks.hasOrigin()) return 'origin'
 
     // Overlay is open but there is no file history and no origin
     if (hooks.canCloseOverlay?.()) return 'close-overlay'
 
-    // 5. 当前 browse 目录不是根目录时返回父目录
+    // 6. 当前 browse 目录不是根目录时返回父目录
     if (hooks.canGoBackDir()) return 'dir'
 
-    // 6. Fallback for other registered page handlers (settings drill-down, tasks…)
+    // 7. Fallback for other registered page handlers (settings drill-down, tasks…)
     if (hooks.canHandleOther?.()) return 'other'
 
     return null
@@ -81,6 +93,12 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
         return hooks.closeTopmostOverlay()
       case 'edit':
         hooks.exitEdit()
+        return true
+      case 'search':
+        hooks.exitSearch?.()
+        return true
+      case 'multi':
+        hooks.exitMultiSelect?.()
         return true
       case 'file':
         return await hooks.goBackFile()

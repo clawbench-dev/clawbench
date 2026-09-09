@@ -57,6 +57,10 @@ export interface NavigationCoordinatorOptions {
     closeOverlayAndSync?: () => void
     handleOpenFileManager?: () => void
     isFileManagerMultiSelectActive?: () => boolean
+    /** Browse search overlay active — transient layer inside the browse panel. */
+    isFileManagerSearchActive?: () => boolean
+    closeFileManagerSearch?: () => void
+    exitFileManagerMultiSelect?: () => void
   }
   backHooks?: {
     hasTopmostOverlay?: () => boolean
@@ -99,6 +103,9 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
   const closeOverlayAndSync = options.viewActions?.closeOverlayAndSync ?? (() => {})
   const handleOpenFileManager = options.viewActions?.handleOpenFileManager ?? (() => {})
   const isFileManagerMultiSelectActive = options.viewActions?.isFileManagerMultiSelectActive ?? (() => false)
+  const isFileManagerSearchActive = options.viewActions?.isFileManagerSearchActive ?? (() => false)
+  const closeFileManagerSearch = options.viewActions?.closeFileManagerSearch ?? (() => {})
+  const exitFileManagerMultiSelect = options.viewActions?.exitFileManagerMultiSelect ?? (() => {})
 
   const hasTopmostOverlay = options.backHooks?.hasTopmostOverlay ?? (() => false)
   const closeTopmostOverlay = options.backHooks?.closeTopmostOverlay ?? (() => false)
@@ -274,11 +281,19 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     closeTopmostOverlay,
     isEditing,
     exitEdit,
+    // Browse search / multi-select are transient layers inside the browse
+    // panel. Back dismisses them (no navigation) before any file/origin/dir
+    // step — search and multi-select never coexist (enterSearch auto-exits
+    // multi-select), so these predicates are mutually exclusive by contract.
+    canExitSearch: () => panelIsActive('browse') && isFileManagerSearchActive(),
+    exitSearch: closeFileManagerSearch,
+    canExitMultiSelect: () => panelIsActive('browse') && isFileManagerMultiSelectActive(),
+    exitMultiSelect: exitFileManagerMultiSelect,
     canGoBackFile: () => panelIsActive('view') && fileNav.overlayOpen.value && fileBackTarget.value === 'file',
     goBackFile,
     hasOrigin: () => !(panelIsActive('view') && fileBackTarget.value === 'browse') && navigation.hasOrigin.value,
     returnToOrigin,
-    canGoBackDir: () => panelIsActive('browse') && store.state.currentDir !== '',
+    canGoBackDir: () => panelIsActive('browse') && !isFileManagerMultiSelectActive() && store.state.currentDir !== '',
     goBackDir: async () => {
       await store.navigateToParentDir()
       return true
