@@ -336,6 +336,14 @@ function normalizeUrl(url) {
         .replace(/\?&/g, '?')
 }
 
+/** Append a cache-buster `t=` param, honoring an existing query string —
+ *  blindly joining with `?` corrupts URLs that already carry params
+ *  (e.g. the share token endpoint `/api/share/{token}/local?path=…`). */
+function withCacheBuster(url) {
+    const sep = url.includes('?') ? '&' : '?'
+    return url + sep + 't=' + Date.now()
+}
+
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
@@ -361,13 +369,13 @@ function navigateMdImage(newIdx, direction) {
         currentUrl.value = ''
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
         currentSvg.value = ''
     }
 }
 
 function open(url, svg = '') {
-    currentUrl.value = svg ? '' : normalizeUrl(url) + '?t=' + Date.now()
+    currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
     currentSvg.value = svg
     lightboxVisible.value = true
     imageLoading.value = !svg
@@ -414,7 +422,7 @@ function openMdImages(imgs, startIndex) {
         imageLoading.value = false
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
         currentSvg.value = ''
         imageLoading.value = true
     }
@@ -475,7 +483,7 @@ function resetAndRefresh() {
     lastTx.value = 0
     lastTy.value = 0
     if (currentUrl.value) {
-        currentUrl.value = normalizeUrl(currentUrl.value) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(currentUrl.value))
     }
 }
 

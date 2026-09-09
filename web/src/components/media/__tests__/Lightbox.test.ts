@@ -307,6 +307,20 @@ describe('Lightbox', () => {
       expect(url).not.toContain('&t=')
     })
 
+    it('joins the cache-buster with & when the URL already carries a query (share token endpoint)', async () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      // Share single-file image: /api/share/{token}/local?path=%2F…
+      // Blindly joining with '?' would corrupt the path param and 404.
+      vm.open('/api/share/tokabc/local?path=%2Frepo%2Fphoto.png')
+      await nextTick()
+
+      const url = vm.currentUrl as string
+      expect(url).toMatch(/^\/api\/share\/tokabc\/local\?path=%2Frepo%2Fphoto\.png&t=\d+$/)
+      expect(url).not.toContain('?path=%2Frepo%2Fphoto.png?t=')
+    })
+
     it('resetAndRefresh never accumulates t= params across repeated calls', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
