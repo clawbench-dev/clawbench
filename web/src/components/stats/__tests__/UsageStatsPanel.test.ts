@@ -293,4 +293,28 @@ describe('UsageStatsPanel', () => {
     const dateInputs = wrapper.findAll('.stats-date-input')
     expect(dateInputs.length).toBe(2)
   })
+
+  it('formats token values in M/K tiers on overview cards and table cells', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 2_500_000, output: 800_000, total: 3_300_000, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 2_500_000, output: 800_000, total: 3_300_000, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    // Show the input/output/total columns so the table exercises every tier.
+    const stats = useUsageStats()
+    stats.setMetrics(['input', 'output', 'total'])
+    await flushPromises()
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+    // Overview cards: M for millions, K for hundreds of thousands.
+    expect(text).toContain('2.5M')
+    expect(text).toContain('800.0K')
+    expect(text).toContain('3.3M')
+    // Same tiers in the detail table cells.
+    const cellTexts = wrapper.findAll('.stats-td-num').map(td => td.text())
+    expect(cellTexts).toContain('2.5M')
+    expect(cellTexts).toContain('800.0K')
+    expect(cellTexts).toContain('3.3M')
+    // Flush the debounced reload scheduled by setMetrics so no timer leaks.
+    await new Promise(r => setTimeout(r, 350))
+  })
 })
