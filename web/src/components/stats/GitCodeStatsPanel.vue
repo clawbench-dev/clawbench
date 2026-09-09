@@ -254,7 +254,8 @@ const trendOption = computed(() => {
   const days = [...new Set(rows.map(r => r.day).filter(Boolean))] as string[]
   const added = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.added, 0))
   const deleted = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.deleted, 0))
-  return buildGitTrendOption(days, added, deleted, t('gitStats.colAdded'), t('gitStats.colDeleted'))
+  const net = added.map((a, i) => a - deleted[i])
+  return buildGitTrendOption(days, added, deleted, t('gitStats.colAdded'), t('gitStats.colDeleted'), net, t('gitStats.colNet'))
 })
 
 // --- Range ---

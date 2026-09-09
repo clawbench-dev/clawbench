@@ -181,6 +181,9 @@ describe('GitCodeStatsPanel', () => {
     expect(option.xAxis?.data).toEqual(['2026-09-01', '2026-09-02'])
     expect(option.series?.[0]?.data).toEqual([6, 4])
     expect(option.series?.[1]?.data).toEqual([1, 1])
+    // Net line (series index 2) = added − deleted per day.
+    expect(option.series?.map(s => s.name)).toEqual(['新增行数', '删除行数', '净增行数'])
+    expect(option.series?.[2]?.data).toEqual([5, 3])
   })
 
   it('lets the trend chart be scoped to a single author', async () => {
