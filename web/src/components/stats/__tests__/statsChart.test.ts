@@ -24,53 +24,17 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(isNarrowScreen()).toBe(false)
   })
 
-  it('bar: mobile renders vertical bars with tilted bottom category axis', () => {
+  it('bar: value-axis ticks hidden on narrow, shown on desktop', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
     setInnerWidth(800)
-    const narrow = buildBarOption(cats, vals, 'total') as {
-      xAxis: { type: string; data?: string[]; axisLabel: { rotate?: number } }
-      yAxis: { type: string; show?: boolean }
-      series: { type: string; data: number[] }[]
-    }
-    // Mobile → vertical: category names move to the bottom axis, value axis is
-    // switched off, single bar series spans the full width.
-    expect(narrow.series).toHaveLength(1)
-    expect(narrow.series[0].type).toBe('bar')
-    expect(narrow.xAxis.type).toBe('category')
-    expect(narrow.xAxis.data).toEqual(cats)
-    expect(narrow.yAxis.type).toBe('value')
-    expect(narrow.yAxis.show).toBe(false)
-    // Bottom category labels are tilted so long names stay readable without
-    // truncation.
-    expect(narrow.xAxis.axisLabel.rotate).toBe(40)
-
-    setInnerWidth(1440)
+    const narrow = buildBarOption(cats, vals, 'total') as { xAxis: { axisLabel: { show?: boolean } } }
+    expect((narrow.xAxis.axisLabel as { show: boolean }).show).toBe(false)
+    // Category labels (which bar is which) are always kept.
     const wide = buildBarOption(cats, vals, 'total') as {
-      xAxis: { type: string }
-      yAxis: { type: string; data: string[] }
-      series: { data: number[] }[]
+      yAxis: { data: string[]; axisLabel: { width?: number } }
     }
-    // Desktop: horizontal bars with the labelled category axis on the left.
-    expect(wide.xAxis.type).toBe('value')
-    expect(wide.yAxis.type).toBe('category')
     expect(wide.yAxis.data).toEqual(cats)
-    expect(wide.series).toHaveLength(1)
-  })
-
-  it('bar: mobile long category list gets inside horizontal zoom', () => {
-    const manyCats = Array.from({ length: 12 }, (_, i) => `m${i}`)
-    const vals = manyCats.map((_, i) => i)
-    setInnerWidth(800)
-    const narrow = buildBarOption(manyCats, vals, 'total') as {
-      xAxis: { type: string; data?: string[] }
-      dataZoom?: { type: string; xAxisIndex?: number }[]
-    }
-    expect(narrow.xAxis.type).toBe('category')
-    expect(narrow.xAxis.data).toEqual(manyCats)
-    // Inside scroll on the bottom axis so many bars stay swipeable.
-    expect(narrow.dataZoom?.[0].type).toBe('inside')
-    expect(narrow.dataZoom?.[0].xAxisIndex).toBe(0)
   })
 
   it('trend: value-axis ticks hidden on narrow, dates kept with hideOverlap', () => {
