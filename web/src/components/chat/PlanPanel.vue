@@ -40,7 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { PlanEntry } from '@/composables/usePlanProgress'
@@ -67,17 +67,27 @@ const chipText = computed(() => {
 })
 
 // ── Active-entry centering ─────────────────────────────────
-// The running plan step stays visible in the middle of the timeline: when the
-// panel first appears / is expanded, and whenever execution advances to a new
-// step. Rows are measured viewport-relative via getBoundingClientRect (the
-// timeline is not a positioned ancestor, so offsetTop would be mis-framed).
-// No entry is in_progress → the list is never force-scrolled.
+// The running plan step stays visible in the middle of the timeline. Whenever
+// the plan changes — a step advances, entries are appended/replaced, the panel
+// reappears after a session switch, or the user expands the collapsed chip —
+// the in_progress entry is centered. centerActiveEntry is idempotent (writing
+// the same scrollTop is a no-op) and self-guarding (no in_progress entry or a
+// hidden timeline → no scroll), so a single catch-all trigger on any plan
+// mutation is safe. Rows are measured viewport-relative via
+// getBoundingClientRect (the timeline is not a positioned ancestor, so
+// offsetTop would be mis-framed).
 const timelineRef = ref<HTMLElement | null>(null)
 
 /** Scroll so the in_progress entry is vertically centered in the timeline. */
 function centerActiveEntry() {
   const el = timelineRef.value
   if (!el) return
+  // Visibility guard: on narrow screens the chat column (and this timeline) is
+  // display:none while the agent keeps streaming plan_updates in the
+  // background. Hidden containers measure all geometry as 0, so the clamp
+  // would reset scrollTop to 0 and corrupt the centered position — and nothing
+  // re-centers when the user switches back to the chat tab. Skip hidden.
+  if (el.offsetHeight === 0) return
   const idx = activeEntryIndex(props.entries)
   if (idx < 0) return
   const row = el.children[idx] as HTMLElement | undefined
@@ -94,42 +104,32 @@ function centerActiveEntry() {
   if (target !== el.scrollTop) el.scrollTop = target
 }
 
-// Center when the expanded timeline is (re)created: on mount with entries, when
-// entries appear, and when the user expands from the collapsed chip. Primitive
-// key (count, not the array) — same-length entry replacements must NOT re-fire
-// (that would yank the user on every non-advancing plan_update).
+// Catch-all: any entries mutation (advance, append, replacement, clear→
+// reappear) re-centers on the live step — nextTick so the freshly rendered
+// rows have laid out. clearPlanState leaves entries empty, and an empty list
+// has no in_progress entry, so centerActiveEntry no-ops there. immediate: true
+// covers mount-with-entries; for a mount that starts collapsed, expanding
+// below flips collapsed and re-fires this trigger.
 watch(
-  () => (props.collapsed ? -1 : props.entries.length),
+  () => props.entries,
   () => {
-    if (!props.collapsed && props.entries.length > 0) {
+    if (!props.collapsed) {
       nextTick(centerActiveEntry)
     }
   },
-  { immediate: true },
+  { deep: true, immediate: true },
 )
 
-// Center when execution advances to a new step.
-let lastActiveIdx = activeEntryIndex(props.entries)
+// Expanding the collapsed chip shows the timeline with existing entries — the
+// deep watch above does not fire (entries are unchanged), so center here.
 watch(
-  () => props.entries.map(e => e.status).join(','),
-  (statuses) => {
-    if (props.collapsed) return
-    const idx = statuses.split(',').indexOf('in_progress')
-    if (idx !== lastActiveIdx) {
+  () => props.collapsed,
+  (collapsed) => {
+    if (!collapsed && props.entries.length > 0) {
       nextTick(centerActiveEntry)
-      lastActiveIdx = idx
     }
   },
 )
-
-onMounted(() => {
-  // Remount case: the component can appear already-expanded with entries (e.g.
-  // restored plan state). The immediate watcher above runs during setup when
-  // the timeline ref is not yet bound, so center here once the DOM is ready.
-  if (!props.collapsed && props.entries.length > 0) {
-    centerActiveEntry()
-  }
-})
 </script>
 
 <style scoped>
