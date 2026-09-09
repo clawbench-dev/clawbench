@@ -3,37 +3,44 @@
     @keydown="handleKeyDown"
     tabindex="0"
     ref="containerRef">
-    <!-- Inline action header (file-browsing image/svg) — mirrors the markdown
-         image block header. Hidden in the share SPA (no chat / lightbox). -->
-    <div v-if="showHeader" class="file-image-header">
-      <span class="file-image-header-actions">
-        <button
-          class="file-image-view-btn"
-          type="button"
-          :title="viewLabel"
-          :aria-label="viewLabel"
-          @click.stop="onView">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-        </button>
-        <button
-          ref="attachBtnRef"
-          class="file-image-attach-btn"
-          type="button"
-          :title="attachLabel"
-          :aria-label="attachLabel"
-          :class="{ 'is-attached': isAttached }"
-          @click.stop="onToggleAttach"
-          v-html="ATTACH_BADGE_SVG">
-        </button>
-      </span>
-    </div>
     <div class="image-preview-body"
       @mousedown="handleMouseDown"
       @touchstart.passive="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
       @touchcancel="handleTouchEnd">
-      <img :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
+      <!-- The image is wrapped in the SAME .image-block-wrapper / header
+           structure markdown file previews use, so the view / attach buttons
+           live on the image's own header (fitting the image width), not a
+           separate full-width toolbar. Share SPA has no chat / lightbox →
+           bare image (no header). -->
+      <div v-if="showHeader" class="image-block-wrapper">
+        <div class="image-block-header">
+          <span class="image-block-header-actions">
+            <button
+              class="image-block-view-btn"
+              type="button"
+              :title="viewLabel"
+              :aria-label="viewLabel"
+              @click.stop="onView">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            </button>
+            <button
+              ref="attachBtnRef"
+              class="image-block-attach-btn"
+              type="button"
+              :title="attachLabel"
+              :aria-label="attachLabel"
+              :class="{ 'is-attached': isAttached }"
+              @click.stop="onToggleAttach"
+              v-html="ATTACH_BADGE_SVG">
+            </button>
+          </span>
+        </div>
+        <img :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
+          :style="{ transform: `translateX(${dragOffsetX}px)`, transition: isDragging ? 'none' : 'transform 0.25s ease-out' }" />
+      </div>
+      <img v-else :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
         :style="{ transform: `translateX(${dragOffsetX}px)`, transition: isDragging ? 'none' : 'transform 0.25s ease-out' }" />
       <!-- Prev overlay -->
       <div v-if="hasPrev" class="img-nav-hint img-nav-prev" @click="goPrev">
@@ -170,7 +177,7 @@ function handleKeyDown(e) {
     // Ignore when focus is on the header buttons (their space/arrow handling
     // must not switch the image underneath).
     const kTarget = e.target instanceof Element ? e.target : null
-    if (kTarget?.closest('.file-image-header button')) return
+    if (kTarget?.closest('.image-block-header button')) return
     if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev() }
     else if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
 }
@@ -180,7 +187,7 @@ function handleMouseDown(e) {
     if (e.button !== 0) return
     // Header buttons must not start a swipe-drag.
     const mTarget = e.target instanceof Element ? e.target : null
-    if (mTarget?.closest('.file-image-header')) return
+    if (mTarget?.closest('.image-block-wrapper')) return
     isDragging.value = true
     dragStartX.value = e.clientX
     dragLastX.value = e.clientX
@@ -215,7 +222,7 @@ function handleTouchStart(e) {
     if (e.touches.length !== 1) return
     // Header buttons must not start a swipe-drag.
     const tTarget = e.target instanceof Element ? e.target : null
-    if (tTarget?.closest('.file-image-header')) return
+    if (tTarget?.closest('.image-block-wrapper')) return
     isDragging.value = true
     touchStartX.value = e.touches[0].clientX
     touchLastX.value = e.touches[0].clientX
@@ -272,63 +279,6 @@ watch(() => props.file, () => {
     outline: none;
 }
 
-/* Inline action header above the image — mirrors the markdown image block
-   header visual (view + attach). Only rendered outside the share SPA. */
-.file-image-header {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding: 2px 8px;
-    background: var(--code-bg);
-    border-bottom: 1px solid var(--border-color);
-    min-height: 22px;
-    user-select: none;
-}
-
-.file-image-header-actions {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-}
-
-.file-image-view-btn,
-.file-image-attach-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border: none;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0;
-    opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
-    outline: none;
-    box-shadow: none;
-}
-
-.file-image-view-btn:hover,
-.file-image-attach-btn:hover {
-    opacity: 1;
-    color: var(--text-secondary);
-    background: var(--bg-tertiary);
-}
-
-.file-image-view-btn svg,
-.file-image-attach-btn svg {
-    width: 14px;
-    height: 14px;
-}
-
-.file-image-attach-btn.is-attached {
-    opacity: 1;
-    color: var(--accent-color);
-}
-
 .image-preview-body {
     flex: 1;
     overflow: auto;
@@ -339,6 +289,33 @@ watch(() => props.file, () => {
     background: var(--bg-primary);
     position: relative;
     user-select: none;
+}
+
+/* The image reuses markdown's .image-block-wrapper header structure. Inside
+   the full-screen viewer the wrapper must center + constrain to the available
+   height (the global markdown rule uses width:fit-content + a text-flow
+   margin that does not apply here). */
+.image-preview-body .image-block-wrapper {
+    margin: 0;
+    max-width: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.image-preview-body .image-block-wrapper .image-block-header {
+    flex: none;
+}
+
+.image-preview-body .image-block-wrapper img {
+    max-width: 100%;
+    max-height: calc(100% - 26px);
+    object-fit: contain;
+}
+
+.image-preview-body .image-block-wrapper .image-block-attach-btn.is-attached {
+    opacity: 1;
+    color: var(--accent-color);
 }
 
 .image-preview-img {

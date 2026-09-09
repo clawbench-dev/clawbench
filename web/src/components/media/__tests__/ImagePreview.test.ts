@@ -316,24 +316,28 @@ describe('ImagePreview', () => {
     removeSpy.mockRestore()
   })
 
-  // ── Inline action header (view / attach) ──
+  // ── Image-block header (view / attach) ──
 
-  it('shows the action header with view + attach buttons outside share mode', () => {
+  it('wraps the image in the shared image-block figure with view + attach buttons', () => {
     const wrapper = mountPreview()
-    expect(wrapper.find('.file-image-header').exists()).toBe(true)
-    expect(wrapper.find('.file-image-view-btn').exists()).toBe(true)
-    expect(wrapper.find('.file-image-attach-btn').exists()).toBe(true)
+    // The image reuses the markdown image-block structure rather than a
+    // separate toolbar: .image-block-wrapper > header > actions.
+    expect(wrapper.find('.image-block-wrapper').exists()).toBe(true)
+    expect(wrapper.find('.image-block-header').exists()).toBe(true)
+    expect(wrapper.find('.image-block-header .image-block-view-btn').exists()).toBe(true)
+    expect(wrapper.find('.image-block-header .image-block-attach-btn').exists()).toBe(true)
   })
 
-  it('hides the action header in share mode', async () => {
+  it('shows a bare image (no header) in share mode', async () => {
     _shareToken = true
     const wrapper = mountPreview()
-    expect(wrapper.find('.file-image-header').exists()).toBe(false)
+    expect(wrapper.find('.image-block-wrapper').exists()).toBe(false)
+    expect(wrapper.find('.image-preview-img').exists()).toBe(true)
   })
 
   it('opens the lightbox with the full media URL on view click', async () => {
     const wrapper = mountPreview()
-    await wrapper.find('.file-image-view-btn').trigger('click')
+    await wrapper.find('.image-block-view-btn').trigger('click')
     expect(mockOpenLightbox).toHaveBeenCalledTimes(1)
     const url = mockOpenLightbox.mock.calls[0][0]
     expect(url).toContain('/api/local-file/')
@@ -341,7 +345,7 @@ describe('ImagePreview', () => {
 
   it('attaches the image file on first attach click and removes on second', async () => {
     const wrapper = mountPreview()
-    const btn = wrapper.find('.file-image-attach-btn')
+    const btn = wrapper.find('.image-block-attach-btn')
     await btn.trigger('click')
     expect(mockAdd).toHaveBeenCalledWith('/project/src/image.png')
     expect(mockRemove).not.toHaveBeenCalled()
@@ -358,7 +362,7 @@ describe('ImagePreview', () => {
 
   it('mousedown on the header does not start a swipe drag', async () => {
     const wrapper = mountPreview()
-    const header = wrapper.find('.file-image-header')
+    const header = wrapper.find('.image-block-header')
     await header.trigger('mousedown', { button: 0, clientX: 100 })
     expect(wrapper.vm.isDragging).toBe(false)
   })
