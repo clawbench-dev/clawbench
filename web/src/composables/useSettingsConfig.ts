@@ -477,6 +477,7 @@ export async function patchAgentField(agentId: string, field: string, value: str
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     sort_order: 'sortOrder',
+    auto_approve: 'autoApprove',
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)

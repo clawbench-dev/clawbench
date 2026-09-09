@@ -347,7 +347,7 @@ func isValidThinkingEffort(agent *model.Agent, level string) bool {
 
 // Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
 // Patchable fields: preferred_model, preferred_thinking_effort, transport,
-// name, specialty, custom_system_prompt, sort_order.
+// name, specialty, custom_system_prompt, sort_order, auto_approve.
 func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-field agent patch logic
 	var patch map[string]any
 	if !decodeJSON(w, r, &patch) {
@@ -511,6 +511,17 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 	}
 
+	// Validate and apply auto_approve (per-agent default for the new-session
+	// auto-approve toggle).
+	if v, exists := patch["auto_approve"]; exists {
+		autoApprove, ok := v.(bool)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+		ap.AutoApprove = &autoApprove
+	}
+
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -550,6 +561,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 	if ap.SortOrder != nil {
 		agent.SortOrder = *ap.SortOrder
+	}
+	if ap.AutoApprove != nil {
+		agent.AutoApprove = *ap.AutoApprove
 	}
 
 	writeJSON(w, http.StatusOK, agent)

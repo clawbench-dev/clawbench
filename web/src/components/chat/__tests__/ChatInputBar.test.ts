@@ -33,11 +33,7 @@ const i18n = createI18n({
           noSessionToArchive: 'No session',
           autoSpeech: 'Read aloud',
           reloadSession: 'Reopen session',
-          agentConfig: 'Configure agent',
           attachment: 'Attach',
-          wideLabels: {
-            config: 'Config',
-          },
         },
         create: { selectAgentOrLongPress: 'New' },
         input: {
@@ -288,11 +284,10 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 // Mock useAgents — return enough functions to avoid TypeError
 const mockSupportsACP = vi.fn().mockReturnValue(false)
-const mockDefaultAgentId = ref('')
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
-    defaultAgentId: mockDefaultAgentId,
+    defaultAgentId: { value: '' },
     getAgent: () => null,
     getAgentBackend: () => '',
     getAgentName: () => '',
@@ -320,20 +315,6 @@ vi.mock('@/composables/useAgents', () => ({
     loadAgents: vi.fn().mockResolvedValue(undefined),
   }),
 }))
-
-// Mock the module-level settings deep-link setter used by the agent-config
-// button, capturing the requested category for assertions. Must be hoisted
-// (declared via vi.hoisted) because the vi.mock factory below is hoisted to
-// the top of the file by vitest and cannot close over a late `const`.
-const { mockSetPendingSettingsCategory } = vi.hoisted(() => ({
-  mockSetPendingSettingsCategory: vi.fn(),
-}))
-vi.mock('@/composables/useSettingsNavigation', () => ({
-  setPendingSettingsCategory: mockSetPendingSettingsCategory,
-}))
-
-// Captured 'switchTab' provider (App.vue provides it in production).
-const mockSwitchTab = vi.fn()
 
 vi.mock('@/utils/appLog.ts', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -387,9 +368,6 @@ afterEach(() => {
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
-  mockSetPendingSettingsCategory.mockClear()
-  mockSwitchTab.mockClear()
-  mockDefaultAgentId.value = ''
 })
 
 const stubs = {
@@ -419,7 +397,6 @@ const stubs = {
   Compass: true,
   Activity: true,
   Minimize2: true,
-  Settings: true,
 }
 
 describe('ChatInputBar', () => {
@@ -436,9 +413,6 @@ describe('ChatInputBar', () => {
       global: {
         plugins: [i18n],
         stubs,
-        provide: {
-          switchTab: mockSwitchTab,
-        },
         directives: {
           'long-press': {
             mounted: () => {},
@@ -736,37 +710,27 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('toggle-auto-speech')).toBeTruthy()
   })
 
-  it('refresh-session button is replaced by agent-config button when a session exists', () => {
-    const wrapper = mountBar({ currentSessionId: 'sess-1', currentAgentId: 'agent-1' })
-    expect(wrapper.find('[data-action="refresh-session"]').exists()).toBe(false)
-    const btn = wrapper.find('[data-action="open-agent-config"]')
+  it('refresh-session button renders next to auto-speech when a session exists', () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    const btn = wrapper.find('[data-action="refresh-session"]')
     expect(btn.exists()).toBe(true)
-    expect(btn.attributes('title')).toBe('Configure agent')
+    expect(btn.attributes('title')).toBe('Reopen session')
     const autoSpeechBtn = wrapper.find('.auto-speech-btn')
-    // Config button sits after the auto-speech button in DOM order
+    // Refresh button sits after the auto-speech button in DOM order
     const doc = wrapper.element.ownerDocument
     const rel = btn.element.compareDocumentPosition(autoSpeechBtn.element)
     expect(rel & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
   })
 
-  it('agent-config button is hidden when no agent is available', () => {
-    const wrapper = mountBar({ currentSessionId: '', currentAgentId: '' })
-    expect(wrapper.find('[data-action="open-agent-config"]').exists()).toBe(false)
+  it('refresh-session button is hidden when no session is active', () => {
+    const wrapper = mountBar({ currentSessionId: '' })
+    expect(wrapper.find('[data-action="refresh-session"]').exists()).toBe(false)
   })
 
-  it('agent-config button deep-links to the current agent settings page on click', async () => {
-    const wrapper = mountBar({ currentSessionId: 'sess-1', currentAgentId: 'agent-1' })
-    await wrapper.find('[data-action="open-agent-config"]').trigger('click')
-    expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('agents:agent-1')
-    expect(mockSwitchTab).toHaveBeenCalledWith('settings')
-  })
-
-  it('agent-config button falls back to the default agent when no session agent', async () => {
-    mockDefaultAgentId.value = 'default-9'
-    const wrapper = mountBar({ currentSessionId: '', currentAgentId: '' })
-    await wrapper.find('[data-action="open-agent-config"]').trigger('click')
-    expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('agents:default-9')
-    expect(mockSwitchTab).toHaveBeenCalledWith('settings')
+  it('refresh-session button emits refresh-session on click', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    await wrapper.find('[data-action="refresh-session"]').trigger('click')
+    expect(wrapper.emitted('refresh-session')).toBeTruthy()
   })
 
   it('archive button does nothing when no currentSessionId', async () => {

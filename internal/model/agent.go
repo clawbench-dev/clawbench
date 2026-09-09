@@ -52,6 +52,12 @@ type Agent struct {
 
 	// SortOrder determines display order in agent list; lower values first.
 	SortOrder int `json:"sortOrder"`
+
+	// AutoApprove defaults new sessions of this agent to auto-approve ON.
+	// This is a front-end "default toggle" preference — the session's real
+	// auto_approve flag is still set by the user in the session drawer and
+	// persisted per-session in chat_sessions.auto_approve.
+	AutoApprove bool `json:"autoApprove"`
 }
 
 // DefaultModelID returns the default model ID for this agent.

@@ -181,6 +181,15 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
+  // New-session auto-approve default
+  result.push({
+    key: 'auto_approve',
+    label: t('settings.items.agentAutoApprove'),
+    description: t('settings.items.agentAutoApproveDesc'),
+    type: 'switch',
+    patchField: 'auto_approve',
+  })
+
   // -- Identity section --
   result.push({ key: 'header-identity', label: t('settings.items.agentSectionIdentity'), type: 'header' })
 
@@ -291,6 +300,8 @@ function getItemValue(item: AgentItem): unknown {
       return a.preferredMode || ''
     case 'transport':
       return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
+    case 'auto_approve':
+      return !!a.autoApprove
     case 'name':
       return a.name || ''
     case 'specialty':

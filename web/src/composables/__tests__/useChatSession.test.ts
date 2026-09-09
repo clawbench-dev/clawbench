@@ -88,6 +88,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     loadAgents: vi.fn().mockResolvedValue(undefined),
     getAgentBackend: vi.fn().mockReturnValue(''),
     getAgentName: vi.fn().mockReturnValue('Test'),
+    getAgent: vi.fn().mockReturnValue(undefined),
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
     agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
@@ -121,6 +122,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.loadAgents.mockReset().mockResolvedValue(undefined)
     mockAgentFns.getAgentBackend.mockReset().mockReturnValue('')
     mockAgentFns.getAgentName.mockReset().mockReturnValue('Test')
+    mockAgentFns.getAgent.mockReset().mockReturnValue(undefined)
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
@@ -335,7 +337,7 @@ vi.mock('@/composables/useAgents', () => ({
     loadAgents: mockAgentFns.loadAgents,
     getAgentBackend: mockAgentFns.getAgentBackend,
     getAgentName: mockAgentFns.getAgentName,
-    getAgent: vi.fn().mockReturnValue(undefined),
+    getAgent: mockAgentFns.getAgent,
     syncModelFromAgent: mockAgentFns.syncModelFromAgent,
     getAgentModel: mockAgentFns.getAgentModel,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
@@ -3334,6 +3336,124 @@ describe('createSession', () => {
       expect.any(String),
       expect.objectContaining({ type: 'success', icon: '✨' })
     )
+  })
+
+  it('enables autoApprove display default when agent.autoApprove is true', async () => {
+    mockAgentFns.getAgent.mockReturnValue({ id: 'agent2', autoApprove: true })
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          sessionId: 'new-s2',
+          title: 'New Session',
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          sessionCount: 5,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'new-s2',
+          sessionTitle: 'New Session',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: '',
+          thinkingEffort: '',
+          autoApprove: false, // server has not persisted auto-approve for this fresh session
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 5 }),
+      })
+
+    const options = {
+      currentSessionId: ref('old-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.createSession('agent2')
+
+    // switchSession's loadHistory syncs autoApprove=false from the server,
+    // then the per-agent default flips it back ON for display.
+    expect(mockIdentity.autoApprove).toBe(true)
+  })
+
+  it('keeps autoApprove off when the agent has no auto-approve default', async () => {
+    mockAgentFns.getAgent.mockReturnValue({ id: 'agent2', autoApprove: false })
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          sessionId: 'new-s3',
+          title: 'New Session',
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          sessionCount: 5,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'new-s3',
+          sessionTitle: 'New Session',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: '',
+          thinkingEffort: '',
+          autoApprove: false,
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 5 }),
+      })
+
+    const options = {
+      currentSessionId: ref('old-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.createSession('agent2')
+
+    expect(mockIdentity.autoApprove).toBe(false)
   })
 
   it('API returns !ok: shows error toast', async () => {

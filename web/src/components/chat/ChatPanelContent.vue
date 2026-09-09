@@ -75,6 +75,7 @@
       :quotes="stagedQuotes"
       :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
+      :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
       :chatRunning="identity.runningSessions.value.size > 0"
@@ -102,6 +103,7 @@
       @archive-session="() => manager.archiveCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @destroy-session="() => manager.destroyCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @open-user-msg-index="handleOpenUserMsgIndex"
+      @refresh-session="handleRefreshSession"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -151,6 +153,7 @@
     :title="t('chat.session.selectAgentForFork')"
     :default-badge="t('chat.sessionSetting.defaultBadge')"
     :set-default-title="t('session.setAsDefaultAgent')"
+    :config-title="t('session.configAgent')"
     @update:open="v => { if (v) forkAgentSelectorDrawer.open(); else { forkAgentSelectorDrawer.close(); forkPending.value = null } }"
     @select="handleForkAgentSelect"
   />
@@ -1194,6 +1197,26 @@ async function ensureMessageContent(msg) {
         msg._loadingOriginal = false
         msg._loadAttempted = true
     }
+}
+
+
+// Reload/reopen the current session from the ActionBar refresh button.
+// Delegates to session.handleManualRefresh which mirrors the WS reconnect
+// resync flow (refresh runningSessions + branch on running state) but ALWAYS
+// forces a loadHistory so every refresh re-renders against the authoritative
+// server state — messages, stream subscription, mode/usage/commands all stay
+// consistent with the backend.
+const refreshingSession = ref(false)
+async function handleRefreshSession() {
+  if (refreshingSession.value || !identity.currentSessionId.value) return
+  refreshingSession.value = true
+  try {
+    await session.handleManualRefresh()
+  } catch (err) {
+    appLog.w(TAG, 'failed to refresh session', err)
+  } finally {
+    refreshingSession.value = false
+  }
 }
 
 // Reset a stuck ACP agent session: kill the connection so the next prompt

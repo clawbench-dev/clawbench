@@ -33,6 +33,7 @@
     :title="t('session.selectAgent')"
     :default-badge="t('chat.sessionSetting.defaultBadge')"
     :set-default-title="t('session.setAsDefaultAgent')"
+    :config-title="t('session.configAgent')"
     @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
     @select="createSession"
   />

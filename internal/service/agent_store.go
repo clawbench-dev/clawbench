@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
+	auto_approve INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -55,7 +56,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			sort_order,
-			transport, acp_command
+			transport, acp_command, auto_approve
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -67,7 +68,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	for rows.Next() {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON string
-		var modelsAutoDetected int
+		var modelsAutoDetected, autoApprove int
 
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
@@ -75,13 +76,14 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
-			&a.Transport, &a.AcpCommand,
+			&a.Transport, &a.AcpCommand, &autoApprove,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 
 		a.ModelsAutoDetected = modelsAutoDetected == 1
+		a.AutoApprove = autoApprove == 1
 
 		// Parse models JSON
 		if modelsJSON != "" && modelsJSON != "[]" {
@@ -134,14 +136,19 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		}
 	}
 
+	autoApprove := 0
+	if agent.AutoApprove {
+		autoApprove = 1
+	}
+
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			sort_order,
-			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			transport, acp_command, auto_approve)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -159,13 +166,14 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			sort_order = excluded.sort_order,
 			transport = excluded.transport,
 			acp_command = excluded.acp_command,
+			auto_approve = excluded.auto_approve,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
 		sortOrder,
-		transport, agent.AcpCommand)
+		transport, agent.AcpCommand, autoApprove)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
@@ -207,6 +215,7 @@ type AgentPatch struct {
 	Specialty               *string
 	CustomSystemPrompt      *string
 	SortOrder               *int
+	AutoApprove             *bool
 }
 
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
@@ -260,6 +269,14 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 	if patch.SortOrder != nil {
 		setClauses = append(setClauses, "sort_order = ?")
 		args = append(args, *patch.SortOrder)
+	}
+	if patch.AutoApprove != nil {
+		autoApprove := 0
+		if *patch.AutoApprove {
+			autoApprove = 1
+		}
+		setClauses = append(setClauses, "auto_approve = ?")
+		args = append(args, autoApprove)
 	}
 
 	if len(setClauses) == 0 {
@@ -358,6 +375,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,
+		AutoApprove:             source.AutoApprove,
 	}
 	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)
 	if len(source.Models) > 0 {

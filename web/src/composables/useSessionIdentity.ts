@@ -710,6 +710,13 @@ export function useSessionIdentity() {
         }
         // Initialize thinking effort from agent preference
         thinkingEffortState.loadPref(currentAgentId.value)
+        // Per-agent new-session auto-approve default: show the session's
+        // Auto-Approve toggle ON when the agent is configured so (display
+        // default only — the session flag is persisted when the user toggles).
+        const agentForDefault = agentsApi.getAgent(currentAgentId.value)
+        if (agentForDefault?.autoApprove) {
+          autoApprove.value = true
+        }
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)

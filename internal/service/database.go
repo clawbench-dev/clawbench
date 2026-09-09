@@ -926,6 +926,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add auto_approve column to agents for per-agent default of the
+	// new-session auto-approve toggle (front-end default only; the session's
+	// real flag lives in chat_sessions.auto_approve).
+	var hasAgentAutoApprove int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='auto_approve'").Scan(&hasAgentAutoApprove)
+	if hasAgentAutoApprove == 0 {
+		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add auto_approve column: %w", err)
+		}
+	}
+
 	// Migrate: add project_path to quick-send / quick-command tables for
 	// project-scoped (仅本项目) items. NULL means global; a value scopes the
 	// item to that project only.
