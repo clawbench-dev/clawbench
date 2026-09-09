@@ -13,7 +13,7 @@
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
         <ChevronUp :size="12" class="plan-expanded__toggle" />
       </div>
-      <div class="plan-expanded__timeline">
+      <div ref="timelineRef" class="plan-expanded__timeline">
         <div v-for="(entry, idx) in entries" :key="idx" class="plan-entry" :class="'plan-entry--' + entry.status">
           <!-- Vertical connector line -->
           <div v-if="idx < entries.length - 1" class="plan-entry__line"
@@ -40,10 +40,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { PlanEntry } from '@/composables/usePlanProgress'
+import { activeEntryIndex, centeredScrollTop } from '@/utils/planScroll'
 
 const props = defineProps<{
   entries: PlanEntry[]
@@ -63,6 +64,71 @@ const chipText = computed(() => {
   const completed = props.entries.filter(e => e.status === 'completed').length
   const total = props.entries.length
   return t('chat.plan.completedCount', { completed, total })
+})
+
+// ── Active-entry centering ─────────────────────────────────
+// The running plan step stays visible in the middle of the timeline: when the
+// panel first appears / is expanded, and whenever execution advances to a new
+// step. Rows are measured viewport-relative via getBoundingClientRect (the
+// timeline is not a positioned ancestor, so offsetTop would be mis-framed).
+// No entry is in_progress → the list is never force-scrolled.
+const timelineRef = ref<HTMLElement | null>(null)
+
+/** Scroll so the in_progress entry is vertically centered in the timeline. */
+function centerActiveEntry() {
+  const el = timelineRef.value
+  if (!el) return
+  const idx = activeEntryIndex(props.entries)
+  if (idx < 0) return
+  const row = el.children[idx] as HTMLElement | undefined
+  if (!row) return
+  const rowRect = row.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  const maxScrollTop = Math.max(el.scrollHeight - el.clientHeight, 0)
+  const target = centeredScrollTop({
+    scrollTop: el.scrollTop,
+    rowCenter: rowRect.top + rowRect.height / 2 - elRect.top,
+    containerHeight: el.clientHeight,
+    maxScrollTop,
+  })
+  if (target !== el.scrollTop) el.scrollTop = target
+}
+
+// Center when the expanded timeline is (re)created: on mount with entries, when
+// entries appear, and when the user expands from the collapsed chip. Primitive
+// key (count, not the array) — same-length entry replacements must NOT re-fire
+// (that would yank the user on every non-advancing plan_update).
+watch(
+  () => (props.collapsed ? -1 : props.entries.length),
+  () => {
+    if (!props.collapsed && props.entries.length > 0) {
+      nextTick(centerActiveEntry)
+    }
+  },
+  { immediate: true },
+)
+
+// Center when execution advances to a new step.
+let lastActiveIdx = activeEntryIndex(props.entries)
+watch(
+  () => props.entries.map(e => e.status).join(','),
+  (statuses) => {
+    if (props.collapsed) return
+    const idx = statuses.split(',').indexOf('in_progress')
+    if (idx !== lastActiveIdx) {
+      nextTick(centerActiveEntry)
+      lastActiveIdx = idx
+    }
+  },
+)
+
+onMounted(() => {
+  // Remount case: the component can appear already-expanded with entries (e.g.
+  // restored plan state). The immediate watcher above runs during setup when
+  // the timeline ref is not yet bound, so center here once the DOM is ready.
+  if (!props.collapsed && props.entries.length > 0) {
+    centerActiveEntry()
+  }
 })
 </script>
 
