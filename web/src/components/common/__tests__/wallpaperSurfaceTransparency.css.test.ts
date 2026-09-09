@@ -101,4 +101,19 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(edit).toContain('var(--accent-color) 6%')
     expect(edit).toContain('var(--code-bg)')
   })
+
+  it('lets the wallpaper show through the plan panel chip and expanded card', () => {
+    // Plan progress UI floats in the chat column between the bubbles and the
+    // input bar. Both the collapsed chip (bg-tertiary) and the expanded
+    // timeline card (bg-secondary) must go translucent at --panel-alpha so
+    // they read consistently with the translucent message bubbles around them.
+    const chip = ruleContaining('html.wallpaper-active .plan-chip')
+    expect(chip).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-tertiary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+    const card = ruleContaining('html.wallpaper-active .plan-expanded')
+    expect(card).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-secondary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+  })
 })

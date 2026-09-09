@@ -303,6 +303,20 @@ html.wallpaper-active .chat-message.user {
     background: color-mix(in srgb, var(--user-msg-color) var(--panel-alpha), transparent);
 }
 
+/* Plan progress panel — the collapsed chip (bg-tertiary) and the expanded
+   timeline card (bg-secondary) float in the chat column between the bubbles
+   and the input bar. They get the same translucent tint so the wallpaper
+   shows through; status-node circle bases keep an opaque --bg-secondary
+   (their own scoped rule at equal specificity — a base.css translucent
+   override would need to match the node's 16px disc exactly) except for the
+   completed green fill which is already a status color. */
+html.wallpaper-active .plan-chip {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .plan-expanded {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
 /* Git history drill-down — the commit-meta bar (shared by the file-list view
    and the file-diff view) and the interactive commit/file row highlights get
    the translucent treatment so they sit consistently on the single
