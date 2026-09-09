@@ -151,6 +151,8 @@ const chipText = computed(() => {
 .plan-expanded__timeline {
   display: flex;
   flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 /* ── Timeline entry ── */
@@ -262,7 +264,6 @@ const chipText = computed(() => {
 }
 
 .plan-entry__text--done {
-  text-decoration: line-through;
   color: var(--text-muted, #6c757d);
 }
 
