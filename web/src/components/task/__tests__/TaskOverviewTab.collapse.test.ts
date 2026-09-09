@@ -32,8 +32,10 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', template: '<span class="agent-icon-stub" />' },
 }))
 
+const { mockOpenFilePath } = vi.hoisted(() => ({ mockOpenFilePath: vi.fn() }))
+
 vi.mock('@/composables/useFilePathAnnotation', () => ({
-  useFilePathAnnotation: () => ({ verifyFilePaths: vi.fn(), openFilePath: vi.fn() }),
+  useFilePathAnnotation: () => ({ verifyFilePaths: vi.fn(), openFilePath: mockOpenFilePath }),
 }))
 
 vi.mock('@/composables/useCommitHashAnnotation', () => ({
@@ -56,6 +58,7 @@ vi.mock('@/composables/useCodeLinkPreview', () => ({
     handleClick: vi.fn(),
     close: vi.fn(),
   }),
+  handleVerifiedFilePathClick: () => false,
 }))
 
 vi.mock('@/components/file/CodeLinkPreview.vue', () => ({
@@ -139,4 +142,35 @@ describe('TaskOverviewTab prompt collapse', () => {
     expect(wrapper.find('.overview-actions').exists()).toBe(false)
     expect(wrapper.find('.action-btn').exists()).toBe(false)
   })
+
+  it('calls openFilePath when chat-file-open-btn is clicked', async () => {
+    const wrapper = mount(TaskOverviewTab, {
+      props: {
+        task: {
+          ...baseTask,
+          prompt: '<button class="chat-file-open-btn" data-file-path="src/main.ts" data-line-start="10" data-line-end="20">Open</button>',
+        },
+      },
+    })
+    const btn = wrapper.find('.chat-file-open-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(mockOpenFilePath).toHaveBeenCalledWith('src/main.ts', 10, 20, 'task')
+  })
+
+  it('calls openFilePath when dir chat-file-path is clicked', async () => {
+    const wrapper = mount(TaskOverviewTab, {
+      props: {
+        task: {
+          ...baseTask,
+          prompt: '<span class="chat-file-path" data-file-path="src/components" data-path-type="dir">components</span>',
+        },
+      },
+    })
+    const dirEl = wrapper.find('.chat-file-path')
+    expect(dirEl.exists()).toBe(true)
+    await dirEl.trigger('click')
+    expect(mockOpenFilePath).toHaveBeenCalledWith('src/components', undefined, undefined, 'task')
+  })
 })
+

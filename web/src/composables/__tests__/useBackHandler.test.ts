@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { registerBackHandler, handleBackNavigation, canNavigateBack, _resetHandlers, _resetExitConfirm, requestExitConfirm, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
+import { registerBackHandler, handleBackNavigation, canNavigateBack, canNavigateBackOverlay, handleBackNavigationOverlay, _resetHandlers, _resetExitConfirm, requestExitConfirm, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
 
 describe('useBackHandler', () => {
     beforeEach(() => {
@@ -218,7 +218,8 @@ describe('useBackHandler', () => {
 
         // Overlay check
         expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(true)
-        const handledOverlay = handleBackNavigation(PRIORITY_OVERLAY)
+        expect(canNavigateBackOverlay()).toBe(true)
+        const handledOverlay = handleBackNavigationOverlay()
         expect(handledOverlay).toBe(true)
         expect(overlayGoBack).toHaveBeenCalledTimes(1)
         expect(pageGoBack).not.toHaveBeenCalled()
@@ -226,7 +227,9 @@ describe('useBackHandler', () => {
         // After overlay is un-registered or cannot go back
         unregOverlay()
         expect(canNavigateBack(PRIORITY_OVERLAY)).toBe(false)
+        expect(canNavigateBackOverlay()).toBe(false)
         expect(handleBackNavigation(PRIORITY_OVERLAY)).toBe(false)
+        expect(handleBackNavigationOverlay()).toBe(false)
 
         // Page level handler still works with default/0 minPriority
         expect(canNavigateBack()).toBe(true)

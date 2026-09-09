@@ -81,6 +81,14 @@ describe('useNavigationCoordinator', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockBackHooks.hasTopmostOverlay.mockReturnValue(false)
+    mockBackHooks.closeTopmostOverlay.mockReturnValue(false)
+    mockBackHooks.canNavigateBack.mockReturnValue(false)
+    mockBackHooks.handleBackNavigation.mockReturnValue(false)
+    mockViewActions.isFileManagerMultiSelectActive.mockReturnValue(false)
+    fakeStore.selectFile.mockResolvedValue(true)
+    fakeStore.navigateToDir.mockResolvedValue(true)
+    fakeStore.navigateToParentDir.mockResolvedValue(true)
     navigation.resetForTesting()
     resetFileNavStack()
     resetDirectoryReturn()
@@ -248,6 +256,360 @@ describe('useNavigationCoordinator', () => {
       coord.openFileInViewer('doc.md')
 
       expect(markdownViewMode.value).toBe('rendered')
+    })
+  })
+
+  describe('handleSelectFile', () => {
+    it('opens file from chat by default', async () => {
+      const coord = createCoordinator()
+      await coord.handleSelectFile('src/main.ts')
+
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('src/main.ts')
+      expect(activeTab.value).toBe('view')
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('chat')
+    })
+
+    it('opens file from history when history panel is active', async () => {
+      activeTab.value = 'history'
+      const coord = createCoordinator()
+      await coord.handleSelectFile('src/main.ts')
+
+      expect(navigation.origin.value?.surface).toBe('history')
+    })
+
+    it('does nothing when file selection fails', async () => {
+      fakeStore.selectFile.mockResolvedValueOnce(false)
+      const coord = createCoordinator()
+      await coord.handleSelectFile('invalid.ts')
+
+      expect(activeTab.value).toBe('chat')
+      expect(navigation.hasOrigin.value).toBe(false)
+    })
+  })
+
+  describe('handleBrowseSelectFile', () => {
+    it('sets browse session and opens file in viewer', async () => {
+      const coord = createCoordinator()
+      await coord.handleBrowseSelectFile('src/index.ts')
+
+      expect(browseFileSession.value).toBe(true)
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('src/index.ts')
+      expect(activeTab.value).toBe('view')
+    })
+
+    it('bails when file manager multi-select is active', async () => {
+      mockViewActions.isFileManagerMultiSelectActive.mockReturnValueOnce(true)
+      const coord = createCoordinator()
+      await coord.handleBrowseSelectFile('src/index.ts')
+
+      expect(fakeStore.selectFile).not.toHaveBeenCalled()
+    })
+
+    it('resets browseFileSession when selectFile fails', async () => {
+      fakeStore.selectFile.mockResolvedValueOnce(false)
+      const coord = createCoordinator()
+      await coord.handleBrowseSelectFile('nonexistent.ts')
+
+      expect(browseFileSession.value).toBe(false)
+      expect(activeTab.value).toBe('chat')
+    })
+  })
+
+  describe('handleTaskOpenFile', () => {
+    it('opens file with task origin and line number', async () => {
+      const coord = createCoordinator()
+      await coord.handleTaskOpenFile('task.log', 10)
+
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('task.log')
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('task')
+      expect(activeTab.value).toBe('view')
+      expect(mockViewActions.scrollToLine).toHaveBeenCalledWith(10, undefined, 'task.log')
+    })
+
+    it('does nothing when selectFile fails', async () => {
+      fakeStore.selectFile.mockResolvedValueOnce(false)
+      const coord = createCoordinator()
+      await coord.handleTaskOpenFile('task.log')
+
+      expect(navigation.hasOrigin.value).toBe(false)
+      expect(activeTab.value).toBe('chat')
+    })
+  })
+
+  describe('handleOverlayClose', () => {
+    it('forces close when custom event has force: true', async () => {
+      browseFileSession.value = true
+      const coord = createCoordinator()
+      await coord.handleOverlayClose({ detail: { force: true } } as any)
+
+      expect(mockViewActions.closeOverlayAndSync).toHaveBeenCalled()
+      expect(browseFileSession.value).toBe(false)
+    })
+
+    it('delegates to navigateBack when force is not specified', async () => {
+      activeTab.value = 'view'
+      fileNav.openFile('test.ts')
+      const coord = createCoordinator()
+      await coord.handleOverlayClose()
+
+      expect(mockViewActions.closeOverlayAndSync).toHaveBeenCalled()
+      expect(activeTab.value).toBe('browse')
+    })
+  })
+
+  describe('handleOverlayOpenFile', () => {
+    it('fetches /api/dir and navigates to dir if path is a directory', async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true })
+
+      try {
+        const coord = createCoordinator()
+        await coord.handleOverlayOpenFile('src/components')
+
+        expect(globalThis.fetch).toHaveBeenCalledWith('/api/dir?path=src%2Fcomponents')
+        expect(fakeStore.navigateToDir).toHaveBeenCalledWith('src/components')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    it('opens file and handles external absolute path with toast', async () => {
+      const coord = createCoordinator()
+      await coord.handleOverlayOpenFile({ path: '/var/log/app.log', lineStart: 5, lineEnd: 10 })
+
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('/var/log/app.log')
+      expect(mockViewActions.scrollToLine).toHaveBeenCalledWith(5, 10, '/var/log/app.log')
+      expect(mockToast.show).toHaveBeenCalled()
+    })
+
+    it('handles plain string file path payload when fetch fails', async () => {
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
+
+      try {
+        const coord = createCoordinator()
+        await coord.handleOverlayOpenFile('src/utils.ts')
+
+        expect(fakeStore.selectFile).toHaveBeenCalledWith('src/utils.ts')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+  })
+
+  describe('handleAppHeaderRecentFileSelect', () => {
+    it('switches file within current file view', async () => {
+      activeTab.value = 'view'
+      fileNav.overlayOpen.value = true
+      fakeStore.state.currentFile = { path: 'old.ts', name: 'old.ts' }
+
+      const coord = createCoordinator()
+      await coord.handleAppHeaderRecentFileSelect('new.ts')
+
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('new.ts')
+      expect(activeTab.value).toBe('view')
+    })
+
+    it('sets browseFileSession when opened from browse panel', async () => {
+      activeTab.value = 'browse'
+      const coord = createCoordinator()
+      await coord.handleAppHeaderRecentFileSelect('recent.ts')
+
+      expect(browseFileSession.value).toBe(true)
+      expect(navigation.hasOrigin.value).toBe(false)
+      expect(activeTab.value).toBe('view')
+    })
+
+    it('sets task origin when opened from tasks panel', async () => {
+      activeTab.value = 'tasks'
+      const coord = createCoordinator()
+      await coord.handleAppHeaderRecentFileSelect('recent.ts')
+
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('task')
+      expect(activeTab.value).toBe('view')
+    })
+
+    it('sets history origin when opened from history panel', async () => {
+      activeTab.value = 'history'
+      const coord = createCoordinator()
+      await coord.handleAppHeaderRecentFileSelect('recent.ts')
+
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('history')
+    })
+
+    it('sets chat origin when opened from chat', async () => {
+      activeTab.value = 'chat'
+      const coord = createCoordinator()
+      await coord.handleAppHeaderRecentFileSelect('recent.ts')
+
+      expect(navigation.hasOrigin.value).toBe(true)
+      expect(navigation.origin.value?.surface).toBe('chat')
+    })
+  })
+
+  describe('handleOpenDirectoryFromEvent and handleOpenFileOverlay extra paths', () => {
+    it('delegates to handleOpenDirectoryFromContext when event has valid path', async () => {
+      const coord = createCoordinator()
+      coord.handleOpenDirectoryFromEvent({ detail: { path: 'src/docs', source: 'chat' } } as any)
+
+      expect(mockViewActions.handleOpenFileManager).toHaveBeenCalled()
+      expect(fakeStore.navigateToDir).toHaveBeenCalledWith('src/docs')
+    })
+
+    it('ignores handleOpenDirectoryFromEvent when path is undefined', () => {
+      const coord = createCoordinator()
+      coord.handleOpenDirectoryFromEvent({ detail: {} } as any)
+
+      expect(fakeStore.navigateToDir).not.toHaveBeenCalled()
+    })
+
+    it('handles open file overlay with task and history sources', () => {
+      activeTab.value = 'tasks'
+      const coord = createCoordinator()
+      coord.handleOpenFileOverlay({ detail: { path: 'task.md', source: 'task' } } as any)
+
+      expect(navigation.origin.value?.surface).toBe('task')
+
+      activeTab.value = 'history'
+      coord.handleOpenFileOverlay({ detail: { path: 'commit.diff', source: 'history' } } as any)
+      expect(navigation.origin.value?.surface).toBe('history')
+    })
+
+    it('handles open file overlay when called with direct payload object', () => {
+      const coord = createCoordinator()
+      coord.handleOpenFileOverlay({ path: 'direct.ts' })
+
+      expect(activeTab.value).toBe('view')
+      expect(fileNav.currentFilePath.value).toBe('direct.ts')
+    })
+
+    it('ignores handleOpenFileOverlay without path', () => {
+      const coord = createCoordinator()
+      coord.handleOpenFileOverlay({} as any)
+
+      expect(activeTab.value).toBe('chat')
+    })
+  })
+
+  describe('back navigation state machine & viewBackLabel', () => {
+    it('handles exitEdit when fileEditor isEditing is true', async () => {
+      const coord = createCoordinator()
+      const mockFileEditor = {
+        isEditing: vi.fn().mockReturnValue(true),
+        exitEdit: vi.fn(),
+      }
+      const coordWithEditor = useNavigationCoordinator({
+        store: fakeStore as any,
+        fileNav,
+        navigation,
+        browseFileSession,
+        markdownViewMode,
+        layout: {
+          isWideScreen,
+          activePane,
+          activeTab,
+          leftPanelActive,
+          panelIsActive: () => true,
+          switchTab: vi.fn(),
+          setActivePane: vi.fn(),
+          setLeftCollapsed: vi.fn(),
+        },
+        fileEditor: mockFileEditor,
+        viewActions: mockViewActions,
+        backHooks: mockBackHooks,
+        toast: mockToast,
+      })
+
+      expect(coordWithEditor.canHandleBack('header')).toBe(true)
+      await coordWithEditor.handleNavigateBack()
+      expect(mockFileEditor.exitEdit).toHaveBeenCalled()
+    })
+
+    it('handles topmost overlay before other back actions', async () => {
+      mockBackHooks.hasTopmostOverlay.mockReturnValue(true)
+      mockBackHooks.closeTopmostOverlay.mockReturnValue(true)
+      const coord = createCoordinator()
+
+      expect(coord.canHandleBack('header')).toBe(true)
+      await coord.handleNavigateBack()
+      expect(mockBackHooks.closeTopmostOverlay).toHaveBeenCalled()
+    })
+
+    it('navigates back through file navigation stack', async () => {
+      activeTab.value = 'view'
+      fileNav.openFile('first.ts')
+      fileNav.openFile('second.ts', { lineStart: 10, lineEnd: 20, viewMode: 'raw' })
+
+      const coord = createCoordinator()
+      expect(coord.canNavigateBackInView.value).toBe(true)
+      expect(coord.viewBackLabel.value).toContain('first.ts')
+
+      await coord.handleNavigateBack()
+      expect(fakeStore.selectFile).toHaveBeenCalledWith('first.ts')
+    })
+
+    it('shows toast when goBackFile fails to select previous file', async () => {
+      activeTab.value = 'view'
+      fileNav.openFile('first.ts')
+      fileNav.openFile('second.ts')
+      fakeStore.selectFile.mockResolvedValueOnce(false)
+
+      const coord = createCoordinator()
+      await coord.handleNavigateBack()
+      expect(mockToast.show).toHaveBeenCalled()
+    })
+
+    it('navigates to parent directory when back in browse panel', async () => {
+      activeTab.value = 'browse'
+      fakeStore.state.currentDir = 'sub/dir'
+
+      const coord = createCoordinator()
+      expect(coord.canHandleBack('header')).toBe(true)
+      await coord.handleNavigateBack()
+      expect(fakeStore.navigateToParentDir).toHaveBeenCalled()
+    })
+
+    it('closes overlay and returns to browse when browse session was active', async () => {
+      activeTab.value = 'view'
+      browseFileSession.value = true
+      fileNav.openFile('viewed.ts')
+
+      const coord = createCoordinator()
+      expect(coord.viewBackLabel.value).toBe('Back')
+      await coord.handleNavigateBack()
+
+      expect(mockViewActions.closeOverlayAndSync).toHaveBeenCalled()
+      expect(browseFileSession.value).toBe(false)
+      expect(activeTab.value).toBe('browse')
+    })
+
+    it('delegates to backHooks when no internal handlers match', async () => {
+      mockBackHooks.canNavigateBack.mockReturnValue(true)
+      mockBackHooks.handleBackNavigation.mockReturnValue(true)
+
+      const coord = createCoordinator()
+      expect(coord.canHandleBack('header')).toBe(true)
+      await coord.handleNavigateBack()
+      expect(mockBackHooks.handleBackNavigation).toHaveBeenCalled()
+    })
+  })
+
+  describe('helper methods', () => {
+    it('manages file scroll and origin settlement', () => {
+      const coord = createCoordinator()
+      coord.handleCaptureFileScroll(150)
+
+      navigation.start({ surface: 'chat', tab: 'chat', label: 'Chat' })
+      expect(navigation.hasOrigin.value).toBe(true)
+      coord.settleOriginForTab('chat')
+      expect(navigation.hasOrigin.value).toBe(false)
+
+      expect(coord.isApplyingOriginReturn()).toBe(false)
+      coord.invalidateDirectoryRequests()
     })
   })
 })

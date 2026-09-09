@@ -65,7 +65,7 @@ describe('GitDiffView', () => {
     // Component renders v-html; we cannot easily access the inner span tree.
     // Test the onDiffClick logic directly via the wrapper.
     await (wrapper.vm as any).onDiffClick(evt)
-    expect(openFilePath).toHaveBeenCalledWith('/a/b.ts', 42)
+    expect(openFilePath).toHaveBeenCalledWith('/a/b.ts', 42, undefined, 'history')
     expect(evt.preventDefault).toHaveBeenCalled()
     expect(evt.stopPropagation).toHaveBeenCalled()
   })
