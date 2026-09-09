@@ -357,6 +357,7 @@ export default {
       forkSession: 'Fork session',
       rewindSession: 'Rewind session',
       reloadSession: 'Reopen session',
+      agentConfig: 'Configure agent',
       userMsgIndex: 'Message index',
       sessionSearch: 'Search sessions',
       attachment: 'Attach',
@@ -375,6 +376,7 @@ export default {
         archive: 'Archive',
         speak: 'Speak',
         refresh: 'Refresh',
+        config: 'Config',
       },
     },
     sessionInfo: {

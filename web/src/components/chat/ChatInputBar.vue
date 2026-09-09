@@ -58,9 +58,10 @@
         <Volume2 :size="14" />
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.speak') }}</span>
       </button>
-      <RefreshButton v-if="currentSessionId" data-action="refresh-session" class="chat-action-btn" :loading="refreshingSession" :title="t('chat.actions.reloadSession')" @click="$emit('refresh-session')">
-        <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
-      </RefreshButton>
+      <button v-if="configTargetAgentId" class="chat-action-btn" data-action="open-agent-config" :title="t('chat.actions.agentConfig')" @click="handleOpenAgentConfig">
+        <Settings :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.config') }}</span>
+      </button>
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
     <Transition name="recommend-slide">
@@ -308,7 +309,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
+import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, inject, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
@@ -317,7 +318,6 @@ import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -336,11 +336,12 @@ import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useChatContext } from '@/composables/useChatContext'
+import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextTotalTokens, contextCachedReadTokens, contextCachedWriteTokens, contextThoughtTokens, contextCost, contextCurrency, contextCacheCreationTokens, contextCacheHitTokens, contextCacheMissTokens, contextCredit, contextUsageByCategory } = useSessionIdentity()
-const { supportsACP, hasPreferredMode } = useAgents()
+const { supportsACP, hasPreferredMode, defaultAgentId } = useAgents()
 const toast = useToast()
 const { uploadAndAttach, pendingFiles, removeFile } = useFileUpload()
 
@@ -356,6 +357,26 @@ const isACPTransport = computed(() => {
   if (sessionTransport.value) return sessionTransport.value === 'acp-stdio'
   return props.currentTransport === 'acp-stdio'
 })
+
+// ── Agent config deep-link (replaces the old ActionBar refresh button) ──
+// Opens the settings tab at the current conversation's agent detail page.
+// The target agent is the current session's agent, falling back to the
+// default agent when no session is active (e.g. fresh project). Navigation
+// follows the AppHeader "more appearance options" pattern: a module-level
+// pending settings category is set first, then the settings tab is switched
+// to; SettingsPage consumes the request whether it was already mounted or is
+// mounted lazily by the tab.
+const switchTab = inject('switchTab', () => {})
+const configTargetAgentId = computed(() =>
+  props.currentAgentId || defaultAgentId.value || '',
+)
+
+function handleOpenAgentConfig() {
+  const id = configTargetAgentId.value
+  if (!id) return
+  setPendingSettingsCategory(`agents:${id}`)
+  switchTab('settings')
+}
 
 // ACP 同步按钮的禁用状态与提示：空会话（无 ACP 会话）或当前会话运行中时不可同步。
 const currentSessionRunning = computed(() => !!props.currentSessionRunning)
@@ -541,7 +562,6 @@ const props = defineProps({
   quoteData: Object,
   messages: Array,
   autoSpeechEnabled: Boolean,
-  refreshingSession: Boolean,
   currentSessionId: String,
   chatUnreadCount: Number,
   chatRunning: Boolean,
@@ -572,7 +592,6 @@ const emit = defineEmits([
   'archive-session',
   'destroy-session',
   'open-user-msg-index',
-  'refresh-session',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',

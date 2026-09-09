@@ -474,7 +474,7 @@ describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
     // the bottom; a manual toggle while reading (isAtBottom=false) keeps the
     // current reading position. Force is needed so content growth after the
     // initial pin is not rejected by the follow decision.
-    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleRefreshSession'))
+    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleResetSession'))
     expect(region).toContain('msg.blocks = blocks')
     expect(region).toMatch(/msg\.blocks = blocks[\s\S]*?scrollBottom\(true\)/)
   })
@@ -482,7 +482,7 @@ describe('ChatPanelContent — ensureMessageContent scroll re-sync', () => {
   it('source guards re-sync with shouldStayPinned to respect user scroll position', async () => {
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleRefreshSession'))
+    const region = source.slice(source.indexOf('async function ensureMessageContent'), source.indexOf('async function handleResetSession'))
     // The shouldStayPinned guard in ChatMessageList keeps the force pin from
     // firing when the user scrolled away: user at bottom (switch-back) →
     // pinned; user reading earlier → position kept.

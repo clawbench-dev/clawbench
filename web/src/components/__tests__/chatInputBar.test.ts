@@ -78,6 +78,7 @@ const i18n = createI18n({
           sessionSearch: '搜索会话',
           acpSync: 'ACP 同步',
           reloadSession: '重新打开会话',
+          agentConfig: '智能体配置',
           wideLabels: {
             session: '列表',
             create: '创建',
@@ -87,6 +88,7 @@ const i18n = createI18n({
             archive: '归档',
             speak: '朗读',
             refresh: '刷新',
+            config: '配置',
           },
         },
         create: { selectAgentOrLongPress: '选择Agent' },
@@ -638,7 +640,7 @@ describe('ChatInputBar — action labels by container width', () => {
 
     expect(actionBar(wrapper).classes()).toContain('show-labels')
     const texts = labelTexts(wrapper)
-    // 列表、创建、搜索、跳转、归档、朗读、刷新 always render; 同步 only when
+    // 列表、创建、搜索、跳转、归档、朗读、配置 always render; 同步 only when
     // the current session uses ACP transport (isACPTransport computed).
     expect(texts).toContain('列表')
     expect(texts).toContain('创建')
@@ -646,7 +648,8 @@ describe('ChatInputBar — action labels by container width', () => {
     expect(texts).toContain('跳转')
     expect(texts).toContain('归档')
     expect(texts).toContain('朗读')
-    expect(texts).toContain('刷新')
+    expect(texts).toContain('配置')
+    expect(texts).not.toContain('刷新')
     expect(texts).not.toContain('同步')
   })
 

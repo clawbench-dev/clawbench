@@ -357,6 +357,7 @@ export default {
       forkSession: '分叉会话',
       rewindSession: '回溯会话',
       reloadSession: '重新打开会话',
+      agentConfig: '智能体配置',
       userMsgIndex: '消息索引',
       sessionSearch: '搜索会话',
       attachment: '附件',
@@ -375,6 +376,7 @@ export default {
         archive: '归档',
         speak: '朗读',
         refresh: '刷新',
+        config: '配置',
       },
     },
     sessionInfo: {
