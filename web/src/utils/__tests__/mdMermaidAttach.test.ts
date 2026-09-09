@@ -99,6 +99,31 @@ describe('resolveMermaidBadgeClick', () => {
     const hit = resolveMermaidBadgeClick(clickOn(badge))
     expect(hit).toEqual({ path: 'docs/guide.md', startLine: 5, endLine: 8, container })
   })
+
+  it('resolves a header attach button whose container is a wrapper sibling', () => {
+    // File-preview diagrams sit in .mermaid-block-wrapper where the header
+    // (attach button) precedes the div.mermaid container — not an ancestor.
+    const md = document.createElement('div')
+    md.className = 'markdown-body'
+    md.setAttribute('data-file-path', 'docs/guide.md')
+    const wrapper = document.createElement('div')
+    wrapper.className = 'mermaid-block-wrapper'
+    const header = document.createElement('div')
+    header.className = 'mermaid-block-header'
+    const btn = document.createElement('button')
+    btn.className = 'mermaid-block-attach-btn'
+    header.appendChild(btn)
+    wrapper.appendChild(header)
+    const container = document.createElement('div')
+    container.className = 'mermaid'
+    container.setAttribute('data-source-line', '5')
+    container.setAttribute('data-source-end', '9')
+    container.dataset.mermaid = 'graph TD; A-->B'
+    wrapper.appendChild(container)
+    md.appendChild(wrapper)
+    const hit = resolveMermaidBadgeClick(clickOn(btn))
+    expect(hit).toEqual({ path: 'docs/guide.md', startLine: 5, endLine: 9, container })
+  })
 })
 
 describe('handleMermaidAttachClick', () => {

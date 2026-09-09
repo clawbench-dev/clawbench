@@ -116,34 +116,6 @@ function mermaidErrorHtml(errorMessage: string): string {
     return `<pre class="mermaid-error-pre">Mermaid Error: ${errorMessage}</pre><button class="mermaid-retry-btn" type="button" aria-label="Retry rendering diagram">Retry</button>`
 }
 
-/**
- * Arm the touch "attach to chat" badge on a rendered diagram.
- *
- * Only meaningful in a FILE-PREVIEW context where the diagram belongs to a
- * markdown file the user can reference: the container must sit inside a
- * `.markdown-body[data-file-path]` with a non-empty path, and the page must
- * not be the public share SPA (share viewers have no chat to attach to).
- * Chat messages and the static HTML exporter never match those conditions, so
- * they stay plain. Idempotent: re-renders (theme change / retry) that wipe the
- * container's innerHTML re-add the badge on the next successful render.
- */
-function maybeArmMermaidAttachBadge(container: HTMLElement): void {
-    if (container.querySelector(':scope > .mermaid-attach-badge')) return
-    if (isShareMode()) return
-    const mdBody = container.closest<HTMLElement>('.markdown-body[data-file-path]')
-    const mdPath = mdBody?.getAttribute('data-file-path') || ''
-    if (!mdPath) return
-    const label = escapeHtml(gt('chat.attach.attachDiagramToChat'))
-    const badge = document.createElement('span')
-    badge.className = 'mermaid-attach-badge'
-    badge.setAttribute('role', 'button')
-    badge.setAttribute('tabindex', '-1')
-    badge.setAttribute('title', label)
-    badge.setAttribute('aria-label', label)
-    badge.innerHTML = ATTACH_BADGE_SVG
-    container.appendChild(badge)
-}
-
 /** Replace a mermaid container with a <pre class="mermaid"> for re-rendering */
 function retryMermaidBlock(container: HTMLElement): void {
     const source = container.dataset.mermaid
@@ -158,6 +130,58 @@ function retryMermaidBlock(container: HTMLElement): void {
     const srcEnd = container.getAttribute('data-source-end')
     if (srcEnd) pre.setAttribute('data-source-end', srcEnd)
     container.replaceWith(pre)
+}
+
+/** Whether a diagram sits in a file-preview context (has an md file to reference). */
+function isMermaidFilePreview(container: HTMLElement): boolean {
+    if (isShareMode()) return false
+    const mdBody = container.closest<HTMLElement>('.markdown-body[data-file-path]')
+    const mdPath = mdBody?.getAttribute('data-file-path') || ''
+    return !!mdPath
+}
+
+/** Maximize glyph for the mermaid header view button (matches image header). */
+const MERMAID_VIEW_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
+
+/** Build a header action button inside the mermaid header actions row. */
+function makeMermaidHeaderButton(cls: string, action: string, i18nKey: string, svg: string): HTMLButtonElement {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = cls
+    btn.dataset.action = action
+    const label = gt(i18nKey)
+    btn.title = label
+    btn.setAttribute('aria-label', label)
+    btn.innerHTML = svg
+    return btn
+}
+
+/**
+ * Arm the block-level header bar (view / attach) around a rendered diagram in
+ * a FILE-PREVIEW context — uniform across mobile and PC, mirroring the image
+ * and code/table headers. Chat messages, shares and the exporter never match
+ * `isMermaidFilePreview`, so they stay bare (with their hover expand icon).
+ * Idempotent: re-renders that wipe/replace the container re-arm via the parent
+ * guard.
+ */
+function maybeArmMermaidHeader(container: HTMLElement): void {
+    if (container.parentElement?.classList.contains('mermaid-block-wrapper')) return
+    if (!isMermaidFilePreview(container)) return
+
+    const wrapper = document.createElement('div')
+    wrapper.className = 'mermaid-block-wrapper'
+
+    const header = document.createElement('div')
+    header.className = 'mermaid-block-header'
+    const actions = document.createElement('span')
+    actions.className = 'mermaid-block-header-actions'
+    actions.appendChild(makeMermaidHeaderButton('mermaid-block-view-btn', 'view', 'imageBlock.view', MERMAID_VIEW_ICON_SVG))
+    actions.appendChild(makeMermaidHeaderButton('mermaid-block-attach-btn', 'attach', 'chat.attach.attachDiagramToChat', ATTACH_BADGE_SVG))
+    header.appendChild(actions)
+
+    container.parentNode?.insertBefore(wrapper, container)
+    wrapper.appendChild(header)
+    wrapper.appendChild(container)
 }
 
 /** Set up event delegation for mermaid retry buttons (called once on module load) */
@@ -259,12 +283,16 @@ export async function renderMermaidInElement(
             try {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
-                // Add expand icon for lightbox (real DOM element so PC clicks can target it)
-                const expandIcon = document.createElement('span')
-                expandIcon.className = 'lightbox-expand-icon'
-                container.appendChild(expandIcon)
-                // Add touch attach-to-chat badge in file-preview contexts
-                maybeArmMermaidAttachBadge(container)
+                if (isMermaidFilePreview(container)) {
+                    // File preview: a block-level header (view / attach) replaces
+                    // the corner expand icon + touch badge — uniform mobile/PC.
+                    maybeArmMermaidHeader(container)
+                } else {
+                    // Chat / share / export stay bare with the hover expand icon.
+                    const expandIcon = document.createElement('span')
+                    expandIcon.className = 'lightbox-expand-icon'
+                    container.appendChild(expandIcon)
+                }
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div into the DOM
                 // with the render id before throwing — remove them so they don't
@@ -305,12 +333,15 @@ export async function reRenderMermaid(): Promise<void> {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
                 container.id = id
-                // Re-add expand icon after innerHTML replaces content
-                const expandIcon = document.createElement('span')
-                expandIcon.className = 'lightbox-expand-icon'
-                container.appendChild(expandIcon)
-                // Re-arm the touch attach-to-chat badge after the wipe
-                maybeArmMermaidAttachBadge(container)
+                if (isMermaidFilePreview(container)) {
+                    // Re-arm the block header after the innerHTML wipe.
+                    maybeArmMermaidHeader(container)
+                } else {
+                    // Bare (chat/share/export): re-add the hover expand icon.
+                    const expandIcon = document.createElement('span')
+                    expandIcon.className = 'lightbox-expand-icon'
+                    container.appendChild(expandIcon)
+                }
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div before throwing
                 cleanupMermaidOrphan(renderId)

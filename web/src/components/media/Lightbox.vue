@@ -732,7 +732,7 @@ watch(lightboxVisible, (visible) => {
 function handleLightboxClick(e) {
     // Touch mode: direct click on .lightbox-img, .mermaid or .lightbox-svg opens lightbox
     // PC mode: only click on .lightbox-expand-icon / image header view button opens lightbox
-    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon, .image-block-view-btn')
+    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon, .image-block-view-btn, .mermaid-block-view-btn')
     // PC mode: only the expand affordances open lightbox (not the image/mermaid/svg itself)
     if (!isExpandIcon && e.pointerType !== 'touch') return
 
@@ -762,6 +762,7 @@ function handleLightboxClick(e) {
         return
     }
     const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')
+      || (e.target.closest('.mermaid-block-wrapper')?.querySelector('.mermaid') ?? null)
     if (mermaidDiv) {
         e.preventDefault()
         const svg = mermaidDiv.querySelector('svg')

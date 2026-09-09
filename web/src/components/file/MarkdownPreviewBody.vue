@@ -58,8 +58,8 @@
       <div
         class="markdown-body md-preview-body"
         :data-file-path="filePath"
-        @dragstart="onMdImageDragStart"
-        @dragend="onMdImageDragEnd"
+        @dragstart="onMarkdownDragStart"
+        @dragend="onMarkdownDragEnd"
         @click="handleBodyClick"
       >
         <div class="markdown-content" v-html="renderedHtml" />
@@ -108,6 +108,7 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
@@ -201,6 +202,17 @@ function handleBodyClick(e: MouseEvent) {
   handleMdImageOpenClick(e, openFilePath)
   handleMermaidAttachClick(e, mermaidAttachActions)
   handleBlockAttachClick(e, mermaidAttachActions)
+}
+
+/** Delegated dragstart: images first, then mermaid diagrams (md range drag). */
+function onMarkdownDragStart(e: DragEvent) {
+  onMdImageDragStart(e)
+  onMermaidDragStart(e)
+}
+
+function onMarkdownDragEnd(e: DragEvent) {
+  onMdImageDragEnd(e)
+  onMermaidDragEnd(e)
 }
 
 // ── Mermaid ────────────────────────────────────────────────────────────────

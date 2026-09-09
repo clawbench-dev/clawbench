@@ -388,12 +388,10 @@
     max-width: 100%;
     border-radius: var(--radius-sm);
     overflow: hidden;
-    background: var(--code-bg);
 }
 
 .image-block-wrapper > .lightbox-img-wrap {
     display: block;
-    background: var(--bg-secondary);
 }
 
 /* Header bar: buttons right-aligned (no label for images). */
@@ -452,17 +450,93 @@
     height: 14px;
 }
 
-/* Solo images sized within the block wrapper (image itself keeps the global
-   max-width/max-height from markdown-common.css). */
+/* Solo images sized within the block wrapper — no padding: the header sits
+   directly above the image with no wasted space around it. */
 .image-block-wrapper .lightbox-img-wrap {
+    display: block;
     text-align: center;
-    padding: 4px 8px 8px;
+    line-height: 0;
+    padding: 0;
 }
 
-/* Cancel the global inline-img vertical margins inside a block figure — the
-   wrapper's padding provides the breathing room. */
+/* Cancel the global inline-img vertical margins inside a block figure. */
 .image-block-wrapper .lightbox-img-wrap img {
     display: inline-block;
     vertical-align: middle;
     margin: 0;
+    line-height: 0;
+}
+
+/* ─── Mermaid block figure (file-preview rendered diagrams) ───
+   Rendered mermaid diagrams in a file preview get a block-level wrapper with a
+   header row (view / attach) above the diagram — uniform mobile/PC. Chat
+   messages, shares and the exporter keep the bare .mermaid (no wrapper). */
+.mermaid-block-wrapper {
+    margin: 1em 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.markdown-body .mermaid-block-wrapper .mermaid {
+    /* Header sits directly above the diagram — no box padding around the svg. */
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    overflow-x: auto;
+}
+
+.mermaid-block-wrapper .mermaid svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+.mermaid-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 2px 8px;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    min-height: 22px;
+    user-select: none;
+}
+
+.mermaid-block-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.mermaid-block-view-btn,
+.mermaid-block-attach-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    outline: none;
+    box-shadow: none;
+}
+
+.mermaid-block-view-btn:hover,
+.mermaid-block-attach-btn:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+}
+
+.mermaid-block-view-btn svg,
+.mermaid-block-attach-btn svg {
+    width: 14px;
+    height: 14px;
 }

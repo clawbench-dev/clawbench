@@ -1988,7 +1988,9 @@ function onChatColDrop(e) {
     const data = readAttachDragData(e.dataTransfer)
     if (!data) return
     e.preventDefault()
-    addAttachedFile(data.path, data.isDir)
+    // A ranged drag (e.g. a mermaid diagram's md code fence) attaches the file
+    // as a line-range reference; plain file drags stay whole-file.
+    addAttachedFile(data.path, data.isDir, data.startLine, data.endLine)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     return
   }

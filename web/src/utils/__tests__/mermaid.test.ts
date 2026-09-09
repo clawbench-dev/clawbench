@@ -307,7 +307,7 @@ describe('mermaid', () => {
             expect(el.querySelectorAll('div.mermaid').length).toBe(3)
         })
 
-        it('should not arm the attach badge in share mode even inside a file preview', async () => {
+        it('should not arm the attach header in share mode even inside a file preview', async () => {
             // Import the real shareMode singleton so we can toggle it.
             const { setShareToken } = await import('@/share/shareMode')
             mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
@@ -322,14 +322,14 @@ describe('mermaid', () => {
                 pre.textContent = 'graph TD; A-->B'
                 mdBody.appendChild(pre)
                 await renderMermaidInElement(mdBody)
-                const diagram = mdBody.querySelector('div.mermaid')!
-                expect(diagram.querySelector('.mermaid-attach-badge')).toBeNull()
+                expect(mdBody.querySelector('.mermaid-block-wrapper')).toBeNull()
+                expect(mdBody.querySelector('.mermaid-block-attach-btn')).toBeNull()
             } finally {
                 setShareToken(null)
             }
         })
 
-        it('should re-arm the attach badge after reRenderMermaid wipes innerHTML', async () => {
+        it('should re-arm the attach header after reRenderMermaid wipes innerHTML', async () => {
             mockRender.mockResolvedValue({ svg: '<svg>first</svg>' })
             // Keep the diagram inside its .markdown-body[data-file-path] and
             // mount that subtree on document.body so reRenderMermaid (which
@@ -346,14 +346,15 @@ describe('mermaid', () => {
             mdBody.appendChild(pre)
             await renderMermaidInElement(mdBody)
             const diagram = mdBody.querySelector('div.mermaid')!
-            expect(diagram.querySelector('.mermaid-attach-badge')).not.toBeNull()
+            expect(mdBody.querySelector('.mermaid-block-attach-btn')).not.toBeNull()
 
             mockRender.mockResolvedValue({ svg: '<svg>second</svg>' })
             await reRenderMermaid()
-            expect(diagram.querySelector('.mermaid-attach-badge')).not.toBeNull()
+            expect(mdBody.querySelector('.mermaid-block-attach-btn')).not.toBeNull()
+            expect(diagram.parentElement?.classList.contains('mermaid-block-wrapper')).toBe(true)
         })
 
-        it('should arm the attach badge with the localized aria label', async () => {
+        it('should arm the attach header with the localized aria label', async () => {
             mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
             const mdBody = document.createElement('div')
             mdBody.className = 'markdown-body'
@@ -364,9 +365,11 @@ describe('mermaid', () => {
             pre.textContent = 'graph TD; A-->B'
             mdBody.appendChild(pre)
             await renderMermaidInElement(mdBody)
-            const badge = mdBody.querySelector('.mermaid-attach-badge')!
-            expect(badge.getAttribute('aria-label')).toBeTruthy()
-            expect(badge.getAttribute('role')).toBe('button')
+            const btn = mdBody.querySelector('.mermaid-block-attach-btn')!
+            expect(btn.getAttribute('aria-label')).toBeTruthy()
+            expect(btn.getAttribute('title')).toBeTruthy()
+            // View button is also present.
+            expect(mdBody.querySelector('.mermaid-block-view-btn')).not.toBeNull()
         })
 
         it('should carry data-source-end onto the rendered container', async () => {

@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMdImageDragStart" @dragend="onMdImageDragEnd">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -47,6 +47,7 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
@@ -170,6 +171,19 @@ const mermaidAttachActions: MermaidAttachActions = {
         added: gt('chat.attach.addedToChat'),
         removed: gt('chat.attach.removedFromChat'),
     },
+}
+
+/** Delegated dragstart: images first, then rendered mermaid diagrams (which
+ *  drag as an md line-range reference). Targets are mutually exclusive (img vs
+ *  svg inside div.mermaid). */
+function onMarkdownDragStart(e: DragEvent) {
+    onMdImageDragStart(e)
+    onMermaidDragStart(e)
+}
+
+function onMarkdownDragEnd(e: DragEvent) {
+    onMdImageDragEnd(e)
+    onMermaidDragEnd(e)
 }
 
 function handleClick(event: MouseEvent) {

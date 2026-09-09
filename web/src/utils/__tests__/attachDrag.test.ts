@@ -35,6 +35,13 @@ describe('attachDrag helpers', () => {
     expect(readAttachDragData(dtDir)).toEqual({ path: '/home/u/src', isDir: true })
   })
 
+  it('round-trips an optional line-range (ranged reference) payload', () => {
+    const dt = makeDataTransfer()
+    setAttachDragData(dt, 'docs/guide.md', false, 12, 15)
+    expect(readAttachDragData(dt)).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 12, endLine: 15 })
+    expect(dt.getData('text/plain')).toBe('docs/guide.md')
+  })
+
   it('also writes a plain-text fallback path', () => {
     const dt = makeDataTransfer()
     setAttachDragData(dt, '/x/y.md', false)

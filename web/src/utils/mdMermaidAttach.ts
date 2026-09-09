@@ -14,8 +14,10 @@
  * in that the "path" is the markdown file and the identity includes the range.
  */
 
-/** Selector of the attach badge injected by mermaid.ts. */
-export const MERMAID_ATTACH_BADGE = '.mermaid-attach-badge'
+/** Selectors of the attach affordances injected around rendered diagrams:
+ *  the header attach button (file-preview block header) and the legacy corner
+ *  badge (kept for hand-built fixtures). */
+export const MERMAID_ATTACH_BADGE = '.mermaid-block-attach-btn, .mermaid-attach-badge'
 
 export interface MermaidRangeHit {
   /** Markdown file path (project-relative) from `.markdown-body[data-file-path]`. */
@@ -57,7 +59,14 @@ export function mermaidFenceEndLine(startLine: number, bodySource: string): numb
 export function resolveMermaidBadgeClick(e: Event): MermaidRangeHit | null {
   const target = e.target as HTMLElement | null
   if (!target || !target.closest(MERMAID_ATTACH_BADGE)) return null
-  const container = target.closest<HTMLElement>('div.mermaid[data-mermaid]')
+  // The container is either an ANCESTOR (legacy badge sits inside div.mermaid)
+  // or a SIBLING child of the block wrapper (header attach button sits before
+  // div.mermaid inside .mermaid-block-wrapper).
+  let container = target.closest<HTMLElement>('div.mermaid[data-mermaid]')
+  if (!container) {
+    const wrapper = target.closest<HTMLElement>('.mermaid-block-wrapper')
+    container = wrapper?.querySelector<HTMLElement>('div.mermaid[data-mermaid]') || null
+  }
   const mdBody = target.closest<HTMLElement>('.markdown-body[data-file-path]')
   const path = mdBody?.getAttribute('data-file-path') || ''
   const startLine = parseInt(container?.getAttribute('data-source-line') || '', 10)
