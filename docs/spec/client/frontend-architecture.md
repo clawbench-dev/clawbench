@@ -53,14 +53,14 @@ flowchart LR
 - **基础能力 composable**：`useConnectivityTest` 负责连通性测试，`useUpgrade` 对接自升级状态（含 `UpgradePromptOverlay` 启动提示），`useShareIn` 接收系统分享，`useMseAudio` 播放流式音频，`useToolbarOverflow` 处理窄屏工具栏折叠，`usePortForward` 管理端口映射与 localhost URL 打开（Android 走原生 `openInSandbox`，Web 走浏览器新标签），`useDialog` 替代原生 `window.confirm()` 提供移动端友好的确认对话框（`DialogOverlay.vue` + `BottomSheet.vue`，支持 Esc/Enter 键盘操作），`useSelectState` 为 ACP 模式/思考深度等单选状态提供统一管理（含 `syncAndFallback()` SSE/REST 状态同步），`useFileUpload` 统一文件上传管理——支持单文件上传（带进度条和预览）、多文件上传（带数量限制和大小检查）、目录上传（保持目录结构）、拖放文件夹上传（webkitGetAsEntry 递归遍历）、目录树下载（File System Access API 逐文件写入）、粘贴上传、自动附加到聊天，`useAsyncComponent` 为 `defineAsyncComponent` 提供有界自动重试（3 次，800ms 间隔）和错误回退组件（含手动重试按钮），解决 SSH 隧道环境下动态 import 瞬时失败导致面板永久空白的问题
 - **摘要切换**：`SummaryToggle` 组件在聊天消息中提供按钮模式切换摘要/原文，在任务执行详情中提供标签页模式——两种场景共享同一摘要数据源。摘要加载时使用 `view=summary` 参数请求历史，仅返回摘要文本和 SummaryCards（不含完整消息内容），前端按需懒加载原始内容
 - **首次访问欢迎面板**：`WelcomeOverlay` 组件在用户首次访问时显示，展示后端检测状态与安装入口。不是 5 步分步向导——Agent 创建通过自动发现或 `AgentInstallDialog` 完成
-- **Android 硬件返回键**：全局 `useBackHandler` 注册表管理返回导航，Android `onBackPressed` 委托给 JS 层——注册了返回处理器则拦截（不退出 App），未注册则传递给原生处理。处理器按显式优先级排序（overlay 级 1000 > page 级 100），同一优先级内最近注册的优先，确保覆盖层返回不被页面级处理器截获
+- **统一返回状态机**：`useNavigationStateMachine` + `useNavigationCoordinator` 收敛全局返回导航——两级分层栈（界面内文件历史 `useFileNavStack` + 跨界面 jump origin `useNavigationContext`）由状态机按确定性优先级裁决（顶层弹层 > 行内编辑 > Browse 瞬态层 > 界面内历史 > 跨界面来源 > 父目录）。`canHandleBack` 零副作用同步探测（满足 Android `onBackPressed` 事件同步消费），`navigateBack` 异步执行；`reason='close'` 严格限定为关闭动作。移动端文件查看内容区底部悬浮胶囊、桌面双栏顶栏导航簇、右缘滑动手势与 Android 物理返回键全部汇入同一状态机。详见[统一返回与跨界面导航](unified-back-navigation.md)
 - **Sticky Scroll**：`useCodeStickyScroll` 为 CodeMirror 代码浏览器提供 VS Code 风格的 sticky scroll，将外层作用域定义行钉顶显示（最多 5 行），点击可平滑滚动到定义位置。基于后端 tree-sitter 符号数据，解决长文件中上下文迷失的问题
 - **系统资源监控**：`useSystemResources` composable 周期轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，引用计数共享轮询定时器；`SystemResourcesPanel` 组件在 AppHeader 的 Gauge 图标弹出菜单中展示实时资源状态。页面可见时自动轮询，隐藏时暂停；WS 断线时隐藏资源数据，改为展示连接状态指示器（disconnected/reconnecting）。详见 [系统资源监控](../infra/system-resources.md)
 - **消息聚类抽屉**：`useMessageClusters` composable 封装消息聚类计算 API（含 WS 进度监听），`MessageClustersDrawer` 展示聚类结果和进度条，聚类中的消息变体可直接一键添加为快捷发送
 - **键盘交互**：`DialogOverlay` 支持 Esc 关闭和 Enter 确认；`BottomSheet` 支持 Esc 关闭（焦点在输入框时跳过，避免干扰 IME/原生输入行为）。覆盖层自动聚焦以立即接收键盘事件
 - **Ctrl+Delete 快捷归档**：聊天 Tab 活跃时 `Ctrl+Delete`（Mac 上 `Cmd+Delete`）触发当前会话归档，桌面用户快速整理对话列表
 - **紧凑上下文按钮**：ACP 会话上下文使用率 ≥ 75% 且 Agent 支持 `/compact` 命令时，会话信息栏显示"Compact context"按钮。点击即发送 `/compact` 命令让 Agent 压缩上下文，缓解长对话中的上下文溢出。颜色阈值：≥95% 红、≥90% 橙、≥75% 黄、<75% 绿
-- **边缘滑动返回**：`useEdgeSwipeBack` composable 在文档右边缘检测左滑手势，触发全局返回导航。同时消费边缘触摸事件，防止 Android 系统的边缘滑动退出手势干扰 App 内导航
+- **边缘滑动返回**：`useEdgeSwipeBack` composable 在文档右边缘检测左滑手势，以 `edge-swipe` reason 派发 `clawbench-back-press` 事件汇入统一返回状态机。同时消费边缘触摸事件，防止 Android 系统的边缘滑动退出手势干扰 App 内导航。Android App 模式下跳过 dispatch（原生 `onBackPressed` 已派发，重复派发会在一次滑动上双重触发）
 - **文件与 Agent/Provider 图标**：`fileIcon.ts` 根据文件扩展名映射图标，`materialIcons.ts` 提供 Material Icons 常量集合，`agentIcons.ts` 为每个 AI Agent 提供 SVG 图标（来自 `@lobehub/icons-static-svg`，支持 `monoCssClass` 主题适配）。`ProviderIcon` 组件渲染 LLM 供应商 Logo（替换了原有的 CPU 图标位置）。统一图标的视觉一致性，单色图标通过 CSS 类随主题切换
 - **会话搜索抽屉**：`useSessionSearch` composable 封装 RAG 会话聚合搜索 API，`SessionSearchDrawer` 提供搜索结果列表 + 钻取详情两种视图，详情页将偏移转换为 DOM 高亮标记
 - **聊天渲染管线**：`useChatRender` 是聊天 Block 渲染的核心 composable，管理 `blockTasks`、`blockAskQuestions` 两类结构化 Block 的解析和渲染状态。流式期间仅做纯 Markdown 渲染（跳过 KaTeX、路径标注、Mermaid 等增强）；流式结束后启动完整管线（结构化检测 → 标签剥离 → 增强 Markdown）。历史加载（非流式）消息直接走完整渲染管线（含静态 Block 缓存），不做 deferred 两阶段渲染——避免首帧后再升级导致 scrollHeight 变化引发滚动跳动。Mermaid 渲染延迟到流式结束后执行（流式期间块内容不完整）
@@ -114,12 +114,12 @@ flowchart LR
 ### 设计要点
 
 - **模块级单例是双刃剑**：所有消费者共享状态，跨组件协调零成本；但需要理解模块级状态的生命周期（应用级而非组件级），项目切换时需要显式重置——这是有意为之的架构选择，不是反模式
-- **无 Vue Router 是移动端适配优先的决策**：Tab 式布局不需要 URL 路由，返回导航由 `useBackHandler` 管理。省去了路由配置的复杂度，但也意味着无法通过 URL 深链接到特定页面
+- **无 Vue Router 是移动端适配优先的决策**：Tab 式布局不需要 URL 路由，返回导航由统一返回状态机管理。省去了路由配置的复杂度，但也意味着无法通过 URL 深链接到特定页面
 - **标注管道顺序有讲究**：Worktree 标注先于文件路径标注，已标注的元素不再被后续标注匹配——避免 Worktree 路径被文件路径标注二次匹配。文件路径标注采用双候选解析，验证阶段自动替换不存在的候选
 - **reactive store 而非 Pinia**：单个 reactive store + action 函数，不用 Pinia/Vuex。状态形状扁平，action 直接修改——对于这种规模的应用，Pinia 的模块化开销不值得
 - **会话设置即时持久化**：模式/思考深度/模型/传输方式的变更通过 PATCH `/api/ai/session/update` 即时写入数据库，无需发送聊天消息。解决了页面重载后设置丢失的问题
 - **单调序列号防竞态**：并发目录加载时使用单调计数器，保证旧结果不会覆盖新状态。这是异步 UI 的经典问题，单调计数器是最简单的解决方案
-- **返回处理器使用显式优先级**：`useBackHandler` 的处理器按优先级排序（overlay > page），而非依赖注册顺序——注册顺序受组件挂载时机影响，不确定且难以调试。显式优先级让覆盖层返回始终优先于页面级返回
+- **返回判定与执行解耦**：`useBackHandler` 仍作为各 feature 页面级返回的注册表（settings/git-history/tasks 等 drill-down 页面注册），但统一返回状态机在此之上做整体裁决——判定（`canHandleBack`）是同步纯谓词，导航（`navigateBack`）异步执行。Android 原生必须在同一 tick 内读到 `__clawbenchBackHandled`，在 async 回调里写会晚于原生读取导致 App 误退出。浮层（overlay 级 1000）高于页面级（100），同一优先级内最近注册优先
 - **FileHeader 三层弹性布局**：`FileHeader`（`web/src/components/file/FileHeader.vue`）使用三层 flex 区域约束工具栏宽度：
   1. **文件名区**：`flex: 0 1 auto; min-width: 80px; overflow: hidden`——可收缩但不会消失
   2. **工具栏区**：`flex: 1 1 0; min-width: 0; overflow: hidden`——ResizeObserver 配合 `useToolbarOverflow` 将溢出按钮移入 “More” 下拉，`inlineCount: 1` 仅保留下拉按钮常驻
