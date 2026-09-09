@@ -63,40 +63,36 @@ func ExtractSummary(name string, input map[string]any) string {
 		return ""
 	}
 
-	nameLower := strings.ToLower(name)
-
-	// AskUserQuestion special case
-	if nameLower == "askuserquestion" {
+	// Tool-specific formatters take priority over the generic chain. Each
+	// returns "" when the input does not match its shape, deferring to the
+	// next formatter or the generic priority chain below.
+	switch strings.ToLower(name) {
+	case "askuserquestion":
 		return extractAskUserQuestionSummary(input)
-	}
-
-	// PermissionApproval input wraps the underlying tool request:
-	// { toolName: "Bash", toolInput: `{"command":"..."}`, options: [...] }.
-	// Summarize to the requested command / file / tool so the card strip shows
-	// what the agent wants to run instead of a junk fallback (e.g. permissionId).
-	if nameLower == "permissionapproval" {
+	case "permissionapproval":
+		// PermissionApproval input wraps the underlying tool request:
+		// { toolName: "Bash", toolInput: `{"command":"..."}`, options: [...] }.
+		// Summarize to the requested command / file / tool so the card strip
+		// shows what the agent wants to run instead of a junk fallback
+		// (e.g. permissionId).
 		return extractPermissionApprovalSummary(input)
-	}
-
-	// TaskUpdate: CodeBuddy's TaskUpdate input is {status, taskId} — it has no
-	// subject/description, so the generic chain below would fall through to the
-	// (deterministic, but opaque) sorted-string fallback. Format it explicitly
-	// as "#<taskId> · <status>" so the pill shows e.g. "#3 · in_progress".
-	// TaskUpdate also accepts optional subject/description overrides, which
-	// must keep priority over the derived form.
-	if nameLower == "taskupdate" {
+	case "taskupdate":
+		// CodeBuddy's TaskUpdate input is {status, taskId} — it has no
+		// subject/description, so the generic chain would fall through to the
+		// (deterministic, but opaque) sorted-string fallback. Format it
+		// explicitly as "#<taskId> · <status>" so the pill shows e.g.
+		// "#3 · in_progress". TaskUpdate also accepts optional subject/
+		// description overrides, which keep priority over the derived form.
 		if s := extractTaskUpdateSummary(input); s != "" {
 			return s
 		}
-	}
-
-	// Agent / wait special cases before the generic priority chain.
-	if nameLower == "agent" {
+		// No recognizable TaskUpdate fields — defer to the generic chain.
+	case "agent":
 		if s := extractAgentSummary(input); s != "" {
 			return s
 		}
-	}
-	if nameLower == "wait" && len(input) > 0 {
+		// No agent-shaped fields — defer to the generic chain.
+	case "wait":
 		if _, hasStates := input["agentsStates"]; hasStates {
 			return extractWaitSummary(input)
 		}
@@ -109,6 +105,13 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
+	return genericFallbackSummary(input)
+}
+
+// genericFallbackSummary derives a summary from input shapes the priority chain
+// does not cover: a src_path→dst_path rename pair, then the first non-empty
+// string value under deterministic (lexicographic) key order.
+func genericFallbackSummary(input map[string]any) string {
 	// src_path + dst_path pair
 	if src, srcOk := input["src_path"].(string); srcOk {
 		if dst, dstOk := input["dst_path"].(string); dstOk {

@@ -222,61 +222,49 @@ type AgentPatch struct {
 // Returns nil even if the agent doesn't exist (no rows affected).
 func PatchAgentFields(id string, patch AgentPatch) error {
 	// Build dynamic SET clause
-	setClauses := []string{}
-	args := []any{}
+	var setClauses []string
+	var args []any
+
+	addSet := func(column string, value any) {
+		setClauses = append(setClauses, column+" = ?")
+		args = append(args, value)
+	}
 
 	if patch.PreferredMode != nil {
-		setClauses = append(setClauses, "preferred_mode = ?")
-		args = append(args, *patch.PreferredMode)
+		addSet("preferred_mode", *patch.PreferredMode)
 	}
 	if patch.PreferredModel != nil {
-		setClauses = append(setClauses, "preferred_model = ?")
-		args = append(args, *patch.PreferredModel)
+		addSet("preferred_model", *patch.PreferredModel)
 	}
 	if patch.PreferredThinkingEffort != nil {
-		setClauses = append(setClauses, "preferred_thinking_effort = ?")
-		args = append(args, *patch.PreferredThinkingEffort)
+		addSet("preferred_thinking_effort", *patch.PreferredThinkingEffort)
 	}
 	if patch.Transport != nil {
 		transport := *patch.Transport
 		if transport == "" {
 			transport = transportCLI
 		}
-		setClauses = append(setClauses, "transport = ?")
-		args = append(args, transport)
+		addSet("transport", transport)
 	}
 	if patch.Name != nil {
-		setClauses = append(setClauses, "name = ?")
-		args = append(args, *patch.Name)
+		addSet("name", *patch.Name)
 	}
 	if patch.Specialty != nil {
-		setClauses = append(setClauses, "specialty = ?")
-		args = append(args, *patch.Specialty)
+		addSet("specialty", *patch.Specialty)
 	}
 	if patch.CustomSystemPrompt != nil {
-		setClauses = append(setClauses, "custom_system_prompt = ?", "system_prompt = ?")
-		// Compose system_prompt from common prompt + custom_system_prompt
-		commonPrompt := model.BuildCommonPrompt()
-		custom := *patch.CustomSystemPrompt
-		if commonPrompt != "" && custom != "" {
-			args = append(args, custom, commonPrompt+"\n\n"+custom)
-		} else if commonPrompt != "" {
-			args = append(args, custom, commonPrompt)
-		} else {
-			args = append(args, custom, custom)
-		}
+		addSet("custom_system_prompt", *patch.CustomSystemPrompt)
+		addSet("system_prompt", composedSystemPrompt(*patch.CustomSystemPrompt))
 	}
 	if patch.SortOrder != nil {
-		setClauses = append(setClauses, "sort_order = ?")
-		args = append(args, *patch.SortOrder)
+		addSet("sort_order", *patch.SortOrder)
 	}
 	if patch.AutoApprove != nil {
 		autoApprove := 0
 		if *patch.AutoApprove {
 			autoApprove = 1
 		}
-		setClauses = append(setClauses, "auto_approve = ?")
-		args = append(args, autoApprove)
+		addSet("auto_approve", autoApprove)
 	}
 
 	if len(setClauses) == 0 {
@@ -292,6 +280,21 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
 	return nil
+}
+
+// composedSystemPrompt builds the effective system_prompt from the shared
+// common prompt plus an agent's custom prompt, mirroring the read path in
+// LoadAgentsIntoMemory.
+func composedSystemPrompt(custom string) string {
+	commonPrompt := model.BuildCommonPrompt()
+	switch {
+	case commonPrompt != "" && custom != "":
+		return commonPrompt + "\n\n" + custom
+	case commonPrompt != "":
+		return commonPrompt
+	default:
+		return custom
+	}
 }
 
 // LoadAgentsIntoMemory loads agents from DB into the global model.Agents map and model.AgentList slice.
