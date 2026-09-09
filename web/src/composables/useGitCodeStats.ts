@@ -27,6 +27,21 @@ export interface GitStatsResponse {
   trend?: GitStatsRow[]
 }
 
+/** Code-inventory (cloc) row returned by GET /api/git/cloc. */
+export interface ClocLanguageRow {
+  name: string
+  files: number
+  code: number
+  comment: number
+  blank: number
+}
+
+export interface ClocResponse {
+  languages: ClocLanguageRow[]
+  total: ClocLanguageRow
+  scannedAt: string
+}
+
 // --- Module-level singleton state ---
 // Mirrors useUsageStats: one shared state per SPA run, reset on project switch.
 
@@ -35,8 +50,15 @@ const raw = ref<GitStatsResponse | null>(null)
 const loading = ref(false)
 const error = ref<{ status?: number; msgKey?: string; message?: string } | null>(null)
 
+// Code-inventory (cloc) snapshot of the current working tree. Independent of
+// the git-history range above: loaded once per project (backend caches).
+const clocRaw = ref<ClocResponse | null>(null)
+const clocLoading = ref(false)
+const clocError = ref<{ status?: number; msgKey?: string; message?: string } | null>(null)
+
 // Abort controller for in-flight requests.
 let abortController: AbortController | null = null
+let clocAbortController: AbortController | null = null
 
 // Debounce timer for rapid range changes.
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -107,6 +129,31 @@ function reloadGitStats(): void {
   }, 300)
 }
 
+/** Fetch the code-inventory (cloc) snapshot. Public for manual refresh. */
+async function loadCloc(): Promise<void> {
+  if (clocAbortController) clocAbortController.abort()
+  const controller = new AbortController()
+  clocAbortController = controller
+
+  clocLoading.value = true
+  clocError.value = null
+  try {
+    const resp = await apiGet<ClocResponse>('/api/git/cloc', { signal: controller.signal })
+    if (controller.signal.aborted) return
+    clocRaw.value = resp
+  } catch (e) {
+    if (controller.signal.aborted) return
+    if (e instanceof DOMException && e.name === 'AbortError') return
+    const err = e as Error & { status?: number; msgKey?: string }
+    appLog.w('GitStats', 'cloc load failed', err?.message)
+    clocError.value = { status: err?.status, msgKey: err?.msgKey, message: err?.message }
+  } finally {
+    if (!controller.signal.aborted) {
+      clocLoading.value = false
+    }
+  }
+}
+
 /**
  * Reset module-level singleton state — called on SPA project switch (App.vue
  * hotSwitchProject). Cancels any in-flight request and pending debounced
@@ -122,10 +169,17 @@ export function resetGitStats(): void {
     abortController.abort()
     abortController = null
   }
+  if (clocAbortController) {
+    clocAbortController.abort()
+    clocAbortController = null
+  }
   range.value = { rangeKey: '24h' }
   raw.value = null
   error.value = null
   loading.value = false
+  clocRaw.value = null
+  clocError.value = null
+  clocLoading.value = false
 }
 
 // --- Derived getters ---
@@ -162,8 +216,12 @@ export function useGitCodeStats() {
     visibleTotals,
     tableRows,
     trend,
+    clocRaw,
+    clocLoading,
+    clocError,
     loadGitStats,
     reloadGitStats,
+    loadCloc,
     resetGitStats,
     setRange,
   }

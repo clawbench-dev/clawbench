@@ -52,6 +52,15 @@ const zhMessages = {
     notGitRepo: '当前项目不是 Git 仓库，无法统计代码量',
     noData: '所选时间段内暂无代码提交',
     loadFailed: '代码统计加载失败',
+    clocTitle: '代码存量',
+    clocColLang: '语言',
+    clocColFiles: '文件数',
+    clocColCode: '代码行',
+    clocColComment: '注释行',
+    clocColBlank: '空白行',
+    clocTotalLabel: '合计',
+    clocNoData: '当前工作区暂无源码文件',
+    clocLoadFailed: '代码存量加载失败',
   },
 }
 
@@ -249,5 +258,44 @@ describe('GitCodeStatsPanel', () => {
     mockApiGet.mockRejectedValue({ message: 'git 统计失败', status: 500 })
     const wrapper = await mountPanel()
     expect(wrapper.text()).toContain('git 统计失败')
+  })
+
+  it('renders the code-inventory (cloc) card with per-language rows', async () => {
+    // git-stats + cloc are fetched on mount; route by URL.
+    mockApiGet.mockImplementation((url: string) => {
+      if (String(url).includes('/cloc')) {
+        return Promise.resolve({
+          languages: [
+            { name: 'Go', files: 2, code: 150, comment: 10, blank: 20 },
+            { name: 'Vue', files: 1, code: 50, comment: 5, blank: 5 },
+          ],
+          total: { name: '', files: 3, code: 200, comment: 15, blank: 25 },
+          scannedAt: '2026-09-09T00:00:00Z',
+        })
+      }
+      return Promise.resolve(mockResponse({ rows: [] }))
+    })
+    const wrapper = await mountPanel()
+    const text = wrapper.text()
+    expect(text).toContain('代码存量')
+    expect(text).toContain('Go')
+    expect(text).toContain('Vue')
+    expect(text).toContain('200') // total code
+    expect(text).toContain('合计')
+    // Total code formatted in M/K tier — 200 stays raw.
+    const codes = wrapper.findAll('.stats-td-num').map(td => td.text())
+    expect(codes).toContain('150')
+    expect(codes).toContain('50')
+  })
+
+  it('shows a hint when the workspace has no source files', async () => {
+    mockApiGet.mockImplementation((url: string) => {
+      if (String(url).includes('/cloc')) {
+        return Promise.resolve({ languages: [], total: { files: 0, code: 0, comment: 0, blank: 0 }, scannedAt: '2026-09-09T00:00:00Z' })
+      }
+      return Promise.resolve(mockResponse({ rows: [] }))
+    })
+    const wrapper = await mountPanel()
+    expect(wrapper.text()).toContain('当前工作区暂无源码文件')
   })
 })

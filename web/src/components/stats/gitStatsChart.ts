@@ -58,3 +58,65 @@ export function buildGitTrendOption(
     series,
   }
 }
+
+/**
+ * Horizontal bar chart of code-line inventory by language (cloc). The code
+ * column is the primary axis; tooltips show the full code/comment/blank/file
+ * breakdown.
+ */
+export function buildClocBarOption(
+  languages: { name: string; files: number; code: number; comment: number; blank: number }[],
+): EChartsCoreOption {
+  const p = resolveStatsPalette()
+  const narrow = isNarrowScreen()
+  const categories = languages.map(l => l.name)
+  const values = languages.map(l => l.code)
+  const many = categories.length > 8
+  const opt: Record<string, unknown> = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => {
+        const list = params as { name: string; dataIndex: number }[]
+        if (!list.length) return ''
+        const idx = list[0].dataIndex
+        const l = languages[idx]
+        return `${l.name}<br/>${l.code.toLocaleString()} code · ${l.comment.toLocaleString()} comment · ${l.blank.toLocaleString()} blank · ${l.files.toLocaleString()} files`
+      },
+    },
+    grid: { left: 8, right: narrow ? 8 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
+    xAxis: {
+      type: 'value',
+      axisLabel: narrow ? { show: false } : { color: p.textSecondary, formatter: (v: number) => formatLineCount(v) },
+      splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
+    },
+    yAxis: {
+      type: 'category',
+      data: categories,
+      axisLabel: { color: p.textSecondary, width: narrow ? 96 : 130, overflow: 'truncate' },
+      axisLine: { lineStyle: { color: p.axisLine } },
+    },
+    series: [{
+      type: 'bar',
+      data: values,
+      itemStyle: { color: p.accent, borderRadius: [0, 3, 3, 0] },
+      barMaxWidth: 18,
+      label: {
+        show: true,
+        position: 'right',
+        color: p.textSecondary,
+        fontSize: 10,
+        formatter: (pp: unknown) => formatLineCount((pp as { value: number }).value),
+      },
+    }],
+  }
+  if (many) {
+    opt.dataZoom = [{
+      type: 'inside',
+      yAxisIndex: 0,
+      start: 0,
+      end: Math.max(12, Math.round((8 / categories.length) * 100)),
+    }]
+  }
+  return opt as EChartsCoreOption
+}

@@ -263,6 +263,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/chat/thinking", middleware.Auth(ServeThinkingDetail))
 	register("/api/usage/stats", middleware.Auth(ServeUsageStats))
 	register("/api/git/stats", middleware.Auth(ServeGitStats))
+	register("/api/git/cloc", middleware.Auth(ServeGitCloc))
 	register("/api/ai/permission/respond", middleware.Auth(ServePermissionRespond))
 	register("/api/upload/file", middleware.Auth(UploadFile))
 	register("/api/upload/recent", middleware.Auth(UploadRecent))
