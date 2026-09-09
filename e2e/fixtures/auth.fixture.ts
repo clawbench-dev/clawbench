@@ -30,6 +30,25 @@ const E2E_PORT = process.env.E2E_PORT || '20100'
  */
 export const test = base.extend({
   page: async ({ page }, use) => {
+    // Dismiss the first-run Welcome overlay BEFORE the page loads.
+    // Every test gets a fresh browser context (empty localStorage), so without
+    // this flag WelcomeOverlay.show() renders the full-screen overlay and
+    // intercepts pointer events on the send button etc. (the overlay is a
+    // first-run UX; real users dismiss it via "Don't show again").
+    // addInitScript runs before each navigation, covering page.reload() too.
+    await page.addInitScript(() => {
+      localStorage.setItem('clawbench_welcome_dismissed', 'true')
+    })
+
+    // Block the upgrade check so the "New Version Available" overlay never
+    // appears and cannot intercept clicks. The E2E binary is a dev build
+    // (IsDevBuild=true, version is a git SHA), so the backend unconditionally
+    // reports has_upgrade=true whenever the registry is reachable — which
+    // would make UpgradePromptOverlay render over the app and block clicks.
+    await page.route('**/api/upgrade/**', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"has_upgrade":false,"latest_version":""}' })
+    })
+
     // Navigate to the app root
     const response = await page.goto('/')
 
