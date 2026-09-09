@@ -1128,6 +1128,30 @@ describe('AppHeader', () => {
     expect(card?.querySelector('.badge-reveal-subtitle')).toBeFalsy()
   })
 
+  it('renders a caret element on the reveal card pointing at the badge', async () => {
+    const wrapper = mountAndTrack({ projectRoot: '/proj', currentFileName: 'a.ts', currentFilePath: '/proj/a.ts', recentFilesAvailable: 1 })
+    const badge = document.querySelector('.current-file-badge') as HTMLElement | null
+    expect(badge).toBeTruthy()
+    // jsdom has no layout — stub the anchor rect so the reveal geometry is
+    // deterministic (left 100, width 40 → center 120).
+    const stubRect = { left: 100, right: 140, width: 40, top: 10, bottom: 34 }
+    ;(badge as HTMLElement).getBoundingClientRect = () => stubRect as DOMRect
+
+    await wrapper.setProps({ currentFileName: 'b.ts', currentFilePath: '/proj/b.ts' })
+    await wrapper.vm.$nextTick()
+
+    const card = document.querySelector('.badge-reveal') as HTMLElement | null
+    const caret = card?.querySelector('.badge-reveal-caret') as HTMLElement | null
+    expect(card).toBeTruthy()
+    expect(caret).toBeTruthy()
+    // Card anchored at the badge's left edge.
+    expect(card?.style.left).toBe('100px')
+    // Caret center tracks the badge center relative to the card's left edge
+    // (badge center 120 − card left 100 = 20); top sits on the card top border.
+    expect(caret?.style.left).toBe('20px')
+    expect(caret?.className).toContain('badge-reveal-caret')
+  })
+
   it('shows a reveal card with the project name + root path when the project changes', async () => {
     const wrapper = mountAndTrack({ projectRoot: '/home/user/my-project' })
     await wrapper.setProps({ projectRoot: '/home/user/other-long-project-name' })

@@ -34,7 +34,8 @@
     <!-- Reveal card: shows the FULL text of a badge segment that just changed
          (the capsule only has room for a truncated name on phones). Teleported
          to body + position:fixed so it isn't clipped by the capsule/header.
-         Appears under the changed segment and auto-dismisses. -->
+         Appears under the changed segment with a caret pointing at it and
+         auto-dismisses. -->
     <Teleport to="body">
       <Transition name="reveal">
         <div
@@ -42,6 +43,11 @@
           class="badge-reveal"
           :style="{ left: reveal.left + 'px', top: reveal.top + 'px' }"
         >
+          <span
+            class="badge-reveal-caret"
+            aria-hidden="true"
+            :style="{ left: reveal.caretLeft + 'px' }"
+          ></span>
           <span class="badge-reveal-title">
             <span class="badge-reveal-icon">
               <Projector v-if="reveal.source === 'project'" :size="13" />
@@ -575,6 +581,8 @@ const reveal = ref<{
     subtitle?: string
     left: number
     top: number
+    /** Horizontal center of the caret, in the card's own px space. */
+    caretLeft: number
 } | null>(null)
 let revealTimer: ReturnType<typeof setTimeout> | null = null
 const REVEAL_MS = 1500
@@ -598,12 +606,18 @@ function showReveal(source: BadgeSegment, title: string, subtitle?: string) {
         // Anchor under the segment's left edge; the card is width-capped in
         // CSS, so clamp against the right viewport edge to avoid overflow.
         const maxLeft = Math.max(4, window.innerWidth - 20)
+        const left = Math.max(4, Math.min(r.left, maxLeft))
+        // The card is clamped to the viewport too, so derive the caret center
+        // from the FINAL left so it stays aligned to the badge. The caret is
+        // always drawn in the top 14px of the card.
+        const caretLeft = Math.min(Math.max(r.left + r.width / 2 - left, 6), 300)
         reveal.value = {
             source,
             title,
             subtitle,
-            left: Math.max(4, Math.min(r.left, maxLeft)),
+            left,
             top: r.bottom + REVEAL_OFFSET_Y,
+            caretLeft,
         }
     }
     // The changed segment is usually already in the DOM (file/project/branch
@@ -1399,9 +1413,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 /* Reveal card — a small fixed popover shown under a badge segment that just
    changed (project / branch / file), carrying the segment's FULL text since
-   the capsule itself truncates long names. Compositor-friendly animation:
-   only opacity + transform (no layout properties). pointer-events: none so it
-   never blocks taps on whatever sits beneath. */
+   the capsule itself truncates long names. A pointer caret on the card's top
+   edge points at the badge. Compositor-friendly animation: only opacity +
+   transform (no layout properties). pointer-events: none so it never blocks
+   taps on whatever sits beneath. */
 .badge-reveal {
     position: fixed;
     z-index: 10000;
@@ -1410,13 +1425,35 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     flex-direction: column;
     gap: 2px;
     min-width: 0;
-    max-width: min(78vw, 320px);
+    /* Generous width so long names/paths can show on one or few lines. */
+    max-width: min(78vw, 520px);
     padding: 8px 12px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 10px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
     transform-origin: top center;
+}
+
+/* Pointer caret (small arrowhead) pointing up at the changed badge segment.
+   A 10px square rotated 45°; border-top + border-left outline the arrowhead
+   (the top-left corner becomes the top vertex after rotation), and the plain
+   lower half melts into the card's top border seam. `left` is set inline from
+   the segment geometry (reveal.caretLeft) so the arrow tracks the badge. */
+.badge-reveal-caret {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    box-sizing: border-box;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border-color);
+    border-left: 1px solid var(--border-color);
+    transform: rotate(45deg);
+    /* Center on the card's top border line: the arrow tip protrudes above the
+       card while the lower half stays inside (never overlaps the title). */
+    top: -5px;
+    margin-left: -5px;
+    pointer-events: none;
 }
 
 .badge-reveal-title {
