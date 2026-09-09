@@ -139,7 +139,11 @@ function focusSearchInput() {
   searchDrawerRef.value?.focusSearchInput?.()
 }
 
-defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput })
+function captureScroll() {
+  return fileViewerRef.value?.captureScroll?.()
+}
+
+defineExpose({ pdfScrollToPage, pdfOutline, focusSearchInput, captureScroll })
 
 // Intercept file-path link clicks inside the overlay content.
 // When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,
@@ -151,6 +155,7 @@ function handleContentClick(event) {
   if (btn) {
     event.preventDefault()
     event.stopPropagation()
+    fileViewerRef.value?.captureScroll?.()
     const filePath = btn.getAttribute('data-file-path')
     const lineStart = btn.getAttribute('data-line-start')
     const lineEnd = btn.getAttribute('data-line-end')
@@ -165,6 +170,7 @@ function handleContentClick(event) {
   if (pathSpan) {
     event.preventDefault()
     event.stopPropagation()
+    fileViewerRef.value?.captureScroll?.()
     const filePath = pathSpan.getAttribute('data-file-path')
     const lineStart = pathSpan.getAttribute('data-line-start')
     const lineEnd = pathSpan.getAttribute('data-line-end')

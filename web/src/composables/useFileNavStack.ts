@@ -1,5 +1,6 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import { recordRecentFile } from '@/composables/useRecentFiles'
+import type { FileScrollEntry } from '@/utils/fileScrollCache'
 
 const MAX_STACK_DEPTH = 20
 
@@ -13,6 +14,7 @@ export interface FileNavLocation {
   lineEnd?: number
   viewMode?: string
   scrollTop?: number
+  scrollEntry?: FileScrollEntry
 }
 
 const _overlayOpen = ref(false)
@@ -64,11 +66,25 @@ export function useFileNavStack() {
     _historyIndex.value = _history.value.length - 1
   }
 
-  /** Update the current visit's metadata (e.g. markdown view mode) without adding history. */
+  /**
+   * Update the current visit's metadata (e.g. markdown view mode) without adding history.
+   *
+   * Fields explicitly set to `undefined` are ignored. Callers build these from
+   * caches that legitimately hold nothing yet (`scrollEntry` is absent until the
+   * first scroll), and spreading that in would erase a position this visit
+   * already recorded — returning would then land wherever the fallback pointed.
+   * When adding a field to FileNavLocation, add it here too.
+   */
   function updateCurrent(location: Partial<Omit<FileNavLocation, 'path'>>) {
     const current = _currentLocation.value
     if (!current) return
-    _history.value[_historyIndex.value] = { ...current, ...location }
+    const next = { ...current }
+    if (location.lineStart !== undefined) next.lineStart = location.lineStart
+    if (location.lineEnd !== undefined) next.lineEnd = location.lineEnd
+    if (location.viewMode !== undefined) next.viewMode = location.viewMode
+    if (location.scrollTop !== undefined) next.scrollTop = location.scrollTop
+    if (location.scrollEntry !== undefined) next.scrollEntry = location.scrollEntry
+    _history.value[_historyIndex.value] = next
   }
 
   function goBack(): string | null {

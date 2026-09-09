@@ -109,6 +109,9 @@ it('wide screen jump: opening code file with source=file retains Markdown on sta
 
   // 1. User opens README.md from browse
   files.openFile('README.md', { viewMode: 'rendered' })
+  // The real store selects the file too; handleCaptureFileScroll only trusts a
+  // capture whose path matches the active file, so the fixture has to mirror it.
+  fakeStore.state.currentFile = { name: 'README.md', path: 'README.md' }
   expect(coord.fileBackTarget.value).toBe('browse')
   expect(files.canGoBack.value).toBe(false)
 
@@ -121,7 +124,14 @@ it('wide screen jump: opening code file with source=file retains Markdown on sta
 
   // 3. First back -> returns to README.md, restores scrollTop and viewMode
   expect(await coord.navigateBack('header')).toBe(true)
-  expect(files.currentLocation.value).toEqual({ path: 'README.md', scrollTop: 450, viewMode: 'rendered' })
+  // The visit banks the whole snapshot next to the pixel offset, so a rendered
+  // return can also restore its anchor once the layout settles.
+  expect(files.currentLocation.value).toEqual({
+    path: 'README.md',
+    scrollTop: 450,
+    viewMode: 'rendered',
+    scrollEntry: { scrollTop: 450 },
+  })
   expect(markdownViewMode.value).toBe('rendered')
   expect(coord.fileBackTarget.value).toBe('browse')
 

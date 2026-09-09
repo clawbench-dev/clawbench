@@ -150,6 +150,7 @@
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
           @close-search="emit('closeSearch')"
+          @capture-scroll="(entry) => emit('captureScroll', entry)"
         />
         <!-- Source/raw mode: a single CodeMirrorViewer for both browse and edit
              (editable toggles), so scroll survives the edit toggle. -->
@@ -509,11 +510,30 @@ function handleToggleViewRequest() {
 
 // File navigation / closing all leave the current edit view, so they go through
 // the same dirty-save confirmation as the back gesture and toggle-view.
-function handleNavBack() {
-    const el = scrollRestore.currentScrollEl()
-    if (el && typeof el.scrollTop === 'number') {
-        emit('captureScroll', el.scrollTop)
+// Snapshot where the user is in the current file.
+//
+// Rendered markdown owns the authoritative capture: it holds the live
+// .markdown-body element and refreshes the module-level cache itself. Delegate
+// to it so the two paths cannot drift — it also emits 'captureScroll' up the
+// chain, so the caller must not emit again.
+function captureScroll() {
+    if (!editing.value && isMarkdown.value && props.markdownViewMode === 'rendered') {
+        const entry = mdPreviewRef.value?.captureCurrentScrollState?.()
+        if (entry) return entry
     }
+    const el = scrollRestore.currentScrollEl()
+    // captureScroll only comes back empty when there is no live pane at all,
+    // so there is no pixel-only fallback to emit here.
+    const saved = scrollRestore.captureScroll(el)
+    if (saved) {
+        emit('captureScroll', saved)
+        return saved
+    }
+    return null
+}
+
+function handleNavBack() {
+    captureScroll()
     return guardExitEdit(() => emit('navigateBack'))
 }
 function handleNavForward() {
@@ -705,6 +725,7 @@ defineExpose({
     pdfOutline,
     pdfScrollToPage,
     focusSearchInput,
+    captureScroll,
 })
 </script>
 

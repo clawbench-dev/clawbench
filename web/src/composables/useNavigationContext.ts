@@ -1,4 +1,5 @@
 import { ref, computed, type ComputedRef } from 'vue'
+import type { FileScrollEntry } from '@/utils/fileScrollCache'
 
 export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history'
 
@@ -11,6 +12,7 @@ export interface NavigationOrigin {
   lineEnd?: number
   viewMode?: string
   scrollTop?: number
+  scrollEntry?: FileScrollEntry
   dirPath?: string
   sessionId?: string
 }

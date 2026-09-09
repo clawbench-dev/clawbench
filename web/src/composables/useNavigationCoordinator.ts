@@ -4,7 +4,7 @@ import { appLog } from '@/utils/appLog'
 import { isAbsolutePath } from '@/utils/path'
 import { getFileType } from '@/utils/fileType'
 import { openRecentFile } from '@/composables/useRecentFiles'
-import { getFileScroll, setFileScroll } from '@/utils/fileScrollCache'
+import { getFileScroll, getFileScrollEntry, setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache'
 import { gt as defaultGt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { PANE_LEFT, PANE_RIGHT, type ActivePane } from '@/composables/useWideScreenLayout'
@@ -57,6 +57,16 @@ export interface NavigationCoordinatorOptions {
     closeOverlayAndSync?: () => void
     handleOpenFileManager?: () => void
     isFileManagerMultiSelectActive?: () => boolean
+    /**
+     * Ask the mounted file viewer for a fresh { scrollTop, anchor } snapshot of
+     * the file being left, synchronously.
+     *
+     * Without it, captures read the module-level scroll cache, which only
+     * refreshes on debounced scroll — a jump taken immediately after a fling
+     * (or before any scroll at all) would bank a position from an earlier
+     * moment and return the user there.
+     */
+    requestScrollCapture?: () => void
   }
   backHooks?: {
     hasTopmostOverlay?: () => boolean
@@ -99,6 +109,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
   const closeOverlayAndSync = options.viewActions?.closeOverlayAndSync ?? (() => {})
   const handleOpenFileManager = options.viewActions?.handleOpenFileManager ?? (() => {})
   const isFileManagerMultiSelectActive = options.viewActions?.isFileManagerMultiSelectActive ?? (() => false)
+  const requestScrollCapture = options.viewActions?.requestScrollCapture ?? (() => {})
 
   const hasTopmostOverlay = options.backHooks?.hasTopmostOverlay ?? (() => false)
   const closeTopmostOverlay = options.backHooks?.closeTopmostOverlay ?? (() => false)
@@ -109,7 +120,6 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
   const exitEdit = options.fileEditor?.exitEdit ?? (() => {})
 
   let applyingOriginReturn = false
-  let lastFileScrollTop = 0
   let directoryRequestId = 0
 
   function isApplyingOriginReturn(): boolean {
@@ -124,22 +134,53 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     return t('common.back')
   }
 
-  function captureCurrentFileState(): void {
-    if (store.state.currentFile?.path) {
-      const cached = getFileScroll(store.state.currentFile.path)
-      const scrollTop = typeof cached === 'number' ? cached : lastFileScrollTop
+  /**
+   * Bank where the user is in the current file before leaving it.
+   *
+   * Reads the live viewer first: the module-level scroll cache only refreshes on
+   * debounced scroll, so on its own it can be a fling behind. Falls back to the
+   * cache when no viewer is mounted, and leaves the recorded position untouched
+   * when neither has anything — never to another file's leftover offset.
+   */
+  function captureCurrentFileState(pathOverride?: string | null): void {
+    const currentPath = store.state.currentFile?.path
+    const path = pathOverride ?? currentPath
+    if (!path) return
+    if (!pathOverride || pathOverride === currentPath) {
+      requestScrollCapture()
+    }
+    // Only borrow the nav stack's own entry when it describes the same file —
+    // banking another visit's snapshot here would send the user to the wrong
+    // place on return.
+    const isCurrentFile = fileNav.currentLocation.value?.path === path
+    const navEntry = isCurrentFile
+      ? fileNav.currentLocation.value?.scrollEntry
+      : undefined
+    const cachedEntry = getFileScrollEntry(path) ?? navEntry
+    const cachedScroll = getFileScroll(path) ?? (isCurrentFile ? fileNav.currentLocation.value?.scrollTop : undefined)
+    // Pass `undefined` (not 0) when the cache holds nothing: updateCurrent
+    // skips undefined, keeping a position this visit already recorded from a
+    // live capture. Writing 0 here would silently discard it.
+    if (isCurrentFile) {
       fileNav.updateCurrent({
         viewMode: markdownViewMode.value,
-        scrollTop,
+        scrollTop: cachedScroll,
+        scrollEntry: cachedEntry,
       })
     }
   }
 
-  function handleCaptureFileScroll(scrollTop: number): void {
-    if (typeof scrollTop === 'number') {
-      lastFileScrollTop = scrollTop
-      fileNav.updateCurrent({ scrollTop })
+  function handleCaptureFileScroll(scroll: number | FileScrollEntry): void {
+    const currentPath = store.state.currentFile?.path
+    if (!currentPath) return
+    if (fileNav.currentLocation.value?.path === currentPath) {
+      if (typeof scroll === 'number') {
+        fileNav.updateCurrent({ scrollTop: scroll })
+      } else if (scroll && typeof scroll === 'object') {
+        fileNav.updateCurrent({ scrollTop: scroll.scrollTop, scrollEntry: scroll })
+      }
     }
+    setFileScroll(currentPath, scroll)
   }
 
   function settleOriginForTab(tab: string): void {
@@ -192,8 +233,14 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (!location?.path) return false
     const previousPath = location.path
 
-    if (location.scrollTop !== undefined) {
+    if (location.scrollEntry !== undefined) {
+      setFileScroll(previousPath, location.scrollEntry)
+    } else if (location.scrollTop !== undefined) {
       setFileScroll(previousPath, location.scrollTop)
+    }
+    const targetViewMode = location.viewMode ?? (getFileType(previousPath).isMarkdown ? 'rendered' : undefined)
+    if (targetViewMode) {
+      markdownViewMode.value = targetViewMode
     }
     const ok = await store.selectFile(previousPath)
     if (!ok) {
@@ -203,11 +250,31 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     fileNav.goBack()
 
     await nextTick()
-    if (location.viewMode) markdownViewMode.value = location.viewMode
-    if (location.lineStart) {
+    // The recorded reading position wins over lineStart: a visit opened via a
+    // line-numbered link keeps its original line forever, but by return time
+    // the user has usually scrolled elsewhere — jumping back to the landing
+    // line would discard that. scrollToLine stays as the fallback for visits
+    // that never captured a position (jumped away before any scroll).
+    //
+    // A recorded 0 does not count as "captured": it is what a viewer reports
+    // before the async scroll-to-line has landed, so treating it as a real
+    // position would dump the user at the top of the file instead of the line
+    // they were sent to.
+    const recordedTop = location.scrollEntry?.scrollTop ?? location.scrollTop
+    if (typeof recordedTop === 'number' && recordedTop > 0) {
+      // Pixels are only comparable when the pane layout is unchanged. Leaving
+      // and returning in the same view mode means content heights match, so
+      // pixel offset directly applies.
+      const sameView = !location.viewMode || location.viewMode === markdownViewMode.value
+      window.dispatchEvent(new CustomEvent('restore-file-scroll', {
+        detail: {
+          scrollTop: recordedTop,
+          scrollEntry: location.scrollEntry,
+          preferPx: sameView,
+        },
+      }))
+    } else if (location.lineStart) {
       scrollToLine(location.lineStart, location.lineEnd, previousPath)
-    } else if (location.scrollTop !== undefined) {
-      window.dispatchEvent(new CustomEvent('restore-file-scroll', { detail: { scrollTop: location.scrollTop } }))
     }
     return true
   }
@@ -230,8 +297,14 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       }
 
       if (origin.filePath) {
-        if (origin.scrollTop !== undefined) {
+        if (origin.scrollEntry !== undefined) {
+          setFileScroll(origin.filePath, origin.scrollEntry)
+        } else if (origin.scrollTop !== undefined) {
           setFileScroll(origin.filePath, origin.scrollTop)
+        }
+        const targetViewMode = origin.viewMode ?? (getFileType(origin.filePath).isMarkdown ? 'rendered' : undefined)
+        if (targetViewMode) {
+          markdownViewMode.value = targetViewMode
         }
         const ok = await store.selectFile(origin.filePath)
         if (!ok) {
@@ -241,11 +314,20 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
           return true
         }
         await nextTick()
-        if (origin.viewMode) markdownViewMode.value = origin.viewMode
-        if (origin.lineStart) {
+        // Reading position wins over lineStart — same rationale as goBackFile,
+        // including the "0 is not a captured position" rule.
+        const recordedTop = origin.scrollEntry?.scrollTop ?? origin.scrollTop
+        if (typeof recordedTop === 'number' && recordedTop > 0) {
+          const sameView = !origin.viewMode || origin.viewMode === markdownViewMode.value
+          window.dispatchEvent(new CustomEvent('restore-file-scroll', {
+            detail: {
+              scrollTop: recordedTop,
+              scrollEntry: origin.scrollEntry,
+              preferPx: sameView,
+            },
+          }))
+        } else if (origin.lineStart) {
           scrollToLine(origin.lineStart, origin.lineEnd, origin.filePath)
-        } else if (origin.scrollTop !== undefined) {
-          window.dispatchEvent(new CustomEvent('restore-file-scroll', { detail: { scrollTop: origin.scrollTop } }))
         }
       } else if (origin.surface !== 'file') {
         closeOverlayAndSync()
@@ -334,7 +416,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         viewMode: markdownViewMode.value,
         lineStart: location?.lineStart,
         lineEnd: location?.lineEnd,
-        scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? lastFileScrollTop,
+        scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
+        scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
     } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
@@ -430,12 +513,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
   async function handleOverlayOpenFile(payload: string | { path: string; lineStart?: number; lineEnd?: number }): Promise<void> {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload, lineStart: undefined, lineEnd: undefined } : payload
     const prevPath = fileNav.currentFilePath.value
-    const cachedScroll = prevPath ? getFileScroll(prevPath) : undefined
-    const scrollTop = typeof cachedScroll === 'number' ? cachedScroll : lastFileScrollTop
-    fileNav.updateCurrent({
-      viewMode: markdownViewMode.value,
-      scrollTop,
-    })
+    // Snapshot the outgoing file from the live DOM before pushing the new one.
+    captureCurrentFileState(prevPath)
 
     if (!path.startsWith('/')) {
       try {
@@ -524,12 +603,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       }
     } else {
       const prevPath = fileNav.currentFilePath.value
-      const cachedScroll = prevPath ? getFileScroll(prevPath) : undefined
-      const scrollTop = typeof cachedScroll === 'number' ? cachedScroll : lastFileScrollTop
-      fileNav.updateCurrent({
-        viewMode: markdownViewMode.value,
-        scrollTop,
-      })
+      captureCurrentFileState(prevPath)
     }
 
     switchTab('view')
@@ -544,6 +618,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     settleOriginForTab,
     handleCaptureFileScroll,
     openFileInViewer,
+    goBackFile,
     returnToOrigin,
     fileBackTarget,
     canNavigateBackInView,
