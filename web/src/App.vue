@@ -221,7 +221,7 @@
 
                 <!-- Usage Statistics Tab -->
                 <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
-                  <UsageStatsPanel :active="panelIsActive('stats')" />
+                  <StatsTabHost :active="panelIsActive('stats')" />
                 </TabPanel>
 
                 <!-- Settings Tab -->
@@ -494,15 +494,13 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
-const UsageStatsPanel = defineAsyncComponent({
-  loader: () => import('./components/stats/UsageStatsPanel.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
+import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { resetUsageStats } from '@/composables/useUsageStats'
+import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
@@ -624,6 +622,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   resetAgents()
   resetChatSessionState()
   resetUsageStats()
+  resetGitStats()
   clearPlanState()
   resetTaskTabState()
   resetTabDrawerState()
