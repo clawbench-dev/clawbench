@@ -361,7 +361,7 @@ func TestClawBenchACPClient_MergeCommandsFromScan_SlashInconsistencyDedupes(t *t
 	cmds := c.GetCommands()
 	require.Len(t, cmds, 3)
 	assert.Equal(t, "mmx-cli", cmds[0].Name)
-	assert.Equal(t, "/compact", cmds[1].Name)  // preserved as reported
+	assert.Equal(t, "/compact", cmds[1].Name)    // preserved as reported
 	assert.Equal(t, "buddy-sings", cmds[2].Name) // new command added, original Name kept
 }
 
