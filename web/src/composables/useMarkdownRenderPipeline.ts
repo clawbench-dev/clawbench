@@ -184,8 +184,12 @@ function annotateImageBlocks(html: string): string {
         wrapper.className = 'image-block-wrapper'
         if (host) host.insertBefore(wrapper, img) // wrapper sits before img
 
-        // 2. Header row (view / attach / open) — only outside share mode.
-        if (!shareMode) {
+        // 2. Header row. The view (lightbox) button is always present — even on
+        // the share SPA every image opens full-size in the mounted Lightbox.
+        // Attach / open buttons are local-app only: they reference the open
+        // file's chat attachment and in-manager file location, which a public
+        // share viewer (read-only, token-scoped) cannot use.
+        {
             const header = doc.createElement('div')
             header.className = 'image-block-header'
             const actions = doc.createElement('span')
@@ -201,7 +205,7 @@ function annotateImageBlocks(html: string): string {
             viewBtn.innerHTML = IMAGE_VIEW_ICON_SVG
             actions.appendChild(viewBtn)
 
-            if (isLocal) {
+            if (isLocal && !shareMode) {
                 actions.appendChild(makeImageHeaderButton(doc, 'image-block-attach-btn', 'attach', 'chat.attach.attachImageToChat', ATTACH_BADGE_SVG))
                 actions.appendChild(makeImageHeaderButton(doc, 'image-block-open-btn', 'open', 'imageBlock.openFile', FILE_OPEN_ICON_SVG))
             }

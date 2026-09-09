@@ -21,7 +21,9 @@ vi.mock('@/components/common/FileIcon.vue', () => ({
   default: { name: 'FileIcon', props: ['path'], template: '<div class="file-icon-stub">{{ path }}</div>' },
 }))
 vi.mock('@/components/media/PdfPreview.vue', () => ({ default: baseStub('PdfPreview') }))
-vi.mock('@/components/media/ImagePreview.vue', () => ({ default: baseStub('ImagePreview') }))
+vi.mock('@/components/media/Lightbox.vue', () => ({
+  default: { name: 'Lightbox', template: '<div class="lightbox-stub" />' },
+}))
 vi.mock('@/components/media/AudioPreview.vue', () => ({ default: baseStub('AudioPreview') }))
 vi.mock('@/components/media/VideoPreview.vue', () => ({ default: baseStub('VideoPreview') }))
 vi.mock('@/components/file/MarkdownPreview.vue', () => ({
@@ -71,6 +73,7 @@ const i18n = createI18n({
         sourceView: 'View source',
       },
       common: { download: 'Download' },
+      imageBlock: { view: 'View image', openFile: 'Open file' },
     },
   },
 })
@@ -85,12 +88,6 @@ beforeEach(() => {
     ok: true,
     json: async () => ({ name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' }),
   })
-  // Ensure a clean <html> state (wallpaper-active class / CSS vars are applied
-  // as document side-effects by the wallpaper applier).
-  document.documentElement.classList.remove('wallpaper-active')
-  document.documentElement.style.removeProperty('--wallpaper-url')
-  document.documentElement.style.removeProperty('--wallpaper-scrim')
-  document.documentElement.style.removeProperty('--panel-alpha')
 })
 
 afterEach(() => {
@@ -98,23 +95,10 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
   vi.restoreAllMocks()
   for (const w of mountedWrappers.splice(0)) w.unmount()
-  document.documentElement.classList.remove('wallpaper-active')
-  document.documentElement.style.removeProperty('--wallpaper-url')
-  document.documentElement.style.removeProperty('--wallpaper-scrim')
-  document.documentElement.style.removeProperty('--panel-alpha')
 })
 
-async function mountShare(file: Record<string, unknown>, appearance?: { wallpaper_file?: string; panel_opacity?: number }) {
-  // Route the two share fetches: the file payload under /file, the wallpaper
-  // appearance config under /appearance (defaults to "no wallpaper set").
+async function mountShare(file: Record<string, unknown>) {
   ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
-    const path = typeof url === 'string' ? url : url instanceof URL ? url.pathname : new URL(url.url).pathname
-    if (path.endsWith('/appearance')) {
-      return {
-        ok: true,
-        json: async () => ({ appearance: { wallpaper_file: appearance?.wallpaper_file ?? '', panel_opacity: appearance?.panel_opacity ?? 0.85 } }),
-      }
-    }
     return {
       ok: true,
       json: async () => file,
@@ -315,53 +299,93 @@ describe('ShareView — view toggle (rendered ⇄ source)', () => {
   })
 })
 
-describe('ShareView — server wallpaper background', () => {
-  it('renders the wallpaper layer when the token-scoped appearance has a file', async () => {
-    const wrapper = await mountShare(
-      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
-      { wallpaper_file: 'background.png', panel_opacity: 0.7 },
-    )
-    const layer = wrapper.find('.wallpaper-layer')
-    expect(layer.exists()).toBe(true)
-    // The <img> src is the token-scoped public endpoint (share SPA has no auth).
-    const img = layer.find('img.wallpaper-image')
-    expect(img.attributes('src')).toContain('/api/share/tokShareTest/theme-background?v=')
-    // Document side-effects mirror the main app: scrim/alpha + active class.
-    const html = document.documentElement
-    expect(html.classList.contains('wallpaper-active')).toBe(true)
-    expect(html.style.getPropertyValue('--panel-alpha')).toBe('70%')
-    expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.35)')
+// jsdom does not implement CSS.escape (used by ShareView.scrollToHeading).
+// Provide the standard algorithm so TOC jumps can be exercised in tests.
+if (typeof (globalThis as { CSS?: { escape?: unknown } }).CSS === 'undefined') {
+  ;(globalThis as { CSS: { escape?: (s: string) => string } }).CSS = {} as never
+}
+;(globalThis as { CSS: { escape?: (s: string) => string } }).CSS.escape = (s: string) =>
+  s.replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c)
+
+describe('ShareView — image blocks + narrow TOC drawer', () => {
+  it('renders a single-file image as an image-block figure with a view button', async () => {
+    const wrapper = await mountShare({ name: 'photo.png', path: '/repo/photo.png', content: '' })
+    // The figure reuses the app markdown image-block classes.
+    expect(wrapper.find('.image-block-wrapper').exists()).toBe(true)
+    expect(wrapper.find('.image-block-header .image-block-view-btn').exists()).toBe(true)
+    // No attach/open actions on the public share page.
+    expect(wrapper.find('.image-block-attach-btn').exists()).toBe(false)
+    expect(wrapper.find('.image-block-open-btn').exists()).toBe(false)
+    const img = wrapper.find('.share-image-img')
+    expect(img.exists()).toBe(true)
+    expect(img.attributes('src')).toContain('/api/share/tokShareTest/local')
   })
 
-  it('keeps the content document visible alongside the wallpaper', async () => {
-    const wrapper = await mountShare(
-      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
-      { wallpaper_file: 'background.png', panel_opacity: 0.85 },
-    )
-    expect(wrapper.find('.markdown-preview-stub').exists()).toBe(true)
+  it('renders an SVG file the same way', async () => {
+    const wrapper = await mountShare({ name: 'logo.svg', path: '/repo/logo.svg', content: '' })
+    expect(wrapper.find('.image-block-header .image-block-view-btn').exists()).toBe(true)
+    const img = wrapper.find('.share-image-img')
+    expect(img.attributes('src')).toContain('/api/share/tokShareTest/local')
   })
 
-  it('renders no wallpaper layer when the server reports no wallpaper', async () => {
-    const wrapper = await mountShare(
-      { name: 'README.md', path: '/repo/README.md', content: '# Hello\nworld' },
-      { wallpaper_file: '', panel_opacity: 0.85 },
-    )
-    expect(wrapper.find('.wallpaper-layer').exists()).toBe(false)
-    expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
+  it('uses a wide-screen inline TOC rail and no drawer by default', async () => {
+    // jsdom has no matchMedia → syncNarrow stays false (wide layout).
+    const wrapper = await mountShare({ name: 'doc.md', path: '/repo/doc.md', content: '# H\n## S' })
+    // tocOpen defaults true on load → rail rendered.
+    expect(wrapper.find('.share-body .share-toc').exists()).toBe(true)
+    expect(wrapper.find('.share-toc-backdrop').exists()).toBe(false)
+    expect(wrapper.find('.share-toc-panel').exists()).toBe(false)
   })
 
-  it('silently shows no wallpaper when the appearance fetch fails', async () => {
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(async (url: string | URL | Request) => {
-      const path = typeof url === 'string' ? url : url instanceof URL ? url.pathname : new URL(url.url).pathname
-      if (path.endsWith('/appearance')) return { ok: false, json: async () => ({}) }
-      return { ok: true, json: async () => ({ name: 'a.md', path: '/a.md', content: '# a' }) }
-    })
-    const wrapper = mount(ShareView, { global: { plugins: [i18n], stubs: asyncComponentStubs } })
-    mountedWrappers.push(wrapper)
-    await flushPromises()
-    expect(wrapper.find('.wallpaper-layer').exists()).toBe(false)
-    // No wallpaper-active side-effects and no error surfaced to the user.
-    expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
-    expect(wrapper.find('.share-error').exists()).toBe(false)
+  it('opens a slide-in TOC drawer on narrow screens when the toggle is tapped', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })))
+    try {
+      const wrapper = await mountShare({ name: 'doc.md', path: '/repo/doc.md', content: '# H\n## S' })
+      // Narrow + tocOpen=false on load → no rail, no drawer yet.
+      expect(wrapper.find('.share-body .share-toc').exists()).toBe(false)
+      expect(document.body.querySelector('.share-toc-panel')).toBeNull()
+
+      // Tap the TOC top-bar button (title = toggleToc) → drawer appears.
+      const tocBtn = wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]')
+      expect(tocBtn.exists()).toBe(true)
+      await tocBtn.trigger('click')
+      await nextTick()
+      expect(document.body.querySelector('.share-toc-backdrop')).not.toBeNull()
+      expect(document.body.querySelector('.share-toc-panel')).not.toBeNull()
+
+      // Backdrop click closes the drawer.
+      ;(document.body.querySelector('.share-toc-backdrop') as HTMLElement).dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      )
+      await nextTick()
+      expect(document.body.querySelector('.share-toc-panel')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('closes the drawer after jumping to a TOC item', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, media: '', addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+    try {
+      const wrapper = await mountShare({ name: 'doc.md', path: '/repo/doc.md', content: '# Hello\n\nbody text' })
+      const tocBtn = wrapper.find('.share-top-actions .share-btn[title="Toggle table of contents"]')
+      await tocBtn.trigger('click')
+      await nextTick()
+      expect(document.body.querySelector('.share-toc-panel')).not.toBeNull()
+
+      const item = document.body.querySelector('.share-toc-item') as HTMLElement | null
+      expect(item).not.toBeNull()
+      item!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await nextTick()
+      await flushPromises()
+      expect(document.body.querySelector('.share-toc-panel')).toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -103,9 +103,13 @@ describe('createFixLocalImagePaths', () => {
       expect(out).toContain('src="/api/share/tokabc/local/docs/assets/a.png?t=42"')
       expect(out).not.toContain('/api/file/thumb')
       expect(out).not.toContain('/api/local-file/')
-      // Share has no chat / lightbox — the image stays a header-less block.
+      // Share has no chat / local file actions — the block header carries only
+      // the lightbox view button (no attach / open).
       expect(out).toContain('image-block-wrapper')
-      expect(out).not.toContain('image-block-header')
+      expect(out).toContain('image-block-header')
+      expect(out).toContain('image-block-view-btn')
+      expect(out).not.toContain('image-block-attach-btn')
+      expect(out).not.toContain('image-block-open-btn')
     } finally {
       setShareToken(null)
     }

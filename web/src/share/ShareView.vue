@@ -1,14 +1,5 @@
 <template>
   <div class="share-view">
-    <!-- Server wallpaper layer for share viewers (valid capability token only).
-         Mirrors the main app's .wallpaper-layer DOM so the shared base.css
-         rules render it identically. The <img> src is the token-scoped public
-         endpoint — the share SPA has no session cookie. -->
-    <div v-if="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
-      <img :src="wallpaperUrl" class="wallpaper-image" alt="" draggable="false" />
-      <div class="wallpaper-scrim"></div>
-    </div>
-
     <!-- Read-only top bar (not the app FileHeader) -->
     <div class="share-topbar">
       <span class="share-file-name" :title="file?.name || ''">{{ file?.name || '' }}</span>
@@ -44,7 +35,7 @@
     </div>
 
     <!-- Body: content + optional TOC -->
-    <div class="share-body" :data-toc-open="tocOpen">
+    <div class="share-body">
       <div
         class="share-content"
         :data-markdown-rendered="isMarkdownRenderedView || undefined"
@@ -78,11 +69,33 @@
             :file="file"
           />
 
-          <!-- Image -->
-          <ImagePreview
-            v-else-if="file.isImage"
-            :file="file"
-          />
+          <!-- Image / SVG — block figure with a header (lightbox view button)
+               matching the in-app markdown image blocks. Share viewers are
+               read-only, so the header carries no attach/open actions. -->
+          <div v-else-if="file.isImage" class="share-image-view">
+            <div class="image-block-wrapper">
+              <div class="image-block-header">
+                <span class="image-block-header-actions">
+                  <button
+                    class="image-block-view-btn"
+                    type="button"
+                    :title="t('imageBlock.view')"
+                    :aria-label="t('imageBlock.view')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                  </button>
+                </span>
+              </div>
+              <span class="lightbox-img-wrap">
+                <img
+                  class="share-image-img lightbox-img"
+                  :src="shareImageUrl"
+                  :alt="file.name"
+                  draggable="false"
+                />
+              </span>
+            </div>
+          </div>
 
           <!-- Audio -->
           <AudioPreview
@@ -141,8 +154,8 @@
         </template>
       </div>
 
-      <!-- TOC -->
-      <div v-if="hasToc && tocOpen" class="share-toc">
+      <!-- TOC rail (wide screens). Narrow screens render a slide-in drawer. -->
+      <div v-if="hasToc && tocOpen && !isNarrow" class="share-toc">
         <div class="share-toc-title">{{ t('share.toc') }}</div>
         <button
           v-for="item in tocItems"
@@ -155,16 +168,40 @@
         >{{ item.text }}</button>
       </div>
     </div>
+
+    <!-- Narrow-screen TOC drawer: backdrop + slide-in panel -->
+    <Teleport to="body">
+      <div v-if="isNarrow && hasToc && tocOpen" class="share-toc-drawer">
+        <div class="share-toc-backdrop" @click="tocOpen = false" />
+        <aside class="share-toc share-toc-panel">
+          <div class="share-toc-title">{{ t('share.toc') }}</div>
+          <button
+            v-for="item in tocItems"
+            :key="item.id"
+            class="share-toc-item"
+            :data-level="item.level"
+            :style="{ paddingLeft: (8 + (item.level - 1) * 14) + 'px' }"
+            :title="item.text"
+            @click="scrollToTocItem(item); tocOpen = false"
+          >{{ item.text }}</button>
+        </aside>
+      </div>
+    </Teleport>
+
+    <!-- Full-image viewer: view buttons (image blocks + rendered markdown) open
+         here. Lightbox provides its own openLightbox/openMdImages via provide;
+         its document-level click listener drives .image-block-view-btn. -->
+    <Lightbox />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, defineAsyncComponent, provide, readonly } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, defineAsyncComponent, provide, readonly } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Download, Eye, FileX2, List } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
-import ImagePreview from '@/components/media/ImagePreview.vue'
+import Lightbox from '@/components/media/Lightbox.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
@@ -177,14 +214,8 @@ import { getFileType } from '@/utils/fileType.ts'
 import { flashElement } from '@/utils/domFlash'
 import { extractToc, type TocItem } from '@/utils/toc.ts'
 import { setShareToken, setSharedFile, shareApiUrl } from '@/share/shareMode'
+import { buildLocalFileUrl } from '@/utils/download'
 import { store } from '@/stores/app.ts'
-import {
-  applyShareWallpaper,
-  shareAppearanceUrl,
-  resolveShareWallpaperUrl,
-  type ShareAppearance,
-} from '@/utils/themeBackground'
-import { isDarkTheme } from '@/utils/themeMeta'
 
 // Share the resolved theme id with child components (OpenApiPreview reads it via
 // inject('theme') to pick Swagger UI colors). share.html sets data-theme on <html>.
@@ -216,50 +247,19 @@ const loading = ref(true)
 const error = ref('')
 const file = ref<ShareFile | null>(null)
 const tocOpen = ref(true)
+/** Narrow layout (<900px): TOC moves to a slide-in drawer over the content. */
+const isNarrow = ref(false)
+let tocMq: MediaQueryList | null = null
+function syncNarrow() {
+  if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
+  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+}
 const wordWrap = ref(false)
 const contentRef = ref<HTMLElement | null>(null)
 const tocItems = ref<TocItem[]>([])
 /** 'rendered' (preview) | 'raw' (source code). Only used by file types that
  *  have both a rendered preview and a viewable source (markdown/html/openapi). */
 const viewMode = ref<'rendered' | 'raw'>('rendered')
-
-// ─── Server wallpaper (share-token-scoped appearance) ───
-// The share SPA is unauthenticated: wallpaper config + image come from the
-// public /api/share/{token}/{appearance,theme-background} endpoints. Any
-// failure (no wallpaper configured, missing image, revoked token) silently
-// renders no background — never an error that disturbs the document preview.
-const wallpaperActive = ref(false)
-const wallpaperUrl = ref('')
-/** Share token captured from the URL, used as the wallpaper fetch credential. */
-const shareToken = ref('')
-
-/** Resolve whether the share page is viewing under a dark theme (scrim strength). */
-function shareThemeIsDark(): boolean {
-  const stored = document.documentElement.getAttribute('data-theme') || 'github-dark'
-  return isDarkTheme(stored)
-}
-
-/**
- * Load the token-scoped wallpaper appearance and apply it when a wallpaper is
- * set. Failures are swallowed — the wallpaper is progressive enhancement.
- */
-async function loadShareWallpaper() {
-  const token = shareToken.value
-  if (!token) return
-  try {
-    const resp = await fetch(shareAppearanceUrl(token))
-    if (!resp.ok) return
-    const data = (await resp.json()) as ShareAppearance
-    const appearance = data.appearance
-    const file = appearance?.wallpaper_file ?? ''
-    const panelOpacity = typeof appearance?.panel_opacity === 'number' ? appearance.panel_opacity : 0.85
-    applyShareWallpaper(token, file, panelOpacity, shareThemeIsDark())
-    wallpaperActive.value = !!file
-    wallpaperUrl.value = wallpaperActive.value ? resolveShareWallpaperUrl(token) : ''
-  } catch {
-    // Network / parse failure — no wallpaper, no error surface.
-  }
-}
 
 // ─── Parse token from /share/{token} ───
 function parseTokenFromPath(): string {
@@ -270,6 +270,12 @@ function parseTokenFromPath(): string {
 const downloadUrl = computed(() => {
   if (!file.value) return ''
   return shareApiUrl('download')
+})
+
+/** Full-size token-scoped URL for the single-file image / SVG preview. */
+const shareImageUrl = computed(() => {
+  if (!file.value?.path) return ''
+  return buildLocalFileUrl(file.value.path)
 })
 
 const rawLanguage = computed(() => {
@@ -372,7 +378,9 @@ async function loadFile() {
     // inside the shared doc cannot resolve to clickable in-app file opens.
     store.state.projectRoot = store.state.projectRoot || ''
     store.state.homeDir = store.state.homeDir || ''
-    tocOpen.value = window.innerWidth >= 900
+    // Desktop opens with the TOC rail visible; narrow screens default closed
+    // (opened on demand via the top-bar button → slide-in drawer).
+    tocOpen.value = !isNarrow.value
   } finally {
     loading.value = false
   }
@@ -461,6 +469,12 @@ function scrollToTocItem(item: TocItem) {
 }
 
 onMounted(() => {
+  syncNarrow()
+  if (typeof window.matchMedia === 'function') {
+    tocMq = window.matchMedia('(max-width: 899px)')
+    tocMq.addEventListener('change', syncNarrow)
+  }
+
   const token = parseTokenFromPath()
   if (!token) {
     error.value = t('share.invalidUrl')
@@ -468,9 +482,12 @@ onMounted(() => {
     return
   }
   setShareToken(token)
-  shareToken.value = token
   void loadFile()
-  void loadShareWallpaper()
+})
+
+onBeforeUnmount(() => {
+  tocMq?.removeEventListener('change', syncNarrow)
+  tocMq = null
 })
 </script>
 
@@ -547,10 +564,69 @@ onMounted(() => {
   cursor: pointer;
 }
 
-@media (max-width: 899px) {
-  .share-body[data-toc-open="true"] .share-toc {
-    display: none; /* TOC handled by overlay toggle on mobile */
-  }
+/* Single-file image / SVG: centered full-bleed host around the shared
+   .image-block figure (header + image). */
+.share-image-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--bg-primary, #fff);
+  overflow: auto;
+}
+
+/* The global .image-block-wrapper is width:fit-content for markdown text flow;
+   inside the full-screen share host it must stretch to the available space and
+   constrain the image height (header keeps its own height). */
+.share-image-view .image-block-wrapper {
+  margin: 0;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.share-image-view .share-image-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100% - 26px);
+  object-fit: contain;
+}
+
+/* Narrow-screen TOC drawer — Teleported to <body>, so its styles must be
+   global (scoped selectors would not reach the teleported nodes). The panel
+   reuses .share-toc from share-chrome.css for sizing/item styles. */
+:global(.share-toc-backdrop) {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 300;
+  animation: share-toc-fade 0.18s ease-out;
+}
+
+:global(.share-toc-panel) {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  z-index: 301;
+  box-sizing: border-box;
+  border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  animation: share-toc-slide 0.2s ease-out;
+}
+
+@keyframes share-toc-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes share-toc-slide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 /* On very wide screens the content column would stretch content (PDFs, code)
