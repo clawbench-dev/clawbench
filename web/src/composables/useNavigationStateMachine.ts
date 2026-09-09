@@ -1,7 +1,7 @@
 import { appLog } from '@/utils/appLog'
 import { useNavigationContext } from './useNavigationContext'
 
-export type BackReason = 'header' | 'android' | 'edge-swipe' | 'origin-bar' | 'close'
+export type BackReason = 'header' | 'android' | 'edge-swipe' | 'close'
 
 /** The step a back press resolves to. `null` means "nothing to handle". */
 export type BackStep = 'overlay' | 'edit' | 'search' | 'multi' | 'file' | 'origin' | 'close-overlay' | 'dir' | 'other'
@@ -50,9 +50,6 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
 
     // 2. 文件编辑状态下退出编辑；未保存修改继续使用现有确认逻辑
     if (hooks.isEditing()) return 'edit'
-
-    // The user clicked the origin banner explicitly
-    if (reason === 'origin-bar' && hooks.hasOrigin()) return 'origin'
 
     // The user clicked the close button. Closing is not "go back one step":
     // falling through to the file/dir steps would turn a dismiss into a

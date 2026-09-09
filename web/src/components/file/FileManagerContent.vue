@@ -148,19 +148,6 @@
           </template>
         </div>
       </div>
-      <!-- Origin return banner -->
-      <div
-        v-if="hasOrigin && originLabel"
-        class="origin-banner"
-        role="button"
-        tabindex="0"
-        :aria-label="originLabel"
-        @click="$emit('returnOrigin')"
-        @keydown.enter="$emit('returnOrigin')"
-      >
-        <ArrowLeft :size="16" class="origin-banner-icon" />
-        <span class="origin-banner-text">{{ originLabel }}</span>
-      </div>
 
       <!-- Breadcrumb / Multi-select info bar -->
       <div v-if="multiSelect.active" class="dir-nav-bottom">
@@ -501,7 +488,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ArrowLeft } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2 } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -752,11 +739,9 @@ const props = defineProps({
     sortDir: String,
     dirLoading: Boolean,
     keyboardActive: { type: Boolean, default: true }, // focus-aware gating for global file shortcuts
-    originLabel: { type: String, default: null },
-    hasOrigin: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete', 'returnOrigin'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
 const sortMenuOpen = ref(false)
@@ -2110,43 +2095,6 @@ function scrollSelectedIntoView(path) {
     min-height: 28px;
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     flex-shrink: 0;
-}
-
-.origin-banner {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 44px;
-    padding: 0 12px;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
-    color: var(--accent-color);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s;
-    flex-shrink: 0;
-}
-@media (hover: hover) {
-    .origin-banner:hover {
-        background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
-    }
-}
-.origin-banner:active {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.2));
-}
-.origin-banner-icon {
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-}
-.origin-banner-text {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .dir-toolbar {

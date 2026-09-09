@@ -201,22 +201,6 @@ describe('navigationBackFlow', () => {
       expect(hooks.returnToOrigin).toHaveBeenCalled()
     })
 
-    it('M3: Chat -> Dir -> origin banner returns to Chat directly without popping parent dir', async () => {
-      nav.start({ surface: 'chat', tab: 'chat', label: 'Back to Chat' })
-      const hooks = createMockHooks({
-        canGoBackFile: vi.fn().mockReturnValue(false),
-        hasOrigin: vi.fn().mockReturnValue(true),
-        canGoBackDir: vi.fn().mockReturnValue(true),
-        returnToOrigin: vi.fn().mockResolvedValue(true),
-        goBackDir: vi.fn().mockResolvedValue(true),
-      })
-      const { navigateBack } = useNavigationStateMachine(hooks)
-      const handled = await navigateBack('origin-bar')
-      expect(handled).toBe(true)
-      expect(hooks.returnToOrigin).toHaveBeenCalled()
-      expect(hooks.goBackDir).not.toHaveBeenCalled()
-    })
-
     it('M4: Markdown -> Dir -> back restores markdown, viewMode and scrollTop', async () => {
       nav.start({
         surface: 'file',

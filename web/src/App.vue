@@ -93,11 +93,8 @@
                       :sort-dir="sortDir"
                       :dir-loading="store.state.dirLoading"
                       :keyboard-active="fileManagerShortcutActive"
-                      :has-origin="browseOriginBannerVisible"
-                      :origin-label="navigation.originLabel.value"
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
-                      @return-origin="navigateBack('origin-bar')"
                       @select-file="handleBrowseSelectFile"
                       @toggle-sort="handleToggleSort"
                       @toggle-hidden="toggleHidden"
@@ -787,18 +784,6 @@ const navigation = useNavigationContext()
 // based on files opened before the user entered the file manager.
 const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
-
-// The origin banner ("← back to chat/task") is a pointer back to the surface
-// a jump came from. On wide screens the chat pane is docked on the right, so a
-// chat origin is already on screen — showing the banner is pure noise. Only
-// when the right pane is collapsed (chat hidden) does a chat origin need the
-// banner again. Non-chat origins (task/history/file) always keep it.
-const browseOriginBannerVisible = computed(() => {
-  if (!navigation.hasOrigin.value) return false
-  const surface = navigation.origin.value?.surface
-  if (surface === 'chat' && isWideScreen.value && !chatCollapsed.value) return false
-  return true
-})
 
 function switchTab(tab, force = false) {
   // The user reached the surface a jump started from without using Back, so

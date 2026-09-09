@@ -9,7 +9,7 @@ const DEFAULT_REASON: BackReason = 'android'
 
 function isBackReason(value: unknown): value is BackReason {
     return value === 'header' || value === 'android' || value === 'edge-swipe'
-        || value === 'origin-bar' || value === 'close'
+        || value === 'close'
 }
 
 declare global {

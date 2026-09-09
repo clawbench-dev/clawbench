@@ -3112,37 +3112,4 @@ describe('FileManagerContent — jump to dir', () => {
     await nextTick()
     expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
   })
-
-  describe('origin banner', () => {
-    it('does not render origin banner when hasOrigin is false', () => {
-      const wrapper = mountContent({ hasOrigin: false, originLabel: 'Back to Chat' })
-      expect(wrapper.find('.origin-banner').exists()).toBe(false)
-    })
-
-    it('does not render origin banner when originLabel is empty', () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: '' })
-      expect(wrapper.find('.origin-banner').exists()).toBe(false)
-    })
-
-    it('renders origin banner with originLabel when hasOrigin is true and label provided', () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      expect(banner.exists()).toBe(true)
-      expect(banner.find('.origin-banner-text').text()).toBe('Back to Chat')
-    })
-
-    it('emits returnOrigin when origin banner is clicked', async () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      await banner.trigger('click')
-      expect(wrapper.emitted('returnOrigin')).toBeTruthy()
-    })
-
-    it('emits returnOrigin on Enter keydown', async () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      await banner.trigger('keydown.enter')
-      expect(wrapper.emitted('returnOrigin')).toBeTruthy()
-    })
-  })
 })
