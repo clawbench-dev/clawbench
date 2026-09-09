@@ -65,6 +65,15 @@ describe('FileAttachmentList', () => {
     expect(wrapper.find('.attachment-image-only').exists()).toBe(true)
   })
 
+  it('falls back to icon + filename for SVG (image the backend cannot thumbnail)', () => {
+    const wrapper = mountList([{ path: 'img/logo.svg' }])
+    // Image-but-not-thumbable must never render a blank card
+    expect(wrapper.find('.attachment-image-only').exists()).toBe(false)
+    expect(wrapper.find('.attachment-thumb-img').exists()).toBe(false)
+    expect(wrapper.find('.attachment-filename').exists()).toBe(true)
+    expect(wrapper.text()).toContain('logo.svg')
+  })
+
   it('applies upload class for upload paths', () => {
     const wrapper = mountList([{ path: '/upload/file.txt' }])
     expect(wrapper.find('.attachment-upload').exists()).toBe(true)

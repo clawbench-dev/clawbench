@@ -32,6 +32,18 @@ describe('AttachmentTags', () => {
     expect(wrapper.find('.attachment-filename .attachment-range').text()).toBe(':5-8')
   })
 
+  it('falls back to icon + filename for SVG (image the backend cannot thumbnail)', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: '.clawbench/uploads/diagram.svg', isDir: false }],
+      },
+    })
+    // Image-but-not-thumbable must never render a blank pill
+    expect(wrapper.find('.attachment-image-only').exists()).toBe(false)
+    expect(wrapper.find('.attachment-thumb-img').exists()).toBe(false)
+    expect(wrapper.find('.attachment-filename').text()).toContain('diagram.svg')
+  })
+
   it('emits the full entry on card click and on remove', async () => {
     const wrapper = mount(AttachmentTags, {
       props: {

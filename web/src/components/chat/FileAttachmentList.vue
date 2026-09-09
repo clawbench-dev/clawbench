@@ -2,7 +2,7 @@
   <div v-if="files.length > 0" class="chat-files">
     <span v-for="(raw, idx) in files" :key="idx"
       class="chat-file-attachment"
-      :class="[isUploadPath(normalizeFileEntry(raw).path) ? 'attachment-upload' : 'attachment-ref', { 'attachment-image-only': isImageFile(normalizeFileEntry(raw).path) }]"
+      :class="[isUploadPath(normalizeFileEntry(raw).path) ? 'attachment-upload' : 'attachment-ref', { 'attachment-image-only': showsThumb(raw) }]"
       @click="$emit('file-tag-click', normalizeFileEntry(raw))"
       :title="t('chat.attach.openFile')">
       <template v-if="normalizeFileEntry(raw).startLine !== undefined">
@@ -10,13 +10,15 @@
         <span class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}<span class="attachment-range">{{ rangeLabel(normalizeFileEntry(raw)) }}</span></span>
       </template>
       <template v-else>
-        <img v-if="isImageFile(normalizeFileEntry(raw).path) && isThumbableExt(normalizeFileEntry(raw).path) && !thumbErrors.has(normalizeFileEntry(raw).path)"
+        <img v-if="showsThumb(raw)"
           class="attachment-thumb-img"
           :src="thumbUrl(normalizeFileEntry(raw).path)" loading="lazy"
           @error="onThumbError(normalizeFileEntry(raw).path)" />
-        <!-- Non-image: icon + filename -->
-        <FileIcon v-if="!isImageFile(normalizeFileEntry(raw).path)" :path="normalizeFileEntry(raw).path" :is-dir="normalizeFileEntry(raw).isDir" :size="22" class="attachment-file-icon" />
-        <span v-if="!isImageFile(normalizeFileEntry(raw).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}</span>
+        <!-- Icon + filename fallback: non-images AND images the backend cannot
+             thumbnail (SVG/WebP/BMP/… or a failed thumb request) render as a
+             file card, never a blank square. -->
+        <FileIcon v-if="!showsThumb(raw)" :path="normalizeFileEntry(raw).path" :is-dir="normalizeFileEntry(raw).isDir" :size="22" class="attachment-file-icon" />
+        <span v-if="!showsThumb(raw)" class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}</span>
       </template>
     </span>
   </div>
@@ -46,6 +48,17 @@ function getFileName(path) {
 function rangeLabel(f) {
   if (f.endLine === undefined || f.endLine === f.startLine) return `:${f.startLine}`
   return `:${f.startLine}-${f.endLine}`
+}
+
+/**
+ * A card shows the square thumbnail only when the backend can serve one and it
+ * has not failed to load. Everything else (non-images, image formats without a
+ * backend thumbnail like SVG/WebP/BMP, and failed thumb loads) falls back to the
+ * icon + filename file card.
+ */
+function showsThumb(raw) {
+  const path = normalizeFileEntry(raw).path
+  return isImageFile(path) && isThumbableExt(path) && !thumbErrors.value.has(path)
 }
 
 const thumbUrl = buildPathThumbUrl
