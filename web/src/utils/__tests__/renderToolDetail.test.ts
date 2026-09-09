@@ -1433,11 +1433,12 @@ describe('PermissionApproval renderer', () => {
     expect(html).toContain('permission-approval-view')
   })
 
-  it('renders header with icon and title', () => {
+  it('does not emit a duplicated title header inside the body (title lives on the card strip)', () => {
     const html = formatToolInput({ options: [] }, 'PermissionApproval')
-    expect(html).toContain('permission-header')
-    expect(html).toContain('permission-icon')
-    expect(html).toContain('permission-title')
+    // The "Permission Request" title is rendered on the surrounding unified card
+    // header strip in ContentBlocks.vue, not inside the renderer's body.
+    expect(html).not.toContain('permission-header')
+    expect(html).not.toContain('permission-title')
   })
 
   it('renders tool name when present', () => {
@@ -1504,6 +1505,34 @@ describe('PermissionApproval renderer', () => {
     }, 'PermissionApproval')
     expect(html).toContain('permission-btn-reject')
     expect(html).toContain('Deny')
+  })
+
+  it('reuses the shared footer pill button classes (fbtn + success/danger)', () => {
+    const html = formatToolInput({
+      toolName: 'Bash',
+      options: [
+        { name: 'Allow Once', kind: 'allow_once', optionId: 'a1' },
+        { name: 'Deny', kind: 'reject_once', optionId: 'r1' },
+      ],
+    }, 'PermissionApproval')
+    // Allow button: fbtn + fbtn-success; Deny button: fbtn + fbtn-danger.
+    // Both keep .permission-btn so the click handler still matches.
+    expect(html).toContain('class="permission-btn fbtn permission-btn-allow fbtn-success"')
+    expect(html).toContain('class="permission-btn fbtn permission-btn-reject fbtn-danger"')
+  })
+
+  it('puts the File/Command label on its own line above the content', () => {
+    const html = formatToolInput({
+      toolName: 'Edit',
+      toolInput: JSON.stringify({ file_path: '/src/main.go', command: 'npm run build' }),
+      options: [],
+    }, 'PermissionApproval')
+    // The label must precede the content in its own block (label as a separate
+    // child of the column layout, not inline-left of the code).
+    const labelIdx = html.indexOf('permission-detail-label')
+    const codeIdx = html.indexOf('<code>')
+    expect(labelIdx).toBeGreaterThan(-1)
+    expect(codeIdx).toBeGreaterThan(labelIdx)
   })
 
   it('renders data-option-id and data-kind attributes on buttons', () => {

@@ -40,6 +40,41 @@ func TestExtractSummary(t *testing.T) {
 			want:     "",
 		},
 
+		// PermissionApproval special case
+		{
+			name:     "PermissionApproval command",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Bash",
+				"toolInput": `{"command":"rm -rf /tmp/cache"}`,
+			},
+			want: "rm -rf /tmp/cache",
+		},
+		{
+			name:     "PermissionApproval file_path basename",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Edit",
+				"toolInput": `{"file_path":"/home/user/project/main.go"}`,
+			},
+			want: "main.go",
+		},
+		{
+			name:     "PermissionApproval falls back to toolName",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Bash",
+				"toolInput": "not-json",
+			},
+			want: "Bash",
+		},
+		{
+			name:     "PermissionApproval no toolName",
+			toolName: "PermissionApproval",
+			input:    map[string]any{},
+			want:     "",
+		},
+
 		// Priority chain: description > file_path > command > ...
 		{
 			name:     "description takes priority",

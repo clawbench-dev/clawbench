@@ -70,6 +70,14 @@ func ExtractSummary(name string, input map[string]any) string {
 		return extractAskUserQuestionSummary(input)
 	}
 
+	// PermissionApproval input wraps the underlying tool request:
+	// { toolName: "Bash", toolInput: `{"command":"..."}`, options: [...] }.
+	// Summarize to the requested command / file / tool so the card strip shows
+	// what the agent wants to run instead of a junk fallback (e.g. permissionId).
+	if nameLower == "permissionapproval" {
+		return extractPermissionApprovalSummary(input)
+	}
+
 	// TaskUpdate: CodeBuddy's TaskUpdate input is {status, taskId} — it has no
 	// subject/description, so the generic chain below would fall through to the
 	// (deterministic, but opaque) sorted-string fallback. Format it explicitly
@@ -225,6 +233,29 @@ func extractAskUserQuestionSummary(input map[string]any) string {
 	}
 	if question, _ := first["question"].(string); question != "" {
 		return truncateStr(question)
+	}
+	return ""
+}
+
+// extractPermissionApprovalSummary summarizes a PermissionApproval request.
+// The wrapper input carries toolName (requesting tool, e.g. "Bash") and a JSON
+// toolInput string describing the intended action. Prefer the concrete
+// command / file path, falling back to the requesting tool name so the card
+// strip never shows a meaningless id.
+func extractPermissionApprovalSummary(input map[string]any) string {
+	if raw, _ := input["toolInput"].(string); raw != "" {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil && parsed != nil {
+			if v, _ := parsed["command"].(string); v != "" {
+				return truncateStr(v)
+			}
+			if v, _ := parsed["file_path"].(string); v != "" {
+				return truncateStr(baseName(v))
+			}
+		}
+	}
+	if v, _ := input["toolName"].(string); v != "" {
+		return truncateStr(v)
 	}
 	return ""
 }

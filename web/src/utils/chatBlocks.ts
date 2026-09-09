@@ -97,6 +97,22 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
     if (header) return header
     return question
   }
+  // PermissionApproval input wraps the underlying tool request:
+  // { toolName: 'Bash', toolInput: '{"command":"..."}', options: [...] }.
+  // Summarize to the requested command / file / tool so the card strip shows
+  // WHAT the agent wants to run instead of a junk fallback (permissionId etc).
+  if (name === 'permissionapproval') {
+    const raw = block.input.toolInput
+    if (typeof raw === 'string' && raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed.command === 'string' && parsed.command) return parsed.command
+        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return parsed.file_path
+      } catch { /* non-JSON — fall through */ }
+    }
+    if (typeof block.input.toolName === 'string' && block.input.toolName) return block.input.toolName
+    return ''
+  }
   // Mirror the Go ExtractSummary TaskUpdate special case (internal/ai/tool_meta.go):
   // TaskUpdate input is {status, taskId} with no subject/description, so derive a
   // deterministic "#<taskId> · <status>" label. Optional subject/description

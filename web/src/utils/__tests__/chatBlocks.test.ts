@@ -379,6 +379,43 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'in_progress', taskId: '3' } })).toBe('#3 · in_progress')
   })
 
+  it('PermissionApproval summarizes to the requested command', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: {
+        toolName: 'Bash',
+        toolInput: JSON.stringify({ command: 'rm -rf /tmp/cache' }),
+        options: [],
+      },
+    })).toBe('rm -rf /tmp/cache')
+  })
+
+  it('PermissionApproval summarizes to the requested file', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: {
+        toolName: 'Edit',
+        toolInput: JSON.stringify({ file_path: '/home/user/project/main.go' }),
+        options: [],
+      },
+    })).toBe('/home/user/project/main.go')
+  })
+
+  it('PermissionApproval falls back to the requesting tool name', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: { toolName: 'Bash', toolInput: 'not-json', options: [] },
+    })).toBe('Bash')
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: { toolName: 'Bash', options: [] },
+    })).toBe('Bash')
+  })
+
+  it('PermissionApproval returns empty when nothing to summarize', () => {
+    expect(toolCallSummary({ name: 'PermissionApproval', input: {} })).toBe('')
+  })
+
   it('shows TaskUpdate completed deterministically', () => {
     expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'completed', taskId: '14' } })).toBe('#14 · completed')
   })

@@ -1756,105 +1756,77 @@ function handleBodyInput(event) {
 .tool-detail-body .permission-approval-view {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   line-height: 1.5;
-}
-.tool-detail-body .permission-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.tool-detail-body .permission-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-.tool-detail-body .permission-title {
-  font-weight: 600;
-  color: #dc2626;
-}
-:root[data-theme-base="dark"] .tool-detail-body .permission-title {
-  color: #fca5a5;
 }
 .tool-detail-body .permission-tool-name {
   font-weight: 600;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
-  color: var(--text-primary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
 }
 .tool-detail-body .permission-tool-detail {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 .tool-detail-body .permission-detail-label {
+  align-self: flex-start;
   font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(239, 68, 68, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
   color: #dc2626;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   white-space: nowrap;
-  flex-shrink: 0;
   line-height: 1.5;
 }
 :root[data-theme-base="dark"] .tool-detail-body .permission-detail-label {
-  background: rgba(248, 113, 113, 0.12);
+  background: color-mix(in srgb, #f87171 14%, var(--bg-secondary));
   color: #fca5a5;
 }
 .tool-detail-body .permission-tool-detail code {
+  display: block;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
   font-size: 12px;
+  line-height: 1.5;
   color: var(--text-primary);
-  word-break: break-all;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 5px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .tool-detail-body .permission-options {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
-.tool-detail-body .permission-btn {
-  padding: 6px 14px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+/* Buttons reuse the shared footer pill language (.fbtn from modal-footer-btn.css
+   loaded by BottomSheet). Only the interaction-state keep-alive stays here. */
+.tool-detail-body .permission-options .permission-btn {
+  padding: 0 14px;
 }
-@media (hover: hover) {
-  .tool-detail-body .permission-btn:hover {
-    opacity: 0.85;
-  }
+.tool-detail-body .permission-options .fbtn:disabled {
+  opacity: 0.45;
 }
-.tool-detail-body .permission-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
+.tool-detail-body .permission-approval-view.permission-responded .permission-btn-allow {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
 }
-.tool-detail-body .permission-btn-allow {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.3);
-  color: #16a34a;
-}
-:root[data-theme-base="dark"] .tool-detail-body .permission-btn-allow {
-  background: rgba(74, 222, 128, 0.12);
-  border-color: rgba(74, 222, 128, 0.25);
-  color: #4ade80;
-}
-.tool-detail-body .permission-btn-reject {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.2);
-  color: #dc2626;
-}
-:root[data-theme-base="dark"] .tool-detail-body .permission-btn-reject {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: rgba(248, 113, 113, 0.2);
-  color: #fca5a5;
+.tool-detail-body .permission-approval-view.permission-responded .permission-btn-reject {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
 }
 
 /* Permission/ask question categories for overlay header */
@@ -1888,10 +1860,6 @@ function handleBodyInput(event) {
 :root[data-theme-base="dark"] .tool-detail-body .permission-result-denied {
   background: #991b1b;
   color: #fee2e2;
-}
-
-.tool-detail-body .permission-auto-approved .permission-header {
-  opacity: 0.85;
 }
 
 .tool-detail-body .permission-result-auto-approved {

@@ -744,21 +744,16 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
 
   html += '">'
 
-  // Header
-  html += '<div class="permission-header">'
-  if (isAutoApproved) {
-    html += `<span class="permission-icon">✅</span>`
-    html += `<span class="permission-title">${escapeHtml(gt('tool.permission.autoApprovedTitle'))}</span>`
-  } else {
-    html += `<span class="permission-icon">⚠️</span>`
-    html += `<span class="permission-title">${escapeHtml(gt('tool.permission.title'))}</span>`
-  }
-  html += '</div>'
-
-  // Tool description
+  // Tool that is requesting permission. The card title ("Permission Request")
+  // lives on the surrounding card header strip, not here — this body focuses
+  // on WHICH tool and WHAT it wants to do.
   if (toolName) {
     html += `<div class="permission-tool-name">${escapeHtml(toolName)}</div>`
   }
+
+  // Requested action details. Each label sits on its own line above the content
+  // so long/multi-line commands no longer force the left tag to stretch the
+  // whole card height.
   if (toolInput) {
     try {
       const parsed = JSON.parse(toolInput) as Record<string, unknown>
@@ -776,7 +771,9 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
     }
   }
 
-  // Option buttons / result
+  // Option buttons / result. Buttons reuse the shared footer pill language
+  // (.fbtn + fbtn-success / fbtn-danger); the .permission-btn class is kept so
+  // the click-action handler still matches and guards against double responses.
   if (hasRealResult) {
     // Already responded — show result badge instead of buttons
     if (isApproved) {
@@ -794,11 +791,11 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
       const label = str(opt.name)
       const kind = str(opt.kind)
       const optionId = str(opt.optionId)
-      let btnClass = 'permission-btn'
+      let btnClass = 'permission-btn fbtn'
       if (kind === 'allow_once' || kind === 'allow_always') {
-        btnClass += ' permission-btn-allow'
+        btnClass += ' permission-btn-allow fbtn-success'
       } else {
-        btnClass += ' permission-btn-reject'
+        btnClass += ' permission-btn-reject fbtn-danger'
       }
       html += `<button class="${btnClass}" data-option-id="${escapeHtml(String(optionId))}" data-kind="${escapeHtml(kind)}">${escapeHtml(label)}</button>`
     }
