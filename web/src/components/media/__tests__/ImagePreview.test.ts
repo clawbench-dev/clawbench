@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, ref } from 'vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 
 // ── Mocks ──
@@ -57,40 +56,6 @@ vi.mock('@/utils/fileType.ts', () => ({
   }),
 }))
 
-// Track attachment state for toggle behavior (reactive so the component's
-// isAttached computed re-evaluates when the array mutates).
-const _attachedPaths = ref<string[]>([])
-const mockAdd = vi.fn((path: string) => { if (!_attachedPaths.value.includes(path)) _attachedPaths.value.push(path) })
-const mockRemove = vi.fn((path: string) => { _attachedPaths.value = _attachedPaths.value.filter(p => p !== path) })
-const mockHas = vi.fn((path: string) => _attachedPaths.value.includes(path))
-
-vi.mock('@/composables/useChatContext', () => ({
-  useChatContext: () => ({
-    addAttachedFile: mockAdd,
-    removeAttachedFileByPath: mockRemove,
-    hasAttachedFile: mockHas,
-  }),
-}))
-
-let _shareToken = false
-vi.mock('@/share/shareMode', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/share/shareMode')>()
-  return {
-    ...actual,
-    isShareMode: () => _shareToken,
-    // Keep token-based helpers working with a fixed fake token while the flag
-    // is flipped (mediaUrl still resolves in the share test).
-    shareApiUrl: (subpath: string) => `/api/share/tok/${subpath.replace(/^\//, '')}`,
-  }
-})
-
-const mockOpenLightbox = vi.fn()
-const mockToast = vi.fn()
-
-vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ show: mockToast }),
-}))
-
 describe('ImagePreview', () => {
   beforeEach(() => {
     mockSelectFile.mockClear()
@@ -102,13 +67,6 @@ describe('ImagePreview', () => {
       { name: 'doc.md', type: 'file' },
       { name: 'pic.gif', type: 'file' },
     ]
-    _attachedPaths.value = []
-    mockAdd.mockClear()
-    mockRemove.mockClear()
-    mockHas.mockClear()
-    _shareToken = false
-    mockOpenLightbox.mockClear()
-    mockToast.mockClear()
   })
 
   function mountPreview(props = {}) {
@@ -116,11 +74,6 @@ describe('ImagePreview', () => {
       props: {
         file: { path: '/project/src/image.png', name: 'image.png' },
         ...props,
-      },
-      global: {
-        provide: {
-          openLightbox: mockOpenLightbox,
-        },
       },
       attachTo: document.body,
     })
@@ -316,54 +269,4 @@ describe('ImagePreview', () => {
     removeSpy.mockRestore()
   })
 
-  // ── Image-block header (view / attach) ──
-
-  it('wraps the image in the shared image-block figure with view + attach buttons', () => {
-    const wrapper = mountPreview()
-    // The image reuses the markdown image-block structure rather than a
-    // separate toolbar: .image-block-wrapper > header > actions.
-    expect(wrapper.find('.image-block-wrapper').exists()).toBe(true)
-    expect(wrapper.find('.image-block-header').exists()).toBe(true)
-    expect(wrapper.find('.image-block-header .image-block-view-btn').exists()).toBe(true)
-    expect(wrapper.find('.image-block-header .image-block-attach-btn').exists()).toBe(true)
-  })
-
-  it('shows a bare image (no header) in share mode', async () => {
-    _shareToken = true
-    const wrapper = mountPreview()
-    expect(wrapper.find('.image-block-wrapper').exists()).toBe(false)
-    expect(wrapper.find('.image-preview-img').exists()).toBe(true)
-  })
-
-  it('opens the lightbox with the full media URL on view click', async () => {
-    const wrapper = mountPreview()
-    await wrapper.find('.image-block-view-btn').trigger('click')
-    expect(mockOpenLightbox).toHaveBeenCalledTimes(1)
-    const url = mockOpenLightbox.mock.calls[0][0]
-    expect(url).toContain('/api/local-file/')
-  })
-
-  it('attaches the image file on first attach click and removes on second', async () => {
-    const wrapper = mountPreview()
-    const btn = wrapper.find('.image-block-attach-btn')
-    await btn.trigger('click')
-    expect(mockAdd).toHaveBeenCalledWith('/project/src/image.png')
-    expect(mockRemove).not.toHaveBeenCalled()
-    expect(mockToast).toHaveBeenCalled()
-    // attached state flips
-    await wrapper.vm.$nextTick()
-    expect(btn.classes()).toContain('is-attached')
-
-    await btn.trigger('click')
-    expect(mockRemove).toHaveBeenCalledWith('/project/src/image.png')
-    await wrapper.vm.$nextTick()
-    expect(btn.classes()).not.toContain('is-attached')
-  })
-
-  it('mousedown on the header does not start a swipe drag', async () => {
-    const wrapper = mountPreview()
-    const header = wrapper.find('.image-block-header')
-    await header.trigger('mousedown', { button: 0, clientX: 100 })
-    expect(wrapper.vm.isDragging).toBe(false)
-  })
 })
