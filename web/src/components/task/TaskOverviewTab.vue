@@ -108,7 +108,7 @@ const renderedPrompt = ref('')
 let promptRenderId = 0
 
 // Code link preview for annotated file paths in the prompt body.
-const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef })
+const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef, source: 'task' })
 
 function copyId() {
   if (taskId.value) {
@@ -204,17 +204,19 @@ function handlePromptClick(event: MouseEvent) {
     }
     return
   }
-  // Handle file-open buttons
-  const btn = target?.closest('.chat-file-open-btn')
-  if (btn) {
+  // Handle file-open buttons or directory path text
+  const btn = target?.closest('.chat-file-open-btn[data-file-path]')
+  const dirEl = target?.closest('.chat-file-path[data-file-path][data-path-type="dir"]')
+  const linkOrBtn = btn || dirEl
+  if (linkOrBtn) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = btn.getAttribute('data-file-path')
-    const lineStart = btn.getAttribute('data-line-start')
-    const lineEnd = btn.getAttribute('data-line-end')
+    const filePath = linkOrBtn.getAttribute('data-file-path')
+    const lineStart = linkOrBtn.getAttribute('data-line-start')
+    const lineEnd = linkOrBtn.getAttribute('data-line-end')
     if (filePath) {
-      openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+      openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
     }
     return
   }

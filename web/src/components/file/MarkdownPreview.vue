@@ -131,7 +131,7 @@ const { handleDblClick } = useDoubleClickCopy({
 
 const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
 const { isPC } = usePlatformDetect()
-const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef })
+const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef, source: 'file' })
 
 function handleClick(event: MouseEvent) {
     // Code block header buttons (copy/wrap)
@@ -166,17 +166,19 @@ function handleClick(event: MouseEvent) {
         }
         return
     }
-    // Check for file-open button click
-    const btn = target?.closest('.chat-file-open-btn')
-    if (btn) {
+    // Check for file-open button or directory path text click
+    const btn = target?.closest<HTMLElement>('.chat-file-open-btn[data-file-path]')
+    const dirEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path][data-path-type="dir"]')
+    const linkOrBtn = btn || dirEl
+    if (linkOrBtn) {
         event.preventDefault()
         event.stopPropagation()
-        const filePath = btn.getAttribute('data-file-path')
-        const lineStart = btn.getAttribute('data-line-start')
-        const lineEnd = btn.getAttribute('data-line-end')
+        const filePath = linkOrBtn.getAttribute('data-file-path')
+        const lineStart = linkOrBtn.getAttribute('data-line-start')
+        const lineEnd = linkOrBtn.getAttribute('data-line-end')
         if (filePath) {
             codeLinkPreview.close()
-            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
+            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'file')
         }
         return
     }
@@ -197,6 +199,7 @@ function handleClick(event: MouseEvent) {
         }
     }
     handleDblClick(event, (href, lineStart, lineEnd) => {
+        event.stopPropagation()
         const anchor = target?.closest<HTMLAnchorElement>('a[href]')
         const annotatedPath = anchor?.getAttribute('data-file-path')
         const currentDir = props.file?.path ? dirName(props.file.path) : ''
@@ -205,7 +208,7 @@ function handleClick(event: MouseEvent) {
         const resolvedPath = annotatedPath
             || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
         codeLinkPreview.close()
-        openFilePath(resolvedPath, lineStart, lineEnd)
+        openFilePath(resolvedPath, lineStart, lineEnd, 'file')
     })
 }
 

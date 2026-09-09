@@ -17,6 +17,8 @@
             :toc-file="tocFile"
             :pdf-outline="pdfOutline"
             :docked="docked"
+            :can-navigate-back="canNavigateBack"
+            :back-label="backLabel"
             @delete="emit('delete', $event)"
             @show-details="emit('showDetails')"
             @open-git-history="emit('openGitHistory')"
@@ -31,6 +33,7 @@
             @overlay-close="emit('overlayClose')"
             @navigate-back="emit('navigateBack')"
             @navigate-forward="emit('navigateForward')"
+            @capture-scroll="emit('captureScroll', $event)"
             @share-external="emit('shareExternal')"
             @share-link="emit('shareLink')"
             @set-as-background="(path) => emit('setAsBackground', path)"
@@ -101,6 +104,8 @@ const props = defineProps({
   fileHistoryOpen: Boolean,
   tocFile: Object,
   pdfOutline: Object,
+  canNavigateBack: Boolean,
+  backLabel: String,
 })
 
 /** Wide-screen inline TOC dock vs narrow-screen bottom drawer. */
@@ -112,6 +117,7 @@ const emit = defineEmits([
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
   'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
   'setAsBackground',
+  'captureScroll',
 ])
 
 const contentRef = ref(null)

@@ -516,3 +516,60 @@ describe('selectFile Windows absolute path detection', () => {
     expect(url).toContain('/api/file?path=')
   })
 })
+
+describe('navigateToDir and navigateToParentDir', () => {
+  beforeEach(() => {
+    vi.mocked(apiGet).mockReset()
+    store.state.currentDir = ''
+    store.state.dirEntries = []
+    store.state.dirLoading = false
+    store.state.projectRoot = '/home/user/project'
+    vi.mocked(apiGet).mockResolvedValue({
+      items: [{ name: 'sub', isDir: true, path: 'sub', type: 'dir', modified: '', size: 0, supported: true }],
+    })
+  })
+
+  it('navigateToDir returns true and sets currentDir on success', async () => {
+    const ok = await store.navigateToDir('src/components')
+    expect(ok).toBe(true)
+    expect(store.state.currentDir).toBe('src/components')
+    expect(store.state.dirEntries).toHaveLength(1)
+  })
+
+  it('navigateToDir strips trailing slashes', async () => {
+    const ok = await store.navigateToDir('src/components///')
+    expect(ok).toBe(true)
+    expect(store.state.currentDir).toBe('src/components')
+  })
+
+  it('navigateToDir converts absolute projectRoot path to root-relative empty string', async () => {
+    const ok = await store.navigateToDir('/home/user/project/')
+    expect(ok).toBe(true)
+    expect(store.state.currentDir).toBe('')
+  })
+
+  it('navigateToDir returns false when dirLoading is active', async () => {
+    store.state.dirLoading = true
+    const ok = await store.navigateToDir('src')
+    expect(ok).toBe(false)
+  })
+
+  it('navigateToDir returns false on fetch failure', async () => {
+    vi.mocked(apiGet).mockRejectedValueOnce(new Error('fetch failed'))
+    const ok = await store.navigateToDir('invalid/dir')
+    expect(ok).toBe(false)
+  })
+
+  it('navigateToParentDir navigates to parent directory and returns true', async () => {
+    store.state.currentDir = 'src/components'
+    const ok = await store.navigateToParentDir()
+    expect(ok).toBe(true)
+    expect(store.state.currentDir).toBe('src')
+  })
+
+  it('navigateToParentDir returns false when already at project root', async () => {
+    store.state.currentDir = ''
+    const ok = await store.navigateToParentDir()
+    expect(ok).toBe(false)
+  })
+})

@@ -1,5 +1,5 @@
 <template>
-  <div class="git-breadcrumb">
+  <div class="git-breadcrumb" data-horizontal-scroll="true">
     <!-- Root crumb: 提交列表 or 文件历史 -->
     <span
       class="git-crumb"

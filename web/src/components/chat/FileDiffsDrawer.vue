@@ -203,8 +203,8 @@ function handleBodyClick(event) {
   // Table row click — open row-form modal
   if (handleTableRowClick(event)) return
 
-  // File-open buttons inside the diff headers
-  const fileBtn = event.target.closest('.chat-file-open-btn')
+  // File-open buttons or path inside the diff headers
+  const fileBtn = event.target.closest('.chat-file-open-btn, .chat-file-path')
   if (fileBtn) {
     const path = fileBtn.getAttribute('data-file-path')
     const lineStart = fileBtn.getAttribute('data-line-start')

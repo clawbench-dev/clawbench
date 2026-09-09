@@ -18,6 +18,7 @@ import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
+import type { NavigationSurface } from '@/composables/useNavigationContext'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import {
   sliceCodeForPreview,
@@ -55,6 +56,9 @@ export function hasLineRange(target: PreviewTarget | null): boolean {
 
 export interface UseCodeLinkPreviewOptions {
   containerRef?: Ref<HTMLElement | null>
+  /** Surface the preview was opened from — threaded into the full-screen open
+   *  so the navigation origin records the right return target. */
+  source?: NavigationSurface
 }
 
 // Only one preview surface should be visible across chat/file panes. Keep the
@@ -395,7 +399,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const openFull = () => {
     if (!target.value) return
     const { filePath, lineStart, lineEnd } = target.value
-    openFilePath(filePath, lineStart, lineEnd)
+    openFilePath(filePath, lineStart, lineEnd, options.source)
     close()
   }
 

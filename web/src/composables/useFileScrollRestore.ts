@@ -96,6 +96,7 @@ const POLL_MS = 50
 const MAX_PX_ATTEMPTS = 100 // 100 * 50ms = 5s
 const MAX_ANCHOR_ATTEMPTS = 60 // 60 * 50ms = 3s
 const CANCEL_EVENT = 'cancel-scroll-restore'
+const RESTORE_EVENT = 'restore-file-scroll'
 
 /** CSS.escape with a fallback for environments without it (jsdom in tests). */
 function escapeCssIdentifier(id: string): string {
@@ -339,6 +340,21 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         cancelPendingRestore()
     }
 
+    function handleRestoreFileScroll(e: Event): void {
+        const ce = e as CustomEvent<{ scrollTop?: number }>
+        if (typeof ce?.detail?.scrollTop === 'number') {
+            const target = ce.detail.scrollTop
+            const el = currentScrollEl()
+            if (el && isScrollable(el) && pxCanApply(el, target)) {
+                el.scrollTop = target
+            } else {
+                pendingPx = { path: currentPath || '', scrollTop: target, attempts: 0 }
+                startPoll()
+                kick()
+            }
+        }
+    }
+
     function cancelPendingRestore(): void {
         pendingPx = null
     }
@@ -347,6 +363,7 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
 
     function start(): void {
         window.addEventListener(CANCEL_EVENT, handleCancelScrollRestore)
+        window.addEventListener(RESTORE_EVENT, handleRestoreFileScroll)
     }
 
     function dispose(): void {
@@ -359,6 +376,7 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
         detachScrollListener()
         stopPoll()
         window.removeEventListener(CANCEL_EVENT, handleCancelScrollRestore)
+        window.removeEventListener(RESTORE_EVENT, handleRestoreFileScroll)
     }
 
     function onFileWillChange(): void {

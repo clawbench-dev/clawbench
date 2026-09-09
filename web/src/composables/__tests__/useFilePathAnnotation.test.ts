@@ -1679,7 +1679,7 @@ describe('openFilePath', () => {
     vi.restoreAllMocks()
   })
 
-  it('navigates to directory when path is a directory', async () => {
+  it('dispatches open-directory-from-context with the click source carried through', async () => {
     const mockFetch = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1687,12 +1687,19 @@ describe('openFilePath', () => {
     const origDispatch = window.dispatchEvent
     window.dispatchEvent = mockDispatchEvent
 
-    await openFilePath('src')
+    // A directory clicked from a chat message — the source must survive so the
+    // file manager can offer a "return to conversation" target even on wide
+    // screens where the active left panel is not the chat.
+    await openFilePath('src', undefined, undefined, 'chat')
 
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(mockFetch.mock.calls[0][0]).toContain('/api/dir?path=')
-    expect(mockNavigateToDir).toHaveBeenCalledWith('src')
-    expect(mockDispatchEvent).toHaveBeenCalled()
+    expect(mockDispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'open-directory-from-context',
+        detail: { path: 'src', source: 'chat' },
+      })
+    )
 
     window.dispatchEvent = origDispatch
     vi.unstubAllGlobals()
@@ -1822,6 +1829,28 @@ describe('openFilePath', () => {
     vi.unstubAllGlobals()
   })
 
+  it('dispatches open-file-overlay with custom source parameter', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) })
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go', 15, 20, 'file')
+
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls).toHaveLength(1)
+    expect(overlayCalls[0][0].detail).toEqual({ path: 'src/main.go', lineStart: 15, lineEnd: 20, source: 'file' })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
   it('navigates to directory when /api/dir fails but batch-exists returns dir', async () => {
     // First fetch: /api/dir check → not ok (e.g. trailing slash issue)
     // Second fetch: /api/file/batch-exists → type is "dir"
@@ -1837,13 +1866,12 @@ describe('openFilePath', () => {
 
     await openFilePath('internal/rag/')
 
-    // Should navigate to directory, NOT call selectFile
-    expect(mockNavigateToDir).toHaveBeenCalledWith('internal/rag/')
     expect(mockSelectFile).not.toHaveBeenCalled()
-    // Should close file overlay and open file manager
+    // Should dispatch open-directory-from-context, NOT close-file-overlay or open-file-manager
     const eventTypes = mockDispatchEvent.mock.calls.map(call => call[0].type)
-    expect(eventTypes).toContain('close-file-overlay')
-    expect(eventTypes).toContain('open-file-manager')
+    expect(eventTypes).toContain('open-directory-from-context')
+    expect(eventTypes).not.toContain('close-file-overlay')
+    expect(eventTypes).not.toContain('open-file-manager')
 
     window.dispatchEvent = origDispatch
     vi.unstubAllGlobals()
@@ -1937,6 +1965,14 @@ describe('openFilePath', () => {
     expect(eventTypes).toContain('close-file-overlay')
     expect(eventTypes).toContain('open-file-manager')
     expect(eventTypes).toContain('highlight-file-item')
+
+    // Reveal-in-manager must dismiss the overlay WITHOUT going through the back
+    // state machine: otherwise an active jump origin resolves to the `origin`
+    // step and gets consumed before the file manager is shown.
+    const closeEvent = mockDispatchEvent.mock.calls
+      .map((call: any[]) => call[0])
+      .find((ev: any) => ev.type === 'close-file-overlay')
+    expect(closeEvent.detail).toEqual({ force: true })
 
     window.dispatchEvent = origDispatch
     vi.useRealTimers()

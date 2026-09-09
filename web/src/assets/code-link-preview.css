@@ -610,21 +610,29 @@ body.code-preview-dragging * {
 .code-preview-sheet-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 6px 10px;
   /* Natural content width; when wider than the footer row it overflows and
-     the .bs-footer above scrolls horizontally. flex: 0 0 auto prevents the
-     row from being shrunk by the flex layout. */
-  width: max-content;
+     the .bs-footer above scrolls horizontally. */
+  width: 100%;
   min-width: 100%;
-  flex: 0 0 auto;
   box-sizing: border-box;
 }
 
 /* Footer buttons now use the shared `.fbtn` pill styles (modal-footer-btn.css,
    loaded by BottomSheet). These rules keep only the CodeLinkPreview-specific
    states/variants that the shared classes don't cover. */
+
+/* Action buttons (open full / quote) flex to fill the remaining width for
+   a balanced layout, no middle void, and larger touch targets on mobile. */
+.code-preview-footer-btn.action-btn {
+  flex: 1;
+  min-width: max-content;
+}
+
+.code-preview-footer-btn.primary-btn {
+  flex: 1.15;
+}
 
 /* Active state (e.g. search bar open) — tint the neutral pill. */
 .code-preview-footer-btn.is-active {

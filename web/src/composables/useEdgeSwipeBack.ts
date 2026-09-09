@@ -8,7 +8,7 @@
  * events that start within the edge zones (left 20px and right 20px).
  */
 import { onMounted, onBeforeUnmount } from 'vue'
-import { registerBackHandler, type BackHandler } from './useBackHandler'
+import { registerBackHandler, BACK_PRESS_EVENT, type BackHandler } from './useBackHandler'
 import { useAppMode } from './useAppMode'
 
 const EDGE_ZONE = 20 // px from screen edge to detect edge swipes
@@ -25,6 +25,19 @@ const MAX_VERTICAL_RATIO = 0.75 // horizontal must dominate over vertical
  *   that start within the edge zones and would otherwise cause the
  *   system to handle the gesture (exit app or go back in WebView history)
  */
+/**
+ * Test whether an event target is an interactive or horizontally scrollable element
+ * that must not trigger edge swipe back gestures.
+ */
+export function isExcludedFromEdgeSwipe(target: EventTarget | null): boolean {
+    if (!target || !(target instanceof Element)) return false
+    if (target.closest('input, textarea, select')) return true
+    if (target.closest('.cm-content, .cm-editor, .cm-scroller')) return true
+    if (target.closest('[data-horizontal-scroll="true"]')) return true
+    if (target.closest('.bs-handle, .bs-header, .drag-handle, .qs-drag-handle, [data-drag-handle="true"]')) return true
+    return false
+}
+
 export function useEdgeSwipeBack() {
     let touchStartX = 0
     let touchStartY = 0
@@ -38,6 +51,7 @@ export function useEdgeSwipeBack() {
 
     function onTouchStart(e: TouchEvent) {
         if (e.touches.length !== 1) return
+        if (isExcludedFromEdgeSwipe(e.target)) return
         const touch = e.touches[0]
         touchStartX = touch.clientX
         touchStartY = touch.clientY
@@ -75,7 +89,11 @@ export function useEdgeSwipeBack() {
                     // dispatches this event via evaluateJavascript, and dispatching
                     // from JS too would cause double-dispatch on a single swipe.
                     if (!isAppMode.value) {
-                        window.dispatchEvent(new CustomEvent('clawbench-back-press'))
+                        // Tag the reason so the state machine can tell a web
+                        // edge swipe from the Android hardware/predictive back.
+                        window.dispatchEvent(new CustomEvent(BACK_PRESS_EVENT, {
+                            detail: { reason: 'edge-swipe' },
+                        }))
                     }
                 }
             }

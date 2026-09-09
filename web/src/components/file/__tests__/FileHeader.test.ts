@@ -693,4 +693,53 @@ describe('FileHeader', () => {
       expect(emitted![0]).toEqual(['/tmp/photo.png'])
     })
   })
+
+  describe('wide-screen back navigation', () => {
+    beforeEach(() => {
+      mockIsWideScreen.value = true
+    })
+
+    it('renders the top-left back button with backLabel when canNavigateBack is true', () => {
+      const wrapper = mountHeader({ canNavigateBack: true, backLabel: 'Back to Chat' })
+      const btn = wrapper.find('.file-header-back-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('title')).toBe('Back to Chat')
+      expect(btn.attributes('aria-label')).toBe('Back to Chat')
+    })
+
+    it('falls back to the generic back label for in-file history back', () => {
+      const wrapper = mountHeader({ canNavigateBack: false, canGoBackFile: true })
+      const btn = wrapper.find('.file-header-back-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('title')).toBe('Back')
+    })
+
+    it('emits navigateBack when the back button is clicked', async () => {
+      const wrapper = mountHeader({ canNavigateBack: true })
+      await wrapper.get('.file-header-back-btn').trigger('click')
+      expect(wrapper.emitted('navigateBack')).toHaveLength(1)
+    })
+
+    it('renders the forward button only when in-file history can go forward', async () => {
+      const wrapper = mountHeader({ canNavigateBack: true, canGoForwardFile: true })
+      const buttons = wrapper.findAll('.file-header-nav .file-header-btn')
+      expect(buttons).toHaveLength(2)
+      expect(buttons[0].find('svg.lucide-arrow-left').exists()).toBe(true)
+      expect(buttons[1].find('svg.lucide-arrow-right').exists()).toBe(true)
+      await buttons[1].trigger('click')
+      expect(wrapper.emitted('navigateForward')).toHaveLength(1)
+    })
+
+    it('hides the whole nav cluster when no back/forward is possible', () => {
+      const wrapper = mountHeader({ canNavigateBack: false })
+      expect(wrapper.find('.file-header-nav').exists()).toBe(false)
+    })
+
+    it('hides the nav cluster on narrow (touch) layouts, which use the floating bar', () => {
+      mockIsWideScreen.value = false
+      const wrapper = mountHeader({ canNavigateBack: true })
+      expect(wrapper.find('.file-header-nav').exists()).toBe(false)
+      expect(wrapper.find('.file-header-back-btn').exists()).toBe(false)
+    })
+  })
 })

@@ -17,6 +17,13 @@
  * (which on Android would exit the app).
  */
 
+/**
+ * Event the platform (Android `onBackPressed`) and the web edge-swipe gesture
+ * dispatch to ask the app to go back. The handler must set
+ * `window.__clawbenchBackHandled` synchronously — see useAndroidBackPress.
+ */
+export const BACK_PRESS_EVENT = 'clawbench-back-press'
+
 export type BackHandler = {
     /** Unique ID for the handler (e.g., 'file-overlay', 'browse', 'settings') */
     id: string
@@ -63,8 +70,9 @@ export function registerBackHandler(handler: BackHandler): () => void {
  * Iterates handlers by priority (highest first). Among handlers with
  * the same priority, the most recently registered one wins.
  */
-export function handleBackNavigation(): boolean {
+export function handleBackNavigation(minPriority = 0): boolean {
     const sorted = handlers
+        .filter(h => h.priority >= minPriority)
         .map((h, idx) => ({ h, idx }))
         .sort((a, b) => b.h.priority - a.h.priority || b.idx - a.idx)
 
@@ -78,10 +86,20 @@ export function handleBackNavigation(): boolean {
 }
 
 /**
- * Check if any registered handler can navigate back.
+ * Check if any registered handler at or above minPriority can navigate back.
  */
-export function canNavigateBack(): boolean {
-    return handlers.some(h => h.canGoBack())
+export function canNavigateBack(minPriority = 0): boolean {
+    return handlers.some(h => h.priority >= minPriority && h.canGoBack())
+}
+
+/** Check if any overlay-tier handler (priority >= 1000) can navigate back */
+export function canNavigateBackOverlay(): boolean {
+    return canNavigateBack(PRIORITY_OVERLAY)
+}
+
+/** Attempt to handle back navigation for overlay-tier handlers */
+export function handleBackNavigationOverlay(): boolean {
+    return handleBackNavigation(PRIORITY_OVERLAY)
 }
 
 // --- Exit confirmation (double-back-to-exit) ---
