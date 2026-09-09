@@ -49,6 +49,49 @@ export function buildBarOption(categories: string[], values: number[], metric: U
   // Cap the visible rows and enable inside scrolling once the list is long.
   const many = categories.length > 8
   const narrow = isNarrowScreen()
+
+  // Mobile layout: the category axis (left column, the "which bar is which"
+  // labels — for usage this is the model/agent group) takes precious width and
+  // its truncated labels are hard to read. Instead each category becomes its
+  // own coloured bar series and the categories are listed in the bottom legend
+  // (colour chip → category). Exact numbers stay in the per-bar labels. This
+  // only kicks in when there are few enough rows that legend colours stay
+  // distinguishable; desktop and long lists keep the labelled category axis.
+  if (narrow && !many && categories.length > 1) {
+    return {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
+      legend: { type: 'scroll', bottom: 0, textStyle: { color: p.textSecondary, fontSize: 10 }, data: categories },
+      grid: { left: 4, right: 20, top: 10, bottom: 28, containLabel: true },
+      xAxis: {
+        type: 'value',
+        show: false,
+        splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
+      },
+      yAxis: {
+        type: 'category',
+        data: categories,
+        show: false,
+      },
+      color: SERIES_COLORS,
+      series: categories.map((cat, i) => ({
+        type: 'bar' as const,
+        name: cat,
+        // One value at this category's row; null everywhere else so each bar
+        // series paints exactly one horizontal row.
+        data: categories.map((_, j) => (j === i ? values[i] : null)),
+        barMaxWidth: 22,
+        itemStyle: { borderRadius: [0, 3, 3, 0] },
+        label: {
+          show: true,
+          position: 'right',
+          color: p.textSecondary,
+          fontSize: 10,
+          formatter: (pp: unknown) => formatMetricValue(metric, (pp as { value: number }).value ?? 0),
+        },
+      })),
+    }
+  }
+
   const opt: Record<string, unknown> = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
     grid: { left: 8, right: narrow ? 4 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },

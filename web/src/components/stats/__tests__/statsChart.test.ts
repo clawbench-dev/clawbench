@@ -24,22 +24,51 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(isNarrowScreen()).toBe(false)
   })
 
-  it('bar: value axis removed on narrow, shown on desktop', () => {
+  it('bar: mobile moves category axis into legend, desktop keeps axes', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
     setInnerWidth(800)
-    const narrow = buildBarOption(cats, vals, 'total') as { xAxis: { show?: boolean } }
-    // Mobile: the value axis (ticks + grid) is switched off to give the bars
-    // full width; exact numbers stay in the per-bar labels and tooltip.
-    expect(narrow.xAxis.show).toBe(false)
+    const narrow = buildBarOption(cats, vals, 'total') as {
+      legend?: { data?: string[] }
+      xAxis: { show?: boolean }
+      yAxis: { show?: boolean }
+      series: { name: string; data: (number | null)[] }[]
+    }
+    // Mobile: one coloured series per category + bottom legend carrying the
+    // category names; the category (left) axis is hidden so bars get full width.
+    expect(narrow.series).toHaveLength(2)
+    expect(narrow.series.map(s => s.name)).toEqual(cats)
+    expect(narrow.yAxis.show).toBe(false)
+    // Each series paints exactly one row (its own value, null elsewhere).
+    expect(narrow.series[0].data).toEqual([5, null])
+    expect(narrow.series[1].data).toEqual([null, 3])
+    expect(narrow.legend?.data).toEqual(cats)
+
     setInnerWidth(1440)
     const wide = buildBarOption(cats, vals, 'total') as {
       xAxis: { show?: boolean }
       yAxis: { data: string[] }
+      series: { data: number[] }[]
     }
+    // Desktop: single-series bar with the value axis as ruler.
     expect(wide.xAxis.show).toBe(true)
-    // Category labels (which bar is which) are always kept.
     expect(wide.yAxis.data).toEqual(cats)
+    expect(wide.series).toHaveLength(1)
+  })
+
+  it('bar: mobile keeps the labelled category axis when rows exceed legend capacity', () => {
+    const manyCats = Array.from({ length: 12 }, (_, i) => `m${i}`)
+    const vals = manyCats.map((_, i) => i)
+    setInnerWidth(800)
+    const narrow = buildBarOption(manyCats, vals, 'total') as {
+      xAxis: { show?: boolean }
+      yAxis: { show?: boolean; data: string[] }
+      series: { data: number[] }[]
+    }
+    // Too many categories for colour legend → stay on the labelled single bar.
+    expect(narrow.series).toHaveLength(1)
+    expect(narrow.yAxis.data).toEqual(manyCats)
+    expect(narrow.xAxis.show).toBe(false)
   })
 
   it('trend: value-axis ticks hidden on narrow, dates kept with hideOverlap', () => {
