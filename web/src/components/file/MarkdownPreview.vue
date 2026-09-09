@@ -49,6 +49,7 @@ import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCo
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
+import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -177,6 +178,10 @@ function handleClick(event: MouseEvent) {
 
     // Touch mermaid range-reference badge (same rationale).
     if (handleMermaidAttachClick(event, mermaidAttachActions)) return
+
+    // Code/table header attach-to-chat buttons (md line range). Runs before the
+    // copy/wrap header handlers so the paperclip never reaches them.
+    if (handleBlockAttachClick(event, mermaidAttachActions)) return
 
     // Code block header buttons (copy/wrap)
     if (handleCodeBlockClick(event)) return

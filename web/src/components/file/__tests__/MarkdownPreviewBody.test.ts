@@ -240,4 +240,31 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(attachedFiles.value.some(f => f.startLine === 5)).toBe(false)
     expect(attachedFiles.value.some(f => f.path === 'docs/guide.md' && f.startLine === undefined)).toBe(true)
   })
+
+  it('attaches a code block md line range when its header attach button is tapped', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<div class="markdown-content"><div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-header-actions"><button class="code-block-attach-btn" data-action="attach"></button></span></div><pre data-source-line="9" data-source-end="12"><code>const a=1</code></pre></div></div>',
+    })
+    const btn = wrapper.find('.code-block-attach-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    const entry = attachedFiles.value.find(f => f.startLine === 9)
+    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 9, endLine: 12 })
+    // Tapping again removes only that range.
+    await btn.trigger('click')
+    expect(attachedFiles.value.some(f => f.startLine === 9)).toBe(false)
+  })
+
+  it('attaches a table md line range when its header attach button is tapped', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<div class="markdown-content"><div class="table-block-wrapper"><div class="table-block-header"><span class="table-block-header-actions"><button class="table-block-attach-btn" data-action="attach"></button></span></div><div class="table-wrap"><table data-source-line="15" data-source-end="18"><tr><td>1</td></tr></table></div></div></div>',
+    })
+    const btn = wrapper.find('.table-block-attach-btn')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    const entry = attachedFiles.value.find(f => f.startLine === 15)
+    expect(entry).toEqual({ path: 'docs/guide.md', isDir: false, startLine: 15, endLine: 18 })
+    await btn.trigger('click')
+    expect(attachedFiles.value.some(f => f.startLine === 15)).toBe(false)
+  })
 })

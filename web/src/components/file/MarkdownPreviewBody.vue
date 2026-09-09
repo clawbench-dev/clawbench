@@ -110,6 +110,7 @@ import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-nex
 import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
+import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -196,6 +197,7 @@ const mermaidAttachActions: MermaidAttachActions = {
 function handleBodyClick(e: MouseEvent) {
   handleMdImageAttachClick(e, mdImageAttachActions)
   handleMermaidAttachClick(e, mermaidAttachActions)
+  handleBlockAttachClick(e, mermaidAttachActions)
 }
 
 // ── Mermaid ────────────────────────────────────────────────────────────────

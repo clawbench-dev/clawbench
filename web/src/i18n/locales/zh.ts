@@ -461,6 +461,8 @@ export default {
       removeFromChat: '取消附件',
       attachImageToChat: '把图片添加到聊天',
       attachDiagramToChat: '把图表添加到聊天',
+      attachCodeToChat: '把代码块添加到聊天',
+      attachTableToChat: '把表格添加到聊天',
     },
     quickSend: {
       title: '快捷发送消息',

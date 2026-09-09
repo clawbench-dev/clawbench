@@ -56,7 +56,8 @@
 
 /* ─── Header buttons: copy + wrap toggle ─── */
 .code-block-copy-btn,
-.code-block-wrap-btn {
+.code-block-wrap-btn,
+.code-block-attach-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -75,7 +76,8 @@
 }
 
 .code-block-copy-btn:hover,
-.code-block-wrap-btn:hover {
+.code-block-wrap-btn:hover,
+.code-block-attach-btn:hover {
     opacity: 1;
     color: var(--text-secondary);
     background: var(--bg-tertiary);
@@ -190,7 +192,8 @@
 
 /* ─── Header buttons: copy + wrap toggle ─── */
 .table-block-copy-btn,
-.table-block-wrap-btn {
+.table-block-wrap-btn,
+.table-block-attach-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -209,14 +212,16 @@
 }
 
 .table-block-copy-btn:hover,
-.table-block-wrap-btn:hover {
+.table-block-wrap-btn:hover,
+.table-block-attach-btn:hover {
     opacity: 1;
     color: var(--text-secondary);
     background: var(--bg-tertiary);
 }
 
 .table-block-copy-btn:active,
-.table-block-wrap-btn:active {
+.table-block-wrap-btn:active,
+.table-block-attach-btn:active {
     background: var(--border-color);
 }
 
@@ -348,3 +353,26 @@
     overflow-wrap: normal !important;
 }
 
+
+/* ─── Attach-to-chat button: file-preview only ───
+   The header annotator runs for chat too, but a code/table block in a chat
+   message has no markdown file to reference. Hide the paperclip everywhere by
+   default and reveal it only inside a file-preview .markdown-body container
+   (which also carries the md data-file-path the resolver requires). */
+.code-block-attach-btn,
+.table-block-attach-btn {
+    display: none;
+}
+
+.markdown-body .code-block-header .code-block-attach-btn,
+.markdown-body .table-block-header .table-block-attach-btn {
+    display: inline-flex;
+}
+
+/* Paperclip glyph inside the header attach button (the shared SVG carries no
+   explicit width/height — size it like the copy/wrap icons). */
+.code-block-attach-btn svg,
+.table-block-attach-btn svg {
+    width: 14px;
+    height: 14px;
+}

@@ -4,6 +4,7 @@ import { appLog } from '@/utils/appLog'
 import { isDarkTheme } from './themeMeta'
 import { gt } from '@/composables/useLocale'
 import { isShareMode } from '@/share/shareMode'
+import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -114,9 +115,6 @@ async function ensureInit(): Promise<void> {
 function mermaidErrorHtml(errorMessage: string): string {
     return `<pre class="mermaid-error-pre">Mermaid Error: ${errorMessage}</pre><button class="mermaid-retry-btn" type="button" aria-label="Retry rendering diagram">Retry</button>`
 }
-
-/** Minimal paperclip glyph for the mermaid attach-to-chat badge (no font deps). */
-const ATTACH_BADGE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
 
 /**
  * Arm the touch "attach to chat" badge on a rendered diagram.

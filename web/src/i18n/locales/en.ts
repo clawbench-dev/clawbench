@@ -461,6 +461,8 @@ export default {
       removeFromChat: 'Remove attachment',
       attachImageToChat: 'Add image to chat',
       attachDiagramToChat: 'Add diagram to chat',
+      attachCodeToChat: 'Add code block to chat',
+      attachTableToChat: 'Add table to chat',
     },
     quickSend: {
       title: 'Quick Send Message',

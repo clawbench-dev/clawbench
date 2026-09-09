@@ -1,6 +1,5 @@
 import { marked, highlightCode } from '@/utils/globals.ts'
 import type { Token, Tokens } from 'marked'
-import { addTokenPositions } from 'marked-token-position'
 import { slugify } from '@/utils/toc.ts'
 import { escapeHtml } from '@/utils/html.ts'
 
@@ -17,33 +16,115 @@ export function resetHeadingIds(): void {
     headingIdCounts = {}
 }
 
-/** Position meta attached by marked-token-position. Line numbers are 0-based. */
+/** Position meta attached by the local source-line annotator. Line numbers are 0-based. */
 interface TokenPositionMeta {
-    position?: { start?: { line?: number } }
+    position?: {
+        /** Start position of every line spanned by the token (unused; kept for shape parity). */
+        lines?: unknown[]
+        /** Position at the beginning of the token. */
+        start?: { offset?: number; line?: number; column?: number }
+        /** Position at the end of the token (0-based line of the last row). */
+        end?: { offset?: number; line?: number; column?: number }
+    }
 }
 
 /**
- * Read the 1-based source line from a token annotated by marked-token-position
- * (the renderMarkdown lexer → addTokenPositions pipeline). Returns '' when the
- * token has no position (callers using the plain marked.parse path) so output
- * stays byte-identical to the default renderer in that case.
+ * Read the 1-based source line from a token annotated by our structural
+ * annotator (the renderMarkdown lexer → annotateSourceLines pipeline). Returns
+ * '' when the token has no position (callers using the plain marked.parse
+ * path) so output stays byte-identical to the default renderer in that case.
  */
 function sourceLineAttr(token: unknown): string {
     const line = (token as TokenPositionMeta | null)?.position?.start?.line
     return typeof line === 'number' && line >= 0 ? ` data-source-line="${line + 1}"` : ''
 }
 
+/**
+ * Emit both the start and the inclusive end source line of a block token
+ * (1-based). End is derived from the annotator's end position, which spans the
+ * block's raw source including any closing fence — so a code fence / table's
+ * last row is covered exactly. Falls back to start-only when no end is known.
+ */
+function sourceRangeAttr(token: unknown): string {
+    const base = sourceLineAttr(token)
+    if (!base) return ''
+    const end = (token as TokenPositionMeta | null)?.position?.end?.line
+    return typeof end === 'number' && end >= 0 ? `${base} data-source-end="${end + 1}"` : base
+}
+
+/**
+ * Count newlines in a string (position advancement primitive). A token's raw
+ * always contains exactly the newlines its source span covered, even when
+ * inline content was normalized (e.g. table cells dropping `\|` escape
+ * backslashes, list items expanding tabs to spaces) — so line numbers stay
+ * exact regardless of character-level rewrites.
+ */
+function countNewlines(s: string): number {
+    let n = 0
+    for (let i = 0; i < s.length; i++) if (s[i] === '\n') n++
+    return n
+}
+
 /** Inner value of a marked token (after the v18 single-object convention). */
 type TokVal = Record<string, unknown>
 
 /**
+ * Structural source-line annotator (replaces marked-token-position).
+ *
+ * marked-token-position locates each token by verbatim-searching its raw text
+ * in the source, and throws "Cannot find … in …" whenever marked normalizes a
+ * token's raw (escaped `\|` → `|` inside table cells, tab → spaces inside list
+ * items). That exception escapes marked.parse() and blanks the whole render.
+ *
+ * The only consumers of these positions are the block renderers emitting
+ * data-source-line (scroll-to-source, TOC/quote linking) — a 1-based line
+ * number computed from the row count. So instead of matching content, we walk
+ * the block token tree and advance a running line counter by the newlines in
+ * each token's raw. Rendered/text normalization never changes newline counts,
+ * so every block's start line is exact, the annotator cannot throw, and crash
+ * cases (tables with `\|`, tab-indented nested lists) now render with correct
+ * line attributes.
+ *
+ * Only block tokens are annotated; inline tokens (which carry no renderer
+ * position consumers and are the ones whose raw gets rewritten) are skipped —
+ * this is what makes the walk total: block raw text is never normalized by
+ * marked, so it is always present in the token tree as written.
+ *
+ * Nested structure walk order mirrors how rendered markup nests:
+ *   list_item   tokens start at the item's own line
+ *   blockquote  children start at the quote's own line
+ * Multi-line items advance the counter so later items land on their own rows.
+ */
+function annotateSourceLines(tokens: Token[], startLine: number): void {
+    let line = startLine
+    for (const token of tokens) {
+        ;(token as Token & TokenPositionMeta).position = {
+            lines: [], // consumers only read start.line
+            start: { offset: 0, line, column: 0 },
+            end: { offset: 0, line: line + countNewlines(token.raw), column: 0 },
+        }
+        if (token.type === 'list') {
+            let itemLine = line
+            for (const item of (token as Tokens.List).items) {
+                if (item.tokens) annotateSourceLines(item.tokens, itemLine)
+                itemLine += countNewlines(item.raw)
+            }
+        } else if (token.type === 'blockquote') {
+            annotateSourceLines((token as Tokens.Blockquote).tokens, line)
+        }
+        line += countNewlines(token.raw)
+    }
+}
+
+/**
  * Configure marked's custom renderer.
  *
- * A processAllTokens hook annotates every token with its source position
- * (marked-token-position), and the block-level renderers below emit
- * data-source-line="N" from that position. Callers that bypass this hook (no
- * position on tokens) get byte-identical default output — verified against
- * lib/marked.esm.js — so there is no visual regression.
+ * A processAllTokens hook annotates every block token with its source position
+ * (via our local structural annotator — see annotateSourceLines), and the
+ * block-level renderers below emit data-source-line="N" from that position.
+ * Callers that bypass this hook (no position on tokens) get byte-identical
+ * default output — verified against lib/marked.esm.js — so there is no visual
+ * regression.
  *
  * Call once at app startup (from main.ts). Idempotent: repeat calls (tests,
  * HMR) must not double-wrap the hooks/renderers.
@@ -54,14 +135,17 @@ export function configureMarkedRenderer(): void {
     markedRendererConfigured = true
 
     marked.use({
-        // Add a source position to every token during marked.parse so the
-        // block renderers can emit data-source-line (1-based source line).
+        // Add a source position to every block token during marked.parse so
+        // the block renderers can emit data-source-line (1-based source line).
         // Token positions survive protectMarkdown because it keeps the row
         // count identical to the source (code is restored multi-line; display
         // math placeholders are padded with newlines to span the same rows).
+        // Unlike marked-token-position this never throws on normalized
+        // content, so tables containing `\|` / nested tab lists render fine.
         hooks: {
             processAllTokens(tokens: Token[]): Token[] {
-                return addTokenPositions(tokens)
+                annotateSourceLines(tokens, 0)
+                return tokens
             },
         },
         renderer: {
@@ -89,7 +173,7 @@ export function configureMarkedRenderer(): void {
                 const isObj = token != null && typeof token === 'object'
                 const code = isObj ? (String((token as TokVal).text || '')) : String(token || '')
                 const lang = isObj ? (String((token as TokVal).lang || '')) : (String(args[1] || ''))
-                const attr = sourceLineAttr(token)
+                const attr = sourceRangeAttr(token)
                 if (lang === 'mermaid') {
                     return '<pre class="mermaid"' + attr + '>' + escapeHtml(code) + '</pre>'
                 }
@@ -145,7 +229,7 @@ export function configureMarkedRenderer(): void {
                 // Match marked v18 default byte-for-byte: thead cells are wrapped
                 // in a <tr>, tbody has no leading newline.
                 const tbody = body ? `<tbody>${body}</tbody>` : ''
-                return `<table${sourceLineAttr(token)}>\n<thead>\n${header}</thead>\n${tbody}</table>\n`
+                return `<table${sourceRangeAttr(token)}>\n<thead>\n${header}</thead>\n${tbody}</table>\n`
             },
             tablerow(...args: unknown[]): string {
                 const text = (args[0] as { text?: string } | undefined)?.text ?? ''

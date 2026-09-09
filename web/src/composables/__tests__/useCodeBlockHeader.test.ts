@@ -59,10 +59,32 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('is-wrapped')
   })
 
+  it('adds an attach-to-chat button to the header actions', () => {
+    const html = '<pre><code>code</code></pre>'
+    const result = annotateCodeBlockHeaders(html)
+    expect(result).toContain('code-block-attach-btn')
+    expect(result).toContain('data-action="attach"')
+    expect(result).toContain('class="code-block-header-actions"')
+  })
+
   it('skips mermaid blocks', () => {
     const html = '<pre class="mermaid"><code>graph TD</code></pre>'
     const result = annotateCodeBlockHeaders(html)
     expect(result).not.toContain('code-block-wrapper')
+  })
+
+  it('does not inject attach buttons in share mode', async () => {
+    const { setShareToken } = await import('@/share/shareMode')
+    const html = '<pre><code>code</code></pre>'
+    setShareToken('tok-share')
+    try {
+      const result = annotateCodeBlockHeaders(html)
+      expect(result).not.toContain('code-block-attach-btn')
+      // copy/wrap still injected
+      expect(result).toContain('code-block-copy-btn')
+    } finally {
+      setShareToken(null)
+    }
   })
 
   it('skips pre without code child', () => {
@@ -194,6 +216,13 @@ describe('annotateTableBlockHeaders', () => {
     expect(result).toContain('table-block-header')
     expect(result).toContain('table-block-copy-btn')
     expect(result).toContain('table-block-wrap-btn')
+  })
+
+  it('adds an attach-to-chat button to the table header actions', () => {
+    const html = '<div class="table-wrap"><table><tr><td>data</td></tr></table></div>'
+    const result = annotateTableBlockHeaders(html)
+    expect(result).toContain('table-block-attach-btn')
+    expect(result).toContain('data-action="attach"')
   })
 
   it('builds a copy dropdown menu with Markdown/HTML/TSV items', () => {

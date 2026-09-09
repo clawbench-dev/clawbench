@@ -1158,6 +1158,9 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         for (const iframe of Array.from(contentEl.querySelectorAll('iframe'))) iframe.remove()
         for (const mathml of Array.from(contentEl.querySelectorAll('.katex-mathml'))) mathml.remove()
         for (const marker of Array.from(contentEl.querySelectorAll('.diff-marker'))) marker.remove()
+        // "Attach to chat" header buttons are inert in a static export (no chat
+        // to attach to) — drop them so the exported doc stays clean.
+        for (const attachBtn of Array.from(contentEl.querySelectorAll('.code-block-attach-btn, .table-block-attach-btn'))) attachBtn.remove()
 
         // 8. Serialize CSS + KaTeX fonts + base typography.
         const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'
