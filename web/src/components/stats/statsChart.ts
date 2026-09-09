@@ -51,19 +51,21 @@ export function buildBarOption(categories: string[], values: number[], metric: U
   const narrow = isNarrowScreen()
   const opt: Record<string, unknown> = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-    grid: { left: 8, right: narrow ? 8 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
+    grid: { left: 8, right: narrow ? 4 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
     xAxis: {
       type: 'value',
       // Bar values are already printed on the right of each bar, so the value
-      // axis ticks are redundant on narrow screens — keep them on desktop.
-      // Token metrics get the same K/M formatting as the bars/labels.
-      axisLabel: narrow ? { show: false } : { color: p.textSecondary, formatter: (v: number) => formatMetricValue(metric, v) },
+      // axis is purely redundant for reading numbers. On narrow screens the
+      // whole axis (ticks + grid lines) is switched off so the bars get the
+      // full width; desktop keeps the scaled ticks as a ruler.
+      show: !narrow,
+      axisLabel: { color: p.textSecondary, formatter: (v: number) => formatMetricValue(metric, v) },
       splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
     },
     yAxis: {
       type: 'category',
       data: categories,
-      axisLabel: { color: p.textSecondary, width: narrow ? 96 : 130, overflow: 'truncate' },
+      axisLabel: { color: p.textSecondary, width: narrow ? 110 : 130, overflow: 'truncate' },
       axisLine: { lineStyle: { color: p.axisLine } },
     },
     series: [{

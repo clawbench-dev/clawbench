@@ -24,16 +24,21 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(isNarrowScreen()).toBe(false)
   })
 
-  it('bar: value-axis ticks hidden on narrow, shown on desktop', () => {
+  it('bar: value axis removed on narrow, shown on desktop', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
     setInnerWidth(800)
-    const narrow = buildBarOption(cats, vals, 'total') as { xAxis: { axisLabel: { show?: boolean } } }
-    expect((narrow.xAxis.axisLabel as { show: boolean }).show).toBe(false)
-    // Category labels (which bar is which) are always kept.
+    const narrow = buildBarOption(cats, vals, 'total') as { xAxis: { show?: boolean } }
+    // Mobile: the value axis (ticks + grid) is switched off to give the bars
+    // full width; exact numbers stay in the per-bar labels and tooltip.
+    expect(narrow.xAxis.show).toBe(false)
+    setInnerWidth(1440)
     const wide = buildBarOption(cats, vals, 'total') as {
-      yAxis: { data: string[]; axisLabel: { width?: number } }
+      xAxis: { show?: boolean }
+      yAxis: { data: string[] }
     }
+    expect(wide.xAxis.show).toBe(true)
+    // Category labels (which bar is which) are always kept.
     expect(wide.yAxis.data).toEqual(cats)
   })
 
