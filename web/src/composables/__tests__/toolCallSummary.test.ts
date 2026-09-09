@@ -256,17 +256,22 @@ describe('toolCallSummary', () => {
   })
 
   it('uses first string value as fallback when first value is a string', () => {
-    // Object.values preserves insertion order; if the first value is a number,
-    // it skips, and the next values are not checked (only the first value is used)
     expect(toolCallSummary({
       input: { text: 'hello', num: 42 },
     })).toBe('hello')
   })
 
-  it('returns empty when first value is a number even if later values are strings', () => {
-    // The fallback only checks Object.values()[0], not subsequent values
+  it('picks first string value by lexicographic key order, skipping non-strings', () => {
+    // Deterministic fallback (mirrors Go ExtractSummary): sort keys, take the
+    // first value that is a string. Non-string values are skipped.
     expect(toolCallSummary({
       input: { num: 42, text: 'hello' },
-    })).toBe('')
+    })).toBe('hello')
+  })
+
+  it('deterministic fallback orders keys lexicographically', () => {
+    expect(toolCallSummary({
+      input: { zeta: 'last', alpha: 'first' },
+    })).toBe('first')
   })
 })

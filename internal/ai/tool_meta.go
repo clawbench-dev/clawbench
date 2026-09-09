@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -56,6 +57,7 @@ func ExtractToolCallMetaFromInput(name, toolID string, input map[string]any) Too
 // mirroring the frontend toolCallSummary() priority chain:
 // description > file_path > command > pattern > query > url > skill >
 // prompt (agent only) > path > src_path+dst_path > first string value
+// (deterministic: lexicographically-first key).
 func ExtractSummary(name string, input map[string]any) string {
 	if input == nil {
 		return ""
@@ -66,6 +68,18 @@ func ExtractSummary(name string, input map[string]any) string {
 	// AskUserQuestion special case
 	if nameLower == "askuserquestion" {
 		return extractAskUserQuestionSummary(input)
+	}
+
+	// TaskUpdate: CodeBuddy's TaskUpdate input is {status, taskId} — it has no
+	// subject/description, so the generic chain below would fall through to the
+	// (deterministic, but opaque) sorted-string fallback. Format it explicitly
+	// as "#<taskId> · <status>" so the pill shows e.g. "#3 · in_progress".
+	// TaskUpdate also accepts optional subject/description overrides, which
+	// must keep priority over the derived form.
+	if nameLower == "taskupdate" {
+		if s := extractTaskUpdateSummary(input); s != "" {
+			return s
+		}
 	}
 
 	// Agent / wait special cases before the generic priority chain.
@@ -94,14 +108,47 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
-	// Fallback: first string value
-	for _, v := range input {
-		if s, ok := v.(string); ok {
+	// Fallback: first string value. Go map iteration order is random, so sort
+	// the keys first to make the result deterministic (and to mirror the
+	// frontend's Object.keys ordering, which is always lexicographic for
+	// string keys). Previously the same input could summarize to different
+	// strings on consecutive runs (e.g. TaskUpdate's {status, taskId}).
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if s, ok := input[k].(string); ok {
 			return truncateStr(s)
 		}
 	}
 
 	return ""
+}
+
+// extractTaskUpdateSummary summarizes a CodeBuddy TaskUpdate call. The usual
+// input {status, taskId} has no descriptive field, so derive a deterministic
+// "#<taskId> · <status>" label. If the model passed an explicit subject or
+// description override it wins; bare taskId is only shown as a fallback when
+// status is missing. Returns "" when neither subject/description nor taskId is
+// present (defer to the generic chain / empty).
+func extractTaskUpdateSummary(input map[string]any) string {
+	if v, _ := input["subject"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if v, _ := input["description"].(string); v != "" {
+		return truncateStr(v)
+	}
+	id, _ := input["taskId"].(string)
+	if id == "" {
+		return ""
+	}
+	status, _ := input["status"].(string)
+	if status == "" {
+		return "#" + truncateStr(id)
+	}
+	return "#" + truncateStr(id) + " · " + status
 }
 
 // extractAgentSummary summarizes an Agent/Agent-like tool call. Priority order

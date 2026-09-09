@@ -190,6 +190,68 @@ func TestExtractSummary(t *testing.T) {
 			want:     "",
 		},
 		{
+			name:     "taskupdate default input shows id and status",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "in_progress", "taskId": "3"},
+			want:     "#3 · in_progress",
+		},
+		{
+			name:     "taskupdate completed",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "completed", "taskId": "14"},
+			want:     "#14 · completed",
+		},
+		{
+			name:     "taskupdate deleted",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "deleted", "taskId": "4"},
+			want:     "#4 · deleted",
+		},
+		{
+			name:     "taskupdate taskId only when status missing",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"taskId": "7"},
+			want:     "#7",
+		},
+		{
+			name:     "taskupdate no taskId defers to chain",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"foo": "bar"},
+			want:     "bar",
+		},
+		{
+			name:     "taskupdate subject override wins",
+			toolName: "TaskUpdate",
+			input: map[string]any{
+				"subject": "Fix auth bug",
+				"status":  "in_progress",
+				"taskId":  "3",
+			},
+			want: "Fix auth bug",
+		},
+		{
+			name:     "taskupdate description override wins",
+			toolName: "TaskUpdate",
+			input: map[string]any{
+				"description": "Roll back config",
+				"status":      "completed",
+				"taskId":      "9",
+			},
+			want: "Roll back config",
+		},
+		{
+			name:     "case-insensitive taskupdate special case",
+			toolName: "taskupdate",
+			input:    map[string]any{"status": "in_progress", "taskId": "3"},
+			want:     "#3 · in_progress",
+		},
+		{
+			name:     "deterministic fallback picks lexicographically first key",
+			toolName: "Unknown",
+			input:    map[string]any{"zeta": "last", "alpha": "first"},
+			want:     "first",
+		},
+		{
 			name:     "description over command",
 			toolName: "Bash",
 			input: map[string]any{

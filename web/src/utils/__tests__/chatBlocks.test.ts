@@ -371,6 +371,44 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ input: { custom: 'hello' } })).toBe('hello')
   })
 
+  it('uses lexicographically first key for deterministic fallback', () => {
+    expect(toolCallSummary({ input: { zeta: 'last', alpha: 'first' } })).toBe('first')
+  })
+
+  it('shows #taskId · status for TaskUpdate default input', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'in_progress', taskId: '3' } })).toBe('#3 · in_progress')
+  })
+
+  it('shows TaskUpdate completed deterministically', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'completed', taskId: '14' } })).toBe('#14 · completed')
+  })
+
+  it('shows #taskId only when TaskUpdate status missing', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { taskId: '7' } })).toBe('#7')
+  })
+
+  it('TaskUpdate is case-insensitive', () => {
+    expect(toolCallSummary({ name: 'taskupdate', input: { status: 'in_progress', taskId: '3' } })).toBe('#3 · in_progress')
+  })
+
+  it('TaskUpdate subject override wins over derived form', () => {
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      input: { subject: 'Fix auth bug', status: 'in_progress', taskId: '3' },
+    })).toBe('Fix auth bug')
+  })
+
+  it('TaskUpdate description override wins over derived form', () => {
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      input: { description: 'Roll back config', status: 'completed', taskId: '9' },
+    })).toBe('Roll back config')
+  })
+
+  it('TaskUpdate with no taskId falls through to generic fallback', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { foo: 'bar' } })).toBe('bar')
+  })
+
   it('shows first value regardless of length', () => {
     expect(toolCallSummary({ input: { data: 'X'.repeat(80) } })).toBe('X'.repeat(80))
   })
