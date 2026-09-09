@@ -24,51 +24,50 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
     expect(isNarrowScreen()).toBe(false)
   })
 
-  it('bar: mobile moves category axis into legend, desktop keeps axes', () => {
+  it('bar: mobile renders vertical bars with bottom category axis', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
     setInnerWidth(800)
     const narrow = buildBarOption(cats, vals, 'total') as {
-      legend?: { data?: string[] }
-      xAxis: { show?: boolean }
-      yAxis: { show?: boolean }
-      series: { name: string; data: (number | null)[] }[]
+      xAxis: { type: string; data?: string[] }
+      yAxis: { type: string; show?: boolean }
+      series: { type: string; data: number[] }[]
     }
-    // Mobile: one coloured series per category + bottom legend carrying the
-    // category names; the category (left) axis is hidden so bars get full width.
-    expect(narrow.series).toHaveLength(2)
-    expect(narrow.series.map(s => s.name)).toEqual(cats)
+    // Mobile → vertical: category names move to the bottom axis, value axis is
+    // switched off, single bar series spans the full width.
+    expect(narrow.series).toHaveLength(1)
+    expect(narrow.series[0].type).toBe('bar')
+    expect(narrow.xAxis.type).toBe('category')
+    expect(narrow.xAxis.data).toEqual(cats)
+    expect(narrow.yAxis.type).toBe('value')
     expect(narrow.yAxis.show).toBe(false)
-    // Each series paints exactly one row (its own value, null elsewhere).
-    expect(narrow.series[0].data).toEqual([5, null])
-    expect(narrow.series[1].data).toEqual([null, 3])
-    expect(narrow.legend?.data).toEqual(cats)
 
     setInnerWidth(1440)
     const wide = buildBarOption(cats, vals, 'total') as {
-      xAxis: { show?: boolean }
-      yAxis: { data: string[] }
+      xAxis: { type: string }
+      yAxis: { type: string; data: string[] }
       series: { data: number[] }[]
     }
-    // Desktop: single-series bar with the value axis as ruler.
-    expect(wide.xAxis.show).toBe(true)
+    // Desktop: horizontal bars with the labelled category axis on the left.
+    expect(wide.xAxis.type).toBe('value')
+    expect(wide.yAxis.type).toBe('category')
     expect(wide.yAxis.data).toEqual(cats)
     expect(wide.series).toHaveLength(1)
   })
 
-  it('bar: mobile keeps the labelled category axis when rows exceed legend capacity', () => {
+  it('bar: mobile long category list gets inside horizontal zoom', () => {
     const manyCats = Array.from({ length: 12 }, (_, i) => `m${i}`)
     const vals = manyCats.map((_, i) => i)
     setInnerWidth(800)
     const narrow = buildBarOption(manyCats, vals, 'total') as {
-      xAxis: { show?: boolean }
-      yAxis: { show?: boolean; data: string[] }
-      series: { data: number[] }[]
+      xAxis: { type: string; data?: string[] }
+      dataZoom?: { type: string; xAxisIndex?: number }[]
     }
-    // Too many categories for colour legend → stay on the labelled single bar.
-    expect(narrow.series).toHaveLength(1)
-    expect(narrow.yAxis.data).toEqual(manyCats)
-    expect(narrow.xAxis.show).toBe(false)
+    expect(narrow.xAxis.type).toBe('category')
+    expect(narrow.xAxis.data).toEqual(manyCats)
+    // Inside scroll on the bottom axis so many bars stay swipeable.
+    expect(narrow.dataZoom?.[0].type).toBe('inside')
+    expect(narrow.dataZoom?.[0].xAxisIndex).toBe(0)
   })
 
   it('trend: value-axis ticks hidden on narrow, dates kept with hideOverlap', () => {

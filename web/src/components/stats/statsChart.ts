@@ -45,70 +45,78 @@ export function isNarrowScreen(): boolean {
 /** Build a horizontal bar chart option (one per selected metric column). */
 export function buildBarOption(categories: string[], values: number[], metric: UsageMetricId): EChartsCoreOption {
   const p = resolveStatsPalette()
-  // On narrow screens a long category list would stretch the card very tall.
-  // Cap the visible rows and enable inside scrolling once the list is long.
-  const many = categories.length > 8
   const narrow = isNarrowScreen()
 
-  // Mobile layout: the category axis (left column, the "which bar is which"
-  // labels — for usage this is the model/agent group) takes precious width and
-  // its truncated labels are hard to read. Instead each category becomes its
-  // own coloured bar series and the categories are listed in the bottom legend
-  // (colour chip → category). Exact numbers stay in the per-bar labels. This
-  // only kicks in when there are few enough rows that legend colours stay
-  // distinguishable; desktop and long lists keep the labelled category axis.
-  if (narrow && !many && categories.length > 1) {
-    return {
+  // Mobile layout — vertical bars. The desktop form is a horizontal bar chart
+  // whose left column lists the category names (model/agent groups); on a
+  // phone that column eats most of the width and long labels truncate. Turning
+  // the chart vertical moves the category names to the bottom axis, so bars
+  // span the full card width and each name gets its own slot. The value axis is
+  // hidden (exact numbers stay in the per-bar top labels + tooltip). This only
+  // applies on narrow screens; desktop keeps the labelled horizontal bars.
+  if (narrow) {
+    const many = categories.length > 8
+    const opt: Record<string, unknown> = {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-      legend: { type: 'scroll', bottom: 0, textStyle: { color: p.textSecondary, fontSize: 10 }, data: categories },
-      grid: { left: 4, right: 20, top: 10, bottom: 28, containLabel: true },
+      grid: { left: 4, right: 4, top: 18, bottom: many ? 28 : 0, containLabel: true },
       xAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: {
+          color: p.textSecondary,
+          fontSize: 10,
+          interval: 0,
+          // Long "model × agent" names rotate so they do not overlap, but stay
+          // as horizontal as possible to keep the chart short.
+          rotate: many ? 40 : 0,
+          width: many ? 70 : undefined,
+          overflow: 'truncate',
+          hideOverlap: false,
+        },
+        axisLine: { lineStyle: { color: p.axisLine } },
+      },
+      yAxis: {
         type: 'value',
         show: false,
         splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
       },
-      yAxis: {
-        type: 'category',
-        data: categories,
-        show: false,
-      },
-      color: SERIES_COLORS,
-      series: categories.map((cat, i) => ({
-        type: 'bar' as const,
-        name: cat,
-        // One value at this category's row; null everywhere else so each bar
-        // series paints exactly one horizontal row.
-        data: categories.map((_, j) => (j === i ? values[i] : null)),
-        barMaxWidth: 22,
-        itemStyle: { borderRadius: [0, 3, 3, 0] },
+      series: [{
+        type: 'bar',
+        data: values,
+        itemStyle: { color: p.accent, borderRadius: [3, 3, 0, 0] },
+        barMaxWidth: 34,
         label: {
           show: true,
-          position: 'right',
+          position: 'top',
           color: p.textSecondary,
           fontSize: 10,
-          formatter: (pp: unknown) => formatMetricValue(metric, (pp as { value: number }).value ?? 0),
+          formatter: (pp: unknown) => formatMetricValue(metric, (pp as { value: number }).value),
         },
-      })),
+      }],
     }
+    if (many) {
+      opt.dataZoom = [{
+        type: 'inside',
+        xAxisIndex: 0,
+        start: 0,
+        end: Math.max(15, Math.round((6 / categories.length) * 100)),
+      }]
+    }
+    return opt as EChartsCoreOption
   }
 
   const opt: Record<string, unknown> = {
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => formatMetricValue(metric, v as number) },
-    grid: { left: 8, right: narrow ? 4 : 24, top: 16, bottom: many ? 28 : 8, containLabel: true },
+    grid: { left: 8, right: 24, top: 16, bottom: 8, containLabel: true },
     xAxis: {
       type: 'value',
-      // Bar values are already printed on the right of each bar, so the value
-      // axis is purely redundant for reading numbers. On narrow screens the
-      // whole axis (ticks + grid lines) is switched off so the bars get the
-      // full width; desktop keeps the scaled ticks as a ruler.
-      show: !narrow,
       axisLabel: { color: p.textSecondary, formatter: (v: number) => formatMetricValue(metric, v) },
       splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
     },
     yAxis: {
       type: 'category',
       data: categories,
-      axisLabel: { color: p.textSecondary, width: narrow ? 110 : 130, overflow: 'truncate' },
+      axisLabel: { color: p.textSecondary, width: 130, overflow: 'truncate' },
       axisLine: { lineStyle: { color: p.axisLine } },
     },
     series: [{
@@ -127,7 +135,7 @@ export function buildBarOption(categories: string[], values: number[], metric: U
       },
     }],
   }
-  if (many) {
+  if (categories.length > 8) {
     // Inside horizontal scroll: start showing the top (first) rows.
     opt.dataZoom = [{
       type: 'inside',
