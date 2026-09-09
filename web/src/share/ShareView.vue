@@ -390,12 +390,18 @@ function scrollToHeading(id: string) {
   const root = contentRef.value
   if (!root) return
   const el = root.querySelector(`#${CSS.escape(id)}`)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    // Flash the jumped heading (reuses the canonical .line-flash animation,
-    // same as the in-app markdown preview anchor jump).
-    flashElement(el)
-  }
+  if (!el) return
+  // Scroll ONLY the content column (never the outer page / header). A bare
+  // scrollIntoView({smooth}) would scroll every scrollable ancestor and, during
+  // the multi-frame animation, drift off target when async content (images,
+  // mermaid, tables) reflows — pushing the topbar out of view. Compute the
+  // heading's absolute position inside .share-content and scroll just that
+  // container, matching the two-phase approach used for the in-app viewer.
+  const targetTop = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
+  root.scrollTo({ top: targetTop, behavior: 'smooth' })
+  // Flash the jumped heading (reuses the canonical .line-flash animation,
+  // same as the in-app markdown preview anchor jump).
+  flashElement(el)
 }
 
 // ─── View toggle ───
