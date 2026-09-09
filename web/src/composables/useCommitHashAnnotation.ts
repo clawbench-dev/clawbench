@@ -9,7 +9,12 @@ export const COMMIT_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke
 
 /**
  * Regex that matches potential git commit hashes in plain text.
- * Matches 7-40 character hex strings with at least one a-f letter.
+ * Matches only the two lengths git actually produces:
+ *   - abbreviated SHA (7-12 hex chars; git starts at 7 and grows for
+ *     uniqueness across all objects — e.g. 45131649, abc1234)
+ *   - full SHA-1 (40 hex chars)
+ * Any other length (13-39 hex chars) is not a form git prints or accepts as a
+ * stable identifier, so it is left untouched.
  *
  * Exclusions via negative lookbehind:
  *   - # prefix → CSS color values (#ff0000, #abcdef0)
@@ -21,16 +26,20 @@ export const COMMIT_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke
  * Note: single colon is NOT excluded — patterns like "commit:abc1234" are
  * legitimate git output and must match.
  *
- * Pure-decimal 7-digit numbers (timestamps, byte counts) are excluded
- * because git commit hashes are SHA-1 values that virtually always
- * contain at least one hex letter.
+ * Pure-decimal strings (e.g. 45131649) are intentionally NOT excluded here:
+ * when a commit's SHA happens to start with digits, git's abbreviated form is
+ * purely numeric (e.g. `git log --oneline` shows 45131649). Such a candidate
+ * is passed to the backend verification endpoint, which resolves it against
+ * the actual repo via `git log --ignore-missing` — non-commits (timestamps,
+ * byte counts, IDs) come back null and their annotation is unwrapped. See
+ * looksLikeCommitHash() for the only remaining heuristic (all-same-character).
  *
  * NOTE: This regex deliberately avoids regex lookbehind (Safari/iPadOS < 16.4
  * does not support it — a lookbehind literal throws SyntaxError at parse time
  * and white-screens the whole bundle). Prefix exclusions are enforced in
  * hasExcludedCommitPrefix() instead.
  */
-export const COMMIT_HASH_RE = /(\b[0-9a-f]{7,40}\b)(?!%)/gi
+export const COMMIT_HASH_RE = /(\b[0-9a-f]{40}\b|\b[0-9a-f]{7,12}\b)(?!%)/gi
 
 /**
  * Check whether the text immediately before a candidate hash match is one of
@@ -53,15 +62,25 @@ export function hasExcludedCommitPrefix(text: string, index: number): boolean {
 
 /**
  * Check if a string looks like a git commit hash.
- * Must be 7-40 hex chars and contain at least one a-f letter
- * (to exclude pure-decimal strings like timestamps and byte counts).
- * Also excludes patterns that are clearly not commit hashes:
+ * Only the two lengths git actually produces are accepted:
+ *   - 7-12 hex chars: abbreviated SHA (git starts at 7 and grows as needed
+ *     for uniqueness across all objects — Linux-sized repos reach 12).
+ *   - 40 hex chars: full SHA-1.
+ * Anything else (e.g. 13-39 chars) is not a form git prints, so it is rejected.
+ * Strings are accepted regardless of whether they contain an a-f letter —
+ * abbreviated SHAs can be purely numeric (a commit whose full SHA starts with
+ * digits, e.g. 45131649). Whether a candidate is a real commit is decided by
+ * the backend verification round-trip (/api/git/verify-commits with
+ * git log --ignore-missing); non-commits are unwrapped again. The only
+ * remaining heuristic:
  *   - All same character (e.g., aaaaaaa, 0000000) — not real SHAs
  */
 export function looksLikeCommitHash(text: string): boolean {
     if (text.length < 7 || text.length > 40) return false
+    // Short (7-12) or full (40) — the only lengths git prints. Mid-range
+    // 13-39-char strings are never abbreviated SHAs and are ignored.
+    if (text.length !== 40 && text.length > 12) return false
     if (!/^[0-9a-f]+$/i.test(text)) return false
-    if (!/[a-f]/i.test(text)) return false
     // Exclude all-same-character strings (aaaaaaa, 0000000, etc.)
     if (/^(.)\1{6,}$/.test(text)) return false
     return true
