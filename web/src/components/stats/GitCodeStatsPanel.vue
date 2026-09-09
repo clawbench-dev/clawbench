@@ -122,16 +122,24 @@
               <ChartLine :size="13" class="stats-card-title-icon" />
               <span>{{ t('gitStats.trendTitle') }}</span>
             </div>
-            <!-- Author scope: all authors (summed) or one author's own lines. -->
-            <div v-if="authorOptions.length > 1" class="stats-chip-scroll">
+            <!-- Author scope: multi-select chips. Empty selection = all
+                 authors summed; checking authors narrows to their union. -->
+            <div v-if="authorList.length > 1" class="stats-chip-scroll">
               <button
-                v-for="a in authorOptions"
-                :key="a.id"
                 class="stats-chip"
-                :class="{ active: trendAuthor === a.id }"
-                @click="trendAuthor = a.id"
+                :class="{ active: selectedAuthors.length === 0 }"
+                @click="clearAuthors"
               >
-                {{ a.label }}
+                {{ t('gitStats.allAuthors') }}
+              </button>
+              <button
+                v-for="a in authorList"
+                :key="a"
+                class="stats-chip"
+                :class="{ active: selectedAuthors.includes(a) }"
+                @click="toggleAuthor(a)"
+              >
+                {{ a }}
               </button>
             </div>
             <UsageChart :option="trendOption" class="git-chart" />
@@ -176,19 +184,32 @@ const customEnd = ref<string>('')
 // lines desc. Clicking the added/deleted header cycles the sort column.
 const sortBy = ref<'added' | 'deleted'>('added')
 
-// Trend chart author scope. 'all' sums every author's commits per day (the
-// project-wide view); selecting an author narrows the lines to that author.
-const ALL_AUTHORS = '__all__'
-const trendAuthor = ref<string>(ALL_AUTHORS)
+// Trend chart author scope — multi-select. An empty selection means "all
+// authors" (the project-wide sum); checking authors narrows the daily lines to
+// the union of the selected authors.
+const selectedAuthors = ref<string[]>([])
 
-const authorOptions = computed(() => {
+const authorList = computed(() => {
   const authors = [...new Set(tableRows.value.map(r => r.author))]
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b))
-  const opts: { id: string; label: string }[] = [{ id: ALL_AUTHORS, label: t('gitStats.allAuthors') }]
-  for (const a of authors) opts.push({ id: a, label: a })
-  return opts
+  // Keep a selected author in the list even if the current range no longer has
+  // commits from them (so the chip can be deselected to restore the view).
+  for (const a of selectedAuthors.value) {
+    if (!authors.includes(a)) authors.push(a)
+  }
+  return authors
 })
+
+function toggleAuthor(author: string) {
+  selectedAuthors.value = selectedAuthors.value.includes(author)
+    ? selectedAuthors.value.filter(a => a !== author)
+    : [...selectedAuthors.value, author]
+}
+
+function clearAuthors() {
+  selectedAuthors.value = []
+}
 
 const isGit = computed(() => raw.value?.isGit === true)
 const rawLoaded = computed(() => raw.value !== null)
@@ -245,12 +266,12 @@ onBeforeUnmount(() => {
 
 const trendOption = computed(() => {
   void themeTick.value
-  // Backend trend rows are (day × author). "All authors" folds across authors
-  // per day for the project-wide view; a selected author only shows that
-  // author's own rows.
-  const rows = trendAuthor.value === ALL_AUTHORS
+  // Backend trend rows are (day × author). Empty selection folds across every
+  // author per day (project-wide); otherwise only the selected authors count.
+  const selected = selectedAuthors.value
+  const rows = selected.length === 0
     ? trend.value
-    : trend.value.filter(r => r.author === trendAuthor.value)
+    : trend.value.filter(r => selected.includes(r.author))
   const days = [...new Set(rows.map(r => r.day).filter(Boolean))] as string[]
   const added = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.added, 0))
   const deleted = days.map(day => rows.filter(r => r.day === day).reduce((s, r) => s + r.deleted, 0))

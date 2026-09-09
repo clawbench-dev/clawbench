@@ -186,7 +186,7 @@ describe('GitCodeStatsPanel', () => {
     expect(option.series?.[2]?.data).toEqual([5, 3])
   })
 
-  it('lets the trend chart be scoped to a single author', async () => {
+  it('lets the trend chart be scoped to selected authors (multi-select)', async () => {
     mockApiGet.mockResolvedValue(mockResponse({
       totals: { added: 30, deleted: 5, net: 25, commitCnt: 3 },
       rows: [
@@ -200,23 +200,49 @@ describe('GitCodeStatsPanel', () => {
       ],
     }))
     const wrapper = await mountPanel()
-    // Two authors → the author-scope chips (plus the "all authors" default) render.
+    // Two authors → the author-scope chips (plus the "all authors" toggle) render.
     const chips = wrapper.findAll('.stats-chip').map(c => c.text())
     expect(chips).toEqual(expect.arrayContaining(['全部作者', 'Ann', 'Bob']))
 
-    // Default "all authors": per-day sums across Ann+Bob.
     const lastOption = (): { series?: { data: number[] }[]; xAxis?: { data: string[] } } =>
       chartOptions[chartOptions.length - 1] as never
+
+    // Default: no selection → per-day sums across Ann+Bob.
     expect(lastOption().series?.[0]?.data).toEqual([22, 8])
 
-    // Click "Bob" → the trend lines now only carry Bob's own daily values.
-    // (Days come from the filtered rows, so only days where Bob committed stay.)
+    // Select Bob → lines narrow to Bob's own daily values.
     const bobChip = wrapper.findAll('.stats-chip').find(c => c.text() === 'Bob')
     await bobChip!.trigger('click')
     await nextTick()
     await flushPromises()
     expect(lastOption().series?.[0]?.data).toEqual([10])
     expect(lastOption().xAxis?.data).toEqual(['2026-09-01'])
+    expect(bobChip!.classes()).toContain('active')
+
+    // Multi-select: also select Ann → lines show their per-day sum.
+    const annChip = wrapper.findAll('.stats-chip').find(c => c.text() === 'Ann')
+    await annChip!.trigger('click')
+    await nextTick()
+    await flushPromises()
+    expect(annChip!.classes()).toContain('active')
+    expect(lastOption().series?.[0]?.data).toEqual([22, 8])
+    expect(lastOption().xAxis?.data).toEqual(['2026-09-01', '2026-09-02'])
+
+    // Deselect Bob → only Ann remains.
+    await bobChip!.trigger('click')
+    await nextTick()
+    await flushPromises()
+    expect(lastOption().series?.[0]?.data).toEqual([12, 8])
+
+    // "全部作者" clears every selection back to the summed view.
+    const allChip = wrapper.findAll('.stats-chip').find(c => c.text() === '全部作者')
+    await allChip!.trigger('click')
+    await nextTick()
+    await flushPromises()
+    expect(allChip!.classes()).toContain('active')
+    const authorChips = wrapper.findAll('.stats-chip').filter(c => c.text() === 'Ann' || c.text() === 'Bob')
+    expect(authorChips.every(c => !c.classes().includes('active'))).toBe(true)
+    expect(lastOption().series?.[0]?.data).toEqual([22, 8])
   })
 
   it('shows the server error message on failure', async () => {
