@@ -1,14 +1,8 @@
 <template>
-  <div class="git-code-stats-panel">
-    <!-- Compact header — matches UsageStatsPanel style -->
-    <header class="git-header">
-      <Code2 :size="18" class="git-header-icon" />
-      <span class="git-header-title">{{ t('gitStats.panelTitle') }}</span>
-      <div class="git-header-actions">
-        <RefreshButton class="git-refresh" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click="onRefresh" />
-      </div>
-    </header>
-
+  <!-- Root visibility is driven by the host (StatsTabHost) through `active`:
+       without v-show this absolutely-positioned pane would stay rendered on
+       top of the sibling usage panel and block switching back to it. -->
+  <div v-show="active" class="git-code-stats-panel">
     <div class="git-body">
       <!-- Range card -->
       <section class="stats-card-panel">
@@ -141,7 +135,6 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Gauge, Table, ChartLine, GitBranch, Code2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import RefreshButton from '@/components/common/RefreshButton.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import { useGitCodeStats } from '@/composables/useGitCodeStats'
 import type { UsageRangeKey } from '@/composables/useUsageStats'
@@ -156,11 +149,7 @@ const props = defineProps<{
 const { t } = useI18n()
 const stats = useGitCodeStats()
 const range = stats.range
-const { raw, loading, error, visibleTotals, tableRows, trend } = stats
-
-// Refresh button mirrors its usage: while a fetch is in flight the header
-// button spins (and first-load uses the body spinner instead).
-const refreshing = loading
+const { raw, error, visibleTotals, tableRows, trend } = stats
 
 const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '24h', labelKey: 'gitStats.range24h' },
@@ -292,10 +281,6 @@ onMounted(() => {
     void stats.loadGitStats()
   }
 })
-
-function onRefresh() {
-  void stats.loadGitStats()
-}
 </script>
 
 <style scoped>
@@ -307,57 +292,7 @@ function onRefresh() {
   background: var(--bg-primary, #fff);
 }
 
-/* ── Compact header (matches .stats-header) ── */
-.git-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--header-height, 36px);
-  padding: 0 4px 0 12px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-  background: var(--bg-primary);
-}
-.git-header-icon {
-  color: var(--accent-color);
-  flex-shrink: 0;
-}
-.git-header-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.git-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.git-refresh {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .git-refresh:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
-}
-
+/* ── Panel body scrolls under the host's tab bar ── */
 .git-body {
   flex: 1;
   overflow-y: auto;

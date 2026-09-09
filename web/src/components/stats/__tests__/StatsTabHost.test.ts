@@ -13,6 +13,9 @@ vi.mock('@/composables/useLocale', () => ({
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
+vi.mock('@/stores/app', () => ({
+  store: { state: { projectRoot: '/p' } },
+}))
 
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { resetUsageStats } from '@/composables/useUsageStats'
@@ -20,6 +23,7 @@ import { resetGitStats } from '@/composables/useGitCodeStats'
 
 const zhMessages = {
   common: { loading: '加载中' },
+  nav: { refresh: '刷新' },
   gitStats: { tabUsage: '用量统计', tabCode: '代码统计' },
   stats: { rangeTitle: 'x' },
 }
@@ -49,6 +53,7 @@ async function mountHost() {
         UsageStatsPanel: stubChild('usage-panel'),
         GitCodeStatsPanel: stubChild('git-panel'),
         AsyncComponentLoader: { template: '<span />' },
+        RefreshButton: { template: '<button class="refresh-stub" @click="$emit(\'click\')" />' },
       },
     },
   })
@@ -65,9 +70,9 @@ describe('StatsTabHost', () => {
     mockApiGet.mockResolvedValue({ totals: {}, rows: [] })
   })
 
-  it('renders both sub-tabs and defaults to the usage panel active', async () => {
+  it('renders both page tabs and defaults to the usage panel active', async () => {
     const wrapper = await mountHost()
-    const btns = wrapper.findAll('.stats-subtab').map(b => b.text())
+    const btns = wrapper.findAll('.stats-tab').map(b => b.text())
     expect(btns).toEqual(['用量统计', '代码统计'])
     const usage = wrapper.findComponent({ name: 'usage-panel' })
     const git = wrapper.findComponent({ name: 'git-panel' })
@@ -77,7 +82,7 @@ describe('StatsTabHost', () => {
 
   it('switches to the code panel when its tab is clicked', async () => {
     const wrapper = await mountHost()
-    const codeTab = wrapper.findAll('.stats-subtab').find(b => b.text() === '代码统计')
+    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
     expect(codeTab).toBeTruthy()
     await codeTab!.trigger('click')
     await nextTick()
@@ -85,6 +90,17 @@ describe('StatsTabHost', () => {
     const git = wrapper.findComponent({ name: 'git-panel' })
     expect(usage.props('active')).toBe(false)
     expect(git.props('active')).toBe(true)
+  })
+
+  it('marks the clicked tab as active (accent indicator)', async () => {
+    const wrapper = await mountHost()
+    let activeTabs = wrapper.findAll('.stats-tab.active')
+    expect(activeTabs.map(b => b.text())).toEqual(['用量统计'])
+    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
+    await codeTab!.trigger('click')
+    await nextTick()
+    activeTabs = wrapper.findAll('.stats-tab.active')
+    expect(activeTabs.map(b => b.text())).toEqual(['代码统计'])
   })
 
   it('passes active=false to both children when the host is inactive', async () => {
@@ -95,5 +111,26 @@ describe('StatsTabHost', () => {
     const git = wrapper.findComponent({ name: 'git-panel' })
     expect(usage.props('active')).toBe(false)
     expect(git.props('active')).toBe(false)
+  })
+
+  it('refresh button triggers a reload of the active panel', async () => {
+    const wrapper = await mountHost()
+    const countUsage = () => mockApiGet.mock.calls.filter(c => String(c[0]).includes('/api/usage/stats')).length
+    const countGit = () => mockApiGet.mock.calls.filter(c => String(c[0]).includes('/api/git/stats')).length
+
+    const usageBefore = countUsage()
+    // Default tab = usage → refresh issues another usage-stats request.
+    await wrapper.find('.refresh-stub').trigger('click')
+    await flushPromises()
+    expect(countUsage()).toBeGreaterThan(usageBefore)
+
+    // Switch to code tab → refresh now issues a git-stats request.
+    const codeTab = wrapper.findAll('.stats-tab').find(b => b.text() === '代码统计')
+    await codeTab!.trigger('click')
+    await nextTick()
+    const gitBefore = countGit()
+    await wrapper.find('.refresh-stub').trigger('click')
+    await flushPromises()
+    expect(countGit()).toBeGreaterThan(gitBefore)
   })
 })

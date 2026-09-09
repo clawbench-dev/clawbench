@@ -1,19 +1,34 @@
 <template>
   <div class="stats-tab-host">
-    <!-- Sub-tab bar: switches between the two statistics panels. Each panel
-         keeps its own full height, header and refresh button, so switching is
-         cheap (v-show keeps scroll positions). -->
+    <!-- Tab bar: two rectangular page-tabs (usage / code). The bar follows the
+         in-app terminal-tab pattern — connected tabs with a bottom accent line
+         on the active one. Each child panel is kept mounted and its visibility
+         is driven by the same `active` prop it already uses to fetch on
+         activation, so switching preserves scroll positions and only the
+         visible pane ever covers the body area. -->
     <div class="stats-tab-bar">
-      <button
-        v-for="s in sections"
-        :key="s.id"
-        class="stats-subtab"
-        :class="{ active: section === s.id }"
-        @click="section = s.id"
-      >
-        {{ t(s.labelKey) }}
-      </button>
+      <div class="stats-tab-list">
+        <button
+          v-for="s in sections"
+          :key="s.id"
+          class="stats-tab"
+          :class="{ active: section === s.id }"
+          @click="section = s.id"
+        >
+          {{ t(s.labelKey) }}
+        </button>
+      </div>
+      <div class="stats-tab-actions">
+        <RefreshButton
+          class="stats-tab-refresh"
+          :loading="refreshing"
+          :disabled="refreshing"
+          :title="t('nav.refresh')"
+          @click="onRefresh"
+        />
+      </div>
     </div>
+
     <div class="stats-tab-body">
       <UsageStatsPanel :active="active && section === 'usage'" class="stats-pane" />
       <GitCodeStatsPanel :active="active && section === 'git'" class="stats-pane" />
@@ -22,12 +37,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { defineAsyncComponent } from 'vue'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
+import RefreshButton from '@/components/common/RefreshButton.vue'
+import { useUsageStats } from '@/composables/useUsageStats'
+import { useGitCodeStats } from '@/composables/useGitCodeStats'
 
-const props = defineProps<{
+defineProps<{
   active: boolean
 }>()
 
@@ -53,9 +71,18 @@ const sections: { id: StatsSection; labelKey: string }[] = [
 
 const section = ref<StatsSection>('usage')
 
-// `active` is only read to keep the per-panel activation fetches consistent;
-// defineProps binds it reactively for the template children.
-void props.active
+// The shared refresh button drives whichever panel is active.
+const usageStats = useUsageStats()
+const gitStats = useGitCodeStats()
+const refreshing = computed(() => (section.value === 'usage' ? usageStats.loading.value : gitStats.loading.value))
+
+function onRefresh() {
+  if (section.value === 'usage') {
+    void usageStats.loadStats()
+  } else {
+    void gitStats.loadGitStats()
+  }
+}
 </script>
 
 <style scoped>
@@ -67,33 +94,82 @@ void props.active
   background: var(--bg-primary, #fff);
 }
 
-/* Compact segmented bar — mirrors the panel header height so the whole tab
-   reads as one unit. */
+/* ── Tab bar (connected rectangular tabs, like terminal tabs) ── */
 .stats-tab-bar {
+  display: flex;
+  align-items: stretch;
+  height: 34px;
   flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  position: relative;
+  z-index: 2;
+}
+.stats-tab-list {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+.stats-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 38px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-}
-.stats-subtab {
-  border: 1px solid var(--border-color);
-  background: var(--bg-elevated, var(--bg-primary));
+  padding: 0 16px;
+  border: none;
+  background: transparent;
   color: var(--text-secondary);
-  border-radius: 999px;
-  padding: 3px 14px;
-  font-size: 12px;
-  line-height: 20px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  user-select: none;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
-.stats-subtab.active {
+@media (hover: hover) {
+  .stats-tab:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+}
+.stats-tab.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.stats-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
   background: var(--accent-color, #4f8cff);
-  border-color: var(--accent-color, #4f8cff);
-  color: #fff;
+}
+
+.stats-tab-actions {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  flex-shrink: 0;
+}
+.stats-tab-refresh {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+@media (hover: hover) {
+  .stats-tab-refresh:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
 }
 
 .stats-tab-body {

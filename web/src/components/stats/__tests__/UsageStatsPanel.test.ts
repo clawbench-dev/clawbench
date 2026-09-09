@@ -259,10 +259,12 @@ describe('UsageStatsPanel', () => {
       rows: [{ key: { model: 'glm' }, input: 300, output: 100, total: 400, cacheHit: 80, cacheMiss: 20, credit: 0, costUsd: 0, messageCnt: 1 }],
     }))
     const wrapper = await mountPanel()
-    // The overview donut is the first UsageChart option pushed (input vs output).
+    // The overview donut is the pie option pushed with the totals slices.
     expect(wrapper.text()).toContain('输入 vs 输出')
-    const donutOption = chartOptions[0] as { series?: { type?: string; data?: { name: string; value: number }[] }[] }
-    const series = donutOption.series?.[0]
+    const donutOption = chartOptions.find(
+      o => (o as { series?: { type?: string }[] }).series?.[0]?.type === 'pie',
+    ) as { series?: { type?: string; data?: { name: string; value: number }[] }[] } | undefined
+    const series = donutOption?.series?.[0]
     expect(series?.type).toBe('pie')
     const values = series?.data?.map(d => d.value) ?? []
     expect(values).toEqual(expect.arrayContaining([300, 100]))
