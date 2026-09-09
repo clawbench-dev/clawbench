@@ -1700,14 +1700,18 @@ describe('PermissionApproval action handler', () => {
     cleanup(container)
   })
 
-  it('dims unselected buttons after responding', () => {
+  it('dims unselected buttons after responding via shared disabled style', () => {
     const { container, emit } = createPermissionDOM()
     const allowBtn = container.querySelector('.permission-btn-allow') as HTMLElement
     const rejectBtn = container.querySelector('.permission-btn-reject') as HTMLElement
     const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
     Object.defineProperty(clickEvent, 'target', { value: allowBtn, writable: false })
     handleToolAction('PermissionApproval', clickEvent, emit)
-    expect(rejectBtn.style.opacity).toBe('0.4')
+    // No inline opacity is forced anymore — dimming comes from the shared
+    // .fbtn:disabled rule so all buttons share one visual language.
+    expect(rejectBtn.disabled).toBe(true)
+    expect(rejectBtn.style.opacity).toBe('')
+    expect(allowBtn.style.opacity).toBe('')
     cleanup(container)
   })
 

@@ -2751,29 +2751,52 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-/* Permission buttons reuse the shared footer pill language (.fbtn / .fbtn-success
-   / .fbtn-danger from modal-footer-btn.css). Only small spacing tweaks + the
-   interaction-state keep-alive below remain here. */
+/* Permission buttons reuse the shared footer pill colour language (.fbtn /
+   .fbtn-success / .fbtn-danger from modal-footer-btn.css) but drop the pill
+   shape for a plain rounded-rect (radius matches the ask-question option
+   blocks in the same card). Only the interaction-state keep-alive stays here. */
 .content-blocks .tool-detail .permission-options .permission-btn {
   padding: 0 14px;
+  border-radius: 6px;
 }
 
+/* Buttons keep their normal shape; disabled buttons get the shared .fbtn
+   opacity treatment only (the JS no longer forces an extra inline opacity). */
 .content-blocks .tool-detail .permission-options .fbtn:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
 }
 
-/* After a user responds (before the SSE result re-renders the badge), keep the
-   clicked pill vivid and visibly "picked". */
+/* After a user responds (before the SSE result re-renders the badge), the
+   picked button stays in the SAME soft-tint family as the idle interactive
+   button (baseline for alignment) — it only saturates its border, deepens its
+   tint and swaps to the Approved/Denied label. No solid fill / white text /
+   shape flip, so the picked state reads as the same button, not a different
+   one. opacity: 1 keeps it from being dimmed by the shared .fbtn:disabled
+   rule that fades the unselected siblings. */
 .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #16a34a 28%, var(--bg-tertiary));
   border-color: #16a34a;
-  background: #16a34a;
-  color: #fff;
+  color: #15803d;
+  opacity: 1;
 }
 
 .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
-  border-color: #dc2626;
-  background: #dc2626;
-  color: #fff;
+  background: color-mix(in srgb, #ef4444 24%, var(--bg-tertiary));
+  border-color: #ef4444;
+  color: #b91c1c;
+  opacity: 1;
+}
+
+:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #22c55e 30%, var(--bg-tertiary));
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
+  background: color-mix(in srgb, #f87171 26%, var(--bg-tertiary));
+  border-color: #f87171;
+  color: #fca5a5;
 }
 
 .content-blocks .tool-detail .permission-result {

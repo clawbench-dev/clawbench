@@ -1906,10 +1906,9 @@ registerToolActionHandler('PermissionApproval', (event, _emit) => {
     view.classList.add('permission-responded')
     const allBtns = view.querySelectorAll('.permission-btn')
     for (const b of allBtns) {
+      // disable() leaves opacity to the shared .fbtn:disabled rule — no extra
+      // inline dimming, so the chosen and dimmed pills share one visual language.
       ;(b as HTMLButtonElement).disabled = true
-      if (b !== btn) {
-        ;(b as HTMLElement).style.opacity = '0.4'
-      }
     }
 
     // Show feedback

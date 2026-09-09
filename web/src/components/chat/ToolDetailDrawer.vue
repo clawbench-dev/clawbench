@@ -1811,23 +1811,41 @@ function handleBodyInput(event) {
   gap: 8px;
   flex-wrap: wrap;
 }
-/* Buttons reuse the shared footer pill language (.fbtn from modal-footer-btn.css
-   loaded by BottomSheet). Only the interaction-state keep-alive stays here. */
+/* Buttons reuse the .fbtn colour language from modal-footer-btn.css but drop
+   the pill shape for a plain rounded-rect (same 6px as the card's ask-question
+   blocks). Only the interaction-state keep-alive stays here. */
 .tool-detail-body .permission-options .permission-btn {
   padding: 0 14px;
+  border-radius: 6px;
 }
 .tool-detail-body .permission-options .fbtn:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
 }
+/* Picked button stays in the same soft-tint family as the idle interactive
+   button (baseline for alignment) — border saturates, tint deepens, label
+   swaps to Approved/Denied. opacity: 1 keeps it from being dimmed by the
+   shared .fbtn:disabled rule that fades the unselected siblings. */
 .tool-detail-body .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #16a34a 28%, var(--bg-tertiary));
   border-color: #16a34a;
-  background: #16a34a;
-  color: #fff;
+  color: #15803d;
+  opacity: 1;
 }
 .tool-detail-body .permission-approval-view.permission-responded .permission-btn-reject {
-  border-color: #dc2626;
-  background: #dc2626;
-  color: #fff;
+  background: color-mix(in srgb, #ef4444 24%, var(--bg-tertiary));
+  border-color: #ef4444;
+  color: #b91c1c;
+  opacity: 1;
+}
+:root[data-theme-base="dark"] .tool-detail-body .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #22c55e 30%, var(--bg-tertiary));
+  border-color: #22c55e;
+  color: #86efac;
+}
+:root[data-theme-base="dark"] .tool-detail-body .permission-approval-view.permission-responded .permission-btn-reject {
+  background: color-mix(in srgb, #f87171 26%, var(--bg-tertiary));
+  border-color: #f87171;
+  color: #fca5a5;
 }
 
 /* Permission/ask question categories for overlay header */
