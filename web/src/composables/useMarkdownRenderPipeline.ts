@@ -25,6 +25,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { gt } from '@/composables/useLocale'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
+import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation'
 
 /**
  * Build the served URL for a project-relative (already normalized, unencoded)
@@ -70,8 +71,8 @@ export interface FixLocalImagePathsOptions {
  * - raster formats the thumb endpoint can decode (png/jpg/jpeg) get a lightweight
  *   JPEG thumbnail inline src (`/api/file/thumb?path=…&w=…`) plus the original
  *   URL kept in `data-full-src` for the lightbox;
- * - every <img> is wrapped in a `.lightbox-img-wrap` span so the exported HTML
- *   gets the same hover-to-expand affordance as the preview.
+ * - every <img> is lifted into a block-level `.image-block-wrapper` figure with a
+ *   header bar (view / attach / open buttons) — uniform across mobile and PC.
  */
 export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html: string) => string {
     const { baseDir, imageTimestamp, isPC } = opts
@@ -134,21 +135,140 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
                 : `src="${fullSrc}"${attachAttr}`
             return match.replace(`src="${src}"`, replacement)
         })
-        // Add lightbox-img class to all <img> tags for lightbox activation
-        result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {
-            const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-            // Local images (the pipeline stamped data-attach-src) get a mobile
-            // "attach to chat" badge inside the wrapper; external/data: images
-            // (no data-attach-src) stay plain. Shown only on touch devices via
-            // the .img-attach-badge CSS media rules.
-            const label = escapeHtml(gt('chat.attach.attachImageToChat'))
-            const badge = /\sdata-attach-src=/.test(clean)
-                ? `<span class="img-attach-badge" role="button" tabindex="-1" title="${label}" aria-label="${label}">${ATTACH_BADGE_SVG}</span>`
-                : ''
-            return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span>${badge}</span>`
-        })
+        // Lift every <img> into a block-level figure with a header bar. Images are
+        // inline-flow in the marked output (inside <p>); blockifying them requires
+        // DOM surgery (paragraph promotion / split), so this runs on a parsed tree.
+        result = annotateImageBlocks(result)
         return result
     }
+}
+
+/** Feather "maximize" glyph for the image header view button. */
+const IMAGE_VIEW_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
+
+/**
+ * Lift every <img> in an HTML fragment into a block-level `.image-block-wrapper`
+ * figure with a header row of action buttons:
+ *   - view (`.image-block-view-btn`, data-action="view") — opens the lightbox
+ *   - attach (`.image-block-attach-btn`) — only for LOCAL images (data-attach-src)
+ *   - open  (`.image-block-open-btn`)  — only for LOCAL images; opens the file
+ * Header buttons are skipped entirely in share mode (no chat / lightbox to reach).
+ *
+ * Images are inline-flow in the marked output; lifting them to block requires:
+ *   - img alone in a <p> → the <p> is replaced by the figure;
+ *   - img mid-paragraph → the paragraph is split (before text <p> + figure +
+ *     after text <p>);
+ *   - img in other containers (<li>, <td>, blockquote…) → the figure is inserted
+ *     in place of the img.
+ * The wrapped img keeps the `lightbox-img` class and `data-attach-src` so PC drag
+ * (mdImageDrag) and Lightbox image collection keep working.
+ */
+function annotateImageBlocks(html: string): string {
+    if (!html) return html
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    // Iterate a snapshot: each pass moves the img, so a live NodeList would skip.
+    const images = Array.from(doc.querySelectorAll('img'))
+    for (const img of images) {
+        if (img.closest('.image-block-wrapper')) continue // idempotent guard
+
+        const isLocal = img.hasAttribute('data-attach-src')
+        const shareMode = isShareMode()
+
+        // Capture where the img currently sits BEFORE any move.
+        const host = img.parentNode as HTMLElement | null
+        const hostIsP = !!host && host.tagName === 'P'
+
+        // 1. Build the wrapper shell at the img's old position.
+        const wrapper = doc.createElement('div')
+        wrapper.className = 'image-block-wrapper'
+        if (host) host.insertBefore(wrapper, img) // wrapper sits before img
+
+        // 2. Header row (view / attach / open) — only outside share mode.
+        if (!shareMode) {
+            const header = doc.createElement('div')
+            header.className = 'image-block-header'
+            const actions = doc.createElement('span')
+            actions.className = 'image-block-header-actions'
+
+            const viewBtn = doc.createElement('button')
+            viewBtn.type = 'button'
+            viewBtn.className = 'image-block-view-btn'
+            viewBtn.dataset.action = 'view'
+            const viewLabel = gt('imageBlock.view')
+            viewBtn.title = viewLabel
+            viewBtn.setAttribute('aria-label', viewLabel)
+            viewBtn.innerHTML = IMAGE_VIEW_ICON_SVG
+            actions.appendChild(viewBtn)
+
+            if (isLocal) {
+                actions.appendChild(makeImageHeaderButton(doc, 'image-block-attach-btn', 'attach', 'chat.attach.attachImageToChat', ATTACH_BADGE_SVG))
+                actions.appendChild(makeImageHeaderButton(doc, 'image-block-open-btn', 'open', 'imageBlock.openFile', FILE_OPEN_ICON_SVG))
+            }
+
+            header.appendChild(actions)
+            wrapper.appendChild(header)
+        }
+
+        // 3. Image wrap keeps lightbox/drag activation classes.
+        const imgWrap = doc.createElement('span')
+        imgWrap.className = 'lightbox-img-wrap'
+        const imgClasses = img.getAttribute('class')
+        img.setAttribute('class', imgClasses ? `${imgClasses} lightbox-img` : 'lightbox-img')
+        imgWrap.appendChild(img) // detaches img from host
+        wrapper.appendChild(imgWrap)
+
+        // 4. Paragraph promotion: a <p> may not contain a block div. When the
+        // img was the paragraph's ONLY content, replace the <p> with the figure.
+        // Mid-paragraph images (text both sides) are lifted out — trailing text
+        // becomes its own <p> after the figure.
+        if (hostIsP && host) {
+            // Collect everything that followed the wrapper in host (originally
+            // text after the img).
+            const trailing: Node[] = []
+            while (host.contains(wrapper) && wrapper.nextSibling) {
+                const sib = wrapper.nextSibling
+                host.removeChild(sib)
+                trailing.push(sib)
+            }
+            const leadingText = host.textContent?.trim()
+            if (!leadingText && trailing.length === 0) {
+                // Empty <p> (img was its only child) — drop it.
+                host.replaceWith(wrapper)
+            } else {
+                // Move the figure after the (still leading-text-bearing) <p>.
+                host.after(wrapper)
+                if (trailing.some(n => n.textContent?.trim())) {
+                    const tailP = doc.createElement('p')
+                    for (const t of trailing) tailP.appendChild(t)
+                    wrapper.after(tailP)
+                } else {
+                    for (const t of trailing) host.appendChild(t)
+                }
+            }
+        }
+    }
+
+    return doc.body.innerHTML
+}
+
+/** Build a small header action button (paperclip / open-file). */
+function makeImageHeaderButton(
+    doc: Document,
+    cls: string,
+    action: string,
+    i18nKey: string,
+    svg: string
+): HTMLButtonElement {
+    const btn = doc.createElement('button')
+    btn.type = 'button'
+    btn.className = cls
+    btn.dataset.action = action
+    const label = gt(i18nKey)
+    btn.title = label
+    btn.setAttribute('aria-label', label)
+    btn.innerHTML = svg
+    return btn
 }
 
 /** Result of rendering markdown source. */

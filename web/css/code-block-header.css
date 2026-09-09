@@ -376,3 +376,93 @@
     width: 14px;
     height: 14px;
 }
+
+/* ─── Image block figure (file-preview rendered images) ───
+   Every image in a file preview is lifted into a block-level figure with a
+   header row above it holding view / attach / open buttons — uniform across
+   mobile and PC. (Chat images go through a different pipeline and never get
+   this markup.) */
+.image-block-wrapper {
+    margin: 0.4em 0;
+    width: fit-content;
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--code-bg);
+}
+
+.image-block-wrapper > .lightbox-img-wrap {
+    display: block;
+    background: var(--bg-secondary);
+}
+
+/* Header bar: buttons right-aligned (no label for images). */
+.image-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 2px 8px;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+    line-height: 1.4;
+    user-select: none;
+    min-height: 22px;
+}
+
+.image-block-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* Header buttons: view / attach / open — same look as copy/wrap. */
+.image-block-view-btn,
+.image-block-attach-btn,
+.image-block-open-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    outline: none;
+    box-shadow: none;
+}
+
+.image-block-view-btn:hover,
+.image-block-attach-btn:hover,
+.image-block-open-btn:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+}
+
+.image-block-view-btn svg,
+.image-block-attach-btn svg,
+.image-block-open-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Solo images sized within the block wrapper (image itself keeps the global
+   max-width/max-height from markdown-common.css). */
+.image-block-wrapper .lightbox-img-wrap {
+    text-align: center;
+    padding: 4px 8px 8px;
+}
+
+/* Cancel the global inline-img vertical margins inside a block figure — the
+   wrapper's padding provides the breathing room. */
+.image-block-wrapper .lightbox-img-wrap img {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0;
+}

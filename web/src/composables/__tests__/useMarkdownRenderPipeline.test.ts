@@ -15,10 +15,17 @@ describe('createFixLocalImagePaths', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isPC: true })
     const html = '<p><img src="assets/a.png" alt="a"></p>'
     const out = fix(html)
-    expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&w=1200"')
+    expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&amp;w=1200"')
     expect(out).toContain('data-full-src="/api/local-file/docs/assets/a.png?t=42"')
     // data-attach-src carries the resolved project-relative path for re-drag
     expect(out).toContain('data-attach-src="docs/assets/a.png"')
+    // Local image is lifted into an image block with a header bar (view /
+    // attach / open buttons) — uniform across mobile and PC.
+    expect(out).toContain('image-block-wrapper')
+    expect(out).toContain('image-block-header')
+    expect(out).toContain('image-block-view-btn')
+    expect(out).toContain('image-block-attach-btn')
+    expect(out).toContain('image-block-open-btn')
   })
 
   it('keeps external URLs untouched', () => {
@@ -29,6 +36,9 @@ describe('createFixLocalImagePaths', () => {
       expect(out).not.toContain('/api/')
       // External / data: images have no local file to re-drag — no attach data
       expect(out).not.toContain('data-attach-src')
+      // Still lifted into a block wrapper, but only the view button applies.
+      expect(out).toContain('image-block-wrapper')
+      expect(out).not.toContain('image-block-attach-btn')
     }
   })
 
@@ -53,22 +63,23 @@ describe('createFixLocalImagePaths', () => {
     expect(out).toContain('data-attach-src="a/c/图 d.png"')
   })
 
-  it('wraps every image in a lightbox span', () => {
+  it('wraps every image in an image-block figure', () => {
     const fix = createFixLocalImagePaths({ baseDir: '', imageTimestamp: 1, isPC: true })
     const out = fix('<img src="x.png"><img src="https://y.com/z.png">')
-    expect(out).toContain('lightbox-img-wrap')
+    expect(out).toContain('image-block-wrapper')
+    expect(out.match(/image-block-wrapper/g)).toHaveLength(2)
+    // Each image keeps its lightbox-img class for lightbox/drag activation.
     expect(out.match(/lightbox-img-wrap/g)).toHaveLength(2)
   })
 
-  it('injects the attach badge only for local images (data-attach-src)', () => {
+  it('injects attach/open buttons only for local images (data-attach-src)', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
     const out = fix('<img src="a.png"><img src="https://x.com/b.png"><img src="data:image/png;base64,abc">')
-    // Local raster → thumbnail; wrapper contains exactly one attach badge.
-    expect(out.match(/img-attach-badge/g)).toHaveLength(1)
-    // External / data: images get no badge.
-    const localWrap = out.slice(0, out.indexOf('https://x.com'))
-    expect(localWrap).toContain('img-attach-badge')
-    expect(out.slice(out.indexOf('https://x.com'))).not.toContain('img-attach-badge')
+    // Local raster → thumbnail; only its figure has attach + open buttons.
+    expect(out.match(/image-block-attach-btn/g)).toHaveLength(1)
+    expect(out.match(/image-block-open-btn/g)).toHaveLength(1)
+    // External / data: images get only the view button.
+    expect(out.match(/image-block-view-btn/g)).toHaveLength(3)
   })
 
   it('HTML-escapes data-attach-src so decoded filenames cannot break the attribute', () => {
@@ -92,6 +103,9 @@ describe('createFixLocalImagePaths', () => {
       expect(out).toContain('src="/api/share/tokabc/local/docs/assets/a.png?t=42"')
       expect(out).not.toContain('/api/file/thumb')
       expect(out).not.toContain('/api/local-file/')
+      // Share has no chat / lightbox — the image stays a header-less block.
+      expect(out).toContain('image-block-wrapper')
+      expect(out).not.toContain('image-block-header')
     } finally {
       setShareToken(null)
     }
@@ -104,7 +118,7 @@ describe('createFixLocalImagePaths', () => {
       // /home/user/proj/test/markdown/images-demo.md referencing ../images/…
       const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 7, isPC: true })
       const out = fix('<img src="../images/pic.jpg" alt="p">')
-      expect(out).toContain('src="/api/share/tokabs/local?path=%2Fhome%2Fuser%2Fproj%2Ftest%2Fmarkdown%2F..%2Fimages%2Fpic.jpg&t=7"')
+      expect(out).toContain('src="/api/share/tokabs/local?path=%2Fhome%2Fuser%2Fproj%2Ftest%2Fmarkdown%2F..%2Fimages%2Fpic.jpg&amp;t=7"')
       expect(out).not.toContain('/local-file')
       expect(out).not.toContain('/file/thumb')
     } finally {
@@ -121,6 +135,35 @@ describe('createFixLocalImagePaths', () => {
     } finally {
       setShareToken(null)
     }
+  })
+
+  it('promotes a solo-paragraph image out of its <p> into a block figure', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<p><img src="a.png" alt="a"></p>')
+    // <p> removed entirely; the figure is a sibling block.
+    expect(out).not.toContain('<p>')
+    expect(out).toMatch(/^<div class="image-block-wrapper">/)
+    expect(out).toContain('</div>')
+  })
+
+  it('splits a paragraph that has text on both sides of an image', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<p>before <img src="a.png"> after</p>')
+    // Leading text stays in the first <p>, trailing text becomes its own <p>.
+    expect(out).toContain('<p>before </p>')
+    expect(out).toContain('<p> after</p>')
+    const figureStart = out.indexOf('image-block-wrapper')
+    const leadEnd = out.indexOf('</p>')
+    const trailStart = out.lastIndexOf('<p>')
+    expect(figureStart).toBeGreaterThan(leadEnd)
+    expect(trailStart).toBeGreaterThan(figureStart)
+  })
+
+  it('blockifies an image nested inside a table cell', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<table><tr><td><img src="a.png"></td></tr></table>')
+    expect(out).toContain('<td><div class="image-block-wrapper">')
+    expect(out).toContain('image-block-header')
   })
 })
 

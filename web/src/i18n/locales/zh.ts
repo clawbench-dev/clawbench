@@ -37,6 +37,10 @@ export default {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
   },
+  imageBlock: {
+    view: '放大查看',
+    openFile: '打开文件',
+  },
   tableBlock: {
     label: '表格',
     wrapOn: '自动换行已开启',

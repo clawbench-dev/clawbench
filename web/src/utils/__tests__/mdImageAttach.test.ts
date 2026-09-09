@@ -11,15 +11,20 @@ function makeWrap(overrides: { attachSrc?: string | null; external?: boolean } =
   badge: HTMLElement
   img: HTMLImageElement
 } {
-  const wrap = document.createElement('span')
-  wrap.className = 'lightbox-img-wrap'
+  // File-preview images are lifted into .image-block-wrapper figures whose
+  // header holds the attach button; the img sits in .lightbox-img-wrap.
+  const wrap = document.createElement('div')
+  wrap.className = 'image-block-wrapper'
+  const imgWrap = document.createElement('span')
+  imgWrap.className = 'lightbox-img-wrap'
   const img = document.createElement('img')
   img.className = 'lightbox-img'
   if (overrides.attachSrc) img.setAttribute('data-attach-src', overrides.attachSrc)
   if (overrides.external) img.setAttribute('src', 'https://x.com/a.png')
-  const badge = document.createElement('span')
+  imgWrap.appendChild(img)
+  const badge = document.createElement('button')
   badge.className = MD_IMAGE_ATTACH_BADGE.slice(1)
-  wrap.appendChild(img)
+  wrap.appendChild(imgWrap)
   wrap.appendChild(badge)
   return { wrap, badge, img }
 }

@@ -1,22 +1,20 @@
 /**
- * Touch "attach image to chat" affordance for rendered markdown views.
+ * "Attach image to chat" affordance for rendered markdown views.
  *
- * The shared file-preview pipeline stamps every LOCAL image with
- * `data-attach-src` and injects a per-image `.img-attach-badge` button inside
- * the `.lightbox-img-wrap` (mobile/touch only, via CSS media rules). Tapping
- * the badge attaches the image file to the chat as a reference attachment —
- * mirroring the desktop drag-out (`mdImageDrag.ts`) and the file-manager /
- * file-header attach actions.
+ * The file-preview pipeline lifts every image into a block-level
+ * `.image-block-wrapper` figure whose header carries a paperclip
+ * `.image-block-attach-btn` (view / attach / open — uniform across mobile and
+ * PC; see createFixLocalImagePaths in useMarkdownRenderPipeline). Tapping it
+ * attaches the image file to the chat as a reference attachment — mirroring
+ * the desktop drag-out (`mdImageDrag.ts`) and the file-manager / file-header
+ * attach actions.
  *
- * The badge sits inside the wrapper next to the (desktop-only, hover-shown)
- * `.lightbox-expand-icon`; on touch the expand icon is hidden so the two never
- * overlap. Tapping the image body still opens the lightbox — the badge branch
- * must stopPropagation so the click never reaches the lightbox's document
- * listener.
+ * The button stops propagation so the click never reaches the lightbox's
+ * document listener; the image body itself still opens the lightbox.
  */
 
-/** Selector of the injected attach badge. */
-export const MD_IMAGE_ATTACH_BADGE = '.img-attach-badge'
+/** Selector of the injected attach button in the image block header. */
+export const MD_IMAGE_ATTACH_BADGE = '.image-block-attach-btn'
 
 export interface MdImageBadgeHit {
   /** Decoded project-relative file path from the wrapped img's data-attach-src. */
@@ -36,14 +34,15 @@ export interface MdImageAttachActions {
 }
 
 /**
- * Resolve a click/tap target to a badge-hit for a local image.
- * Returns null when the target is not the badge, the wrapper is missing, or
- * the wrapped image carries no data-attach-src (external / data: images).
+ * Resolve a click/tap target to an attach-hit for a local image.
+ * Returns null when the target is not the attach button, the image figure is
+ * missing, or the wrapped image carries no data-attach-src (external / data:
+ * images). The image itself sits inside `.image-block-wrapper > .lightbox-img-wrap`.
  */
 export function resolveMdImageBadgeClick(e: Event): MdImageBadgeHit | null {
   const target = e.target as HTMLElement | null
   if (!target || !target.closest(MD_IMAGE_ATTACH_BADGE)) return null
-  const wrap = target.closest<HTMLElement>('.lightbox-img-wrap')
+  const wrap = target.closest<HTMLElement>('.image-block-wrapper')
   const img = wrap?.querySelector<HTMLImageElement>('img.lightbox-img')
   const path = img?.getAttribute('data-attach-src')
   if (!wrap || !path) return null

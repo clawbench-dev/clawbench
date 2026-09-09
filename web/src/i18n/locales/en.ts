@@ -37,6 +37,10 @@ export default {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
   },
+  imageBlock: {
+    view: 'View image',
+    openFile: 'Open file',
+  },
   tableBlock: {
     label: 'Table',
     wrapOn: 'Word wrap on',

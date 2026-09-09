@@ -111,6 +111,8 @@ import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
+import { handleMdImageOpenClick } from '@/utils/mdImageOpen'
+import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { useChatContext } from '@/composables/useChatContext'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
@@ -196,6 +198,7 @@ const mermaidAttachActions: MermaidAttachActions = {
     in the read-only document view is left untouched (parent / lightbox handles). */
 function handleBodyClick(e: MouseEvent) {
   handleMdImageAttachClick(e, mdImageAttachActions)
+  handleMdImageOpenClick(e, openFilePath)
   handleMermaidAttachClick(e, mermaidAttachActions)
   handleBlockAttachClick(e, mermaidAttachActions)
 }

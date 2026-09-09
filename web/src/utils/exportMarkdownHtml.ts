@@ -1050,17 +1050,19 @@ function buildLightboxJs(): string {
     }
 
     document.addEventListener('click', function(e) {
-        var expandIcon = e.target.closest('.lightbox-expand-icon');
-        if (expandIcon) {
+        var expandAffordance = e.target.closest('.lightbox-expand-icon, .image-block-view-btn');
+        if (expandAffordance) {
             // Check if the expand icon is inside a mermaid container
-            var mermaidContainer = expandIcon.closest('.mermaid');
+            var mermaidContainer = expandAffordance.closest('.mermaid');
             if (mermaidContainer) {
                 var svg = mermaidContainer.querySelector('svg');
                 if (svg) { e.preventDefault(); openLightbox(svg.outerHTML, true); }
                 return;
             }
-            // Otherwise, it's an image expand icon — open the full-size image.
-            var wrap = expandIcon.closest('.lightbox-img-wrap');
+            // Otherwise it's an image expand affordance — open the full-size image.
+            // .lightbox-expand-icon sits in .lightbox-img-wrap; .image-block-view-btn
+            // sits in the figure header above .lightbox-img-wrap.
+            var wrap = expandAffordance.closest('.image-block-wrapper, .lightbox-img-wrap');
             var img = wrap ? wrap.querySelector('.lightbox-img') : null;
             if (img) {
                 e.preventDefault();
@@ -1159,8 +1161,15 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
         for (const mathml of Array.from(contentEl.querySelectorAll('.katex-mathml'))) mathml.remove()
         for (const marker of Array.from(contentEl.querySelectorAll('.diff-marker'))) marker.remove()
         // "Attach to chat" header buttons are inert in a static export (no chat
-        // to attach to) — drop them so the exported doc stays clean.
-        for (const attachBtn of Array.from(contentEl.querySelectorAll('.code-block-attach-btn, .table-block-attach-btn'))) attachBtn.remove()
+        // to attach to) — drop them so the exported doc stays clean. Image
+        // "open file" buttons are equally inert; local image paths in
+        // data-attach-src must not leak into the standalone file.
+        for (const btn of Array.from(contentEl.querySelectorAll(
+            '.code-block-attach-btn, .table-block-attach-btn, .image-block-attach-btn, .image-block-open-btn'
+        ))) btn.remove()
+        for (const img of Array.from(contentEl.querySelectorAll('img[data-attach-src]'))) {
+            img.removeAttribute('data-attach-src')
+        }
 
         // 8. Serialize CSS + KaTeX fonts + base typography.
         const currentThemeId = document.documentElement.getAttribute('data-theme') || 'github-light'

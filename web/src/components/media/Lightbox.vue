@@ -731,16 +731,18 @@ watch(lightboxVisible, (visible) => {
 
 function handleLightboxClick(e) {
     // Touch mode: direct click on .lightbox-img, .mermaid or .lightbox-svg opens lightbox
-    // PC mode: only click on .lightbox-expand-icon opens lightbox
-    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
-    // PC mode: only expand icon opens lightbox (not the image/mermaid/svg itself)
+    // PC mode: only click on .lightbox-expand-icon / image header view button opens lightbox
+    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon, .image-block-view-btn')
+    // PC mode: only the expand affordances open lightbox (not the image/mermaid/svg itself)
     if (!isExpandIcon && e.pointerType !== 'touch') return
 
-    // When clicking the expand icon, find the image from the wrapper
-    // (the icon is a sibling of the img, not a child)
+    // When clicking an expand affordance, find the image from its wrapper:
+    //   - .lightbox-expand-icon sits inside .lightbox-img-wrap (sibling of the img)
+    //   - .image-block-view-btn sits in the figure header; the img is in the
+    //     figure's .lightbox-img-wrap child
     let img
     if (isExpandIcon) {
-        const wrap = e.target.closest('.lightbox-img-wrap')
+        const wrap = e.target.closest('.image-block-wrapper, .lightbox-img-wrap')
         img = wrap ? wrap.querySelector('.lightbox-img') : null
     } else {
         img = e.target.closest('.lightbox-img')

@@ -194,28 +194,37 @@ describe('MarkdownPreviewBody.vue', () => {
     expect(dataTransfer.setData).not.toHaveBeenCalled()
   })
 
-  it('attaches a local image when its attach badge is tapped (touch)', async () => {
+  it('attaches a local image when its header attach button is tapped', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
-    await wrapper.find('.img-attach-badge').trigger('click')
+    await wrapper.find('.image-block-attach-btn').trigger('click')
     expect(attachedFiles.value).toEqual([{ path: 'docs/a.png', isDir: false }])
   })
 
-  it('removes a local image from attachments when its badge is tapped again', async () => {
+  it('removes a local image from attachments when its header attach button is tapped again', async () => {
     addTestAttachment('docs/a.png')
     const { wrapper } = mountBody({
-      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
-    await wrapper.find('.img-attach-badge').trigger('click')
+    await wrapper.find('.image-block-attach-btn').trigger('click')
     expect(attachedFiles.value).toEqual([])
   })
 
-  it('does not attach when tapping the image body (not the badge)', async () => {
+  it('does not attach when tapping the image body (not the button)', async () => {
     const { wrapper } = mountBody({
-      renderedHtml: '<p><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"><span class="img-attach-badge"><svg></svg></span></span></p>',
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-attach-btn" type="button"></button></div>',
     })
     await wrapper.find('img.lightbox-img').trigger('click')
+    expect(attachedFiles.value).toEqual([])
+  })
+
+  it('open-file button click does not attach (it routes to file navigation)', async () => {
+    const { wrapper } = mountBody({
+      renderedHtml: '<div class="image-block-wrapper"><span class="lightbox-img-wrap"><img class="lightbox-img" src="/api/local-file/docs/a.png?t=1" data-attach-src="docs/a.png"></span><button class="image-block-open-btn" type="button"></button></div>',
+    })
+    await wrapper.find('.image-block-open-btn').trigger('click')
+    // The open-file handler consumes the click; it must NOT toggle an attachment.
     expect(attachedFiles.value).toEqual([])
   })
 
