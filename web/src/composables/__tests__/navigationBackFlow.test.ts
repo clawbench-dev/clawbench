@@ -389,4 +389,39 @@ describe('navigationBackFlow', () => {
       expect(hooks.exitMultiSelect).not.toHaveBeenCalled()
     })
   })
+
+  describe('jump origin spent directly on back', () => {
+    it('back returns to the jump origin without popping in-panel drill levels', async () => {
+      nav.start({ surface: 'chat', tab: 'chat', label: 'Back to Chat' })
+      const hooks = createMockHooks({
+        canGoBackFile: vi.fn().mockReturnValue(false),
+        hasOrigin: vi.fn().mockReturnValue(true),
+        returnToOrigin: vi.fn().mockImplementation(async () => {
+          nav.consume()
+          return true
+        }),
+        canHandleOther: vi.fn().mockReturnValue(true),
+        handleOther: vi.fn().mockReturnValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.returnToOrigin).toHaveBeenCalledTimes(1)
+      expect(hooks.handleOther).not.toHaveBeenCalled()
+      expect(nav.hasOrigin.value).toBe(false)
+    })
+
+    it('with no origin pending the in-panel drill handler still consumes back', async () => {
+      const hooks = createMockHooks({
+        hasOrigin: vi.fn().mockReturnValue(false),
+        canGoBackDir: vi.fn().mockReturnValue(false),
+        canHandleOther: vi.fn().mockReturnValue(true),
+        handleOther: vi.fn().mockReturnValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.handleOther).toHaveBeenCalledTimes(1)
+    })
+  })
 })

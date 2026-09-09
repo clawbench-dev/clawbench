@@ -557,6 +557,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       ++directoryRequestId
     },
     settleOriginForTab,
+    beginExternalJump,
+    surfaceLabel,
     handleCaptureFileScroll,
     openFileInViewer,
     returnToOrigin,

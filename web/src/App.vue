@@ -1711,6 +1711,8 @@ const {
   handleOverlayOpenFile,
   handleAppHeaderRecentFileSelect,
   handleOpenFileOverlay,
+  beginExternalJump,
+  surfaceLabel,
 } = navCoordinator
 
 /** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
@@ -1740,6 +1742,10 @@ async function handleFileHistoryForward() {
 
 
 function onTaskCardClick(taskId) {
+    // Task cards appear inside chat messages (scheduled-task-card), so this is
+    // a chat→tasks jump. Record the chat origin so Back returns the user
+    // straight to the conversation.
+    beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
     navigateToTaskSettings(taskId)
     switchTab('tasks')
 }
@@ -2327,9 +2333,27 @@ function handleOpenFileManager() {
 
 function handleNavigateToCommit(e) {
     const sha = e?.detail?.sha
-    if (sha) {
-        setPendingCommitNavigation(sha)
+    if (!sha) return
+    // Record the surface this commit jump came from so Back (header / edge
+    // swipe / Android) returns the user straight there. Chat/task/history jumps
+    // track their origin; a jump from the file view is already covered by the
+    // file stack.
+    const surface = (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
+      ? 'chat'
+      : panelIsActive('tasks')
+      ? 'task'
+      : panelIsActive('history')
+      ? 'history'
+      : panelIsActive('browse')
+      ? 'browse'
+      : 'file'
+    if (surface === 'chat' || surface === 'task' || surface === 'history') {
+      beginExternalJump(surface, surfaceLabel(surface), surface === 'chat' ? { tab: 'chat' } : {})
+    } else {
+      fileNav.closeOverlay()
+      browseFileSession.value = false
     }
+    setPendingCommitNavigation(sha)
     switchTab('history')
 }
 
