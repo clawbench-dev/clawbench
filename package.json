@@ -68,7 +68,6 @@
     "katex": "^0.16.45",
     "lucide-vue-next": "^1.0.0",
     "marked": "^18.0.0",
-    "marked-token-position": "^2.0.2",
     "material-icon-theme": "^5.36.1",
     "mermaid": "^11.14.0",
     "pdfjs-dist": "^5.7.284",
