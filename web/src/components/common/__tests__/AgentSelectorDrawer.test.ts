@@ -200,7 +200,7 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.findAll('.agent-config-btn').length).toBe(2)
     })
 
-    it('deep-links to the agent settings page on gear click without selecting', async () => {
+    it('deep-links to the agent settings page and closes the drawer on gear click without selecting', async () => {
       const wrapper = mountDrawer()
       await flushPromises()
 
@@ -211,9 +211,10 @@ describe('AgentSelectorDrawer', () => {
 
       expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('agents:agent-1')
       expect(mockSwitchTab).toHaveBeenCalledWith('settings')
-      // The gear click must not select/close the drawer
+      // The gear click must close the drawer but not select/change the agent
+      expect(wrapper.emitted('update:open')![0]).toEqual([false])
       expect(wrapper.emitted('select')).toBeFalsy()
-      expect(wrapper.emitted('update:open')).toBeFalsy()
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
     })
 
     it('does not fire when no agent id', async () => {

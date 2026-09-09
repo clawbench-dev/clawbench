@@ -101,9 +101,11 @@ async function handleSetDefaultAgent(agentId: string) {
 // AppHeader "more appearance options" pattern: a module-level pending settings
 // category is set first, then the settings tab is switched to; SettingsPage
 // consumes the request whether it was already mounted or is mounted lazily.
+// The agent selector is closed so it does not linger over the settings page.
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 function handleOpenAgentConfig(agentId: string) {
   if (!agentId) return
+  handleClose()
   setPendingSettingsCategory(`agents:${agentId}`)
   switchTab('settings')
 }
