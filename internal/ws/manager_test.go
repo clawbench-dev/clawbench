@@ -1225,9 +1225,13 @@ func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
 	subAready := make(chan struct{}, 1)
 	subBready := make(chan struct{}, 1)
 	releaseA := make(chan struct{}, 1)
+	aTornDown := make(chan struct{}, 1)
 
 	// Connection A handler: subscribe + start writer, then block until released,
-	// then run its deferred StopWriter (simulating the old connection tearing down).
+	// then run its teardown (simulating the old connection tearing down). The
+	// teardown mirrors production EventsHandler: DisconnectClientIfCurrent
+	// guards against wiping a connection that Subscribe has since replaced, and
+	// StopWriter's conn identity check makes it a no-op for the new writer.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -1242,8 +1246,9 @@ func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
 		m.StartWriter("reconnect-client", conn, &wmu)
 		subAready <- struct{}{}
 		<-releaseA
+		m.DisconnectClientIfCurrent("reconnect-client", conn)
 		m.StopWriter("reconnect-client", conn)
-		m.DisconnectClient("reconnect-client")
+		aTornDown <- struct{}{}
 	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -1287,12 +1292,19 @@ func TestClientSubscription_ReconnectOldStopWriterNoOp(t *testing.T) {
 	}
 	<-subBready
 
-	// Release connection A's handler so its deferred StopWriter runs against the
-	// same clientID (must be a no-op now — writer A was already stopped).
+	// Release connection A's handler so its teardown runs against the same
+	// clientID (must be a no-op now — writer A was already stopped and the
+	// connection was replaced). Wait for it to finish so the broadcast below
+	// cannot race with A's teardown goroutine.
 	releaseA <- struct{}{}
+	select {
+	case <-aTornDown:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for connection A teardown")
+	}
 
 	// Broadcast — the message must reach connection B, proving writer B is alive
-	// after A's StopWriter ran.
+	// after A's teardown ran.
 	msg := ServerMessage{Type: "event", ID: "reconnect_ok", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
 	m.BroadcastEvent(msg)
 
