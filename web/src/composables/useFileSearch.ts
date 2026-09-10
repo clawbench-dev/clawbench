@@ -49,6 +49,14 @@ export function useFileSearch() {
 
   const effectiveDir = computed(() => state.scope === 'global' ? '' : state.searchBasePath)
 
+  /**
+   * Global scope always searches recursively — a non-recursive project-root
+   * search only ever matches top-level entries, which defeats the point of a
+   * global search. The user's explicit `recursive` preference is preserved so
+   * it is restored when global scope is switched off.
+   */
+  const effectiveRecursive = computed(() => state.scope === 'global' || state.recursive)
+
   let eventSource: EventSource | null = null
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -107,7 +115,7 @@ export function useFileSearch() {
     const params = new URLSearchParams()
     params.set('path', dir || '')
     params.set('q', state.query.trim())
-    params.set('recursive', state.recursive ? 'true' : 'false')
+    params.set('recursive', effectiveRecursive.value ? 'true' : 'false')
     params.set('exact', state.exact ? 'true' : 'false')
     params.set('limit', String(displayLimit + 1))
 
@@ -165,5 +173,5 @@ export function useFileSearch() {
     }
   }
 
-  return { state, effectiveDir, startSearch, cancelSearch, reset, getDisplayLimit }
+  return { state, effectiveDir, effectiveRecursive, startSearch, cancelSearch, reset, getDisplayLimit }
 }

@@ -240,6 +240,8 @@ vi.mock('@/composables/useFileSearch', () => ({
   useFileSearch: () => ({
     state: searchState,
     effectiveDir: { value: '' },
+    // Mirror the real composable: global scope always recurses.
+    effectiveRecursive: computed(() => searchState.scope === 'global' || searchState.recursive),
     startSearch: mockSearchStart,
     cancelSearch: mockSearchCancel,
     // Mirror the real reset(): clears the query so the results layer collapses.
@@ -954,6 +956,73 @@ describe('FileManagerContent — resident search', () => {
     expect(items[0].find('.file-name').text()).toContain('main.go')
   })
 
+  it('shows each hit parent directory in global scope results', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'internal/ai/main2.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    expect(items[0].find('.file-parent-dir').text()).toBe('cmd')
+    expect(items[1].find('.file-parent-dir').text()).toBe('internal/ai')
+  })
+
+  it('shows each hit parent directory in recursive search results', async () => {
+    searchState.query = 'main'
+    searchState.recursive = true
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.find('.file-parent-dir').text()).toBe('cmd')
+  })
+
+  it('omits the parent directory for a plain current-directory search', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    // Every hit is already known to be in the browsed directory — no path row.
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+    expect(wrapper.find('.file-meta').exists()).toBe(true)
+  })
+
+  it('omits the parent directory for root-level hits even when recursive', async () => {
+    searchState.query = 'main'
+    searchState.recursive = true
+    searchState.results = [
+      { name: 'main.go', path: 'main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('shows the parent directory in grid view for scoped results', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    expect(wrapper.find('.grid-parent-dir').text()).toBe('cmd')
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('never shows a parent directory row while browsing a directory', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+    expect(wrapper.find('.file-meta').exists()).toBe(true)
+  })
+
   it('double-clicking a file result emits selectFile and keeps the query', async () => {
     searchState.query = 'main'
     searchState.results = [
@@ -1068,7 +1137,55 @@ describe('FileManagerContent — resident search', () => {
     searchState.recursive = false
     searchState.exact = false
     await nextTick()
-    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前项目下搜索')
+    // Global scope always recurses, so the placeholder reflects recursion even
+    // when the (now disabled) recursive toggle is off.
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前项目下递归搜索')
+  })
+
+  it('forces recursive search in global scope and disables the recursive toggle', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.recursive = false
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    // The recursive toggle is disabled while global, and shown active.
+    const recursiveBtn = wrapper.findAll('.fs-toggle-btn').find(b => b.attributes('title') === '递归搜索')!
+    expect(recursiveBtn.attributes('disabled')).toBeDefined()
+    expect(recursiveBtn.classes()).toContain('active')
+
+    // Global results show their containing directory (search ranges beyond the
+    // browsed directory).
+    expect(wrapper.find('.file-parent-dir').text()).toBe('cmd')
+  })
+
+  it('keeps the recursive toggle operable and off outside global scope', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'current'
+    searchState.recursive = false
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    const recursiveBtn = wrapper.findAll('.fs-toggle-btn').find(b => b.attributes('title') === '递归搜索')!
+    expect(recursiveBtn.attributes('disabled')).toBeUndefined()
+    expect(recursiveBtn.classes()).not.toContain('active')
+    // Non-recursive current-dir search: no containing-directory row.
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('places the recursive toggle directly to the left of the global toggle', () => {
+    const wrapper = mountContent()
+    const titles = wrapper.findAll('.fs-toggle-btn').map(b => b.attributes('title'))
+    const recursiveIdx = titles.indexOf('递归搜索')
+    const globalIdx = titles.indexOf('全局搜索')
+    expect(recursiveIdx).toBeGreaterThanOrEqual(0)
+    expect(globalIdx).toBe(recursiveIdx + 1)
   })
 
   it('renders a reveal-in-directory button on each search result', async () => {

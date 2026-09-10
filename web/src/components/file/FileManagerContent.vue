@@ -256,8 +256,13 @@
               <Paperclip :size="12" />
             </span>
           </div>
-          <span class="file-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></span>
-          <span class="file-name" v-else>{{ entry.name }}</span>
+          <div class="file-info">
+            <span class="file-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></span>
+            <span class="file-name" v-else>{{ entry.name }}</span>
+            <!-- Global / recursive search hits live outside the browsed
+                 directory, so show the directory each hit came from. -->
+            <span v-if="showResultPath && entry.parentDir" class="file-parent-dir">{{ entry.parentDir }}</span>
+          </div>
           <span class="file-meta">{{ metaText(entry) }}</span>
           <button
             v-if="searchHasQuery"
@@ -325,6 +330,7 @@
         </div>
         <div class="grid-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></div>
         <div class="grid-name" v-else>{{ entry.name }}</div>
+        <div v-if="showResultPath && entry.parentDir" class="grid-parent-dir" :title="entry.parentDir">{{ entry.parentDir }}</div>
       </div>
       <div v-if="!searchHasQuery && hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
@@ -358,11 +364,13 @@
           @down="moveSelection(1)"
           @up="moveSelection(-1)"
         />
-        <button class="fs-toggle-btn" :class="{ active: search.state.recursive }" :title="t('file.search.recursive')" @click="toggleRecursive">
-          <FolderTree :size="15" />
-        </button>
         <button class="fs-toggle-btn" :class="{ active: search.state.exact }" :title="t('file.search.exact')" @click="toggleExact">
           <WholeWord :size="15" />
+        </button>
+        <!-- Recursive + global are paired: global implies recursive, so they sit
+             together (recursive to the left of global). -->
+        <button class="fs-toggle-btn" :class="{ active: isRecursiveEffective }" :disabled="isGlobalScope" :title="t('file.search.recursive')" @click="toggleRecursive">
+          <FolderTree :size="15" />
         </button>
         <button class="fs-toggle-btn" :class="{ active: search.state.scope === 'global' }" :title="t('file.search.scopeGlobal')" @click="toggleScope">
           <Globe :size="15" />
@@ -865,23 +873,36 @@ const searchInputRef = ref(null)
 /** True while the search box has a non-empty query (results view). */
 const searchHasQuery = computed(() => !!search.state.query.trim())
 
+/** Global scope searches from the project root and always recurses. */
+const isGlobalScope = computed(() => search.state.scope === 'global')
+const isRecursiveEffective = computed(() => search.effectiveRecursive.value)
+
+/**
+ * Search results are shown with their containing directory whenever the search
+ * ranges beyond the browsed directory — i.e. recursive (including global)
+ * search. A plain current-directory search already shows every hit's location,
+ * so the extra path row would be redundant there.
+ */
+const showResultPath = computed(() => searchHasQuery.value && isRecursiveEffective.value)
+
 // Search-options description used as the search box placeholder (no separate
 // prompt prefix). Word order and spacing follow the active locale, matching
 // the pre-refactor FileSearchDrawer header wording.
 const searchPlaceholder = computed(() => {
     const s = search.state
     const isEn = locale.value.toLowerCase().startsWith('en')
-    const scope = s.scope === 'global' ? t('file.search.wordGlobal') : t('file.search.wordCurrent')
+    const scope = isGlobalScope.value ? t('file.search.wordGlobal') : t('file.search.wordCurrent')
     const verb = t('file.search.wordVerb')
+    const recursive = isRecursiveEffective.value
 
     if (isEn) {
         const words = []
         if (s.exact) words.push(t('file.search.wordExact'))
-        if (s.recursive) {
+        if (recursive) {
             const w = t('file.search.wordRecursive')
             words.push(s.exact ? `${w.charAt(0).toLowerCase()}${w.slice(1)}` : w)
         }
-        const hasMod = s.exact || s.recursive
+        const hasMod = s.exact || recursive
         const verbText = hasMod ? verb : `${verb.charAt(0).toUpperCase()}${verb.slice(1)}`
         words.push(`${verbText} ${scope}`)
         return words.join(' ')
@@ -889,7 +910,7 @@ const searchPlaceholder = computed(() => {
     // zh: [scope][exact][recursive][verb] concatenated without spaces
     const parts = [scope]
     if (s.exact) parts.push(t('file.search.wordExact'))
-    if (s.recursive) parts.push(t('file.search.wordRecursive'))
+    if (recursive) parts.push(t('file.search.wordRecursive'))
     parts.push(verb)
     return parts.join('')
 })
@@ -2539,6 +2560,18 @@ function scrollSelectedIntoView(path) {
     object-fit: contain;
 }
 
+.file-info {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.file-info .file-name {
+    flex: none;
+    width: 100%;
+}
+
 .file-name {
     flex: 1;
     overflow-x: auto;
@@ -2547,6 +2580,20 @@ function scrollSelectedIntoView(path) {
 }
 .file-name::-webkit-scrollbar {
     display: none;
+}
+
+/* Containing directory shown under a search hit (global / recursive search). */
+.file-parent-dir {
+    font-size: 11px;
+    color: var(--text-muted, #999);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.file-item.active .file-parent-dir {
+    color: rgba(255,255,255,0.7);
 }
 
 .file-meta {
@@ -2708,6 +2755,19 @@ function scrollSelectedIntoView(path) {
 .grid-item.grid-dir .grid-name {
     color: var(--text-primary, #1a1a1a);
     font-weight: 500;
+}
+
+/* Containing directory shown under a search hit in grid view. */
+.grid-parent-dir {
+    margin-top: 1px;
+    font-size: 10px;
+    line-height: 1.2;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+    color: var(--text-muted, #999);
 }
 
 .grid-item.grid-dir.grid-active .grid-name {
@@ -2892,6 +2952,17 @@ function scrollSelectedIntoView(path) {
 
 .fs-toggle-btn.active {
     color: var(--accent-color, #4a90d9);
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+/* Forced-on (global scope implies recursive) — stays visibly active but is not
+   user-operable. */
+.fs-toggle-btn:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.fs-toggle-btn:disabled:hover {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
