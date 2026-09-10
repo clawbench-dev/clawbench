@@ -56,7 +56,10 @@ vi.mock('@/utils/chatStreamUtils', () => ({
 
 vi.mock('@/utils/format', () => ({
   formatDuration: (ms: number) => `${ms}ms`,
-  formatRelativeTime: (date: string) => (date ? '3 min ago' : ''),
+  // Mirror the real formatRelativeTime contract: '' for missing dates and for
+  // Go zero-value timestamps (year 0001), otherwise a relative label.
+  formatRelativeTime: (date: string) =>
+    !date || date.startsWith('0001-01-01') ? '' : '3 min ago',
 }))
 
 vi.mock('@/utils/clipboard', () => ({
@@ -306,6 +309,31 @@ describe('ChatMessageItem', () => {
     expect(wrapper.find('.chat-meta-time').classes()).not.toContain('chat-meta-sep')
   })
 
+  it('hides the relative time entirely for a Go zero-value timestamp', () => {
+    // Backend zero-value times serialize as year 0001. formatRelativeTime returns
+    // '' for these, so neither the label nor its separator should render.
+    const wrapper = createWrapper({
+      msg: {
+        id: '11', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+        metadata: { wallMs: 100 },
+        createdAt: '0001-01-01T00:00:00Z',
+      },
+    })
+    expect(wrapper.find('.chat-meta-duration').exists()).toBe(true)
+    expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
+  })
+
+  it('hides the relative time when createdAt is missing', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: '12', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+      },
+    })
+    expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
+  })
+
   it('emits remove-pending when pending remove button is clicked', async () => {
     const wrapper = createWrapper({
       msg: { id: '8', role: 'user', content: 'hello', blocks: [], pending: true },
@@ -532,6 +560,10 @@ describe('ChatMessageItem', () => {
       )
       const btn = wrapper.find('.chat-speak-btn')
       expect(btn.text()).toContain('正在朗读')
+      // The button is a stop control while playing — it must not advertise
+      // "read aloud" as its accessible name/tooltip.
+      expect(btn.attributes('aria-label')).toBe('正在朗读')
+      expect(btn.attributes('title')).toBe('正在朗读')
     })
 
     it('shows the generating/loading state when speech is being generated', () => {

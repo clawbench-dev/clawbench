@@ -73,7 +73,7 @@
         <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
           <LoadingIndicator size="sm" inline />
         </span>
-        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="t('chat.message.readAloud')" :aria-label="t('chat.message.readAloud')" @click.stop="handleSpeak">
+        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
             <Clock :size="14" class="speak-spinner" />
@@ -243,6 +243,18 @@ const msgText = computed(() => {
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
 // times), so the label and its separator stay hidden when there is nothing to show.
 const relativeTime = computed(() => (props.msg?.createdAt ? formatRelativeTime(props.msg.createdAt) : ''))
+
+// Accessible name/tooltip for the read-aloud button. While audio is playing the
+// button acts as a stop control, so it must not advertise "read aloud".
+const speakBtnLabel = computed(() => {
+  const id = props.msg?.id
+  if (autoSpeech.isPlayingAudio(id)) return t('chat.message.speaking')
+  if (autoSpeech.isGeneratingText(id)) {
+    const phase = autoSpeech.getPhaseLabel(id)
+    return phase ? t('chat.speech.' + phase) : t('chat.message.readAloud')
+  }
+  return t('chat.message.readAloud')
+})
 
 // Whether to render the summary view. Computed from message state (summary
 // exists, content stripped), the user's explicit preference, and the global
@@ -466,12 +478,6 @@ function handleCopyMessage() {
 
 .chat-meta-time {
     white-space: nowrap;
-}
-
-/* When both duration and time are shown, insert a middot between them. The
-   separator margin is offset by the parent's gap to keep even spacing. */
-.chat-meta-time.chat-meta-sep::before {
-    margin-right: 0;
 }
 
 /* Speak button active state */
