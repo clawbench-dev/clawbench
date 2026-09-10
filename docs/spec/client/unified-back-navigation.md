@@ -68,7 +68,7 @@ flowchart TD
 ### 功能清单
 
 - **界面内文件历史栈**：`useFileNavStack` 维护文件预览的前进/后退栈（上限 20 条），支持行内编辑退出、Markdown rendered/raw 视图模式与行范围记录。返回出栈时携带上一文件的视图状态，浏览器式的分支语义——回退后再打开新文件会截断当前分支
-- **滚动/阅读位置精准还原**：`useFileScrollRestore` 拥有文件查看器全部滚动状态存取的裁决权——跨文件/重开恢复用按路径缓存的像素 scrollTop（`fileScrollCache` 模块级共享，跨 FileViewer 卸载存活），rendered↔raw 与编辑切换用源行锚点（rendered 块带 `data-source-line`，CodeMirror 有真实行号，单行即共享坐标）。两个守卫防丢位置：隐藏容器（display:none 重置 scrollTop）读到的偏移一律不写入；内容异步渲染导致目标超出当前最大滚动时延后到内容真正能承载为止
+- **滚动/阅读位置精准还原**：`useFileScrollRestore` 拥有文件查看器全部滚动状态存取的裁决权——跨文件/重开恢复用按路径缓存的像素 scrollTop（`fileScrollCache` 模块级共享，跨 FileViewer 卸载存活），rendered↔raw 与编辑切换用**单一 sourceLine 锚**（rendered 块带 `data-source-line`，CodeMirror 有真实行号，单行即共享坐标）。锚阶梯收敛为 3 级（sourceLine → 像素 → 比例），块内偏移用 `sourceOffset` 吸收——多套坐标锚（heading/block/sourceLine）叠加会在接缝处互相打架。两个守卫防丢位置：隐藏容器（display:none 重置 scrollTop）读到的偏移一律不写入；内容异步渲染导致目标超出当前最大滚动时延后到内容真正能承载为止；行号不可达时正确回退到像素/比例而非把用户丢回顶部
 - **跨界面跳转来源追踪**：`useNavigationContext` 模块级单例追踪 jump origin——记录来源界面（surface：chat/task/file/browse/history）、应激活页签（tab）、标签与初始文件状态。`start`/`replace`/`consume`/`clear` 管理生命周期，快照/恢复支撑项目热切换时保留未消费的返回目标
 - **目录游历事务**：`useDirectoryReturn` 在「文件查看 → 游历目录 → 查看新文件」场景下挂起原文件上下文（文件栈 + origin + 所在目录全部快照），离开目录时精准复原。模块级单例存储保证同一时刻只有一次可挂起的文件访问——被挂起的状态是全局的，per-call 栈会让两个调用者对"谁被挂起"产生分歧
 - **统一返回状态机**：`useNavigationStateMachine` 以注入的 hooks 接口实现裁决——判定（纯谓词）与执行分离。返回步骤优先级阶梯：顶层弹层/抽屉 > 行内编辑 > Browse 瞬态层（搜索/多选）> 界面内历史 > 跨界面来源 > 关闭覆盖层 > 父目录 > 其他页面级处理器。`reason='close'` 时严格限定为关闭动作，命中 origin/overlay 之外直接返回

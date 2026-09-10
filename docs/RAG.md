@@ -38,9 +38,9 @@ rag:
   api_key: ""
   chunk_size: 512
   chunk_overlap: 64
-  poll_interval: "10s"
-  batch_size: 10
-  search_limit: 20
+  poll_interval: "5s"
+  batch_size: 50
+  search_limit: 100
   search_pool_size: 20
   retention_days: 90
 ```
@@ -52,9 +52,9 @@ rag:
 | `api_key` | 空 | 云端嵌入服务的可选密钥 |
 | `chunk_size` | `512` | 分块 token 数 |
 | `chunk_overlap` | `64` | 相邻分块重叠 token 数 |
-| `poll_interval` | `10s` | Indexer 轮询间隔 |
-| `batch_size` | `10` | 每轮处理的消息数 |
-| `search_limit` | `20` | 默认结果数 |
+| `poll_interval` | `5s` | Indexer 轮询间隔 |
+| `batch_size` | `50` | 每轮处理的消息数（热生效） |
+| `search_limit` | `100` | 默认结果数 |
 | `search_pool_size` | `20` | 各检索源参与 RRF 融合的候选数 |
 | `retention_days` | `90` | 软删除数据保留天数；`0` 表示永久保留 |
 

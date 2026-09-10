@@ -81,7 +81,7 @@ npm test                             # Vitest 前端测试
 |---|------|
 | `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输；含用量统计（`/api/usage/stats`）、主题壁纸（`/api/theme-background`）等端点 |
 | `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker）、用量聚合（`usage_stats.go`：按维度 GROUP BY `chat_metadata`）、会话截断（Rewind/TruncateSessionAfterMessage + RAG 范围清理） |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。14 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发）与 `~/.codebuddy/skills/` 技能扫描（YAML frontmatter 解析 → 斜杠命令 + 系统提示词注入） |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。14 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发）与 `~/.codebuddy/skills/` 技能扫描（YAML frontmatter 解析 → 斜杠命令 + 系统提示词注入）。ACP 子智能体内容经 `_meta` 父工具调用 id 归属（`acp_parent_link.go`，CodeBuddy 扁平键 / Claude·Qoder 嵌套键），子块按父边界隔离（累加不跨父合并），随 `ParentToolCallID` 贯穿到前端分组渲染 |
 | `internal/model/` | 数据模型、后端注册表、模型发现、27 个 LLM Provider |
 | `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
 | `internal/stt/` | STT（语音输入）：vLLM Whisper，流式/非流式双端点 |
