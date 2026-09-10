@@ -117,9 +117,11 @@
     </template>
     <!-- Original content mode -->
     <template v-if="nested || !showingSummary || !summary">
-    <template v-for="(block, bi) in blocks" :key="stableBlockKey(absIdx(bi), block)">
+    <template v-for="(block, bi) in blocks" :key="stableBlockKey(bi, block)">
       <!-- Sub-agent child blocks are rendered nested under their parent Agent
-           block below; skip them in the flat stream. -->
+           block below; skip them in the flat stream. Children always arrive
+           AFTER their parent (the parent id is known when they are emitted), so
+           this branch never flips mid-stream for a live block. -->
       <template v-if="isChildBlock(block)"></template>
       <!-- Thinking block: streaming or expanded shows inline content, collapsed shows clickable chip -->
       <div v-else-if="block.type === 'thinking'"
@@ -163,7 +165,7 @@
         <!-- AskUserQuestion / PermissionApproval: unified interactive card
              (status strip + body in one box). -->
         <div v-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
-          <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), bi)">
+          <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
@@ -181,7 +183,7 @@
           </div>
         </div>
         <template v-else>
-          <div class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
+          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
@@ -199,7 +201,7 @@
                 :aria-expanded="isSubagentGroupOpen(bi, block)"
                 :aria-label="isSubagentGroupOpen(bi, block) ? t('chat.contentBlocks.subagentCollapse') : t('chat.contentBlocks.subagentExpand')"
                 :title="isSubagentGroupOpen(bi, block) ? t('chat.contentBlocks.subagentCollapse') : t('chat.contentBlocks.subagentExpand')"
-                @click.stop="$emit('toggle-tool', subagentGroupKey(bi, block))"
+                @click.stop="toggleSubagentGroup(bi, block)"
               >
                 <ChevronUp v-if="isSubagentGroupOpen(bi, block)" :size="12" />
                 <ChevronDown v-else :size="12" />
@@ -220,11 +222,14 @@
         <!-- Sub-agent group body: nested thinking/text/tool_use produced by the
              sub-agent this Agent call spawned, rendered by a recursive
              ContentBlocks instance so they get the exact same styles (thinking
-             callout/pill, tool pills) as top-level content. -->
+             callout/pill, tool pills) as top-level content. The recursive
+             subtree is mounted lazily on first open: a never-opened group (e.g.
+             a collapsed 4558-block sub-agent) pays no component/index cost. -->
         <div v-if="hasSubagentGroup(block)" class="subagent-group" :class="{ 'subagent-group-open': isSubagentGroupOpen(bi, block) }">
-          <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block) }">
+          <div class="subagent-group-body-wrapper" :class="{ 'subagent-group-body-open': isSubagentGroupOpen(bi, block), 'subagent-group-body-nostransition': collapsingSubagentGroups[subagentGroupKey(bi, block)] }">
             <div class="subagent-group-body">
               <ContentBlocks
+                v-if="isSubagentGroupMounted(bi, block)"
                 :blocks="childBlocksOf(block.id)"
                 :root-blocks="rootBlocksResolved"
                 :nested="true"
@@ -255,6 +260,18 @@
                 @resume-session="$emit('resume-session', $event)"
                 @reset-session="$emit('reset-session', $event)"
               />
+              <!-- Footer: a bottom affordance to collapse the group (the pill
+                   chevron also toggles, but after scrolling a long sub-agent
+                   trace the bottom is the natural place to close it). -->
+              <button
+                v-if="isSubagentGroupOpen(bi, block)"
+                type="button"
+                class="subagent-group-footer"
+                @click.stop="toggleSubagentGroup(bi, block)"
+              >
+                <ChevronUp :size="12" />
+                <span>{{ t('chat.contentBlocks.subagentCollapse') }}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -599,12 +616,20 @@ const elapsedLabel = computed(() => {
 // indices 0..n-1, but every per-block cache key and the detail drawer's live
 // lookup are keyed by the ABSOLUTE index in the root blocks array. Resolve by
 // object identity so nested instances stay correctly keyed at any depth.
+// A single identity Map per root array keeps lookups O(1) — absIdx is called
+// several times per block per render, and a sub-agent can have thousands of
+// child blocks (a naive indexOf would be O(n) each time).
 const rootBlocksResolved = computed(() => props.rootBlocks || props.blocks)
+const rootIndexByIdentity = computed(() => {
+  const map = new Map<any, number>()
+  const arr = rootBlocksResolved.value
+  for (let i = 0; i < arr.length; i++) map.set(arr[i], i)
+  return map
+})
 function absIdx(bi: number): number {
   if (!props.nested || !props.rootBlocks) return bi
-  const block = props.blocks[bi]
-  const idx = rootBlocksResolved.value.indexOf(block)
-  return idx >= 0 ? idx : bi
+  const idx = rootIndexByIdentity.value.get(props.blocks[bi])
+  return idx !== undefined ? idx : bi
 }
 
 // Key helper: use msgId if available, otherwise msgIndex
@@ -703,12 +728,78 @@ function isChildBlock(block: any): boolean {
 
 /** Expand key for a sub-agent group: reuses the Agent block's stable key. */
 function subagentGroupKey(bi: number, block: any): string {
-  return `subagent-${stableBlockKey(absIdx(bi), block)}`
+  return `subagent-${stableBlockKey(bi, block)}`
 }
 
 /** Whether the sub-agent group under this Agent block is expanded. */
 function isSubagentGroupOpen(bi: number, block: any): boolean {
   return !!props.expandedTools[subagentGroupKey(bi, block)]
+}
+
+// Pill elements by group key, so collapsing can anchor the pill to the top of
+// the scroll viewport (see toggleSubagentGroup).
+const subagentPillEls = new Map<string, HTMLElement>()
+function setSubagentPillRef(key: string, el: any) {
+  if (el) subagentPillEls.set(key, el as HTMLElement)
+  else subagentPillEls.delete(key)
+}
+
+/**
+ * Toggle a sub-agent group. Collapsing shrinks the group by potentially
+ * thousands of pixels, which would violently shift everything below the
+ * viewport. Before collapsing we anchor the Agent pill to the top of its
+ * scroll container and restore that offset after the DOM updates, so the
+ * pill (and the following content) stay put instead of jumping.
+ */
+function toggleSubagentGroup(bi: number, block: any) {
+  const key = subagentGroupKey(bi, block)
+  const wasOpen = isSubagentGroupOpen(bi, block)
+  if (!wasOpen) {
+    // Expanding: no anchoring needed (content grows below the pill).
+    emit('toggle-tool', key)
+    return
+  }
+  const pill = subagentPillEls.get(key)
+  const scroller = pill?.closest('.chat-messages') as HTMLElement | null
+  if (!pill || !scroller) {
+    emit('toggle-tool', key)
+    return
+  }
+  // Distance from the pill's top to the scroller's visible top, plus the
+  // current scrollTop. After collapse we restore scrollTop so the pill keeps
+  // the same on-screen position (clamped to the pill's new max scroll).
+  const pillTopInContent = scroller.scrollTop + (pill.getBoundingClientRect().top - scroller.getBoundingClientRect().top)
+  // Disable the grid transition for this collapse so the height change is
+  // applied synchronously — nextTick then measures the final layout and the
+  // anchor restore is exact. Expansion animates normally.
+  collapsingSubagentGroups[key] = true
+  emit('toggle-tool', key)
+  nextTick(() => {
+    const maxScroll = scroller.scrollHeight - scroller.clientHeight
+    const target = Math.max(0, Math.min(pillTopInContent, maxScroll))
+    if (Math.abs(target - scroller.scrollTop) > 1) {
+      scroller.scrollTop = target
+    }
+    // Re-enable the transition on the next frame so a later expand animates.
+    requestAnimationFrame(() => { delete collapsingSubagentGroups[key] })
+  })
+}
+
+// Groups whose recursive body has been mounted at least once. Once mounted it
+// stays mounted so the collapse animation works on subsequent toggles; an
+// unopened group never instantiates its (possibly huge) child subtree.
+const mountedSubagentGroups = reactive<Record<string, boolean>>({})
+
+// Groups mid-collapse. Collapse is instant (transition disabled) so the
+// viewport anchor can be restored at nextTick against the final height; only
+// expansion animates.
+const collapsingSubagentGroups = reactive<Record<string, boolean>>({})
+
+/** Whether to mount the recursive body for this group (first open or later). */
+function isSubagentGroupMounted(bi: number, block: any): boolean {
+  const k = subagentGroupKey(bi, block)
+  if (isSubagentGroupOpen(bi, block)) mountedSubagentGroups[k] = true
+  return !!mountedSubagentGroups[k]
 }
 
 /** Whether the parent Agent tool is still running (drives the group spinner). */
@@ -813,14 +904,16 @@ function handleSummaryToolClick(tool: any, ti: number) {
  *  thinking: block.think_id (stable backend-assigned ID, survives re-opens),
  *            falling back to block._key (key assigned at creation/parsing)
  *  text: text-${bi} (text blocks merge so index is stable)
- *  other: type-bi (fallback) */
+ *  other: type-bi (fallback)
+ *  The index fallback uses the ABSOLUTE root index (absIdx) so a nested
+ *  instance's keys never collide with the parent's. */
 function stableBlockKey(bi: number, block: any) {
   if (block.type === 'tool_use' && block.id) return block.id
   if (block.type === 'thinking') {
     if (block.think_id) return block.think_id
     if (block._key) return block._key
   }
-  return `${block.type || 'other'}-${bi}`
+  return `${block.type || 'other'}-${absIdx(bi)}`
 }
 
 function handleThinkingClick(block: any, bi: number) {
@@ -1055,7 +1148,7 @@ function getBlockHtml(bi: number, block: any) {
     return ''
   }
   // Streaming: deferred rendering with throttling
-  const key = stableBlockKey(ai, block)
+  const key = stableBlockKey(bi, block)
   if (blockHtmlCache.value[key] !== undefined) {
     if (!_throttleTimer) {
       const newCache = { ...blockHtmlCache.value }
@@ -1096,7 +1189,7 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   }
   // Streaming: skip KaTeX (formulas may be incomplete)
   const streamingOpts = { skipKatex: true } as const
-  const cacheKey = `t-${stableBlockKey(absIdx(bi), block)}`
+  const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   if (blockHtmlCache.value[cacheKey] !== undefined) {
     if (!_throttleTimer) {
@@ -1780,6 +1873,12 @@ onUnmounted(() => {
   opacity: 1;
 }
 
+/* Collapse is applied without a transition so the viewport anchor restore
+   (toggleSubagentGroup) can measure the final height synchronously. */
+.subagent-group-body-wrapper.subagent-group-body-nostransition {
+  transition: none;
+}
+
 .subagent-group-body {
   overflow: hidden;
   min-height: 0;
@@ -1787,6 +1886,28 @@ onUnmounted(() => {
 
 .subagent-group-body-open .subagent-group-body {
   padding: 6px 10px;
+}
+
+/* Bottom "collapse" affordance shown only while the group is open. */
+.subagent-group-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--subagent-accent) 20%, var(--border-color));
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.subagent-group-footer:hover {
+  color: var(--subagent-accent);
 }
 
 /* Inline tool detail — only used by AskUserQuestion (other tools use ToolDetailDrawer) */

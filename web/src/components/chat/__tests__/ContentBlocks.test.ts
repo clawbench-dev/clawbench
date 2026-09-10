@@ -112,7 +112,6 @@ const i18n = createI18n({
         retry: 'Retry',
         continue: 'Continue',
         resetSession: 'Reset session',
-        subagentGroup: 'Sub-agent',
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
@@ -145,7 +144,6 @@ function mountBlocks(props: Record<string, unknown> = {}) {
         // icon" test verifies the real component renders. Stub every other
         // lucide icon explicitly instead of the package-level stub.
         Brain: LucideStub,
-        Bot: LucideStub,
         ChevronRight: LucideStub,
         ChevronDown: LucideStub,
         ChevronUp: LucideStub,
@@ -1390,6 +1388,7 @@ describe('ContentBlocks — sub-agent grouping', () => {
         { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
         { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
       ],
+      expandedTools: { 'subagent-call_p': true },
     })
     // The expand/collapse toggle lives INSIDE the Agent pill — no separate
     // group header bar duplicating the agent name.
@@ -1408,6 +1407,49 @@ describe('ContentBlocks — sub-agent grouping', () => {
     expect(directPills.length).toBe(1)
   })
 
+  it('does not mount the recursive body until the group is first opened', () => {
+    const collapsed = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+    })
+    // Collapsed: the child subtree is not instantiated at all.
+    expect(collapsed.find('.subagent-group-body .content-blocks-nested').exists()).toBe(false)
+
+    const open = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+    })
+    expect(open.find('.subagent-group-body .content-blocks-nested').exists()).toBe(true)
+  })
+
+  it('child tool detail is emitted with its real ROOT block index', async () => {
+    // Regression: nested instances must translate the local index back to the
+    // root array index — the drawer resolves the live block by root index.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'thinking', text: 'child reasoning', parent_tool_call_id: 'call_p' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+    })
+    const group = wrapper.find('.subagent-group')
+    const childPill = group.findAll('.chat-tool-call').find((p) => p.text().includes('Read'))!
+    expect(childPill).toBeTruthy()
+    await childPill.trigger('click')
+    const events = wrapper.emitted('show-tool-detail')
+    expect(events).toBeTruthy()
+    const detail = events!.find((e) => (e[0] as any).name === 'Read')?.[0] as any
+    expect(detail).toBeTruthy()
+    // The Read block is at root index 2 (Agent=0, thinking=1, Read=2).
+    expect(detail.blockIdx).toBe(2)
+  })
+
   it('toggling the in-pill chevron emits toggle-tool with the group key', async () => {
     const wrapper = mountBlocks({
       blocks: [
@@ -1417,6 +1459,31 @@ describe('ContentBlocks — sub-agent grouping', () => {
     })
     await wrapper.find('.subagent-group-toggle').trigger('click')
     const events = wrapper.emitted('toggle-tool')
+    expect(events).toBeTruthy()
+    expect(events![0][0]).toBe('subagent-call_p')
+  })
+
+  it('renders a bottom footer collapse button only while open, and it toggles', async () => {
+    const collapsed = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+    })
+    // Body is not mounted while collapsed → no footer.
+    expect(collapsed.find('.subagent-group-footer').exists()).toBe(false)
+
+    const open = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+    })
+    const footer = open.find('.subagent-group-footer')
+    expect(footer.exists()).toBe(true)
+    await footer.trigger('click')
+    const events = open.emitted('toggle-tool')
     expect(events).toBeTruthy()
     expect(events![0][0]).toBe('subagent-call_p')
   })
@@ -1474,6 +1541,8 @@ describe('ContentBlocks — sub-agent grouping', () => {
         { type: 'tool_use', name: 'Agent', id: 'call_c', done: true, input: {}, parent_tool_call_id: 'call_p' },
         { type: 'text', text: 'grandchild content', parent_tool_call_id: 'call_c' },
       ],
+      // Open both levels so the recursive subtrees mount.
+      expandedTools: { 'subagent-call_p': true, 'subagent-call_c': true },
     })
     // Both Agent blocks render a group; the grandchild nests under call_c.
     expect(wrapper.findAll('.subagent-group').length).toBe(2)
