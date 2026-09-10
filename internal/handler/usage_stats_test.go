@@ -32,9 +32,10 @@ func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt s
 
 	_, err = db.Exec(
 		`INSERT INTO chat_metadata (message_id, model, input_tokens, output_tokens, total_tokens,
-			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		msgID, model, total, 0, total, 0, 0, 0, 0, createdAt,
+			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at,
+			project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codebuddy', 'codebuddy', ?)`,
+		msgID, model, total, 0, total, 0, 0, 0, 0, createdAt, projectPath, sessionID,
 	)
 	require.NoError(t, err)
 }

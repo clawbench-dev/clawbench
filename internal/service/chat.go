@@ -1362,6 +1362,11 @@ func UpdateSessionAutoApprove(sessionID string, enabled bool) error {
 // This enables SQL-based analytical queries (token usage, cost, model stats)
 // while the same metadata remains embedded in chat_history.content JSON for
 // backward compatibility with the frontend.
+//
+// chat_metadata is a standalone usage ledger: it carries no foreign key to
+// chat_history so a row survives the message/session being deleted. The
+// project/backend/agent attribution is denormalized here at write time so the
+// stats query never has to join back to a possibly-deleted session.
 func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	if messageID <= 0 || meta == nil {
 		return nil
@@ -1377,6 +1382,20 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			categoryJSON = string(b)
 		}
 	}
+	// Resolve denormalized attribution from the message's own row. A missing
+	// row (ErrNoRows) is benign — the message was already deleted — and leaves
+	// the columns empty. Any other error is propagated rather than swallowed:
+	// writing a row with empty project_path would make it permanently invisible
+	// to every project-scoped stats query, i.e. silent under-counting.
+	var projectPath, backend, agentID, clawbenchSessionID string
+	if err := dbRead.QueryRow(
+		`SELECT h.project_path, h.backend, h.session_id, COALESCE(s.agent_id, '')
+		 FROM chat_history h
+		 LEFT JOIN chat_sessions s ON s.id = h.session_id
+		 WHERE h.id = ?`, messageID,
+	).Scan(&projectPath, &backend, &clawbenchSessionID, &agentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("resolve metadata attribution for message %d: %w", messageID, err)
+	}
 	_, err := WriteExec(
 		`
 		INSERT OR REPLACE INTO chat_metadata
@@ -1386,8 +1405,9 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			 cache_creation_tokens, cache_hit_tokens, cache_miss_tokens, credit,
 			 usage_by_category, session_id,
 			 request_id, trace_id, agent_message_id, message_request_id, request_model_name,
-			 response_model_id, finish_reason, outcome, agent_phase)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 response_model_id, finish_reason, outcome, agent_phase,
+			 project_path, backend, agent_id, clawbench_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, meta.Model,
 		meta.InputTokens, meta.OutputTokens, meta.DurationMs, meta.WallMs,
 		meta.CostUSD, meta.StopReason, isError, meta.ErrorMessage,
@@ -1396,6 +1416,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 		categoryJSON, meta.SessionID,
 		meta.RequestID, meta.TraceID, meta.MessageID, meta.MessageRequestID, meta.RequestModelName,
 		meta.ResponseModelID, meta.FinishReason, meta.Outcome, meta.AgentPhase,
+		projectPath, backend, agentID, clawbenchSessionID,
 	)
 	return err
 }
@@ -2381,6 +2402,10 @@ func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 // Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
 // Returns counts of purged sessions and messages.
+//
+// chat_metadata (the usage ledger) is deliberately left untouched — see
+// HardDeleteSession. Its rows have no foreign key to chat_history, so the
+// usage history for purged sessions remains queryable.
 func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
 	if len(sessionIDs) == 0 {
 		return 0, 0, nil
@@ -2446,6 +2471,11 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 // user-initiated permanent deletion.
 // Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
+//
+// chat_metadata (the usage ledger) is deliberately NOT deleted: it records
+// tokens/cost that were really consumed, and must survive so usage statistics
+// do not under-count. It has no foreign key to chat_history, so removing the
+// history rows leaves it intact.
 func HardDeleteSession(sessionID string) error {
 	tx, err := WriteBegin()
 	if err != nil {
@@ -2483,6 +2513,11 @@ type ReplayMessage struct {
 // the new messages, all in one transaction — on any error the transaction rolls
 // back so the original history is preserved. Returns the number of messages
 // inserted.
+//
+// chat_metadata (the usage ledger) is intentionally NOT deleted. Replayed
+// messages carry no usage data (only {"transport":"acp"}), so replacing the
+// history cannot double-count; keeping the ledger preserves the real token/cost
+// consumed by the messages being replaced.
 func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []ReplayMessage) (int, error) {
 	tx, err := WriteBegin()
 	if err != nil {

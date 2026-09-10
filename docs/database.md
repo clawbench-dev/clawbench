@@ -43,11 +43,13 @@ UNIQUE：`(project_path, backend, id)`
 | indexed | INTEGER | NOT NULL | `0` | RAG 已索引标记 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 
-### chat_metadata（消息元数据）
+### chat_metadata（用量台账）
+
+独立用量台账，**无外键**（刻意不与 `chat_history` 级联）。记录真实消耗的 token/费用，会话/消息被删除后仍然保留，避免统计遗漏。`project_path` / `backend` / `agent_id` 在写入时冗余，统计查询无需回连会话表；`agent` 显示名仍通过 `LEFT JOIN agents` 实时解析。
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
-| message_id | INTEGER | PRIMARY KEY, FK → chat_history.id (CASCADE) | — | 与 chat_history 1:1 |
+| message_id | INTEGER | PRIMARY KEY | — | 原 chat_history.id（仅作标识，无 FK） |
 | mode | TEXT | | `''` | 模式：chat / plan / code |
 | thinking_effort | TEXT | | `''` | 思考力度等级 |
 | transport | TEXT | | `''` | 传输方式：cli / acp |
@@ -60,7 +62,30 @@ UNIQUE：`(project_path, backend, id)`
 | stop_reason | TEXT | | `''` | 停止原因 |
 | is_error | INTEGER | | `0` | 是否出错 |
 | error_message | TEXT | | `''` | 错误信息 |
-| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+| cached_read_tokens | INTEGER | | `0` | 缓存读取 token |
+| cached_write_tokens | INTEGER | | `0` | 缓存写入 token |
+| thought_tokens | INTEGER | | `0` | 思考 token |
+| total_tokens | INTEGER | | `0` | 总 token |
+| cache_creation_tokens | INTEGER | | `0` | 缓存创建 token |
+| cache_hit_tokens | INTEGER | | `0` | 缓存命中 token |
+| cache_miss_tokens | INTEGER | | `0` | 缓存未命中 token |
+| credit | REAL | | `0` | 积分消耗 |
+| usage_by_category | TEXT | | `''` | 上下文分类用量 JSON |
+| session_id | TEXT | | `''` | 外部 ACP session id（CLI 代理为空） |
+| request_id | TEXT | | `''` | 请求 ID |
+| trace_id | TEXT | | `''` | 链路 ID |
+| agent_message_id | TEXT | | `''` | 代理消息 ID |
+| message_request_id | TEXT | | `''` | 请求级 ID |
+| request_model_name | TEXT | | `''` | 请求模型名 |
+| response_model_id | TEXT | | `''` | 响应模型 ID |
+| finish_reason | TEXT | | `''` | 结束原因 |
+| outcome | TEXT | | `''` | 结果 |
+| agent_phase | TEXT | | `''` | 代理阶段 |
+| project_path | TEXT | | `''` | 冗余：项目路径（会话删除后统计仍可用） |
+| backend | TEXT | | `''` | 冗余：AI 后端名称 |
+| agent_id | TEXT | | `''` | 冗余：代理 ID（agent 维度兜底） |
+| clawbench_session_id | TEXT | | `''` | 冗余：ClawBench 会话 ID |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 记录时间 |
 
 ### chat_tool_calls（工具调用）
 
@@ -296,7 +321,7 @@ UNIQUE：`(type, key_id)`
 | 子表列 | 父表 | ON DELETE | 类型 |
 |---|---|---|---|
 | chat_history.session_id | chat_sessions.id | CASCADE | 数据库外键 |
-| chat_metadata.message_id | chat_history.id | CASCADE | 数据库外键 |
+| chat_metadata.message_id | chat_history.id | 无外键 | 独立用量台账（刻意不级联，会话删除后保留） |
 | chat_tool_calls.message_id | chat_history.id | CASCADE | 数据库外键 |
 | chat_tool_calls.session_id | chat_sessions.id | CASCADE | 数据库外键 |
 | ai_raw_responses.session_id | chat_sessions.id | CASCADE | 数据库外键 |
@@ -361,6 +386,10 @@ erDiagram
         TEXT stop_reason
         INTEGER is_error
         TEXT error_message
+        TEXT project_path
+        TEXT backend
+        TEXT agent_id
+        TEXT clawbench_session_id
         DATETIME created_at
     }
 
@@ -553,7 +582,7 @@ erDiagram
     }
 
     chat_sessions ||--o{ chat_history : "session_id CASCADE"
-    chat_history ||--o| chat_metadata : "message_id CASCADE 1:1"
+    chat_history ||--o| chat_metadata : "message_id 1:1 无外键（独立台账）"
     chat_history ||--o{ chat_tool_calls : "message_id CASCADE 1:N"
     chat_sessions ||--o{ chat_tool_calls : "session_id CASCADE"
     chat_history ||--o{ ai_raw_responses : "message_id CASCADE"

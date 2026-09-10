@@ -220,9 +220,12 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	err = db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE message_id = ?", asst2ID).Scan(&n)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, n)
+	// chat_metadata (the usage ledger) must SURVIVE a rewind: the removed turns
+	// really did consume tokens/cost, and re-sending later produces fresh
+	// AUTOINCREMENT message ids so the retained row never double-counts.
 	err = db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?", asst2ID).Scan(&n)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, n)
 
 	// Orphan recommendation for the deleted asst2 message is cleaned; the one for
 	// the preserved asst1 message survives.

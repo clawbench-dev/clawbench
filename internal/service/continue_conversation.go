@@ -482,6 +482,10 @@ func copySessionSummaries(idMap map[int64]int64) error {
 // copySessionDetailTables copies chat_tool_calls and chat_thinking rows from the
 // source session to the fork/continued session, remapping message_id via idMap.
 // Rows whose source message_id is not in idMap (e.g. fork truncation) are skipped.
+//
+// chat_metadata is deliberately NOT copied: it is a usage ledger of tokens/cost
+// actually consumed by the source session. Duplicating it into the fork would
+// double-count that usage in the statistics.
 func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionID string) error {
 	if len(idMap) == 0 {
 		return nil
@@ -648,11 +652,12 @@ func CountMessagesAfterAnchor(sessionID string, anchorID int64) (int, error) {
 // any in-flight streaming placeholder.
 //
 // Child rows are deleted transactionally in the same order as HardDeleteSession.
-// chat_tool_calls / chat_thinking / chat_metadata carry ON DELETE CASCADE on
-// message_id, but they are deleted explicitly anyway to keep semantics visible
-// and tests robust. RAG chunks for the removed messages are purged best-effort
-// after commit via the injected range callback (a separate SQLite store that
-// cannot be touched inside this DB transaction).
+// chat_tool_calls / chat_thinking carry ON DELETE CASCADE on message_id, but
+// they are deleted explicitly anyway to keep semantics visible and tests robust.
+// chat_metadata (the usage ledger) is NOT deleted — the rewound turns really did
+// consume tokens/cost and must remain counted. RAG chunks for the removed
+// messages are purged best-effort after commit via the injected range callback
+// (a separate SQLite store that cannot be touched inside this DB transaction).
 //
 // The caller (handler) is responsible for resetting the AI-side session state
 // (clearing external_session_id and closing the ACP connection) — this function
@@ -716,8 +721,8 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		"DELETE FROM ai_raw_responses WHERE session_id = ? AND message_id IN ("+childPred+")",
 		sessionID, sessionID, anchorID,
 	)
-	// chat_tool_calls / chat_thinking / chat_metadata: FK ON DELETE CASCADE, but
-	// deleted explicitly for visible semantics.
+	// chat_tool_calls / chat_thinking: FK ON DELETE CASCADE, but deleted
+	// explicitly for visible semantics.
 	_, _ = tx.Exec(
 		"DELETE FROM chat_tool_calls WHERE session_id = ? AND message_id IN ("+childPred+")",
 		sessionID, sessionID, anchorID,
@@ -726,10 +731,11 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		"DELETE FROM chat_thinking WHERE session_id = ? AND message_id IN ("+childPred+")",
 		sessionID, sessionID, anchorID,
 	)
-	_, _ = tx.Exec(
-		"DELETE FROM chat_metadata WHERE message_id IN ("+childPred+")",
-		sessionID, anchorID,
-	)
+	// chat_metadata (the usage ledger) is intentionally NOT deleted. The
+	// removed turns consumed real tokens/cost; discarding their records would
+	// under-count usage. Re-sending after a rewind creates fresh message ids
+	// (AUTOINCREMENT never reuses ids) and therefore fresh ledger rows, so the
+	// preserved rows never double-count.
 	// summaries / tts_summaries: no FK on target_id / message_id.
 	_, _ = tx.Exec(
 		"DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN ("+childPred+")",

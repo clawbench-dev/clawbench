@@ -1628,6 +1628,10 @@ func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
 		finish_reason TEXT DEFAULT '',
 		outcome TEXT DEFAULT '',
 		agent_phase TEXT DEFAULT '',
+		project_path TEXT DEFAULT '',
+		backend TEXT DEFAULT '',
+		agent_id TEXT DEFAULT '',
+		clawbench_session_id TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	cleanup := SetDBForTest(db, db)

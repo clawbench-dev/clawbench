@@ -243,6 +243,30 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		slog.Info("renamed chat_sessions.deleted column to archived")
 	}
 
+	// Pre-migration: add the chat_metadata ledger attribution columns before
+	// createTables runs. On an existing database the CREATE TABLE below is a
+	// no-op, so the new index on (project_path, created_at) would reference a
+	// column that does not exist yet and abort the whole multi-statement Exec,
+	// breaking startup. Mirrors the chat_history.indexed handling above.
+	var chatMetadataExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&chatMetadataExists)
+	if chatMetadataExists > 0 {
+		for _, col := range []struct{ name, ddl string }{
+			{"project_path", "ALTER TABLE chat_metadata ADD COLUMN project_path TEXT DEFAULT ''"},
+			{"backend", "ALTER TABLE chat_metadata ADD COLUMN backend TEXT DEFAULT ''"},
+			{"agent_id", "ALTER TABLE chat_metadata ADD COLUMN agent_id TEXT DEFAULT ''"},
+			{"clawbench_session_id", "ALTER TABLE chat_metadata ADD COLUMN clawbench_session_id TEXT DEFAULT ''"},
+		} {
+			var hasCol int
+			_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
+			if hasCol == 0 {
+				if _, err := WriteExec(col.ddl); err != nil {
+					return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
+				}
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
@@ -446,6 +470,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		-- Usage ledger. Deliberately has NO foreign key to chat_history: a row
+		-- records tokens/cost that were actually consumed and must survive the
+		-- session/message being deleted (hard-delete, rewind, ACP replay
+		-- replace) so usage statistics never under-count. project_path/backend/
+		-- agent_id are denormalized at write time so the stats query needs no
+		-- join back to the (possibly deleted) session; agent_name is still
+		-- resolved live via LEFT JOIN agents.
+		--
+		-- session_id holds the EXTERNAL ACP session id (may be empty for CLI
+		-- agents); clawbench_session_id holds the ClawBench chat_sessions.id.
 		CREATE TABLE IF NOT EXISTS chat_metadata (
 			message_id INTEGER PRIMARY KEY,
 			mode TEXT DEFAULT '',
@@ -479,11 +513,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			finish_reason TEXT DEFAULT '',
 			outcome TEXT DEFAULT '',
 			agent_phase TEXT DEFAULT '',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (message_id) REFERENCES chat_history(id) ON DELETE CASCADE
+			project_path TEXT DEFAULT '',
+			backend TEXT DEFAULT '',
+			agent_id TEXT DEFAULT '',
+			clawbench_session_id TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at);
 
 		-- Pending events for offline push notifications (added 2026-07)
 		CREATE TABLE IF NOT EXISTS pending_events (
@@ -634,6 +672,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"finish_reason", "ALTER TABLE chat_metadata ADD COLUMN finish_reason TEXT DEFAULT ''"},
 		{"outcome", "ALTER TABLE chat_metadata ADD COLUMN outcome TEXT DEFAULT ''"},
 		{"agent_phase", "ALTER TABLE chat_metadata ADD COLUMN agent_phase TEXT DEFAULT ''"},
+		// NOTE: project_path/backend/agent_id/clawbench_session_id (the ledger
+		// attribution columns) are added in the pre-migration block before
+		// createTables, because createTables creates an index over them.
 	}
 	for _, col := range chatMetaCols {
 		var hasCol int
@@ -643,6 +684,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
 			}
 		}
+	}
+
+	// Migrate: drop the chat_metadata → chat_history foreign key so the usage
+	// ledger survives message/session deletion, and backfill the denormalized
+	// attribution columns. Runs after the column additions above.
+	if err := migrateChatMetadataLedger(); err != nil {
+		return fmt.Errorf("failed to migrate chat_metadata to standalone ledger: %w", err)
 	}
 
 	// Migrate: add source_session_id column for "continue conversation" feature
@@ -1015,6 +1063,162 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	return nil
 }
 
+// migrateChatMetadataLedger converts chat_metadata into a standalone usage
+// ledger that outlives the messages it describes.
+//
+// Older databases declared `FOREIGN KEY (message_id) REFERENCES chat_history(id)
+// ON DELETE CASCADE`, so hard-deleting a session (or rewinding / replacing its
+// history) silently destroyed the token/cost record for work that really was
+// performed, under-counting usage statistics. SQLite cannot drop a constraint
+// with ALTER TABLE, so the table is rebuilt without the FK. Denormalized
+// attribution columns (project_path/backend/agent_id/clawbench_session_id) are
+// then backfilled from the still-present chat_history/chat_sessions rows.
+//
+// Idempotent: skips when the table has no foreign key (fresh installs create it
+// without one, and a rerun after a partial migration is a no-op). Runs inside a
+// single write transaction — any failure rolls back to the original table.
+func migrateChatMetadataLedger() error {
+	var tableExists int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&tableExists); err != nil {
+		return err
+	}
+	if tableExists == 0 {
+		return nil
+	}
+
+	// PRAGMA foreign_key_list returns one row per FK; empty means the ledger is
+	// already standalone.
+	var fkCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkCount); err != nil {
+		return err
+	}
+	if fkCount > 0 {
+		if err := rebuildChatMetadataWithoutFK(); err != nil {
+			return err
+		}
+		slog.Info("migrated chat_metadata to standalone usage ledger (foreign key removed)")
+	}
+
+	// Backfill attribution for rows written before these columns existed. Only
+	// rows whose chat_history row still exists can be recovered; rows already
+	// orphaned by a past cascade delete stay empty. The `h.project_path != ''`
+	// term keeps this a true no-op on later startups: a row whose history
+	// project_path is itself empty cannot be attributed, so it must not match
+	// the predicate again (otherwise the UPDATE would re-run every boot).
+	var needsBackfill int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM chat_metadata m
+		WHERE m.project_path = ''
+		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_path != '')
+	`).Scan(&needsBackfill); err != nil {
+		return err
+	}
+	if needsBackfill == 0 {
+		return nil
+	}
+
+	_, err := WriteExec(`
+		UPDATE chat_metadata SET
+			project_path = COALESCE((SELECT h.project_path FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
+			backend = COALESCE((SELECT h.backend FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
+			clawbench_session_id = COALESCE((SELECT h.session_id FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
+			agent_id = COALESCE((SELECT s.agent_id FROM chat_history h JOIN chat_sessions s ON s.id = h.session_id WHERE h.id = chat_metadata.message_id), '')
+		WHERE project_path = ''
+		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = chat_metadata.message_id AND h.project_path != '')
+	`)
+	if err != nil {
+		return fmt.Errorf("backfill ledger attribution: %w", err)
+	}
+	slog.Info("backfilled chat_metadata ledger attribution", slog.Int("rows", needsBackfill))
+	return nil
+}
+
+// rebuildChatMetadataWithoutFK recreates chat_metadata without the message_id
+// foreign key, preserving every row. Must run after the ALTER TABLE column
+// additions so the source table already carries all current columns.
+func rebuildChatMetadataWithoutFK() error {
+	const cols = "message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens, " +
+		"duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message, " +
+		"cached_read_tokens, cached_write_tokens, thought_tokens, total_tokens, " +
+		"cache_creation_tokens, cache_hit_tokens, cache_miss_tokens, credit, " +
+		"usage_by_category, session_id, request_id, trace_id, agent_message_id, " +
+		"message_request_id, request_model_name, response_model_id, finish_reason, " +
+		"outcome, agent_phase, project_path, backend, agent_id, clawbench_session_id, created_at"
+
+	tx, err := WriteBegin()
+	if err != nil {
+		return err
+	}
+	defer writeMu.Unlock()
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`CREATE TABLE chat_metadata_new (
+		message_id INTEGER PRIMARY KEY,
+		mode TEXT DEFAULT '',
+		thinking_effort TEXT DEFAULT '',
+		transport TEXT DEFAULT '',
+		model TEXT DEFAULT '',
+		input_tokens INTEGER DEFAULT 0,
+		output_tokens INTEGER DEFAULT 0,
+		duration_ms INTEGER DEFAULT 0,
+		wall_ms INTEGER DEFAULT 0,
+		cost_usd REAL DEFAULT 0,
+		stop_reason TEXT DEFAULT '',
+		is_error INTEGER DEFAULT 0,
+		error_message TEXT DEFAULT '',
+		cached_read_tokens INTEGER DEFAULT 0,
+		cached_write_tokens INTEGER DEFAULT 0,
+		thought_tokens INTEGER DEFAULT 0,
+		total_tokens INTEGER DEFAULT 0,
+		cache_creation_tokens INTEGER DEFAULT 0,
+		cache_hit_tokens INTEGER DEFAULT 0,
+		cache_miss_tokens INTEGER DEFAULT 0,
+		credit REAL DEFAULT 0,
+		usage_by_category TEXT DEFAULT '',
+		session_id TEXT DEFAULT '',
+		request_id TEXT DEFAULT '',
+		trace_id TEXT DEFAULT '',
+		agent_message_id TEXT DEFAULT '',
+		message_request_id TEXT DEFAULT '',
+		request_model_name TEXT DEFAULT '',
+		response_model_id TEXT DEFAULT '',
+		finish_reason TEXT DEFAULT '',
+		outcome TEXT DEFAULT '',
+		agent_phase TEXT DEFAULT '',
+		project_path TEXT DEFAULT '',
+		backend TEXT DEFAULT '',
+		agent_id TEXT DEFAULT '',
+		clawbench_session_id TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`); err != nil {
+		return fmt.Errorf("create chat_metadata_new: %w", err)
+	}
+
+	if _, err := tx.Exec("INSERT INTO chat_metadata_new (" + cols + ") SELECT " + cols + " FROM chat_metadata"); err != nil {
+		return fmt.Errorf("copy chat_metadata rows: %w", err)
+	}
+
+	if _, err := tx.Exec("DROP TABLE chat_metadata"); err != nil {
+		return fmt.Errorf("drop chat_metadata: %w", err)
+	}
+	if _, err := tx.Exec("ALTER TABLE chat_metadata_new RENAME TO chat_metadata"); err != nil {
+		return fmt.Errorf("rename chat_metadata_new: %w", err)
+	}
+
+	// Indexes are dropped with the old table — recreate them on the renamed one.
+	for _, stmt := range []string{
+		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model)",
+		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at)",
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("recreate chat_metadata index: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // migrateChatThinkingSeq rebuilds chat_thinking with a seq column for
 // incremental streaming persistence. Older databases created chat_thinking
 // without seq and with UNIQUE(think_id, message_id) (one full-text row per
@@ -1121,6 +1325,12 @@ func migrateQuickProjectScope() error {
 // the content JSON and inserts them into the chat_metadata table.
 // Rows already present in chat_metadata are skipped.
 // Runs in batches of 500 to avoid excessive memory usage on large databases.
+//
+// Copy-origin sessions are excluded: ForkSession / continue-conversation copy
+// assistant content verbatim (including the embedded metadata), so their
+// messages would otherwise be re-migrated here and double-count usage that the
+// source session already contributed. ACP replay-replace messages carry only
+// {"transport":"acp"} and are likewise skipped.
 func MigrateMetadataFromContent() {
 	// Count how many rows need migration
 	var needed int
@@ -1129,6 +1339,10 @@ func MigrateMetadataFromContent() {
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
 		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM chat_sessions s
+			WHERE s.id = h.session_id AND s.source_session_id IS NOT NULL
+		  )
 	`).Scan(&needed)
 	if needed == 0 {
 		return
@@ -1191,6 +1405,10 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
 		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM chat_sessions s
+			WHERE s.id = h.session_id AND s.source_session_id IS NOT NULL
+		  )
 		ORDER BY h.id
 		LIMIT ? OFFSET ?`,
 		batchSize, offset,
