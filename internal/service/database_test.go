@@ -149,6 +149,54 @@ func TestSchema_SessionTypeColumnExists(t *testing.T) {
 	assert.Contains(t, columns, "session_type", "chat_sessions should have session_type column")
 }
 
+// TestSchema_TitleRenamedColumnExists verifies the additive migration that
+// backs the "manual rename must not be overwritten" fix.
+func TestSchema_TitleRenamedColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_renamed", "chat_sessions should have title_renamed column")
+}
+
+// TestSchema_TitleRenamedMigration_Idempotent verifies that running InitDB twice
+// does not fail on the already-present title_renamed column.
+func TestSchema_TitleRenamedMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	// Re-run against the same data dir: the pragma_table_info guard must skip
+	// the ALTER instead of erroring.
+	err = InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_renamed")
+}
+
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir

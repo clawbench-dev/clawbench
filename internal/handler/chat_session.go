@@ -182,6 +182,9 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			backend = "codebuddy"
 		}
 		title := req.Title
+		// A caller-supplied title is deliberately chosen; only the generated
+		// "NewSession N" placeholder may be replaced by first-message auto-titling.
+		lockTitle := title != ""
 		if title == "" {
 			// Numbering is per project: the new unnamed session takes
 			// max(existing numbered unnamed sessions) + 1, so unnamed sessions
@@ -194,7 +197,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 				title = T(r, "NewSession")
 			}
 		}
-		sessionID, err := service.CreateSession(projectPath, backend, title, resolvedAgentID, agentModel, agentSource, "chat")
+		createSession := service.CreateSession
+		if lockTitle {
+			createSession = service.CreateSessionWithLockedTitle
+		}
+		sessionID, err := createSession(projectPath, backend, title, resolvedAgentID, agentModel, agentSource, "chat")
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 			return
@@ -455,11 +462,12 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 			conn.SetAutoApprove(*req.AutoApprove)
 		}
 	}
-	if req.Title != "" {
-		// Manual rename: mark title_renamed so the first-message auto-title
-		// does not overwrite the user's explicit choice.
+	if title := strings.TrimSpace(req.Title); title != "" {
+		// Manual rename: lock the title so the first-message auto-title does
+		// not overwrite the user's explicit choice. Trimmed so a whitespace-only
+		// value cannot latch a blank title.
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.SetSessionTitleByUser(sessionID, req.Title)
+		service.SetSessionTitleLocked(sessionID, title)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

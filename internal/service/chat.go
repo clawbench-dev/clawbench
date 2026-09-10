@@ -638,38 +638,50 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 		return 0, txErr
 	}
 
-	// If this is the first user message, update session title — unless the user
-	// already renamed the session manually (title_renamed=1) or the session was
-	// created with a meaningful title of its own (scheduled task sessions).
 	if role == "user" {
-		var count int
-		if txErr = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
-			var renamed int
-			var sessionType string
-			// Best-effort reads: a missing column (minimal test schemas) leaves the
-			// zero value, preserving the historical auto-title behavior.
-			_ = tx.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed)
-			_ = tx.QueryRow("SELECT COALESCE(session_type, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionType)
-			if renamed == 0 && sessionType != "scheduled" {
-				title := ExtractPlainText(content)
-				if title == "" && len(files) > 0 {
-					title = titleFromFileEntries(files)
-				}
-				if title == "" {
-					title = fallbackTitle
-				}
-				runes := []rune(title)
-				if len(runes) > 50 {
-					title = string(runes[:50]) + "..."
-				}
-				if _, txErr = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); txErr != nil {
-					return 0, txErr
-				}
-			}
+		if err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle); err != nil {
+			return 0, err
 		}
 	}
 
 	return result.LastInsertId()
+}
+
+// maybeAutoTitleSessionTx sets the session title from the first user message,
+// unless the title was deliberately chosen (title_renamed=1): a manual rename,
+// or a meaningful title supplied at creation (scheduled task, fork, continue,
+// imported session). No-op when this is not the session's first message.
+func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
+	var count int
+	// Only the first message auto-titles. A read error (or any other count) means
+	// "not the first message", so the historical behavior is preserved.
+	if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
+		var renamed int
+		// Best-effort read: a missing column (minimal test schemas) leaves the zero
+		// value, preserving the historical auto-title behavior. Any other error is
+		// unexpected and worth surfacing — it would silently overwrite a locked title.
+		if err := tx.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed); err != nil && !strings.Contains(err.Error(), "no such column") {
+			slog.Warn("chat: could not read title_renamed; auto-title may overwrite a locked title",
+				slog.String("session", sessionID), slog.String("err", err.Error()))
+		}
+		if renamed != 0 {
+			return nil
+		}
+		title := ExtractPlainText(content)
+		if title == "" && len(files) > 0 {
+			title = titleFromFileEntries(files)
+		}
+		if title == "" {
+			title = fallbackTitle
+		}
+		if runes := []rune(title); len(runes) > 50 {
+			title = string(runes[:50]) + "..."
+		}
+		if _, err := tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AddQueuedMessage persists a user message to chat_history with queued=1 so it
@@ -1408,12 +1420,29 @@ func GetLatestUserModel(agentID, projectPath string) string {
 // agentSource tracks how the agent was chosen: "default" (auto-assigned) or "user" (manually selected).
 // sessionType is "chat" or "scheduled"; empty string defaults to "chat".
 //
+// The title is treated as a placeholder that the first user message may
+// replace (auto-titling). Callers that pass a deliberately chosen title
+// (task name, fork title, user-supplied name) should use
+// CreateSessionWithLockedTitle instead so it is not overwritten.
+//
 // When the agent is configured with AutoApprove=true, the session's
 // chat_sessions.auto_approve flag is initialized to 1 at creation time, so the
 // choice survives a frontend reload instead of living only in in-memory UI
 // state. This is a creation-time snapshot: toggling the agent default later
 // does not rewrite existing sessions.
 func CreateSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
+	return createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType, false)
+}
+
+// CreateSessionWithLockedTitle creates a session whose title was deliberately
+// chosen by the caller (e.g. a scheduled task name, a fork/continue title, or a
+// user-supplied name at creation). It marks chat_sessions.title_renamed=1 so
+// the first-message auto-title does not overwrite it.
+func CreateSessionWithLockedTitle(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
+	return createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType, true)
+}
+
+func createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType string, lockTitle bool) (string, error) {
 	if sessionType == "" {
 		sessionType = "chat"
 	}
@@ -1428,6 +1457,9 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if err != nil {
 		return "", err
 	}
+	if lockTitle {
+		markSessionTitleRenamed(sessionID)
+	}
 	applyAgentAutoApproveDefault(sessionID, agentID)
 	slog.Info("session created",
 		slog.String("session", sessionID),
@@ -1436,6 +1468,18 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 		slog.String("type", sessionType),
 		slog.String("source", agentSource))
 	return sessionID, nil
+}
+
+// markSessionTitleRenamed sets chat_sessions.title_renamed=1 so the first-message
+// auto-title does not overwrite a deliberately chosen title. Implemented as a
+// guarded UPDATE (not part of the INSERT) so session creation does not depend on
+// the column being present in minimal schemas; failure is non-fatal.
+func markSessionTitleRenamed(sessionID string) {
+	if _, err := WriteExec("UPDATE chat_sessions SET title_renamed = 1 WHERE id = ?", sessionID); err != nil {
+		slog.Warn("failed to mark session title as renamed",
+			slog.String("session", sessionID),
+			slog.String("err", err.Error()))
+	}
 }
 
 // applyAgentAutoApproveDefault initializes a freshly created session's
@@ -1467,18 +1511,20 @@ func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
 	return err
 }
 
-// UpdateSessionTitle updates the title of a chat session. This is the
-// system/auto path (ACP import, etc.) and does NOT mark the title as
-// user-renamed — the first-message auto-title may still replace it.
+// UpdateSessionTitle updates the title of a chat session WITHOUT locking it.
+// Use this only for titles that are still placeholders and may legitimately be
+// replaced by first-message auto-titling. For a deliberately chosen title, use
+// SetSessionTitleLocked.
 func UpdateSessionTitle(sessionID, title string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
 	return err
 }
 
-// SetSessionTitleByUser updates the title of a chat session and marks it as
-// user-renamed (title_renamed=1) so the first-message auto-title will not
-// overwrite the user's explicit choice. Used by the manual rename endpoint.
-func SetSessionTitleByUser(sessionID, title string) error {
+// SetSessionTitleLocked updates the title of a chat session and marks it as
+// deliberately chosen (title_renamed=1) so the first-message auto-title will
+// not overwrite it. Used by the manual rename endpoint and by ACP session
+// import, where the title is derived from the CLI's own transcript.
+func SetSessionTitleLocked(sessionID, title string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_renamed = 1 WHERE id = ?", title, sessionID)
 	return err
 }

@@ -175,6 +175,9 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
 	}
+	// The "⏰ [time] task" title is deliberately chosen — lock it so the first
+	// user message cannot replace it (matters when no messages were copied).
+	markSessionTitleRenamed(newSessionID)
 	// Apply the agent's auto-approve default like CreateSession does, so the
 	// continued interactive session matches a freshly created one.
 	applyAgentAutoApproveDefault(newSessionID, agentID)
@@ -356,6 +359,9 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
 	}
+	// The fork title ("🔀 <source title>") is deliberately chosen — lock it so a
+	// first user message on a fork with no copied history cannot replace it.
+	markSessionTitleRenamed(newSessionID)
 	// Inherit the agent's auto-approve default like CreateSession does, so a
 	// forked session matches a freshly created one for the same agent.
 	applyAgentAutoApproveDefault(newSessionID, agentID)

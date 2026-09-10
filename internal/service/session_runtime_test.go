@@ -1322,6 +1322,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
+	title_renamed INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

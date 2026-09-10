@@ -616,8 +616,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		backendName = "codebuddy"
 	}
 
-	// Create a chat session for this execution, prefixed with clock emoji
-	sessionID, err := CreateSession(projectPath, backendName, "⏰ "+task.Name, task.AgentID, "", "default", "scheduled")
+	// Create a chat session for this execution, prefixed with clock emoji.
+	// The task name is a deliberately chosen title, so lock it against
+	// first-message auto-titling (otherwise the task prompt would replace it).
+	sessionID, err := CreateSessionWithLockedTitle(projectPath, backendName, "⏰ "+task.Name, task.AgentID, "", "default", "scheduled")
 	if err != nil {
 		slog.Error(
 			"failed to create session for task",

@@ -573,6 +573,31 @@ func TestServeAISessionUpdate_Title(t *testing.T) {
 	assert.Equal(t, "My Custom Session Name", got)
 }
 
+// TestServeAISessionUpdate_WhitespaceTitleIgnored verifies a whitespace-only
+// title is treated as "no rename": it must not blank the title nor latch the
+// title_renamed flag (which would permanently disable auto-titling).
+func TestServeAISessionUpdate_WhitespaceTitleIgnored(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Original Title", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"title": "   ",
+	})
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	got, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Original Title", got, "whitespace-only title must be ignored")
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.False(t, renamed, "whitespace-only title must not latch title_renamed")
+}
+
 // TestServeAISessionUpdate_TitleMarksRenamed verifies that a manual rename sets
 // title_renamed so the first-message auto-title will not clobber it.
 func TestServeAISessionUpdate_TitleMarksRenamed(t *testing.T) {

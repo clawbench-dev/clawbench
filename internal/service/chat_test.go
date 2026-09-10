@@ -305,7 +305,7 @@ func TestAddChatMessage_AutoTitleSkippedWhenUserRenamed(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
 	// User renames the session before sending anything.
-	require.NoError(t, service.SetSessionTitleByUser(sid, "My Custom Name"))
+	require.NoError(t, service.SetSessionTitleLocked(sid, "My Custom Name"))
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	require.NoError(t, err)
 	assert.True(t, renamed)
@@ -319,15 +319,56 @@ func TestAddChatMessage_AutoTitleSkippedWhenUserRenamed(t *testing.T) {
 	assert.Equal(t, "My Custom Name", title)
 }
 
+// TestCreateSessionWithLockedTitle_SurvivesFirstMessage verifies that a title
+// supplied at creation time is not replaced by the first user message.
+func TestCreateSessionWithLockedTitle_SurvivesFirstMessage(t *testing.T) {
+	setupDB(t)
+
+	sid, err := service.CreateSessionWithLockedTitle("/project", "claude", "Chosen At Creation", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.True(t, renamed, "locked-title creation must set title_renamed")
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "some first message", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "Chosen At Creation", title)
+}
+
+// TestCreateSession_DoesNotLockGeneratedTitle verifies the plain CreateSession
+// path still allows first-message auto-titling.
+func TestCreateSession_DoesNotLockGeneratedTitle(t *testing.T) {
+	setupDB(t)
+
+	sid, err := service.CreateSession("/project", "claude", "NewSession 1", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.False(t, renamed)
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "auto title wins", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "auto title wins", title)
+}
+
 // TestAddChatMessage_AutoTitleSkippedForScheduledSession verifies that a
 // scheduled task session keeps its created title (⏰ <task name>) instead of
 // being overwritten by the task prompt on the first message.
 func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
 	setupDB(t)
 
-	sid := helperCreateScheduledSession(t, "/project", "claude", "⏰ Daily Code Review")
+	sid, err := service.CreateSessionWithLockedTitle("/project", "claude", "⏰ Daily Code Review", "", "", "default", "scheduled")
+	require.NoError(t, err)
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "review the code please", nil, false, "Daily Code Review")
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "review the code please", nil, false, "Daily Code Review")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -336,7 +377,7 @@ func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
 }
 
 // TestAddChatMessage_AutoTitleStillAppliesForChatSession is a guard against the
-// scheduled-session exception accidentally suppressing normal auto-titling.
+// locked-title logic accidentally suppressing normal auto-titling.
 func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
 	setupDB(t)
 
@@ -351,27 +392,27 @@ func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
 
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	assert.NoError(t, err)
-	assert.False(t, renamed, "auto-titled sessions must not be marked as user-renamed")
+	assert.False(t, renamed, "auto-titled sessions must not be marked as renamed")
 }
 
-// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the system/auto title path
-// (ACP import etc.) leaves the user-renamed flag untouched.
+// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the placeholder title path
+// leaves the lock untouched, so first-message auto-titling still applies.
 func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
-	require.NoError(t, service.UpdateSessionTitle(sid, "Imported Title"))
+	require.NoError(t, service.UpdateSessionTitle(sid, "Placeholder Title"))
 
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	require.NoError(t, err)
 	assert.False(t, renamed)
 
-	// Because it was not marked, the first message may still auto-title it.
-	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites import", nil, false, "NewSession")
+	// Because it was not locked, the first message may still auto-title it.
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites placeholder", nil, false, "NewSession")
 	assert.NoError(t, err)
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
-	assert.Equal(t, "overwrites import", title)
+	assert.Equal(t, "overwrites placeholder", title)
 }
 
 func TestAddChatMessage_AutoTitleTruncated(t *testing.T) {

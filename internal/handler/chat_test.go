@@ -631,6 +631,66 @@ func TestServeSessions_Post_CreateSession(t *testing.T) {
 	assert.Equal(t, "codebuddy", result["backend"])
 }
 
+// TestServeSessions_Post_ExplicitTitleIsLocked verifies that a caller-supplied
+// title is treated as deliberately chosen: the first user message must not
+// replace it. Without the lock, a POST with an explicit title followed by a
+// first message would auto-retitle the session.
+func TestServeSessions_Post_ExplicitTitleIsLocked(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"title": "Chosen By Caller"})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.True(t, renamed, "explicit POST title must be locked")
+
+	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "first message text", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Chosen By Caller", title)
+}
+
+// TestServeSessions_Post_GeneratedTitleNotLocked is the counterpart: when no
+// title is supplied, the generated placeholder must remain auto-titlable.
+func TestServeSessions_Post_GeneratedTitleNotLocked(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.False(t, renamed, "generated placeholder title must stay auto-titlable")
+
+	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "auto generated title", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "auto generated title", title)
+}
+
 // TestServeSessions_Post_InitializesAutoApproveFromAgentDefault verifies the
 // reported bug fix: when the chosen agent is configured with auto-approve in
 // the agent settings panel, a newly created session is persisted with
