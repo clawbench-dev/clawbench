@@ -287,6 +287,56 @@ describe('SessionList', () => {
     expect(url).not.toContain(encodeURIComponent('2025-06-01T00:00:00Z'))
   })
 
+  it('reload (fetchSessionsUpTo) paginates using createdAt as the cursor', async () => {
+    // The depth-preservation refetch loop is the path that actually fired the
+    // duplicate bug, so its cursor must be createdAt too — not just loadMore's.
+    const page1 = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, createdAt: `2025-01-${String(i + 1).padStart(2, '0')}`, updatedAt: `2025-09-${String(i + 1).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
+    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `s1${i}`, title: `S1${i}`, createdAt: `2025-01-${String(i + 11).padStart(2, '0')}`, updatedAt: `2025-09-${String(i + 11).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
+    mockFetch.mockImplementation((url: string) => {
+      const hasCursor = url.includes('cursor=')
+      const page = hasCursor ? page2 : page1
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: page, hasMore: hasCursor ? false : true }) })
+    })
+    const wrapper = await mountList()
+    await wrapper.vm.loadMoreSessions()
+    await flushPromises()
+    // Deepen to 15 rows, then reload — reload re-fetches page 2 via cursor.
+    mockFetch.mockClear()
+    mockFetch.mockImplementation((url: string) => {
+      const hasCursor = url.includes('cursor=')
+      const page = hasCursor ? page2 : page1
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: page, hasMore: hasCursor ? false : true }) })
+    })
+    await wrapper.vm.reload()
+    await flushPromises()
+
+    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
+    expect(cursorCall).toBeTruthy()
+    const url = String(cursorCall![0])
+    // Cursor must be the 10th row's createdAt (2025-01-10), never its updatedAt.
+    expect(url).toContain(`cursor=${encodeURIComponent('2025-01-10')}`)
+    expect(url).not.toContain(encodeURIComponent('2025-09-10'))
+  })
+
+  it('stops paginating instead of sending cursor=undefined when createdAt is missing', async () => {
+    // A row without createdAt cannot form a valid cursor; encodeURIComponent
+    // would emit "undefined" and the server's `created_at < 'undefined'` is
+    // lexically true for all dates, re-returning page 1 (duplicates).
+    const noCreatedAt = { id: 's1', title: 'S1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli' }
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [noCreatedAt], hasMore: true }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockClear()
+    wrapper.vm.hasMore = true
+    await wrapper.vm.loadMoreSessions()
+    await flushPromises()
+
+    // No follow-up request at all — bail before forming a bad cursor.
+    expect(mockFetch.mock.calls.filter((c: unknown[]) => String(c[0]).includes('cursor=')).length).toBe(0)
+    expect(wrapper.vm.hasMore).toBe(false)
+  })
+
   it('exposes reload() and removes the WS listener on unmount', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
     const wrapper = await mountList()

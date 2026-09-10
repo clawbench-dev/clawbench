@@ -717,6 +717,14 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	cursorCreatedAt := lastSession["createdAt"].(string)
 	cursorID := lastSession["id"].(string)
 
+	// Diverge the last page-1 session's updated_at from its created_at, so a
+	// cursor mix-up (or an ignored cursor) actually produces overlap. Without
+	// this, created_at == updated_at for message-less sessions and the test
+	// cannot distinguish the two cursor fields.
+	_, err := service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 day') WHERE id = ?", cursorID)
+	require.NoError(t, err)
+
 	// Normalize cursor format (replace T/space, strip Z)
 	cursor := strings.ReplaceAll(cursorCreatedAt, "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")

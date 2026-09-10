@@ -165,6 +165,15 @@ async function fetchSessionsUpTo(minCount) {
     const last = list[list.length - 1]
     pages++
     if (!last || !serverHasMore || accumulated.length >= minCount || pages >= 20) break
+    // A missing createdAt means we cannot form a safe cursor. encodeURIComponent
+    // would stringify it to "undefined", and the server filter
+    // `created_at < 'undefined'` is lexically true for every date — re-returning
+    // page 1 (the duplicate bug). Stop instead of looping.
+    if (!last.createdAt) {
+      appLog.w('SessionList', 'session missing createdAt; stopping pagination')
+      serverHasMore = false
+      break
+    }
     cursorTime = last.createdAt
     cursorId = last.id
   }
@@ -178,6 +187,13 @@ async function loadMoreSessions() {
   try {
     const last = sessions.value[sessions.value.length - 1]
     if (!last) return
+    // A missing createdAt cannot form a valid cursor (see fetchSessionsUpTo) —
+    // bail out rather than sending cursor=undefined and re-fetching page 1.
+    if (!last.createdAt) {
+      appLog.w('SessionList', 'last session missing createdAt; stopping pagination')
+      hasMore.value = false
+      return
+    }
     // Cursor = createdAt (backend paginates by created_at, see fetchSessionsUpTo).
     const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}&cursor=${encodeURIComponent(last.createdAt)}&cursor_id=${encodeURIComponent(last.id)}`)
     const data = await resp.json()

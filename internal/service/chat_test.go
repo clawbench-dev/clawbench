@@ -2491,12 +2491,18 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
 
-	// Sanity: using updated_at as the cursor WOULD re-return page 1's row,
-	// which is exactly the duplicate-producing behaviour we guard against.
-	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, "2999-01-01 00:00:00", page1[0].ID)
+	// Sanity: feeding an updated_at value as the cursor re-returns page 1's row.
+	// sidOld.updated_at is +1 day, so `created_at < <that>` matches sidNew —
+	// the exact duplicate-producing behaviour this contract guards against.
+	var oldUpdatedAt string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)
+	require.NoError(t, err)
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID)
 	assert.NoError(t, err)
 	require.Len(t, badCursor, 1)
-	assert.Equal(t, sidNew, badCursor[0].ID)
+	assert.Equal(t, sidNew, badCursor[0].ID,
+		"an updated_at cursor must re-return page 1 (demonstrating the duplicate bug)")
 }
 
 // ---------- GetSessionTitlesBatch ----------
