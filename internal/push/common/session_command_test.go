@@ -52,6 +52,11 @@ func TestParseSessionCommand(t *testing.T) {
 		{"@short no", "", "", false},                     // less than 8 hex chars
 		{"@A1B2C3D4 hello", "A1B2C3D4", "hello", true},   // uppercase
 		{" @a1b2c3d4 hello ", "a1b2c3d4", "hello", true}, // leading/trailing space
+		// Multi-line messages must be preserved in full, not truncated to the first line.
+		{"@a1b2c3d4 line1\nline2", "a1b2c3d4", "line1\nline2", true},
+		{"@a1b2c3d4 line1\nline2\nline3", "a1b2c3d4", "line1\nline2\nline3", true},
+		{"@a1b2c3d4\nline1\nline2", "a1b2c3d4", "line1\nline2", true}, // newline right after ID
+		{"@a1b2c3d4 line1\r\nline2", "a1b2c3d4", "line1\r\nline2", true},
 	}
 	for _, tt := range tests {
 		gotID, gotMsg, gotMatch := ParseSessionCommand(tt.text)

@@ -8,7 +8,9 @@ import (
 
 // SessionCmdRe matches "@{8+hex-chars}" followed by optional message text.
 // Allows 8+ hex chars so users can type longer prefixes for disambiguation.
-var SessionCmdRe = regexp.MustCompile(`^@([0-9a-fA-F]{8,})(?:[\s]|$)(.*)`)
+// The (?s) flag makes "." match newlines so multi-line messages are preserved
+// in full instead of being truncated at the first line break.
+var SessionCmdRe = regexp.MustCompile(`(?s)^@([0-9a-fA-F]{8,})(?:\s|$)(.*)`)
 
 // ParseSessionCommand parses the "@{shortID} message" format from push messages.
 // Returns (shortID, message, true) if matched, or ("", "", false) if not.
