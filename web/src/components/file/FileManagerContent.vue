@@ -348,7 +348,7 @@
     </div>
 
     <!-- Bottom dock: resident search bar -->
-    <div class="fs-nav-bottom" @keydown.esc.stop="exitSearch">
+    <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
       <div class="fs-input-row">
         <SearchInput
           ref="searchInputRef"
@@ -777,6 +777,9 @@ const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
   () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden', 'jump', 'sharedFiles'],
+  // Fixed slots reserved outside the demotable list: the sort dropdown and the
+  // "more" dropdown. (The toolbar search button was removed when the search bar
+  // became resident, so this dropped from 3 to 2.)
   { inlineCount: 2, gap: 6 },
 )
 
@@ -797,6 +800,12 @@ const selectedPath = ref('')
 const rangeAnchorPath = ref('')
 /** Selection snapshot taken when the anchor is set; the range rebuilds on it. */
 let rangeBaseSelection = new Set()
+
+/** Drop the range anchor + snapshot (used when the listing they refer to changes). */
+function clearRangeAnchor() {
+    rangeAnchorPath.value = ''
+    rangeBaseSelection = new Set()
+}
 // Sync from external file selection (e.g. chat annotation, search)
 watch(() => props.currentFile?.path ?? '', p => { selectedPath.value = p })
 
@@ -896,6 +905,19 @@ function exitSearch() {
     thumbErrors.clear()
 }
 
+/**
+ * Escape pressed inside the search dock. The bar is resident, so this must not
+ * swallow the key: clear the query first, and fall through to exiting
+ * multi-select when there is nothing to clear.
+ */
+function onSearchDockEscape() {
+    if (search.state.query.trim()) {
+        exitSearch()
+        return
+    }
+    if (multiSelect.active) exitMultiSelect()
+}
+
 /** Focus the resident search box — used by App Ctrl+F. */
 function openSearch() {
     nextTick(() => searchInputRef.value?.focus())
@@ -953,8 +975,10 @@ function toggleScope() {
     refreshSearchResults()
 }
 
-// Debounced search while typing in the search box
+// Debounced search while typing in the search box. The listing changes with
+// every query, so any range anchor from the previous listing is dropped.
 watch(() => search.state.query, () => {
+    clearRangeAnchor()
     search.startSearch(props.currentDir)
 })
 
@@ -1086,15 +1110,13 @@ const { state: multiSelect, enterMultiSelect: _enterMultiSelect, enterMultiSelec
 /** Enter multi-select with a clean selection — the range anchor resets too. */
 function enterMultiSelect() {
     _enterMultiSelect()
-    rangeAnchorPath.value = ''
-    rangeBaseSelection = new Set()
+    clearRangeAnchor()
 }
 
 /** Exit multi-select and drop the range anchor along with the selection. */
 function exitMultiSelect() {
     _exitMultiSelect()
-    rangeAnchorPath.value = ''
-    rangeBaseSelection = new Set()
+    clearRangeAnchor()
 }
 
 defineExpose({
@@ -1127,13 +1149,27 @@ function toggleSelectAll() {
         // Select all visible
         displayEntries.value.forEach(e => multiSelect.selected.add(pathOf(e)))
     }
+    // Refresh the range snapshot so a following Shift+click extends the
+    // select-all result instead of silently discarding it.
+    refreshRangeSnapshot()
+}
+
+/**
+ * Re-snapshot the current selection without moving the anchor. Used by
+ * selection changes that are not plain clicks (select-all, Space toggle) so the
+ * next Shift+click builds on them rather than overwriting them.
+ */
+function refreshRangeSnapshot() {
+    rangeBaseSelection = new Set(multiSelect.selected)
 }
 
 // Clear the active search and multi-selection on directory change — both layers
-// refer to the entries of the directory being left.
+// refer to the entries of the directory being left. The range anchor is dropped
+// too, since it points at an entry from the previous listing.
 watch(() => props.currentDir, () => {
     exitSearch()
     if (multiSelect.active) exitMultiSelect()
+    clearRangeAnchor()
     thumbErrors.clear()
     selectedPath.value = ''
 })
@@ -1527,9 +1563,12 @@ function setRangeAnchor(path) {
 
 /** Shift+click: select the contiguous range from the anchor to `path`. */
 function extendRangeTo(path) {
-    if (!rangeAnchorPath.value) {
-        setRangeAnchor(path)
+    // No anchor, or the anchor no longer resolves in the current listing (e.g.
+    // the directory changed or the query replaced the entries) — re-anchor here
+    // instead of silently selecting nothing.
+    if (!rangeAnchorPath.value || !isRangeAnchorValid()) {
         multiSelect.selected.add(path)
+        setRangeAnchor(path)
         selectedPath.value = path
         return
     }
@@ -1537,6 +1576,11 @@ function extendRangeTo(path) {
     for (const p of rangeBaseSelection) multiSelect.selected.add(p)
     selectRange(rangeAnchorPath.value, path)
     selectedPath.value = path
+}
+
+/** True while the recorded anchor still exists in the current display list. */
+function isRangeAnchorValid() {
+    return displayEntries.value.some(en => pathOf(en) === rangeAnchorPath.value)
 }
 
 function handleItemClick(e) {
@@ -1988,6 +2032,8 @@ async function handleKeydown(e) {
     if (e.key === ' ' && multiSelect.active && selectedPath.value) {
         e.preventDefault()
         toggleSelect(selectedPath.value)
+        // Keep the range snapshot in step so a later Shift+click keeps this pick.
+        refreshRangeSnapshot()
         return
     }
 

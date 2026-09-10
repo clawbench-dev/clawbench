@@ -60,9 +60,9 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
       return null
     }
 
-    // 3. Browse 面板的瞬态层：搜索框激活时先退出搜索（纯关闭，不导航）。
-    //    Browse 内搜索与多选互斥（enterSearch/exitSearch 会自动退出多选），
-    //    所以两条路径可各自独立命中，互不重叠。
+    // 3. Browse 面板的瞬态层：搜索结果层激活时先退出搜索（纯关闭，不导航）。
+    //    搜索栏常驻，与多选可共存（可在搜索结果上多选），因此两条路径可能
+    //    同时命中 —— 顺序即优先级：先剥搜索结果层，再剥多选层。
     if (hooks.canExitSearch?.()) return 'search'
     if (hooks.canExitMultiSelect?.()) return 'multi'
 

@@ -1682,7 +1682,9 @@ navCoordinator = useNavigationCoordinator({
     closeOverlayAndSync,
     handleOpenFileManager,
     isFileManagerMultiSelectActive: () => !!fileManagerRef.value?.multiSelectState?.active,
-    isFileManagerSearchActive: () => !!fileManagerRef.value?.searchActive?.value,
+    // defineExpose unwraps refs/computeds, so `searchActive` is already a plain
+    // boolean here — reading `.value` off it would always be falsy.
+    isFileManagerSearchActive: () => !!fileManagerRef.value?.searchActive,
     closeFileManagerSearch: () => fileManagerRef.value?.closeSearch(),
     exitFileManagerMultiSelect: () => fileManagerRef.value?.exitMultiSelect(),
     // FileOverlay forwards to FileViewer, which emits 'captureScroll' — so this

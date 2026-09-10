@@ -667,6 +667,75 @@ describe('FileManagerContent — handleItemClick', () => {
     expect(sel.has('readme.md')).toBe(false)
   })
 
+  it('PC: Shift+click re-anchors after a directory change', async () => {
+    mockIsPC.value = true
+    const dirA = [
+      { name: 'a1', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'a2', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+    ]
+    const dirB = [
+      { name: 'b1', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'b2', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'b3', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+    ]
+    const wrapper = mountContent({ entries: dirA, currentDir: 'dirA' })
+    // Plain click anchors on an entry of dirA.
+    await wrapper.find('.file-item[data-path="dirA/a1"]').trigger('click')
+    await nextTick()
+
+    // Change directory — the anchor no longer exists in the listing.
+    await wrapper.setProps({ entries: dirB, currentDir: 'dirB' })
+    await nextTick()
+
+    // Shift+click must re-anchor on the clicked entry instead of selecting nothing.
+    await wrapper.find('.file-item[data-path="dirB/b3"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.has('dirB/b3')).toBe(true)
+  })
+
+  it('PC: Shift+click re-anchors after the query replaces the listing', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // Switch to a search-results listing whose entries are unrelated.
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'cmd/main2.go', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+
+    await wrapper.find('.file-item[data-path="cmd/main2.go"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.has('cmd/main2.go')).toBe(true)
+  })
+
+  it('PC: Shift+click after select-all keeps the whole selection', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    // Enter multi-select and select everything via the toolbar button.
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    await wrapper.find('.ms-select-all-btn').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(3)
+
+    // Shift+clicking the first entry must not silently drop the rest.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(3)
+  })
+
   it('does not emit when dirLoading is true', async () => {
     const wrapper = mountContent({ dirLoading: true })
     const dirItem = wrapper.find('.dir-item')
@@ -1589,6 +1658,43 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     await nextTick()
     expect(wrapper.vm.multiSelectState.selected.size).toBe(0)
+  })
+
+  it('PC: Space toggle is preserved by a following Shift+click', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await nextTick()
+
+    // Anchor on src, then Space-toggle readme.md on (highlight it first).
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    wrapper.vm._setSelectedPath('readme.md')
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.has('readme.md')).toBe(true)
+
+    // Shift+click test.ts — readme.md (added via Space) must survive.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+  })
+
+  it('Escape in the empty resident search box exits multi-select', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+
+    // Query is empty, so Escape must fall through to exiting multi-select
+    // instead of being swallowed by the dock's esc handler.
+    await wrapper.find('.fs-nav-bottom').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
   })
 
   it('ArrowDown moves the highlighted selection to the next entry', async () => {
@@ -3195,6 +3301,26 @@ describe('FileManagerContent — search API', () => {
   it('focusSearchInput does not throw', async () => {
     const wrapper = mountContent()
     expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
+  })
+
+  it('exposes searchActive as an already-unwrapped boolean', async () => {
+    // App.vue reads this off the template ref to decide whether back-navigation
+    // should dismiss the results layer. defineExpose unwraps refs/computeds, so
+    // the value is a plain boolean — App.vue must NOT read `.value` off it.
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    const exposed = wrapper.vm.searchActive
+    expect(typeof exposed).toBe('boolean')
+    expect(exposed).toBe(true)
+    // The App.vue predicate must evaluate truthy for this exact expression.
+    expect(!!exposed).toBe(true)
+    // Guard against the regression where App.vue appended `.value`.
+    expect(!!(exposed as unknown as { value?: unknown })?.value).toBe(false)
   })
 })
 

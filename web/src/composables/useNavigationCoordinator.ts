@@ -365,10 +365,10 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     exitEdit,
     // Browse search results / multi-select are transient layers inside the
     // browse panel. Back dismisses them (no navigation) before any
-    // file/origin/dir step — the search bar is resident, but its results layer
-    // is only "active" while a query is typed, and it never coexists with
-    // multi-select (the bar is hidden in multi-select), so these predicates are
-    // mutually exclusive by contract.
+    // file/origin/dir step. The search bar is resident, but its results layer is
+    // only "active" while a query is typed. The two layers can coexist (you can
+    // multi-select search results), so they are NOT mutually exclusive: back
+    // peels the search results layer first, then multi-select on the next press.
     canExitSearch: () => panelIsActive('browse') && isFileManagerSearchActive(),
     exitSearch: closeFileManagerSearch,
     canExitMultiSelect: () => panelIsActive('browse') && isFileManagerMultiSelectActive(),
