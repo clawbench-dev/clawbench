@@ -53,6 +53,16 @@
           <p class="ug-warn-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
         </div>
 
+        <!-- Docker advisory: a container CAN self-upgrade, but a later rebuild
+             from the unchanged image reverts it — recommend the image path
+             without blocking the in-place upgrade. -->
+        <div v-if="showDockerHint" class="ug-hint">
+          <p class="ug-hint-title">{{ t('upgrade.dockerHintTitle') }}</p>
+          <p class="ug-hint-body">{{ t('upgrade.dockerHintBody') }}</p>
+          <code class="ug-hint-cmd">docker pull ghcr.io/clawbench-dev/clawbench:latest &amp;&amp; docker compose up -d</code>
+          <p class="ug-hint-warn">{{ t('upgrade.dockerHintRestart') }}</p>
+        </div>
+
         <!-- Progress area -->
         <div v-if="isInProgress || isRestarting" class="ug-progress-area">
           <template v-if="state.phase === 'downloading'">
@@ -116,7 +126,7 @@ defineExpose({ show })
 const { t } = useI18n()
 const {
   state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
-  installWritable, installDir, checkUpgrade, startUpgrade, releaseNotesUrl,
+  installWritable, installDir, isDocker, checkUpgrade, startUpgrade, releaseNotesUrl,
 } = useUpgrade()
 
 /**
@@ -129,6 +139,19 @@ const showWritableWarning = computed(() =>
   hasUpgrade.value &&
   !checking.value &&
   !installWritable.value &&
+  !isInProgress.value &&
+  !isCompleted.value &&
+  !isFailed.value,
+)
+
+/**
+ * Docker advisory — same visibility window as the writability warning: only
+ * while the user is deciding. Informational, never blocking.
+ */
+const showDockerHint = computed(() =>
+  hasUpgrade.value &&
+  !checking.value &&
+  isDocker.value &&
   !isInProgress.value &&
   !isCompleted.value &&
   !isFailed.value,
@@ -357,6 +380,49 @@ watch(visible, (v) => {
   margin: 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* Docker advisory (informational, non-fatal) */
+.ug-hint {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  text-align: left;
+}
+
+.ug-hint-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-color);
+}
+
+.ug-hint-body {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.ug-hint-cmd {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+  user-select: all;
+}
+
+.ug-hint-warn {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-warning, #d69e2e);
+  line-height: 1.5;
 }
 
 .ug-error-title {

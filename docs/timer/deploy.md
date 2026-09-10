@@ -158,6 +158,7 @@ cd "$NPM_DIR"
 docker build -t clawbench-npm:latest .
 docker run -d \
   --name clawbench-npm \
+  --restart unless-stopped \
   -p 20500:20500 \
   -v clawbench-npm-data:/data \
   clawbench-npm:latest
@@ -198,6 +199,7 @@ docker stop clawbench-image 2>/dev/null && docker rm clawbench-image 2>/dev/null
 docker pull ghcr.io/clawbench-dev/clawbench:$NEW_TAG
 docker run -d \
   --name clawbench-image \
+  --restart unless-stopped \
   -p 20400:20000 \
   -v clawbench-image-data:/data \
   ghcr.io/clawbench-dev/clawbench:$NEW_TAG
@@ -243,3 +245,4 @@ echo "Docker 镜像版 (port 20400) 密码: $IMG_PASS"
 - NPM 安装使用官方 registry `https://registry.npmjs.org`（不使用国内镜像，因 npmmirror 同步延迟可能导致平台包 404）
 - NPM 安装需显式安装平台包 `@xulongzhe/clawbench-linux-x64`，主包不会自动安装可选依赖
 - Docker 镜像的 GHCR 地址是 `ghcr.io/clawbench-dev/clawbench`（GitHub 仓库的 organization 是 `clawbench-dev`）
+- Docker 容器必须带 `--restart unless-stopped`（或 `always`）：应用内升级会替换自身二进制并以退出码 0 退出，靠重启策略拉起新版本。`--restart on-failure` 不生效（退出码为 0 不触发重启）

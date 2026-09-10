@@ -107,6 +107,7 @@ describe('useUpgrade', () => {
     upgrade.state.error_code = ''
     upgrade.installWritable.value = true
     upgrade.installDir.value = ''
+    upgrade.isDocker.value = false
   })
 
   // ── checkUpgrade ──
@@ -194,6 +195,33 @@ describe('useUpgrade', () => {
       await upgrade.checkUpgrade()
 
       expect(upgrade.installWritable.value).toBe(true)
+    })
+
+    it('records is_docker from the response', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        is_docker: true,
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.isDocker.value).toBe(true)
+    })
+
+    it('defaults is_docker to false when absent (older server)', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.isDocker.value).toBe(false)
     })
   })
 

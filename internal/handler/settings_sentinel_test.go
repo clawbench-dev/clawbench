@@ -18,10 +18,23 @@ import (
 
 // ---------- IsRunningUnderSupervisor ----------
 
-func TestIsRunningUnderSupervisor_CLAWBENCH_NO_SUPERVISOR(t *testing.T) {
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "1")
+// The container signal alone must be enough for an unrecognized runtime
+// (k8s, runit, supervisord): no systemd unit, no other indicator.
+func TestIsRunningUnderSupervisor_ContainerWithoutSystemdUnit(t *testing.T) {
+	orig := isContainerized
+	isContainerized = func() bool { return true }
+	defer func() { isContainerized = orig }()
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("container", "")
+	systemdCgroupPath = filepath.Join(testdataDir(), "cgroup-empty")
+	systemctlShowFunc = func(string) string { return "" }
+	defer func() {
+		systemdCgroupPath = "/proc/self/cgroup"
+		systemctlShowFunc = systemctlShowMainPID
+	}()
 
-	assert.False(t, IsRunningUnderSupervisor(), "CLAWBENCH_NO_SUPERVISOR=1 should return false")
+	assert.True(t, IsRunningUnderSupervisor(),
+		"container with no systemd unit must still be supervised")
 }
 
 // INVOCATION_ID alone must NOT imply supervision: a process started from a
@@ -35,7 +48,6 @@ func TestIsRunningUnderSupervisor_INVOCATION_ID(t *testing.T) {
 		systemdCgroupPath = "/proc/self/cgroup"
 		systemctlShowFunc = systemctlShowMainPID
 	}()
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("INVOCATION_ID", "test-id")
 	t.Setenv("container", "")
 
@@ -43,14 +55,12 @@ func TestIsRunningUnderSupervisor_INVOCATION_ID(t *testing.T) {
 }
 
 func TestIsRunningUnderSupervisor_ContainerEnv(t *testing.T) {
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("container", "docker")
 
 	assert.True(t, IsRunningUnderSupervisor(), "container env set should return true")
 }
 
 func TestIsRunningUnderSupervisor_NoIndicators(t *testing.T) {
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("INVOCATION_ID", "")
 	t.Setenv("container", "")
 
@@ -63,7 +73,6 @@ func TestIsRunningUnderSupervisor_NoIndicators(t *testing.T) {
 }
 
 func TestIsRunningUnderSupervisor_DockerenvFile(t *testing.T) {
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("INVOCATION_ID", "")
 	t.Setenv("container", "")
 
@@ -130,9 +139,9 @@ func TestIsRunningUnderSupervisorHelper(t *testing.T) {
 	// Give the intermediate sh time to exit so we are truly re-parented to PID 1.
 	time.Sleep(500 * time.Millisecond)
 
-	os.Unsetenv("CLAWBENCH_NO_SUPERVISOR")
 	os.Unsetenv("INVOCATION_ID")
 	os.Unsetenv("container")
+	os.Unsetenv("KUBERNETES_SERVICE_HOST")
 
 	result := "not_supervised"
 	if IsRunningUnderSupervisor() {

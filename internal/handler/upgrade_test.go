@@ -22,9 +22,11 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
 	}()
 
 	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
 
 	upgradeCheckForUpgrade = func() (string, string, error) {
 		return "1.0.0", "1.1.0", nil
@@ -50,6 +52,37 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	assert.Equal(t, true, resp["has_upgrade"])
 	assert.Equal(t, true, resp["install_writable"])
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
+	assert.Equal(t, false, resp["is_docker"])
+}
+
+// TestServeUpgradeCheck_DockerAdvisory guards that a container deployment is
+// reported to the UI (so it can show a non-blocking "pull the image" hint)
+// without affecting has_upgrade — the upgrade must remain available.
+func TestServeUpgradeCheck_DockerAdvisory(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+
+	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCompareVersions = func(a, b string) int { return -1 }
+	upgradeIsDevBuild = func(v string) bool { return false }
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/app", nil }
+	upgradeIsDocker = func() bool { return true }
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["is_docker"])
+	assert.Equal(t, true, resp["has_upgrade"], "Docker must not block the upgrade")
 }
 
 func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {

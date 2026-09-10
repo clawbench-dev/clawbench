@@ -290,7 +290,7 @@ if [[ -n "$DO_RESTART" ]]; then
     # which would otherwise propagate to the new server and make it look like an
     # orphan AI subprocess to another instance's CleanupOrphans (leading to the
     # new server being killed on startup).
-    env -u CLAWBENCH_CHILD -u CLAWBENCH_NO_SUPERVISOR setsid "$BIN" $PORT_ARGS >> "$LOG" 2>&1 &
+    env -u CLAWBENCH_CHILD setsid "$BIN" $PORT_ARGS >> "$LOG" 2>&1 &
     NEW_PID=$!
     echo "  New PID: $NEW_PID"
 

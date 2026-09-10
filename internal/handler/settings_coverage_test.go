@@ -43,7 +43,6 @@ func TestShellQuote_EmptyVal(t *testing.T) {
 // --- IsRunningUnderSupervisor: container env var ---
 
 func TestIsRunningUnderSupervisor_ContainerEnvVar(t *testing.T) {
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("container", "docker")
 	assert.True(t, IsRunningUnderSupervisor())
 }

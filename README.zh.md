@@ -135,10 +135,12 @@ cd clawbench
 
 ```bash
 docker pull ghcr.io/clawbench-dev/clawbench:latest
-docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
 ```
 
 修改 `-p` 可自定义端口（如 `-p 20300:20000`），`clawbench-data` 卷持久化数据。
+
+> `--restart unless-stopped`（或 `always`）是应用内升级的必要条件：容器会替换自身二进制并以退出码 0 退出，依赖 Docker 重启策略把新版本拉起来。请勿使用 `--restart on-failure`——优雅退出的退出码为 0，不会触发重启，容器会停在停止状态。推荐的升级方式仍是 `docker pull` 后重建容器——用未更新的镜像重建会回退就地替换的结果。
 
 > 首次启动会自动生成32位随机密码，以字符框突出打印到控制台，请妥善保存。
 

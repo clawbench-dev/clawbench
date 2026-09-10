@@ -29,6 +29,9 @@ const i18n = createI18n({
         installDirNotWritableTitle: '无法自动升级：安装目录不可写',
         installDirNotWritableBody: '当前用户对 {dir} 没有写权限。',
         installDirNotWritableHint: '请用 sudo 手动更新，或安装到用户可写目录。',
+        dockerHintTitle: '当前运行在 Docker 中',
+        dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。',
+        dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
       },
     },
   },
@@ -55,6 +58,7 @@ const mockIsFailed = ref(false)
 const mockReleaseNotesUrl = ref('https://example.com/releases')
 const mockInstallWritable = ref(true)
 const mockInstallDir = ref('')
+const mockIsDocker = ref(false)
 
 const mockCheckUpgrade = vi.fn()
 const mockStartUpgrade = vi.fn()
@@ -78,6 +82,7 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
       releaseNotesUrl: mockReleaseNotesUrl,
       installWritable: mockInstallWritable,
       installDir: mockInstallDir,
+      isDocker: mockIsDocker,
     }),
   }
 })
@@ -139,6 +144,7 @@ beforeEach(() => {
   mockReleaseNotesUrl.value = 'https://example.com/releases'
   mockInstallWritable.value = true
   mockInstallDir.value = ''
+  mockIsDocker.value = false
 })
 
 describe('UpgradeDialog', () => {
@@ -437,6 +443,76 @@ describe('UpgradeDialog', () => {
       ;(wrapper!.vm as any).show()
       await nextTick()
       expect($('.ug-warn')).toBeFalsy()
+    })
+  })
+
+  describe('docker advisory hint', () => {
+    it('shows the advisory when running in Docker', async () => {
+      mockIsDocker.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-hint')).toBeTruthy()
+      expect(document.body.textContent).toContain('当前运行在 Docker 中')
+      expect($('.ug-hint-cmd')!.textContent).toContain('docker pull')
+    })
+
+    it('warns about the restart policy requirement', async () => {
+      mockIsDocker.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-hint-warn')).toBeTruthy()
+      expect(document.body.textContent).toContain('重启')
+    })
+
+    it('names the working policies and warns that on-failure does not restart', async () => {
+      // The server exits with code 0 after a graceful shutdown, so only
+      // `always` / `unless-stopped` bring it back; `on-failure` never fires.
+      // The hint must say so explicitly or users pick the "safer" on-failure.
+      mockIsDocker.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      const text = $('.ug-hint-warn')!.textContent ?? ''
+      expect(text).toContain('--restart always')
+      expect(text).toContain('--restart unless-stopped')
+      expect(text).toContain('on-failure')
+    })
+
+    it('does not show the advisory outside Docker', async () => {
+      mockIsDocker.value = false
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-hint')).toBeFalsy()
+    })
+
+    it('does not block the upgrade — start button stays enabled', async () => {
+      mockIsDocker.value = true
+      mockHasUpgrade.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-start')).toBeTruthy()
+    })
+
+    it('hides the advisory while an upgrade is in progress', async () => {
+      mockIsDocker.value = true
+      mockIsInProgress.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-hint')).toBeFalsy()
+    })
+
+    it('hides the advisory when no upgrade is available', async () => {
+      mockIsDocker.value = true
+      mockHasUpgrade.value = false
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-hint')).toBeFalsy()
     })
   })
 

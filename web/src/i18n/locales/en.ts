@@ -2449,6 +2449,9 @@ export default {
     installDirNotWritableTitle: 'Cannot upgrade automatically: install directory not writable',
     installDirNotWritableBody: 'The current user cannot write to {dir}, so the upgrade cannot create a backup or replace the binary there.',
     installDirNotWritableHint: 'Update manually with sudo, or install ClawBench to a user-writable directory (e.g. ~/.local/bin) and try again.',
+    dockerHintTitle: 'Running in Docker',
+    dockerHintBody: 'The in-place upgrade still works, but rebuilding the container from the unchanged image will revert it. Prefer updating the image instead:',
+    dockerHintRestart: 'The container must use --restart always or --restart unless-stopped, otherwise the service will not come back after an in-place upgrade. Do not use --restart on-failure: the server exits with code 0, so it would never restart.',
   },
   share: {
     loading: 'Loading...',

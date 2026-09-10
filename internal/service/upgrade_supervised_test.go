@@ -206,3 +206,45 @@ func TestPerformSupervisedUpgrade_NilShutdownFunc(t *testing.T) {
 	err := performSupervisedUpgrade(newPath, target)
 	require.NoError(t, err)
 }
+
+// --- path selection: container always wins ---
+
+// A container can never use the self-restart subprocess path: the runtime tears
+// the namespace down when PID 1 exits, killing the upgrade-replace child before
+// it finishes. Even when the supervisor probe says "not supervised" (k8s,
+// runit, supervisord), a container must still be treated as supervised.
+func TestResolveReplaceInPlace_ContainerForcesInPlaceEvenWhenProbeSaysNo(t *testing.T) {
+	assert.True(t, resolveReplaceInPlace(true, false),
+		"container + probe says not supervised => still in-place")
+}
+
+func TestResolveReplaceInPlace_ContainerAndProbeBothTrue(t *testing.T) {
+	assert.True(t, resolveReplaceInPlace(true, true))
+}
+
+// Outside a container the probe is authoritative: a genuinely unsupervised
+// deployment must use the self-restart subprocess path (nothing else restarts
+// it), while a supervised one replaces in place.
+func TestResolveReplaceInPlace_NonContainerFollowsProbe(t *testing.T) {
+	assert.False(t, resolveReplaceInPlace(false, false),
+		"not a container + not supervised => subprocess path")
+	assert.True(t, resolveReplaceInPlace(false, true),
+		"not a container + supervised (systemd) => in-place")
+}
+
+// The container override must survive a probe that reports false — this is the
+// exact combination an unrecognized runtime (k8s/runit/supervisord) produces.
+func TestResolveReplaceInPlace_ProbeOverrideCannotDefeatContainer(t *testing.T) {
+	origContainer := upgradeIsContainer
+	origProbe := upgradeIsSupervised
+	defer func() {
+		upgradeIsContainer = origContainer
+		upgradeIsSupervised = origProbe
+	}()
+
+	upgradeIsContainer = func() bool { return true }
+	upgradeIsSupervised = func() bool { return false } // unrecognized runtime
+
+	got := resolveReplaceInPlace(upgradeIsContainer(), upgradeIsSupervised())
+	assert.True(t, got, "container must force in-place even when the probe says false")
+}

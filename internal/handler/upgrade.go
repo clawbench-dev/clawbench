@@ -19,6 +19,7 @@ var (
 	upgradeCompareVersions     = version.CompareVersions
 	upgradeIsDevBuild          = version.IsDevBuild
 	upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+	upgradeIsDocker            = service.IsDocker
 )
 
 // ServeUpgradeCheck handles GET /api/upgrade/check
@@ -53,6 +54,10 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		"has_upgrade":      hasUpgrade,
 		"install_writable": installWritable,
 		"install_dir":      installDir,
+		// is_docker tells the UI to show an advisory (non-blocking) hint
+		// recommending an image-based upgrade. Self-replace still works in a
+		// container, but a later rebuild from the unchanged image reverts it.
+		"is_docker": upgradeIsDocker(),
 	})
 }
 

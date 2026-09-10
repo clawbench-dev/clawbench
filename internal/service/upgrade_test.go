@@ -553,7 +553,7 @@ func TestIsDocker_WithContainerEnvVar(t *testing.T) {
 	defer os.Setenv("container", orig)
 
 	os.Setenv("container", "docker")
-	assert.True(t, isDocker())
+	assert.True(t, IsDocker())
 }
 
 func TestIsDocker_WithDockerenvFile(t *testing.T) {
@@ -566,7 +566,7 @@ func TestIsDocker_WithDockerenvFile(t *testing.T) {
 	// and the negative case.
 	_, _ = os.Stat("/.dockerenv")
 	// Just ensure it doesn't panic
-	_ = isDocker()
+	_ = IsDocker()
 }
 
 func TestIsDocker_NeitherIndicator(t *testing.T) {
@@ -576,7 +576,7 @@ func TestIsDocker_NeitherIndicator(t *testing.T) {
 
 	// If /.dockerenv exists, this will be true; that's OK.
 	// The test mainly ensures no panic and the env var path works.
-	result := isDocker()
+	result := IsDocker()
 	// On most CI, /.dockerenv may exist
 	if _, err := os.Stat("/.dockerenv"); os.IsNotExist(err) {
 		assert.False(t, result)
@@ -1126,7 +1126,7 @@ func TestIsDocker_EmptyContainerEnvVar(t *testing.T) {
 	os.Unsetenv("container")
 	// If /.dockerenv doesn't exist, result should be false
 	if _, err := os.Stat("/.dockerenv"); os.IsNotExist(err) {
-		assert.False(t, isDocker())
+		assert.False(t, IsDocker())
 	}
 }
 

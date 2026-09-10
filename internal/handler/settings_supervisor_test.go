@@ -34,8 +34,8 @@ func stubSupervisorProbe(cgroupFixture string, mainPID func(unit string) string)
 
 func clearSupervisorEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("CLAWBENCH_NO_SUPERVISOR", "")
 	t.Setenv("container", "")
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 }
 
 // ---------- currentSystemdUnit ----------
