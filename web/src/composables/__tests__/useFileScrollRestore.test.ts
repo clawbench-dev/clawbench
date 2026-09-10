@@ -15,7 +15,6 @@ const renderedLineAnchorMock = vi.fn()
 const renderedLineScrollTopMock = vi.fn()
 vi.mock('@/utils/scrollRenderedToLine', () => ({
     renderedLineAnchor: (...a: unknown[]) => renderedLineAnchorMock(...a),
-    renderedTopLine: (...a: unknown[]) => renderedLineAnchorMock(...a)?.line ?? null,
     renderedLineScrollTop: (...a: unknown[]) => renderedLineScrollTopMock(...a),
 }))
 

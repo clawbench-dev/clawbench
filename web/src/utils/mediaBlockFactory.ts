@@ -97,6 +97,11 @@ export function annotateMediaBlocks(html: string): string {
         // 1. Build the wrapper shell at the element's old position.
         const wrapper = doc.createElement('div')
         wrapper.className = 'image-block-wrapper'
+        // Preserve the source line the host block carried so the line-anchor
+        // scroll (scrollRenderedToLine) can still locate media-containing
+        // paragraphs after the <p> is dissolved into the figure.
+        const hostLine = host?.getAttribute?.('data-source-line')
+        if (hostLine) wrapper.setAttribute('data-source-line', hostLine)
         if (host) host.insertBefore(wrapper, el) // wrapper sits before the element
 
         // 2. Header row. The view (lightbox) button is always present — even on
@@ -194,7 +199,7 @@ export function annotateMediaBlocks(html: string): string {
  *   `mermaid-block-attach-btn` (semantic class resolved by mdMermaidAttach).
  */
 export function armMermaidFigure(container: HTMLElement, opts: { attach: boolean }): void {
-    if (container.parentElement?.classList.contains('image-block-wrapper')) return // idempotent
+    if (container.closest('.image-block-wrapper')) return // idempotent
     if (!container.parentNode) return
 
     const wrapper = document.createElement('div')

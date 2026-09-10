@@ -73,6 +73,16 @@ describe('annotateMediaBlocks', () => {
     expect(a?.querySelector('img')?.classList.contains('lightbox-img')).toBe(true)
   })
 
+  it('moves the host block source line onto the figure (line-anchor scroll)', () => {
+    // markedConfig stamps data-source-line on the paragraph. The <p> is
+    // dissolved into the figure, so the attribute must move with it — else
+    // media-containing paragraphs cannot be located by scrollRenderedToLine.
+    const solo = annotateMediaBlocks('<p data-source-line="7"><img src="a.png"></p>')
+    expect(solo).toContain('data-source-line="7"')
+    const mid = annotateMediaBlocks('<p data-source-line="3">hi <img src="a.png"> yo</p>')
+    expect(mid).toContain('data-source-line="3"')
+  })
+
   it('inserts the figure in place inside li/td without splitting', () => {
     const html = '<ul><li><img src="x.png"></li></ul><table><tbody><tr><td><img src="y.png"></td></tr></tbody></table>'
     const out = annotateMediaBlocks(html)
