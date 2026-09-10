@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, h, defineComponent } from 'vue'
@@ -432,6 +432,69 @@ describe('AttachDrawer', () => {
     await fileRow.find('.ad-file-open').trigger('click')
     expect(wrapper.emitted('file-open')).toBeTruthy()
     expect(wrapper.emitted('file-open')![0]).toEqual(['src/main.ts'])
+  })
+
+  describe('uploads tab content', () => {
+    beforeEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+    afterEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+
+    async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
+      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await nextTick()
+      await nextTick()
+    }
+
+    it('renders only in-flight pending uploads as rows', async () => {
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 40, size: 100 },
+        { path: '/tmp/done.txt', previewUrl: null, isImage: false, uploading: false, progress: 100, size: 100 },
+      ]
+      const wrapper = mountDrawer()
+      await openUploadsTab(wrapper)
+      const rows = wrapper.find('.ad-content').findAll('.ad-file-row')
+      expect(rows.length).toBe(1)
+      expect(wrapper.find('.ad-content').text()).toContain('40%')
+    })
+
+    it('shows the empty state when a finished entry is retained and recent uploads is empty', async () => {
+      // Regression: a non-uploading entry kept in pendingFiles (e.g. an
+      // auto-attached paste/drag upload) used to hide every row via v-show while
+      // also suppressing the empty state, collapsing the content area to nothing.
+      sharedPendingFiles.value = [
+        { path: '/tmp/kept.txt', previewUrl: null, isImage: false, uploading: false, progress: 100, size: 100 },
+      ]
+      sharedAttachedFiles.value = [{ path: '/tmp/kept.txt' }]
+      sharedRecentUploads.value = []
+      const wrapper = mountDrawer()
+      await openUploadsTab(wrapper)
+      const content = wrapper.find('.ad-content')
+      expect(content.findAll('.ad-file-row').length).toBe(0)
+      expect(content.find('.ad-empty').exists()).toBe(true)
+      expect(content.text()).toContain('No uploaded files')
+    })
+
+    it('renders recent uploads rows even when a finished entry is retained', async () => {
+      sharedPendingFiles.value = [
+        { path: '/tmp/kept.txt', previewUrl: null, isImage: false, uploading: false, progress: 100, size: 100 },
+      ]
+      sharedAttachedFiles.value = [{ path: '/tmp/kept.txt' }]
+      sharedRecentUploads.value = [
+        { name: 'kept.txt', path: '/tmp/kept.txt', size: 100, modTime: new Date().toISOString() },
+      ]
+      const wrapper = mountDrawer()
+      await openUploadsTab(wrapper)
+      const content = wrapper.find('.ad-content')
+      expect(content.findAll('.ad-file-row').length).toBe(1)
+      expect(content.find('.ad-empty').exists()).toBe(false)
+    })
   })
 
   it('upload watcher cleans up finished uploads and refreshes', async () => {
