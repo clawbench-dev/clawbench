@@ -21,13 +21,16 @@ import (
 // gitClocDefaultExclude matches directory components that are never source
 // code: build artifacts, vendored deps, VCS internals, virtualenvs, tool data
 // dirs and hidden dirs. The regex runs against the file's parent dir (gocloc
-// ReNotMatchDir), so it must match a path segment like "/node_modules/..." .
+// ReNotMatchDir, i.e. filepath.Dir(path)), so it must match a path segment like
+// "/node_modules/..." — or "\node_modules\..." on Windows, where
+// filepath.Dir yields backslash separators. The separator class therefore
+// accepts both / and \.
 //
 // This mirrors the repo-level .gitignore intent: without it a project tree
 // containing e.g. .venv/ (Python env), models/ or a data dir would pull in
 // hundreds of thousands of third-party lines and make the inventory look like
 // it covers the whole machine rather than the project sources.
-var gitClocDefaultExclude = regexp.MustCompile(`(^|/)(\.git|\.hg|\.svn|\.bzr|\.cache|\.venv|venv|__pycache__|\.idea|\.vscode|\.clawbench|\.clawbench-ci|\.worktrees|\.agents|\.codebuddy|node_modules|vendor|dist|build|out|target|coverage|public|models)(/|$)`)
+var gitClocDefaultExclude = regexp.MustCompile(`(^|[/\\])(\.git|\.hg|\.svn|\.bzr|\.cache|\.venv|venv|__pycache__|\.idea|\.vscode|\.clawbench|\.clawbench-ci|\.worktrees|\.agents|\.codebuddy|node_modules|vendor|dist|build|out|target|coverage|public|models)([/\\]|$)`)
 
 type clocLanguageSummary struct {
 	Name    string `json:"name"`

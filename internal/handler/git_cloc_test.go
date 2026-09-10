@@ -113,6 +113,42 @@ func TestCollectClocSortedByCodeDesc(t *testing.T) {
 	assert.Equal(t, "Go", res.Languages[1].Name)
 }
 
+// TestGitClocExcludeRegexHandlesBothSeparators locks down the cross-platform
+// contract: gocloc matches ReNotMatchDir against filepath.Dir(path), which uses
+// "/" on Unix but "\" on Windows. A regex that only understood "/" silently
+// stopped excluding node_modules/.venv on Windows, so the inventory counted
+// vendored third-party code. The exclusion must fire for both separators
+// regardless of the host the test runs on.
+func TestGitClocExcludeRegexHandlesBothSeparators(t *testing.T) {
+	excluded := []string{
+		"/proj/node_modules/pkg",
+		`C:\proj\node_modules\pkg`,
+		"/proj/.venv/lib/python3.11/site-packages",
+		`C:\proj\.venv\lib\python3.11\site-packages`,
+		"/proj/models/weights",
+		`C:\proj\models\weights`,
+		"/proj/sub/.git",
+		`C:\proj\sub\.git`,
+		"/proj/android-lib/__pycache__",
+		`C:\proj\android-lib\__pycache__`,
+	}
+	for _, dir := range excluded {
+		assert.Truef(t, gitClocDefaultExclude.MatchString(dir),
+			"exclude regex must match %q", dir)
+	}
+
+	kept := []string{
+		"/proj/src/app",
+		`C:\proj\src\app`,
+		"/proj/internal/handler",
+		`C:\proj\internal\handler`,
+	}
+	for _, dir := range kept {
+		assert.Falsef(t, gitClocDefaultExclude.MatchString(dir),
+			"exclude regex must not match %q", dir)
+	}
+}
+
 func TestServeGitCloc_ValidResponse(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
