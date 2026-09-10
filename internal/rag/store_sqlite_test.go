@@ -285,6 +285,78 @@ func TestSQLiteStore_SearchFTS_FiltersByProject(t *testing.T) {
 	assert.Equal(t, "/project/a", hits[0].ProjectPath)
 }
 
+func TestSQLiteStore_SearchFTS_TimeRangeBoundaries(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	// Three rows matching the same term, one per month. SearchFTS compares
+	// created_at as text, so the bound format must sort correctly against what
+	// the driver stored (UTC with a "+0000 UTC" suffix).
+	insert := func(msgID int64, sessionID string, at time.Time) {
+		chunk := Chunk{
+			SessionID: sessionID, MessageID: msgID, ChunkText: "database tuning",
+			ChunkTextSegmented: "database tuning", ChunkIndex: 0,
+			TokenCount: 2, ProjectPath: testProjectPath, Backend: testBackendClaude,
+			Role: testRoleAssistant, CreatedAt: at,
+		}
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+	insert(1, "s-jan", time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC))
+	insert(2, "s-feb", time.Date(2024, 2, 15, 10, 0, 0, 0, time.UTC))
+	insert(3, "s-mar", time.Date(2024, 3, 15, 10, 0, 0, 0, time.UTC))
+
+	// Window covering February only (inclusive bounds, as the handler builds).
+	hits, err := store.SearchFTS("database", 10, "", "", "", "", "",
+		"2024-02-01 00:00:00", "2024-02-29 23:59:59.999999")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "s-feb", hits[0].SessionID)
+
+	// Lower bound only.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "2024-02-01 00:00:00", "")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+
+	// Upper bound only.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-02-29 23:59:59.999999")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+
+	// A window with no rows returns nothing rather than an error.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "",
+		"2025-01-01 00:00:00", "2025-12-31 23:59:59.999999")
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+}
+
+func TestSQLiteStore_SearchFTS_TimeBoundIncludesSuffixedRow(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	// A row in the final second of the range: its stored text is
+	// "2024-03-01 10:00:00 +0000 UTC", which sorts after a bare
+	// "2024-03-01 10:00:00". The upper bound carries a fractional suffix so it
+	// still includes this row.
+	chunk := Chunk{
+		SessionID: "s-edge", MessageID: 1, ChunkText: "database edge",
+		ChunkTextSegmented: "database edge", ChunkIndex: 0,
+		TokenCount: 2, ProjectPath: testProjectPath, Backend: testBackendClaude,
+		Role: testRoleAssistant, CreatedAt: time.Date(2024, 3, 1, 10, 0, 0, 0, time.UTC),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	// Bare-second upper bound misses the suffixed row.
+	hits, err := store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-03-01 10:00:00")
+	require.NoError(t, err)
+	assert.Empty(t, hits, "bare-second bound should sort before the suffixed stored text")
+
+	// Fractional bound includes it.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-03-01 10:00:00.999999")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "s-edge", hits[0].SessionID)
+}
+
 // ---------- SearchVector (vec0 KNN) ----------
 
 func TestStore_SearchVector_Basic(t *testing.T) {

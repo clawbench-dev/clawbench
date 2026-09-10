@@ -85,6 +85,15 @@ describe('useSessionSearch', () => {
       expect(resolveTimeRange('custom', '2024-01-01', '')).toEqual({ from: '2024-01-01', to: '' })
       expect(resolveTimeRange('custom', '', '2024-02-01')).toEqual({ from: '', to: '2024-02-01' })
     })
+
+    it('swaps an inverted custom range instead of sending it as-is', () => {
+      // from > to would match nothing on the backend and show an unexplained
+      // empty list, so the bounds are reordered.
+      expect(resolveTimeRange('custom', '2024-03-01', '2024-01-01')).toEqual({
+        from: '2024-01-01',
+        to: '2024-03-01',
+      })
+    })
   })
 
   describe('search', () => {

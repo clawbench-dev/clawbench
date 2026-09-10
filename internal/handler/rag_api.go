@@ -29,16 +29,33 @@ func normalizeCursorTime(cursor string) string {
 	return cursor
 }
 
-// normalizeTimeBound converts a frontend time-range bound into the local
+// normalizeTimeBound converts a frontend time-range bound into the UTC
 // "2006-01-02 15:04:05" text SQLite compares created_at against.
+//
+// Note the two search paths apply the window to different columns: search mode
+// filters rag_chunks.created_at (when the matching message was written), while
+// browse mode filters chat_sessions.created_at (when the session was created).
+// A session created months ago whose only match is today therefore appears in
+// search mode but not in browse mode. This mirrors the two modes' semantics —
+// browse lists sessions, search lists matches — and is called out in the spec.
+//
+// The stored timestamps are UTC, not local:
+//   - chat_sessions.created_at is filled by DEFAULT CURRENT_TIMESTAMP, which
+//     SQLite evaluates in UTC ("2026-09-10 12:12:54").
+//   - rag_chunks.created_at is bound from a time.Time, which the modernc driver
+//     renders as UTC with a suffix ("2026-09-10 12:16:35 +0000 UTC").
+//
+// The user picks days in their own calendar, so a date-only bound is read as a
+// local day and converted to the matching UTC instant. Parsing it with
+// time.Parse would silently use UTC and shift the window by the zone offset —
+// in UTC+8 the "today" preset would span local 08:00 → next-day 07:59 and drop
+// every session created in the local small hours.
 //
 // Two input shapes are accepted:
 //   - date-only "2024-03-01" (from <input type="date">): `endOfDay` expands it
-//     to 23:59:59 so the whole selected day is included; otherwise it becomes
-//     00:00:00. Without this a date-only upper bound would lexicographically
-//     sort before any same-day timestamp ("2024-03-01" < "2024-03-01 10:00:00").
-//   - RFC3339 "2024-03-01T10:00:00Z": parsed and converted to local time so it
-//     lines up with the local timestamps SQLite stores.
+//     to the last second of that local day so the whole day is included;
+//     otherwise it becomes the start of the local day.
+//   - RFC3339 "2024-03-01T10:00:00Z": an absolute instant, converted to UTC.
 //
 // Unparseable input is returned trimmed so callers never bind garbage that
 // would silently match nothing.
@@ -48,14 +65,31 @@ func normalizeTimeBound(value string, endOfDay bool) string {
 		return ""
 	}
 	const layout = "2006-01-02 15:04:05"
-	if t, err := time.Parse("2006-01-02", value); err == nil {
+	// An upper bound gets a literal fractional suffix so it sorts after a row
+	// whose text continues past the second — rag_chunks stores
+	// "…15:59:59 +0000 UTC", which is lexicographically greater than a bare
+	// "…15:59:59" and would otherwise drop the final second of the range.
+	// A literal, not a ".999999" format verb: Go omits trailing zeros, so the
+	// verb would emit the bare second and defeat the purpose.
+	const endSuffix = ".999999"
+	render := func(t time.Time) string {
 		if endOfDay {
-			t = t.Add(24*time.Hour - time.Second)
+			return t.UTC().Format(layout) + endSuffix
 		}
-		return t.Format(layout)
+		return t.UTC().Format(layout)
+	}
+
+	if t, err := time.ParseInLocation("2006-01-02", value, time.Local); err == nil {
+		if endOfDay {
+			// Expand to the last second of the selected local day. AddDate (not
+			// Add 24h) so a DST transition day still lands on the next local
+			// midnight before stepping back.
+			t = t.AddDate(0, 0, 1).Add(-time.Second)
+		}
+		return render(t)
 	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t.Local().Format(layout)
+		return render(t)
 	}
 	return value
 }

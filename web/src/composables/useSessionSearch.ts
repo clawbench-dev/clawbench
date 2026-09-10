@@ -55,13 +55,20 @@ function formatLocalDate(d: Date): string {
 // "from"/"to" bounds the API accepts (the backend expands them to the start and
 // end of the selected days). An unset custom bound is omitted, so the user can
 // pick only one side of the range.
+//
+// An inverted custom range (from > to) is swapped rather than sent as-is: the
+// backend would otherwise match nothing and the UI would show an unexplained
+// empty list. ISO dates compare lexicographically, so a string compare suffices.
 export function resolveTimeRange(
   range: SessionTimeRange,
   customFrom: string,
   customTo: string,
 ): { from: string; to: string } {
   if (range === 'custom') {
-    return { from: customFrom.trim(), to: customTo.trim() }
+    const from = customFrom.trim()
+    const to = customTo.trim()
+    if (from && to && from > to) return { from: to, to: from }
+    return { from, to }
   }
   if (range === 'all') {
     return { from: '', to: '' }

@@ -1128,30 +1128,135 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 
 // ---------- Time-range filtering ----------
 
+// withFixedZone runs fn with time.Local pinned to the given offset, restoring
+// it afterwards. The stored timestamps are UTC while the user picks days in
+// their own zone, so the date-only branch is only exercised meaningfully under
+// a non-UTC zone.
+func withFixedZone(t *testing.T, offsetSeconds int, fn func()) {
+	t.Helper()
+	orig := time.Local
+	time.Local = time.FixedZone("TEST", offsetSeconds)
+	t.Cleanup(func() { time.Local = orig })
+	fn()
+}
+
 func TestNormalizeTimeBound(t *testing.T) {
-	// Date-only from: expands to the start of that local day.
-	assert.Equal(t, "2024-03-01 00:00:00", normalizeTimeBound("2024-03-01", false))
-	// Date-only to: expands to the last second of that local day, so a session
-	// created later the same day is still included.
-	assert.Equal(t, "2024-03-01 23:59:59", normalizeTimeBound("2024-03-01", true))
-	// Whitespace is trimmed; empty stays empty.
-	assert.Equal(t, "2024-03-01 00:00:00", normalizeTimeBound("  2024-03-01  ", false))
+	// Empty and whitespace-only inputs mean "no bound".
 	assert.Equal(t, "", normalizeTimeBound("", false))
 	assert.Equal(t, "", normalizeTimeBound("   ", true))
-	// RFC3339 converts to the local wall-clock text SQLite stores.
-	local := time.Date(2024, 3, 1, 10, 30, 0, 0, time.Local)
-	assert.Equal(t, local.Format("2006-01-02 15:04:05"), normalizeTimeBound(local.Format(time.RFC3339), false))
+
 	// Unparseable input passes through so the caller binds something predictable.
 	assert.Equal(t, "not-a-date", normalizeTimeBound("not-a-date", false))
+
+	// A date-only bound is a LOCAL calendar day, emitted as the matching UTC
+	// instant. Pinned to UTC+8, "2024-03-01" therefore starts at 2024-02-29
+	// 16:00 UTC — not 2024-03-01 00:00 UTC, which is what a naive parse (and
+	// the original bug) produced.
+	withFixedZone(t, 8*3600, func() {
+		assert.Equal(t, "2024-02-29 16:00:00", normalizeTimeBound("2024-03-01", false))
+		// The upper bound is the last second of the local day, with a
+		// fractional suffix so it sorts after rag_chunks' "… +0000 UTC" text.
+		assert.Equal(t, "2024-03-01 15:59:59.999999", normalizeTimeBound("2024-03-01", true))
+	})
+
+	// The two branches must agree: an RFC3339 instant that equals local
+	// midnight must normalize to the same bound as the date-only form.
+	withFixedZone(t, 8*3600, func() {
+		localMidnight := time.Date(2024, 3, 1, 0, 0, 0, 0, time.Local)
+		assert.Equal(t,
+			normalizeTimeBound("2024-03-01", false),
+			normalizeTimeBound(localMidnight.Format(time.RFC3339), false))
+	})
+
+	// A UTC-5 zone must produce a different instant than UTC+8 for the same
+	// calendar day, proving the offset is actually applied.
+	withFixedZone(t, -5*3600, func() {
+		assert.Equal(t, "2024-03-01 05:00:00", normalizeTimeBound("2024-03-01", false))
+	})
+
+	// RFC3339 is an absolute instant: the same string normalizes identically
+	// regardless of the machine's zone.
+	assert.Equal(t, "2024-03-01 10:30:00", normalizeTimeBound("2024-03-01T10:30:00Z", false))
+	withFixedZone(t, 8*3600, func() {
+		assert.Equal(t, "2024-03-01 10:30:00", normalizeTimeBound("2024-03-01T10:30:00Z", false))
+	})
+
+	// endOfDay only widens date-only input; an explicit RFC3339 upper bound is
+	// used verbatim (plus the suffix that keeps sub-second rows included).
+	assert.Equal(t, "2024-03-01 10:30:00.999999", normalizeTimeBound("2024-03-01T10:30:00Z", true))
+}
+
+func TestNormalizeTimeBound_UpperBoundIncludesSuffixedRow(t *testing.T) {
+	// rag_chunks stores "2026-09-10 15:59:59 +0000 UTC" (UTC with a suffix).
+	// The end-of-day bound must sort at or after that text, otherwise the last
+	// second of the range is silently dropped.
+	withFixedZone(t, 8*3600, func() {
+		// Local day 2026-09-10 in UTC+8 ends at 2026-09-10 15:59:59 UTC.
+		bound := normalizeTimeBound("2026-09-10", true)
+		stored := "2026-09-10 15:59:59 +0000 UTC"
+		assert.LessOrEqual(t, stored, bound, "stored row must fall inside the upper bound")
+
+		// And a row just past the boundary must stay outside.
+		assert.Less(t, bound, "2026-09-10 16:00:00 +0000 UTC")
+	})
+}
+
+func TestNormalizeTimeBound_MatchesStoredUTCFormat(t *testing.T) {
+	// Regression guard: chat_sessions stores UTC (DEFAULT CURRENT_TIMESTAMP)
+	// and rag_chunks stores UTC with a suffix. A session created at local 02:00
+	// in UTC+8 is stored as the previous day 18:00 UTC, and must fall inside the
+	// local day's window.
+	withFixedZone(t, 8*3600, func() {
+		from := normalizeTimeBound("2026-09-10", false)
+		to := normalizeTimeBound("2026-09-10", true)
+
+		// Local 2026-09-10 02:00 in UTC+8 → stored UTC text.
+		localEarly := time.Date(2026, 9, 10, 2, 0, 0, 0, time.Local).UTC()
+		stored := localEarly.Format("2006-01-02 15:04:05")
+		assert.Equal(t, "2026-09-09 18:00:00", stored)
+		assert.LessOrEqual(t, from, stored, "early local session must be inside the range")
+		assert.LessOrEqual(t, stored, to, "early local session must be inside the range")
+
+		// Local 2026-09-10 23:00 is stored as 15:00 UTC the same day.
+		localLate := time.Date(2026, 9, 10, 23, 0, 0, 0, time.Local).UTC()
+		assert.LessOrEqual(t, from, localLate.Format("2006-01-02 15:04:05"))
+		assert.LessOrEqual(t, localLate.Format("2006-01-02 15:04:05"), to)
+
+		// A session from the neighbouring local day must stay outside.
+		prevDay := time.Date(2026, 9, 9, 23, 59, 59, 0, time.Local).UTC().Format("2006-01-02 15:04:05")
+		assert.Less(t, prevDay, from)
+	})
+}
+
+func TestNormalizeTimeBound_DSTTransitionDay(t *testing.T) {
+	// America/New_York springs forward on 2024-03-10 (02:00 → 03:00). A 24h
+	// Add would overshoot into the next day; AddDate lands on local midnight.
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	orig := time.Local
+	time.Local = ny
+	defer func() { time.Local = orig }()
+
+	assert.Equal(t, "2024-03-11 03:59:59.999999", normalizeTimeBound("2024-03-10", true))
 }
 
 func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
+	// Pin the zone: date-only bounds are read as local days, so the day
+	// boundaries (and therefore which sessions fall inside) depend on the
+	// machine's offset. UTC keeps the expected results stable.
+	withFixedZone(t, 0, func() {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+		browseTimeRangeFilter(t, env.ProjectDir)
+	})
+}
 
-	insertSession(t, env.ProjectDir, "jan", "Jan", "2024-01-15 10:00:00", false)
-	insertSession(t, env.ProjectDir, "feb", "Feb", "2024-02-15 10:00:00", false)
-	insertSession(t, env.ProjectDir, "mar", "Mar", "2024-03-15 10:00:00", false)
+func browseTimeRangeFilter(t *testing.T, projectDir string) {
+	t.Helper()
+
+	insertSession(t, projectDir, "jan", "Jan", "2024-01-15 10:00:00", false)
+	insertSession(t, projectDir, "feb", "Feb", "2024-02-15 10:00:00", false)
+	insertSession(t, projectDir, "mar", "Mar", "2024-03-15 10:00:00", false)
 
 	type resp struct {
 		Sessions []struct {
@@ -1165,7 +1270,7 @@ func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
 		"from": "2024-02-01",
 		"to":   "2024-02-29",
 	})
-	req = withProjectCookie(req, env.ProjectDir)
+	req = withProjectCookie(req, projectDir)
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	var feb resp
@@ -1179,7 +1284,7 @@ func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
 		"from": "2024-03-15",
 		"to":   "2024-03-15",
 	})
-	req = withProjectCookie(req, env.ProjectDir)
+	req = withProjectCookie(req, projectDir)
 	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	var day resp
@@ -1189,7 +1294,7 @@ func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
 
 	// Lower bound only → everything from February onward.
 	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"from": "2024-02-01"})
-	req = withProjectCookie(req, env.ProjectDir)
+	req = withProjectCookie(req, projectDir)
 	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	var fromFeb resp
@@ -1201,7 +1306,7 @@ func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
 		"from": "2025-01-01",
 		"to":   "2025-12-31",
 	})
-	req = withProjectCookie(req, env.ProjectDir)
+	req = withProjectCookie(req, projectDir)
 	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	var empty resp
