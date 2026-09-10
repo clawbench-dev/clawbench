@@ -1687,13 +1687,17 @@ type RecentSession struct {
 	CreatedAt   time.Time
 }
 
-// GetRecentSessions returns all chat sessions for a project ordered newest-first
-// by creation time, including archived ones. When projectPath is empty it
-// returns sessions across all projects (CLI global browse). limit <= 0 returns
-// all sessions. archiveFilter narrows to active/archived (or all); sortOrder
-// selects newest/oldest time ordering (relevance falls back to newest here,
-// since browse mode has no search score).
-func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder string) ([]RecentSession, error) {
+// GetRecentSessions returns chat sessions for a project in the given time
+// order, including archived ones. When projectPath is empty it returns sessions
+// across all projects (CLI global browse). limit <= 0 returns all sessions.
+// archiveFilter narrows to active/archived (or all); sortOrder selects
+// newest/oldest time ordering (relevance falls back to newest here, since
+// browse mode has no search score).
+//
+// Cursor pagination: pass the last row's created_at (formatted "2006-01-02
+// 15:04:05") and id to fetch the next page. The returned bool reports whether
+// more rows remain after this page.
+func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, cursor, cursorID string) ([]RecentSession, bool, error) {
 	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at
 		FROM chat_sessions s
 		WHERE s.session_type = 'chat'`
@@ -1708,19 +1712,31 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder s
 	case SessionArchiveFilterArchived:
 		query += " AND s.archived = 1"
 	}
-	if NormalizeSessionSortOrder(sortOrder) == SessionSortOldest {
+	oldestFirst := NormalizeSessionSortOrder(sortOrder) == SessionSortOldest
+	if cursor != "" && cursorID != "" {
+		// Tie-break on id so rows sharing a timestamp are neither skipped nor
+		// duplicated across pages.
+		if oldestFirst {
+			query += " AND (s.created_at > ? OR (s.created_at = ? AND s.id > ?))"
+		} else {
+			query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
+		}
+		args = append(args, cursor, cursor, cursorID)
+	}
+	if oldestFirst {
 		query += " ORDER BY s.created_at ASC, s.id ASC"
 	} else {
 		query += " ORDER BY s.created_at DESC, s.id DESC"
 	}
 	if limit > 0 {
+		// Fetch one extra row to detect whether a further page exists.
 		query += " LIMIT ?"
-		args = append(args, limit)
+		args = append(args, limit+1)
 	}
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -1729,12 +1745,21 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder s
 		var s RecentSession
 		var archived int
 		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		s.Archived = archived != 0
 		sessions = append(sessions, s)
 	}
-	return sessions, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := false
+	if limit > 0 && len(sessions) > limit {
+		hasMore = true
+		sessions = sessions[:limit]
+	}
+	return sessions, hasMore, nil
 }
 
 // FirstMessage is the earliest message of a session, used to lazily populate

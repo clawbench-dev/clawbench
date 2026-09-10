@@ -847,6 +847,8 @@ export default {
     sortOldest: '最早优先',
     noPreview: '该会话暂无消息',
     loadingPreview: '加载预览中...',
+    loadingMore: '加载更多中...',
+    noMore: '没有更多会话',
     loadExternalSession: '外部会话',
   },
   task: {

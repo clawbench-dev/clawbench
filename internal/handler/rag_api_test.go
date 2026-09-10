@@ -753,6 +753,50 @@ func TestServeRAGSessionSearch_EmptyQueryBrowsesRecentSessions(t *testing.T) {
 	assert.Zero(t, result.Sessions[2].MatchCount)
 }
 
+func TestServeRAGSessionSearch_BrowseCursorPagination(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Four sessions; RAG.SearchLimit is 100 by default, so drive pagination by
+	// passing an explicit small limit via config is not possible here. Instead
+	// verify has_more is false when the whole set fits, and that a cursor
+	// narrows the result set correctly.
+	insertSession(t, env.ProjectDir, "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "s3", "S3", "2024-03-01 10:00:00", false)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+		HasMore bool `json:"has_more"`
+	}
+
+	// First page (all three fit) → has_more false.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var page1 resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page1))
+	require.Len(t, page1.Sessions, 3)
+	assert.False(t, page1.HasMore)
+
+	// Cursor after s3 (newest) → only older rows remain.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"cursor":    "2024-03-01T10:00:00Z",
+		"cursor_id": "s3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var page2 resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page2))
+	require.Len(t, page2.Sessions, 2)
+	assert.Equal(t, "s2", page2.Sessions[0].SessionID)
+	assert.Equal(t, "s1", page2.Sessions[1].SessionID)
+}
+
 func TestServeRAGSessionSearch_EmptyQueryRemoteNoProjectDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

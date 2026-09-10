@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +14,20 @@ import (
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 )
+
+// normalizeCursorTime converts a frontend cursor timestamp to the format SQLite
+// stores in chat_sessions.created_at ("2006-01-02 15:04:05"). The frontend
+// sends RFC3339 (e.g. "2026-05-16T15:25:50Z"); the T separator and zone suffix
+// would otherwise make the lexicographic comparison miss.
+func normalizeCursorTime(cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	cursor = strings.ReplaceAll(cursor, "T", " ")
+	cursor = strings.TrimSuffix(cursor, "Z")
+	cursor = strings.TrimSuffix(cursor, "+00:00")
+	return cursor
+}
 
 // ragResetting prevents concurrent reset requests.
 var ragResetting atomic.Bool
@@ -553,6 +568,8 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		PreferMode       string `json:"prefer_mode"`
 		Archived         string `json:"archived"`
 		SortOrder        string `json:"sort"`
+		Cursor           string `json:"cursor"`
+		CursorID         string `json:"cursor_id"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -564,9 +581,12 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Empty query → "browse all" mode: list the project's sessions instead of
-	// rejecting the request. Archive filter and time sort apply here too.
+	// rejecting the request. Archive filter, time sort and cursor pagination
+	// apply here too. The frontend requests pages of searchLimit rows and
+	// scrolls to load more, so there is no hard cap on the number shown.
 	if req.Query == "" {
-		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder)
+		cursor := normalizeCursorTime(req.Cursor)
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder, cursor, req.CursorID)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 			return

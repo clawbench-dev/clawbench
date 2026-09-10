@@ -33,6 +33,8 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.sortOldest': 'Oldest',
       'sessionSearch.noPreview': 'No messages in this session',
       'sessionSearch.loadingPreview': 'Loading preview...',
+      'sessionSearch.loadingMore': 'Loading more...',
+      'sessionSearch.noMore': 'No more sessions',
     }
     return map[key] ?? key
   }}),
@@ -70,6 +72,7 @@ const mockClear = vi.fn()
 const mockSetQuery = vi.fn()
 const mockBrowse = vi.fn()
 const mockSetFilters = vi.fn()
+const mockLoadMore = vi.fn()
 const mockSearchState = vi.fn()
 const mockFetchFirstMessage = vi.fn()
 
@@ -80,6 +83,7 @@ vi.mock('@/composables/useSessionSearch', () => ({
     browse: mockBrowse,
     clear: mockClear,
     setFilters: mockSetFilters,
+    loadMore: mockLoadMore,
   }),
   fetchSessionFirstMessage: (...args: unknown[]) => mockFetchFirstMessage(...args),
 }))
@@ -110,6 +114,17 @@ vi.mock('@/components/common/PopupMenu.vue', () => ({
   },
 }))
 
+// jsdom does not implement IntersectionObserver; the browse list uses one for
+// infinite scroll. Stub it so mounting does not throw.
+class MockIntersectionObserver {
+  callback: any
+  constructor(cb: any) { this.callback = cb }
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+}
+vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+
 function createState(overrides = {}) {
   return {
     query: '',
@@ -121,6 +136,8 @@ function createState(overrides = {}) {
     preferMode: 'hybrid' as const,
     archivedFilter: 'all' as const,
     sortOrder: 'relevance' as const,
+    hasMore: false,
+    loadingMore: false,
     ...overrides,
   }
 }
@@ -470,6 +487,32 @@ describe('SessionSearchDrawer', () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult], searchMode: '' }))
     const wrapper = mountDrawer()
     expect(wrapper.find('.session-search-mode').exists()).toBe(false)
+  })
+
+  it('does not show a mode badge in browse mode even when mode is set', () => {
+    // Browse mode reports mode "recent"; the badge must stay hidden when no
+    // query has been entered.
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent' }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-mode').exists()).toBe(false)
+  })
+
+  it('renders the infinite-scroll sentinel in browse mode', () => {
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent', hasMore: true }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-sentinel').exists()).toBe(true)
+  })
+
+  it('does not render the sentinel in search mode', () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult], searchMode: 'hybrid', hasMore: true }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-sentinel').exists()).toBe(false)
+  })
+
+  it('shows the end marker in browse mode when there are no more pages', () => {
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent', hasMore: false }))
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.session-search-end').exists()).toBe(true)
   })
 
   it('shows an escaped preview when a chunk has no match positions', () => {

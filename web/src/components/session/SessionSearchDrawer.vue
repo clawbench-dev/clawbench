@@ -128,10 +128,10 @@
         <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
-        <div v-else class="session-search-results">
+        <div v-else class="session-search-results" ref="resultsRef">
           <div class="session-search-count">
             {{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}
-            <span v-if="searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
+            <span v-if="!isBrowseMode && searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
           </div>
           <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectSession(session)">
             <div class="session-search-item-header">
@@ -145,6 +145,10 @@
               <span v-if="!isBrowseMode && session.chunks.length > 0" class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
             </div>
           </div>
+          <!-- Infinite-scroll sentinel: loads the next browse page when visible. -->
+          <div v-if="isBrowseMode" ref="sentinelRef" class="session-search-sentinel"></div>
+          <LoadingIndicator v-if="searchState.loadingMore" size="sm" :label="t('sessionSearch.loadingMore')" />
+          <div v-else-if="isBrowseMode && !searchState.hasMore && searchState.results.length > 0" class="session-search-end">{{ t('sessionSearch.noMore') }}</div>
         </div>
       </div>
     </div>
@@ -217,11 +221,51 @@ const { t } = useI18n()
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult]; destroy: [session: SessionSearchResult]; 'open-acp-sessions': [] }>()
 
-const { state: searchState, setQuery, browse, clear, setFilters } = useSessionSearch()
-const search = { state: searchState, setQuery, browse, clear, setFilters }
+const { state: searchState, setQuery, browse, clear, setFilters, loadMore } = useSessionSearch()
+const search = { state: searchState, setQuery, browse, clear, setFilters, loadMore }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
+const resultsRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
+let sentinelObserver: IntersectionObserver | null = null
+
+// Infinite scroll for browse mode: when the sentinel at the list bottom becomes
+// visible, append the next page. Re-observed whenever the list grows so the
+// observer stays bound to the current sentinel node.
+function disconnectSentinel() {
+  if (sentinelObserver) {
+    sentinelObserver.disconnect()
+    sentinelObserver = null
+  }
+}
+
+function observeSentinel() {
+  disconnectSentinel()
+  const el = sentinelRef.value
+  const root = resultsRef.value
+  if (!el || !root) return
+  sentinelObserver = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting && searchState.hasMore && !searchState.loadingMore && !searchState.loading) {
+      void loadMore()
+    }
+  }, { root, rootMargin: '120px' })
+  sentinelObserver.observe(el)
+}
+
+onUnmounted(disconnectSentinel)
+
+watch(
+  () => [searchState.searchMode, searchState.results.length, searchState.hasMore, searchState.loadingMore] as const,
+  () => {
+    if (searchState.searchMode === 'recent') {
+      nextTick(() => observeSentinel())
+    } else {
+      disconnectSentinel()
+    }
+  },
+  { immediate: true },
+)
 
 // ── Search mode / filter / sort dropdowns ──
 // All three collapse into compact triggers on the search row, keeping the
@@ -665,6 +709,19 @@ defineExpose({ focusSearchInput })
 .session-search-results {
   flex: 1;
   overflow-y: auto;
+}
+
+/* Zero-height sentinel observed by IntersectionObserver to trigger the next
+   browse page; rootMargin prefetches slightly before the true bottom. */
+.session-search-sentinel {
+  height: 1px;
+}
+
+.session-search-end {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-size: 11px;
 }
 
 .session-search-count {

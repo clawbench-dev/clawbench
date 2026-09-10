@@ -847,6 +847,8 @@ export default {
     sortOldest: 'Oldest',
     noPreview: 'No messages in this session',
     loadingPreview: 'Loading preview...',
+    loadingMore: 'Loading more...',
+    noMore: 'No more sessions',
     loadExternalSession: 'External Session',
   },
   task: {

@@ -32,6 +32,7 @@ interface SessionSearchResponse {
   sessions: SessionSearchResult[]
   total: number
   mode: string
+  has_more?: boolean
 }
 
 const DEBOUNCE_MS = 300
@@ -69,6 +70,8 @@ export function useSessionSearch() {
     results: [] as SessionSearchResult[],
     total: 0,
     loading: false,
+    loadingMore: false,
+    hasMore: false,
     error: null as string | null,
     searchMode: '',
     preferMode: 'hybrid' as 'hybrid' | 'fts',
@@ -78,6 +81,7 @@ export function useSessionSearch() {
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let abortController: AbortController | null = null
+  let loadMoreController: AbortController | null = null
 
   function cancelPending() {
     if (debounceTimer !== null) {
@@ -88,6 +92,10 @@ export function useSessionSearch() {
       abortController.abort()
       abortController = null
     }
+    if (loadMoreController !== null) {
+      loadMoreController.abort()
+      loadMoreController = null
+    }
   }
 
   function clear() {
@@ -96,13 +104,30 @@ export function useSessionSearch() {
     state.results = []
     state.total = 0
     state.loading = false
+    state.loadingMore = false
+    state.hasMore = false
     state.error = null
     state.searchMode = ''
+  }
+
+  function requestBody(q: string, cursor?: string, cursorId?: string) {
+    const body: Record<string, string> = {
+      q,
+      prefer_mode: state.preferMode,
+      archived: state.archivedFilter,
+      sort: state.sortOrder,
+    }
+    if (cursor && cursorId) {
+      body.cursor = cursor
+      body.cursor_id = cursorId
+    }
+    return body
   }
 
   async function doFetch(q: string) {
     cancelPending()
     state.loading = true
+    state.loadingMore = false
     state.error = null
 
     abortController = new AbortController()
@@ -111,12 +136,7 @@ export function useSessionSearch() {
       const res = await fetch('/api/rag/session-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          q,
-          prefer_mode: state.preferMode,
-          archived: state.archivedFilter,
-          sort: state.sortOrder,
-        }),
+        body: JSON.stringify(requestBody(q)),
         signal: abortController.signal,
       })
 
@@ -131,6 +151,7 @@ export function useSessionSearch() {
       state.results = data.sessions
       state.total = data.total
       state.searchMode = data.mode
+      state.hasMore = !!data.has_more
       state.loading = false
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') return
@@ -141,9 +162,46 @@ export function useSessionSearch() {
     }
   }
 
-  // Browse all sessions newest-first when there is no query to search for.
+  // Browse all sessions when there is no query to search for. In browse mode
+  // the list is paginated: loadMore appends the next page on scroll.
   function browse() {
     return doFetch('')
+  }
+
+  // Append the next page of browse results. Only meaningful in browse mode —
+  // search results are ranked and not paginated.
+  async function loadMore() {
+    if (state.loading || state.loadingMore || !state.hasMore) return
+    if (state.searchMode !== 'recent') return
+    const last = state.results[state.results.length - 1]
+    if (!last) return
+
+    loadMoreController = new AbortController()
+    state.loadingMore = true
+    try {
+      const res = await fetch('/api/rag/session-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody('', last.created_at, last.session_id)),
+        signal: loadMoreController.signal,
+      })
+      if (!res.ok) {
+        state.loadingMore = false
+        return
+      }
+      const data: SessionSearchResponse = await res.json()
+      // Guard against duplicates if the same page is somehow returned twice.
+      const seen = new Set(state.results.map(r => r.session_id))
+      const fresh = (data.sessions || []).filter(s => !seen.has(s.session_id))
+      state.results = [...state.results, ...fresh]
+      state.hasMore = !!data.has_more
+      state.loadingMore = false
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      const message = err instanceof Error ? err.message : String(err)
+      appLog.e('SessionSearch', 'load more error', message)
+      state.loadingMore = false
+    }
   }
 
   function search(q: string) {
@@ -179,5 +237,5 @@ export function useSessionSearch() {
     cancelPending()
   })
 
-  return { state, setQuery, search, browse, clear, setFilters }
+  return { state, setQuery, search, browse, clear, setFilters, loadMore }
 }

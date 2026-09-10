@@ -40,6 +40,8 @@ describe('useSessionSearch', () => {
       expect(state.preferMode).toBe('hybrid')
       expect(state.archivedFilter).toBe('all')
       expect(state.sortOrder).toBe('relevance')
+      expect(state.hasMore).toBe(false)
+      expect(state.loadingMore).toBe(false)
     })
   })
 
@@ -118,6 +120,18 @@ describe('useSessionSearch', () => {
         method: 'POST',
         body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
+    })
+
+    it('parses has_more from a browse response', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ session_id: 's1' }], total: 1, mode: 'recent', has_more: true }),
+      })
+
+      const { state, browse } = useSessionSearch()
+      await browse()
+      expect(state.hasMore).toBe(true)
+      expect(state.searchMode).toBe('recent')
     })
 
     it('handles HTTP errors', async () => {
@@ -322,6 +336,62 @@ describe('useSessionSearch', () => {
 
       expect(state.archivedFilter).toBe('active')
       expect(state.sortOrder).toBe('relevance')
+    })
+  })
+
+  describe('loadMore', () => {
+    function recentSession(id: string, createdAt: string) {
+      return { session_id: id, session_title: id, score: 0, backend: 'cli', project_path: '/p', archived: false, created_at: createdAt, match_count: 0, chunks: [] }
+    }
+
+    it('appends the next page using the last row as cursor', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s1', '2024-03-01 10:00:00')], total: 1, mode: 'recent', has_more: true }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s2', '2024-02-01 10:00:00')], total: 1, mode: 'recent', has_more: false }) })
+
+      const { state, browse, loadMore } = useSessionSearch()
+      await browse()
+      expect(state.hasMore).toBe(true)
+
+      await loadMore()
+      expect(state.results.map(r => r.session_id)).toEqual(['s1', 's2'])
+      expect(state.hasMore).toBe(false)
+      // Second request carries the last row's created_at + id as cursor.
+      expect(mockFetch).toHaveBeenLastCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance', cursor: '2024-03-01 10:00:00', cursor_id: 's1' }),
+      }))
+    })
+
+    it('deduplicates rows already present', async () => {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s1', '2024-03-01 10:00:00')], total: 1, mode: 'recent', has_more: true }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s1', '2024-03-01 10:00:00')], total: 1, mode: 'recent', has_more: false }) })
+
+      const { state, browse, loadMore } = useSessionSearch()
+      await browse()
+      await loadMore()
+      expect(state.results.map(r => r.session_id)).toEqual(['s1'])
+    })
+
+    it('does nothing when hasMore is false', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s1', '2024-03-01 10:00:00')], total: 1, mode: 'recent', has_more: false }) })
+
+      const { browse, loadMore } = useSessionSearch()
+      await browse()
+      mockFetch.mockClear()
+      await loadMore()
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+
+    it('does nothing in search mode', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [recentSession('s1', '2024-03-01 10:00:00')], total: 1, mode: 'hybrid', has_more: true }) })
+
+      const { state, search, loadMore } = useSessionSearch()
+      await search('test')
+      expect(state.hasMore).toBe(true)
+      mockFetch.mockClear()
+      await loadMore()
+      expect(mockFetch).not.toHaveBeenCalled()
     })
   })
 

@@ -2104,7 +2104,7 @@ func TestGetRecentSessions_NewestFirstIncludesArchived(t *testing.T) {
 	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "arch", "Archived", "2024-02-01 10:00:00", true)
 
-	sessions, err := service.GetRecentSessions("/project", 0, "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 3)
 	// Reverse chronological order (newest first).
@@ -2124,12 +2124,12 @@ func TestGetRecentSessions_ProjectScopedAndLimited(t *testing.T) {
 	insertSessionWithTime(t, "/other", "c", "C", "2024-01-03 10:00:00", false)
 
 	// Other project must be excluded.
-	sessions, err := service.GetRecentSessions("/project", 0, "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 
 	// Limit truncates the newest-first list.
-	sessions, err = service.GetRecentSessions("/project", 1, "", "")
+	sessions, _, err = service.GetRecentSessions("/project", 1, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2142,7 +2142,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 	insertSessionWithTime(t, "/other", "b", "B", "2024-01-02 10:00:00", false)
 
 	// Empty project path → across all projects (CLI global browse).
-	sessions, err := service.GetRecentSessions("", 0, "", "")
+	sessions, _, err := service.GetRecentSessions("", 0, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2151,7 +2151,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 func TestGetRecentSessions_NoSessions(t *testing.T) {
 	setupDB(t)
 
-	sessions, err := service.GetRecentSessions("/project", 0, "", "")
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 0)
 }
@@ -2165,7 +2165,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	insertSessionWithTime(t, "/project", "arch-2", "R2", "2024-04-01 10:00:00", true)
 
 	// Active only.
-	active, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "")
+	active, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, active, 2)
 	for _, s := range active {
@@ -2174,7 +2174,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "active-2", active[0].ID)
 
 	// Archived only.
-	archived, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "")
+	archived, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, archived, 2)
 	for _, s := range archived {
@@ -2183,7 +2183,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "arch-2", archived[0].ID)
 
 	// All (default) includes both.
-	all, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "")
+	all, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, all, 4)
 }
@@ -2195,7 +2195,7 @@ func TestGetRecentSessions_SortOrderOldest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "old", "Old", "2024-01-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "mid", "Mid", "2024-02-01 10:00:00", false)
 
-	oldest, err := service.GetRecentSessions("/project", 0, "", service.SessionSortOldest)
+	oldest, _, err := service.GetRecentSessions("/project", 0, "", service.SessionSortOldest, "", "")
 	assert.NoError(t, err)
 	require.Len(t, oldest, 3)
 	assert.Equal(t, "old", oldest[0].ID)
@@ -2213,6 +2213,90 @@ func TestNormalizeSessionArchiveFilterAndSortOrder(t *testing.T) {
 	assert.Equal(t, "relevance", service.NormalizeSessionSortOrder("bogus"))
 	assert.Equal(t, "newest", service.NormalizeSessionSortOrder("Newest"))
 	assert.Equal(t, "oldest", service.NormalizeSessionSortOrder(" OLDEST "))
+}
+
+func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s4", "S4", "2024-04-01 10:00:00", false)
+
+	// Page 1: newest first, 2 rows + hasMore.
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 2)
+	assert.True(t, hasMore)
+	assert.Equal(t, "s4", page1[0].ID)
+	assert.Equal(t, "s3", page1[1].ID)
+
+	// Page 2: cursor from the last row of page 1.
+	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", cursor, page1[1].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 2)
+	assert.False(t, hasMore2)
+	assert.Equal(t, "s2", page2[0].ID)
+	assert.Equal(t, "s1", page2[1].ID)
+
+	// No overlap between pages.
+	seen := map[string]bool{}
+	for _, s := range append(page1, page2...) {
+		require.False(t, seen[s.ID], "session %s appeared twice", s.ID)
+		seen[s.ID] = true
+	}
+	assert.Len(t, seen, 4)
+}
+
+func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
+
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 2)
+	assert.True(t, hasMore)
+	assert.Equal(t, "s1", page1[0].ID)
+	assert.Equal(t, "s2", page1[1].ID)
+
+	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, cursor, page1[1].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.False(t, hasMore2)
+	assert.Equal(t, "s3", page2[0].ID)
+}
+
+func TestGetRecentSessions_CursorWithSameTimestamp(t *testing.T) {
+	setupDB(t)
+
+	// Rows sharing a created_at must still paginate without skip/duplicate:
+	// the id tie-break carries the cursor forward.
+	insertSessionWithTime(t, "/project", "a", "A", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "b", "B", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "c", "C", "2024-01-01 10:00:00", false)
+
+	seen := map[string]bool{}
+	cursor, cursorID := "", ""
+	for range 5 {
+		page, hasMore, err := service.GetRecentSessions("/project", 1, "", "", cursor, cursorID)
+		assert.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		require.False(t, seen[page[0].ID], "duplicate %s", page[0].ID)
+		seen[page[0].ID] = true
+		cursor = page[0].CreatedAt.Format("2006-01-02 15:04:05")
+		cursorID = page[0].ID
+		if !hasMore {
+			break
+		}
+	}
+	assert.Len(t, seen, 3)
 }
 
 func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {

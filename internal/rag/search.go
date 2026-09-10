@@ -220,16 +220,20 @@ type SessionSearchResponse struct {
 	Sessions []SessionSearchResult `json:"sessions"`
 	Total    int                   `json:"total"`
 	Mode     SearchMode            `json:"mode"`
+	// HasMore is set in browse ("recent") mode to signal another page exists.
+	HasMore bool `json:"has_more,omitempty"`
 }
 
-// RecentSessions lists the project's sessions for the "browse all" state of
-// session search (no query entered). archiveFilter narrows to active/archived
-// sessions (or all), and sortOrder selects newest/oldest time ordering. It
-// returns up to limit sessions with title, backend, project, archived flag and
-// creation time. No message content is attached: the browse list stays cheap,
-// and the detail view lazily fetches the first message on demand.
-func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder string) (*SessionSearchResponse, error) {
-	sessions, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder)
+// RecentSessions lists a page of the project's sessions for the "browse all"
+// state of session search (no query entered). archiveFilter narrows to
+// active/archived sessions (or all), and sortOrder selects newest/oldest time
+// ordering. It returns up to limit sessions with title, backend, project,
+// archived flag and creation time, plus whether a further page exists. Pass the
+// last row's created_at (RFC3339) and id as cursor to fetch the next page. No
+// message content is attached: the browse list stays cheap, and the detail view
+// lazily fetches the first message on demand.
+func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder, cursor, cursorID string) (*SessionSearchResponse, error) {
+	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder, cursor, cursorID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +257,7 @@ func RecentSessions(ctx context.Context, projectPath string, limit int, archiveF
 		Sessions: out,
 		Total:    len(out),
 		Mode:     SearchModeRecent,
+		HasMore:  hasMore,
 	}, nil
 }
 
