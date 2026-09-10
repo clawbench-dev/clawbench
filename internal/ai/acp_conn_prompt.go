@@ -296,10 +296,14 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	// cachedUsageState. Persist that to the message metadata so
 	// chat_metadata.cost_usd is populated for ACP agents too — otherwise only
 	// CLI stream parsers ever set CostUSD and ACP rows stay 0.
+	//
+	// CodeBuddy is excluded: its usage_update.cost carries credit, not money
+	// (see costFieldCarriesCredit). The real credit is persisted separately
+	// from _meta.usage.credit below.
 	c.mu.Lock()
 	cachedUsage := c.cachedUsageState
 	c.mu.Unlock()
-	if cachedUsage != nil && cachedUsage.Cost > 0 {
+	if cachedUsage != nil && cachedUsage.Cost > 0 && !costFieldCarriesCredit(backendID) {
 		meta.CostUSD = cachedUsage.Cost
 	}
 

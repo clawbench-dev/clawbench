@@ -389,6 +389,8 @@ func mergeMetaExtractionToConn(conn *ACPConn, backendID string, meta map[string]
 //     incoming zero/absent → keep existing (partial notifications omit them).
 //   - cost: monotonic cumulative. An incoming cost lower than the existing one
 //     is treated as "no new cost info" and does not regress the total.
+//     CodeBuddy never contributes a cost here: its usage_update.cost carries
+//     credit, which the ingestion paths discard (costFieldCarriesCredit).
 //   - currency: filled when incoming carries one.
 //
 // existing may be nil (first observation) — incoming is then used as-is.

@@ -324,7 +324,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			Used: update.UsageUpdate.Used,
 			Size: update.UsageUpdate.Size,
 		}
-		if update.UsageUpdate.Cost != nil {
+		// Discard the ACP cost for agents that repurpose the field: CodeBuddy
+		// ships its credit consumption as cost.amount (empty currency), so
+		// persisting it would corrupt the cost stats. See
+		// costFieldCarriesCredit.
+		if update.UsageUpdate.Cost != nil && !costFieldCarriesCredit(backendID) {
 			usageState.Cost = update.UsageUpdate.Cost.Amount
 			usageState.Currency = update.UsageUpdate.Cost.Currency
 		}

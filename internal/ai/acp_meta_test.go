@@ -644,7 +644,7 @@ func TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState(t *testing.T)
 	ch := make(chan StreamEvent, 10)
 	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
 	// First: a real usage_update establishes the window.
-	conn.SetCachedUsageState(&UsageState{Used: 300000, Size: 1000000, InputTokens: 301000, Cost: 5.0})
+	conn.SetCachedUsageState(&UsageState{Used: 300000, Size: 1000000, InputTokens: 301000})
 
 	// Then a naked notification arrives (used=0, size=0, cost only).
 	naked := acp.SessionUpdate{
@@ -667,7 +667,75 @@ func TestMapACPSessionUpdate_UsageUpdate_NakedZeroKeepsCachedState(t *testing.T)
 	require.NotNil(t, cached)
 	assert.Equal(t, 1000000, cached.Size, "cached window must survive a naked notification")
 	assert.Equal(t, 300000, cached.Used, "cached used must survive a naked notification")
-	assert.Equal(t, 6.08, cached.Cost, "cost is monotonic — the naked notification's higher cost applies")
+	assert.Equal(t, 0.0, cached.Cost, "CodeBuddy's usage_update.cost carries credit, not money — discarded")
+}
+
+// TestMapACPSessionUpdate_UsageUpdate_CodeBuddyCostDiscarded is the regression
+// guard for the CodeBuddy credit-as-cost defect: CodeBuddy repurposes the
+// ACP-standard usage_update.cost field to carry its credit consumption (with an
+// empty currency), so ingesting it as UsageState.Cost would persist a unit-less
+// credit number into chat_metadata.cost_usd and corrupt the cost stats.
+func TestMapACPSessionUpdate_UsageUpdate_CodeBuddyCostDiscarded(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cb", Backend: "codebuddy"}}
+
+	update := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: 29495,
+			Size: 200000,
+			Cost: &acp.Cost{Amount: 1.48}, // CodeBuddy credit, empty currency
+			Meta: map[string]any{
+				"usage": map[string]any{"credit": 1.48},
+			},
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)
+
+	var evt *StreamEvent
+	select {
+	case e := <-ch:
+		evt = &e
+	default:
+		t.Fatal("expected usage_update event")
+	}
+	require.NotNil(t, evt.Usage)
+	assert.Equal(t, 0.0, evt.Usage.Cost, "CodeBuddy cost field must be discarded")
+	assert.Equal(t, "", evt.Usage.Currency, "no fabricated currency for the discarded cost")
+	// The genuine credit still flows through the _meta extension.
+	assert.Equal(t, 1.48, evt.Usage.Credit, "real credit from _meta.usage.credit is preserved")
+
+	cached := conn.GetCachedUsageState()
+	require.NotNil(t, cached)
+	assert.Equal(t, 0.0, cached.Cost, "discarded cost must not be cached")
+	assert.Equal(t, 1.48, cached.Credit)
+}
+
+// TestMapACPSessionUpdate_UsageUpdate_ClaudeCostPreserved verifies the discard
+// is scoped to CodeBuddy: a backend reporting a genuine monetary cost (Claude
+// reports USD on the final usage_update of a turn) still populates Cost.
+func TestMapACPSessionUpdate_UsageUpdate_ClaudeCostPreserved(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	conn := &ACPConn{agent: &model.Agent{ID: "cl", Backend: "claude"}}
+
+	update := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: 53000,
+			Size: 200000,
+			Cost: &acp.Cost{Amount: 0.1568, Currency: "USD"},
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), conn, nil)
+
+	var evt *StreamEvent
+	select {
+	case e := <-ch:
+		evt = &e
+	default:
+		t.Fatal("expected usage_update event")
+	}
+	require.NotNil(t, evt.Usage)
+	assert.InDelta(t, 0.1568, evt.Usage.Cost, 0.0001, "Claude's real USD cost must be preserved")
+	assert.Equal(t, "USD", evt.Usage.Currency)
 }
 
 // TestMergeUsageState_AuthoritativeWindowWithZeroUsed verifies the distinction
