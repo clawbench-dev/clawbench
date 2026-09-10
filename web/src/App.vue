@@ -1685,6 +1685,9 @@ navCoordinator = useNavigationCoordinator({
     isFileManagerSearchActive: () => !!fileManagerRef.value?.searchActive?.value,
     closeFileManagerSearch: () => fileManagerRef.value?.closeSearch(),
     exitFileManagerMultiSelect: () => fileManagerRef.value?.exitMultiSelect(),
+    // FileOverlay forwards to FileViewer, which emits 'captureScroll' — so this
+    // also refreshes the module-level scroll cache for the file being left.
+    requestScrollCapture: () => fileOverlayRef.value?.captureScroll?.(),
   },
   backHooks: {
     hasTopmostOverlay,

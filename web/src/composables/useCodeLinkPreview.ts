@@ -59,6 +59,8 @@ export interface UseCodeLinkPreviewOptions {
   /** Surface the preview was opened from — threaded into the full-screen open
    *  so the navigation origin records the right return target. */
   source?: NavigationSurface
+  /** Called synchronously before opening the target file in full view. */
+  onBeforeOpen?: () => void
 }
 
 // Only one preview surface should be visible across chat/file panes. Keep the
@@ -361,6 +363,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const openFull = () => {
     if (!target.value) return
     const { filePath, lineStart, lineEnd } = target.value
+    options.onBeforeOpen?.()
     openFilePath(filePath, lineStart, lineEnd, options.source)
     close()
   }

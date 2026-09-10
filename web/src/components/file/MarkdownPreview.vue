@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -71,6 +71,8 @@ import {
 } from '@/composables/useMarkdownDiff.ts'
 import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
+import { captureMarkdownScroll } from '@/composables/useFileScrollRestore.ts'
+import { setFileScroll, type FileScrollEntry } from '@/utils/fileScrollCache.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import '@/assets/diff-marker.css'
 
@@ -81,7 +83,7 @@ const props = defineProps<{
     wordWrap?: boolean
     showLineNumbers?: boolean
 }>()
-const emit = defineEmits(['closeSearch'])
+const emit = defineEmits(['closeSearch', 'captureScroll'])
 
 const renderedHtml = ref('')
 const bodyRef = ref<HTMLElement | null>(null)
@@ -142,9 +144,30 @@ const { handleDblClick } = useDoubleClickCopy({
     },
 })
 
+function captureCurrentScrollState(): FileScrollEntry | null {
+    const el = bodyRef.value
+    if (!el || !props.file?.path) return null
+    const entry = captureMarkdownScroll(el, props.file.content || '')
+    if (entry) {
+        setFileScroll(props.file.path, entry)
+        emit('captureScroll', entry)
+    }
+    return entry
+}
+
+function onImageLoad() {
+    window.dispatchEvent(new CustomEvent('realign-file-scroll'))
+}
+
 const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
 const { isPC } = usePlatformDetect()
-const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef, source: 'file' })
+const codeLinkPreview = useCodeLinkPreview({
+    containerRef: bodyRef,
+    source: 'file',
+    onBeforeOpen: () => {
+        captureCurrentScrollState()
+    },
+})
 
 // Image attach-to-chat badge (touch devices): actions injected from the shared
 // chat-attachment singleton + toast + i18n labels.
@@ -229,6 +252,7 @@ function handleClick(event: MouseEvent) {
         event.stopPropagation()
         const sha = commitEl.getAttribute('data-commit-sha')
         if (sha) {
+            captureCurrentScrollState()
             window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha } }))
         }
         return
@@ -244,6 +268,7 @@ function handleClick(event: MouseEvent) {
         const lineStart = linkOrBtn.getAttribute('data-line-start')
         const lineEnd = linkOrBtn.getAttribute('data-line-end')
         if (filePath) {
+            captureCurrentScrollState()
             codeLinkPreview.close()
             openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'file')
         }
@@ -274,6 +299,7 @@ function handleClick(event: MouseEvent) {
         // directly; otherwise resolve the relative href against the md's dir.
         const resolvedPath = annotatedPath
             || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
+        captureCurrentScrollState()
         codeLinkPreview.close()
         openFilePath(resolvedPath, lineStart, lineEnd, 'file')
     })
@@ -362,6 +388,7 @@ async function doRender(f: { content: string; path?: string; error?: boolean }) 
     if (renderId === currentRenderId) {
         lastBlockList.value = extractBlocks(el.querySelector('.markdown-content') || el)
         computeMarkerPositions()
+        window.dispatchEvent(new CustomEvent('realign-file-scroll'))
     }
 }
 
@@ -389,6 +416,7 @@ watch(() => props.viewMode, async (mode) => {
     if (!el) return
     const mermaidTarget = el.querySelector('.markdown-content') as HTMLElement || el
     await renderMermaidInElement(mermaidTarget, 'md-preview')
+    window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 })
 
 // Watch for marker changes and recompute positions
@@ -424,6 +452,7 @@ defineExpose({
     lastBlockList,
     bodyRef,
     focusSearchInput,
+    captureCurrentScrollState,
 })
 </script>
 
