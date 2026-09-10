@@ -208,6 +208,47 @@ describe('useFileScrollRestore', () => {
             vi.advanceTimersByTime(60 * 50 + 100) // past MAX_ANCHOR_ATTEMPTS
             expect(el.scrollTop).toBe(180) // 0.4 * (500 - 50)
         })
+
+        it('falls back to ratio at give-up for a CodeMirror pane too', () => {
+            // Same give-up fall-through must hold for the raw pane: a target
+            // beyond max scroll defers, then falls through to ratio at give-up.
+            const el = makeEl({ scrollHeight: 500, clientHeight: 50, scrollTop: 0, _classes: ['cm-scroller'] })
+            fakeView = {
+                state: { doc: { lines: 1000, line: () => ({ from: 200 }) } },
+                lineBlockAt: () => ({ top: 4600 }), // max scroll = 450
+            }
+            const ctx = makeContext({
+                contentRoot: () => el,
+                isMarkdown: () => true,
+                file: () => ({ path: 'a.md', content: 'x' }),
+            })
+            const s = useFileScrollRestore(ctx)
+
+            s.restoreAfterContainerSwitch({ scrollTop: 800, sourceLine: 900, ratio: { ratio: 0.4 } })
+            // Deferred first: must not clamp to 450.
+            vi.advanceTimersByTime(50)
+            expect(el.scrollTop).toBe(0)
+            vi.advanceTimersByTime(60 * 50 + 100) // past MAX_ANCHOR_ATTEMPTS
+            expect(el.scrollTop).toBe(180) // 0.4 * (500 - 50)
+        })
+
+        it('defers when the line anchor is not yet resolvable (no blocks laid out)', () => {
+            // v-html not populated yet → renderedLineScrollTop returns null. With
+            // allowFallback=false the restore must defer, not let the outgoing
+            // pane's pixel offset win immediately.
+            const el = makeEl({ scrollHeight: 500, clientHeight: 50, scrollTop: 0, _classes: ['markdown-body'] })
+            renderedLineScrollTopMock.mockReturnValue(null)
+            const ctx = makeContext({
+                contentRoot: () => el,
+                isMarkdown: () => true,
+                file: () => ({ path: 'a.md', content: 'x' }),
+            })
+            const s = useFileScrollRestore(ctx)
+
+            s.restoreAfterContainerSwitch({ scrollTop: 300, sourceLine: 900, ratio: { ratio: 0.1 } })
+            vi.advanceTimersByTime(50)
+            expect(el.scrollTop).toBe(0) // deferred, pixels did not win
+        })
     })
 
     describe('cancel-scroll-restore event', () => {

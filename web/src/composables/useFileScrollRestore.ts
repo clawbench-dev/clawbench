@@ -480,6 +480,10 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
                     // instead of clamping to a wrong position. At give-up
                     // (allowFallback) fall through to the pixel / ratio ladder.
                     if (!allowFallback) return false
+                } else if (!allowFallback) {
+                    // No annotated blocks yet (v-html not populated) — defer too,
+                    // rather than letting the outgoing pane's pixels win.
+                    return false
                 }
             } else if (el.classList?.contains('cm-scroller')) {
                 const target = cmLineScrollTop(el, saved.sourceLine)
@@ -489,6 +493,8 @@ export function useFileScrollRestore(ctx: FileScrollContext): UseFileScrollResto
                         return true
                     }
                     if (!allowFallback) return false
+                } else if (!allowFallback) {
+                    return false
                 }
             }
         }

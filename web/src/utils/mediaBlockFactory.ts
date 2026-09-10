@@ -97,11 +97,12 @@ export function annotateMediaBlocks(html: string): string {
         // 1. Build the wrapper shell at the element's old position.
         const wrapper = doc.createElement('div')
         wrapper.className = 'image-block-wrapper'
-        // Preserve the source line the host block carried so the line-anchor
-        // scroll (scrollRenderedToLine) can still locate media-containing
-        // paragraphs after the <p> is dissolved into the figure.
+        // The source line the host block carried (markedConfig stamps paragraphs
+        // with data-source-line) is transferred below — to the leading <p> when
+        // the paragraph keeps leading content, otherwise to the figure. Keeping
+        // it at the paragraph TOP is what makes line-anchor scroll land where the
+        // user was reading, not at the figure further down.
         const hostLine = host?.getAttribute?.('data-source-line')
-        if (hostLine) wrapper.setAttribute('data-source-line', hostLine)
         if (host) host.insertBefore(wrapper, el) // wrapper sits before the element
 
         // 2. Header row. The view (lightbox) button is always present — even on
@@ -170,9 +171,17 @@ export function annotateMediaBlocks(html: string): string {
 
             const frag = doc.createDocumentFragment()
             if (meaningful(before)) {
+                // Leading content survives: it keeps the paragraph's source line
+                // (the top of the original block), so capture/restore anchors to
+                // where the text starts.
                 const p = doc.createElement('p')
+                if (hostLine) p.setAttribute('data-source-line', hostLine)
                 for (const b of before) p.appendChild(b)
                 frag.appendChild(p)
+            } else if (hostLine) {
+                // No leading content: the figure becomes the block, so it owns
+                // the line (covers the solo-media case, where the <p> vanishes).
+                wrapper.setAttribute('data-source-line', hostLine)
             }
             frag.appendChild(wrapper)
             if (meaningful(after)) {

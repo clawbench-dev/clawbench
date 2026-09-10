@@ -74,13 +74,25 @@ describe('annotateMediaBlocks', () => {
   })
 
   it('moves the host block source line onto the figure (line-anchor scroll)', () => {
-    // markedConfig stamps data-source-line on the paragraph. The <p> is
-    // dissolved into the figure, so the attribute must move with it — else
-    // media-containing paragraphs cannot be located by scrollRenderedToLine.
+    // markedConfig stamps data-source-line on the paragraph. When the paragraph
+    // is fully dissolved (solo media), the attribute must move to the figure —
+    // else media-containing paragraphs cannot be located by scrollRenderedToLine.
     const solo = annotateMediaBlocks('<p data-source-line="7"><img src="a.png"></p>')
     expect(solo).toContain('data-source-line="7"')
-    const mid = annotateMediaBlocks('<p data-source-line="3">hi <img src="a.png"> yo</p>')
-    expect(mid).toContain('data-source-line="3"')
+    // Exactly once (no duplicate on wrapper + leading <p>).
+    expect(solo.match(/data-source-line="7"/g)).toHaveLength(1)
+  })
+
+  it('keeps the source line on the LEADING <p> for mid-paragraph media', () => {
+    // The line must stay at the paragraph top (where the text starts), not move
+    // down to the figure — otherwise restore drifts to the bottom of the block.
+    const out = annotateMediaBlocks('<p data-source-line="3">see <img src="a.png"></p>')
+    const host = document.createElement('div')
+    host.innerHTML = out
+    const leadingP = host.querySelector('p')
+    expect(leadingP?.getAttribute('data-source-line')).toBe('3')
+    // The figure itself must not duplicate the line.
+    expect(host.querySelector('.image-block-wrapper')?.getAttribute('data-source-line')).toBeNull()
   })
 
   it('inserts the figure in place inside li/td without splitting', () => {
