@@ -1086,11 +1086,19 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 	}
 
 	backfilled := 0
-	for i, p := range pendingChunks {
-		if i >= len(embeddings) || embeddings[i] == nil {
+	// pendingChunks and embeddings are parallel slices; embeddings may be
+	// shorter (or carry nil holes) when embedding failed for some chunks, so
+	// bound the walk to the shorter length.
+	limit := len(pendingChunks)
+	if len(embeddings) < limit {
+		limit = len(embeddings)
+	}
+	for i := range limit {
+		emb := embeddings[i]
+		if emb == nil {
 			continue
 		}
-		if backfillOneChunk(embeddings[i], p, vecDim, deleteVecStmt, insertVecStmt, updateStmt) {
+		if backfillOneChunk(emb, pendingChunks[i], vecDim, deleteVecStmt, insertVecStmt, updateStmt) {
 			backfilled++
 		}
 	}

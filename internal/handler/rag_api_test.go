@@ -1222,7 +1222,7 @@ func TestNormalizeTimeBound_MatchesStoredUTCFormat(t *testing.T) {
 		assert.LessOrEqual(t, from, localLate.Format("2006-01-02 15:04:05"))
 		assert.LessOrEqual(t, localLate.Format("2006-01-02 15:04:05"), to)
 
-		// A session from the neighbouring local day must stay outside.
+		// A session from the neighboring local day must stay outside.
 		prevDay := time.Date(2026, 9, 9, 23, 59, 59, 0, time.Local).UTC().Format("2006-01-02 15:04:05")
 		assert.Less(t, prevDay, from)
 	})

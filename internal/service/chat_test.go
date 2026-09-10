@@ -2590,7 +2590,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	}
 
 	// Push the OLDEST session's updated_at far into the future. If the cursor
-	// were updated_at, page 2 would re-return it (and its neighbours) because
+	// were updated_at, page 2 would re-return it (and its neighbors) because
 	// their created_at is < that future timestamp.
 	_, err := service.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld)
@@ -2613,7 +2613,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 
 	// Sanity: feeding an updated_at value as the cursor re-returns page 1's row.
 	// sidOld.updated_at is +1 day, so `created_at < <that>` matches sidNew —
-	// the exact duplicate-producing behaviour this contract guards against.
+	// the exact duplicate-producing behavior this contract guards against.
 	var oldUpdatedAt string
 	err = service.UnsafeDBForTest().QueryRow(
 		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)

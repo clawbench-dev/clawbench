@@ -289,11 +289,65 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		return nil, err
 	}
 
-	// Aggregate by session_id with per-session chunk cap
+	sessions := aggregateSessionHits(result.Results)
+	enrichSessionMeta(sessions)
+
+	// Filter by archive status now that each session's archived flag is known.
+	archiveFilter := service.NormalizeSessionArchiveFilter(params.Archived)
+	if archiveFilter != service.SessionArchiveFilterAll {
+		wantArchived := archiveFilter == service.SessionArchiveFilterArchived
+		filtered := sessions[:0]
+		for _, s := range sessions {
+			if s.Archived == wantArchived {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
+	// Sort sessions. Default keeps search-engine relevance (best chunk score
+	// desc); time orders re-sort the relevance result set by the session's
+	// creation time, tie-broken by session id.
+	sortSessionResults(sessions, params.SortOrder)
+
+	// Truncate to searchLimit
+	if len(sessions) > searchLimit {
+		sessions = sessions[:searchLimit]
+	}
+
+	// Build response
+	titles := getSessionTitles(sessionIDSet(sessions))
+	out := make([]SessionSearchResult, len(sessions))
+	for i, s := range sessions {
+		out[i] = *s
+		if title, ok := titles[s.SessionID]; ok {
+			out[i].SessionTitle = title
+		}
+	}
+
+	slog.Info(
+		"rag session search completed",
+		slog.String("query", params.Query),
+		slog.String("mode", string(result.Mode)),
+		slog.Int("sessions", len(out)),
+		slog.Int("search_limit", searchLimit),
+	)
+
+	return &SessionSearchResponse{
+		Sessions: out,
+		Total:    len(out),
+		Mode:     result.Mode,
+	}, nil
+}
+
+// aggregateSessionHits groups raw chunk hits by session_id in first-seen order,
+// applying a per-session chunk cap and tracking each session's best score and
+// match count.
+func aggregateSessionHits(hits []SearchHit) []*SessionSearchResult {
 	sessionMap := make(map[string]*SessionSearchResult)
 	var sessionOrder []string
 
-	for _, hit := range result.Results {
+	for _, hit := range hits {
 		sr, exists := sessionMap[hit.SessionID]
 		if !exists {
 			sr = &SessionSearchResult{
@@ -332,17 +386,15 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 	for _, id := range sessionOrder {
 		sessions = append(sessions, sessionMap[id])
 	}
+	return sessions
+}
 
-	// Enrich with session titles, archived status and the session's own
-	// creation time. In search mode CreatedAt initially comes from the matched
-	// chunk; the session-level timestamp is authoritative for display and for
-	// time sorting, so overwrite it when known.
-	sessionIDs := make(map[string]bool)
-	for _, s := range sessions {
-		sessionIDs[s.SessionID] = true
-	}
-	titles := getSessionTitles(sessionIDs)
-	metaMap := getSessionMetaBatch(sessionIDs)
+// enrichSessionMeta overwrites each session's archived flag and creation time
+// with the authoritative DB values. In search mode CreatedAt initially comes
+// from the matched chunk; the session-level timestamp is authoritative for
+// display and for time sorting.
+func enrichSessionMeta(sessions []*SessionSearchResult) {
+	metaMap := getSessionMetaBatch(sessionIDSet(sessions))
 	for _, s := range sessions {
 		if m, ok := metaMap[s.SessionID]; ok {
 			s.Archived = m.Archived
@@ -351,24 +403,22 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 			}
 		}
 	}
+}
 
-	// Filter by archive status now that each session's archived flag is known.
-	archiveFilter := service.NormalizeSessionArchiveFilter(params.Archived)
-	if archiveFilter != service.SessionArchiveFilterAll {
-		wantArchived := archiveFilter == service.SessionArchiveFilterArchived
-		filtered := sessions[:0]
-		for _, s := range sessions {
-			if s.Archived == wantArchived {
-				filtered = append(filtered, s)
-			}
-		}
-		sessions = filtered
+// sessionIDSet collects the distinct session IDs of the given results.
+func sessionIDSet(sessions []*SessionSearchResult) map[string]bool {
+	ids := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		ids[s.SessionID] = true
 	}
+	return ids
+}
 
-	// Sort sessions. Default keeps search-engine relevance (best chunk score
-	// desc); time orders re-sort the relevance result set by the session's
-	// creation time, tie-broken by session id.
-	switch service.NormalizeSessionSortOrder(params.SortOrder) {
+// sortSessionResults sorts sessions in place. Default keeps search-engine
+// relevance (best chunk score desc); time orders re-sort by session creation
+// time, tie-broken by session id.
+func sortSessionResults(sessions []*SessionSearchResult, sortOrder string) {
+	switch service.NormalizeSessionSortOrder(sortOrder) {
 	case service.SessionSortNewest:
 		sort.Slice(sessions, func(i, j int) bool {
 			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
@@ -388,34 +438,6 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 			return sessions[i].Score > sessions[j].Score
 		})
 	}
-
-	// Truncate to searchLimit
-	if len(sessions) > searchLimit {
-		sessions = sessions[:searchLimit]
-	}
-
-	// Build response
-	out := make([]SessionSearchResult, len(sessions))
-	for i, s := range sessions {
-		out[i] = *s
-		if title, ok := titles[s.SessionID]; ok {
-			out[i].SessionTitle = title
-		}
-	}
-
-	slog.Info(
-		"rag session search completed",
-		slog.String("query", params.Query),
-		slog.String("mode", string(result.Mode)),
-		slog.Int("sessions", len(out)),
-		slog.Int("search_limit", searchLimit),
-	)
-
-	return &SessionSearchResponse{
-		Sessions: out,
-		Total:    len(out),
-		Mode:     result.Mode,
-	}, nil
 }
 
 // sessionMeta holds the DB-sourced session attributes needed to enrich and

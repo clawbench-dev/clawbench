@@ -26,7 +26,7 @@ var (
 // tool call ID), so in the read-only summary view it would only ever render a
 // button that cannot work — it is omitted entirely.
 func isSummaryCardTool(name string) bool {
-	return strings.ToLower(name) == "askuserquestion"
+	return strings.EqualFold(name, "askuserquestion")
 }
 
 // extractSummaryCards walks content blocks and builds the compact card
