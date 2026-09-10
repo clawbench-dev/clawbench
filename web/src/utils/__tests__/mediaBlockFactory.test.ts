@@ -45,6 +45,34 @@ describe('annotateMediaBlocks', () => {
     expect(out.indexOf('image-block-wrapper')).toBeLessThan(out.indexOf('after'))
   })
 
+  it('keeps multiple media in one paragraph in their original order', () => {
+    const out = annotateMediaBlocks('<p><img src="a.png"><img src="b.png"><img src="c.png"></p>')
+    const order = [...out.matchAll(/src="([abc])\.png"/g)].map(m => m[1])
+    expect(order).toEqual(['a', 'b', 'c'])
+    expect(out.match(/<div class="image-block-wrapper">/g)).toHaveLength(3)
+  })
+
+  it('keeps media + text in one paragraph in order (image-text-image)', () => {
+    const out = annotateMediaBlocks('<p><img src="a.png"> mid <img src="b.png"></p>')
+    const order = [...out.matchAll(/src="([ab])\.png"/g)].map(m => m[1])
+    expect(order).toEqual(['a', 'b'])
+    expect(out.indexOf('mid')).toBeGreaterThan(out.indexOf('a.png'))
+    expect(out.indexOf('mid')).toBeLessThan(out.indexOf('b.png'))
+  })
+
+  it('does not lift an image inside <a> — the link must survive re-parse', () => {
+    // A block <div> inside <a> is hoisted out by the HTML parser, emptying the
+    // link. Keep linked media inline (marker only) and leave the <a> intact.
+    const out = annotateMediaBlocks('<p>see <a href="https://ex.com"><img src="a.png"></a> end</p>')
+    expect(out).not.toContain('image-block-wrapper')
+    const host = document.createElement('div')
+    host.innerHTML = out // same path as Vue v-html
+    const a = host.querySelector('a')
+    expect(a?.getAttribute('href')).toBe('https://ex.com')
+    expect(a?.querySelector('img')).not.toBeNull()
+    expect(a?.querySelector('img')?.classList.contains('lightbox-img')).toBe(true)
+  })
+
   it('inserts the figure in place inside li/td without splitting', () => {
     const html = '<ul><li><img src="x.png"></li></ul><table><tbody><tr><td><img src="y.png"></td></tr></tbody></table>'
     const out = annotateMediaBlocks(html)

@@ -35,6 +35,16 @@ import { FILE_OPEN_ICON_SVG } from '@/composables/useFilePathAnnotation'
 export const IMAGE_VIEW_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
 
 /**
+ * Ensure the raster `<img>` carries the `lightbox-img` marker (no duplicates),
+ * so the Lightbox collector and PC drag keep working.
+ */
+function stampLightboxImg(el: Element): void {
+    const classes = el.getAttribute('class')
+    const next = classes ? `${classes} lightbox-img` : 'lightbox-img'
+    el.setAttribute('class', next.split(/\s+/).filter((c, i, arr) => c && arr.indexOf(c) === i).join(' '))
+}
+
+/**
  * Lift every media element in an HTML fragment into a block-level
  * `.image-block-wrapper` figure with a header row of action buttons:
  *   - view (`.image-block-view-btn`, data-action="view") — opens the lightbox
@@ -66,7 +76,16 @@ export function annotateMediaBlocks(html: string): string {
     const media = Array.from(doc.querySelectorAll('img, svg.lightbox-svg'))
     for (const el of media) {
         if (el.closest('.image-block-wrapper')) continue // idempotent guard
-        if (el.tagName === 'SVG' && el.closest('a, button')) continue // UI icon, not content
+        const isSvg = el.tagName.toLowerCase() === 'svg'
+        // A block <div> may not live inside an <a>: the HTML parser hoists it
+        // out and leaves an empty link, so a linked image would lose its href.
+        // Keep linked media inline and just stamp the lightbox marker so taps
+        // still open it full-size.
+        if (el.closest('a')) {
+            if (!isSvg) stampLightboxImg(el)
+            continue
+        }
+        if (isSvg && el.closest('button')) continue // UI icon, not content
 
         const isLocal = el.hasAttribute('data-attach-src')
         const shareMode = isShareMode()
@@ -111,47 +130,52 @@ export function annotateMediaBlocks(html: string): string {
         }
 
         // 3. Content cell — keeps lightbox/drag activation classes.
-        const isSvg = el.tagName.toLowerCase() === 'svg'
         const cell = doc.createElement('span')
         cell.className = isSvg ? 'lightbox-svg-wrap' : 'lightbox-img-wrap'
-        if (!isSvg) {
-            // Raster images also carry the chat-img class from the chat pipeline;
-            // ensure the lightbox-img marker is always present (no duplicates).
-            const classes = el.getAttribute('class')
-            const next = classes ? `${classes} lightbox-img` : 'lightbox-img'
-            el.setAttribute('class', next.split(/\s+/).filter((c, i, arr) => c && arr.indexOf(c) === i).join(' '))
-        }
+        if (!isSvg) stampLightboxImg(el)
         cell.appendChild(el) // detaches from host
         wrapper.appendChild(cell)
 
-        // 4. Paragraph promotion: a <p> may not contain a block div. When the
-        // media was the paragraph's ONLY content, replace the <p> with the figure.
-        // Mid-paragraph media (text both sides) are lifted out — trailing text
-        // becomes its own <p> after the figure.
+        // 4. Paragraph promotion: a <p> may not contain a block div. Split the
+        // host <p> around the figure — text before becomes a leading <p>, text
+        // after a trailing <p> — so multiple media in one paragraph keep their
+        // original order.
         if (hostIsP && host) {
-            // Collect everything that followed the wrapper in host (originally
-            // text after the media).
-            const trailing: Node[] = []
-            while (host.contains(wrapper) && wrapper.nextSibling) {
-                const sib = wrapper.nextSibling
-                host.removeChild(sib)
-                trailing.push(sib)
+            const before: Node[] = []
+            let n: Node | null = host.firstChild
+            while (n && n !== wrapper) {
+                before.push(n)
+                n = n.nextSibling
             }
-            const leadingText = host.textContent?.trim()
-            if (!leadingText && trailing.length === 0) {
-                // Empty <p> (media was its only child) — drop it.
-                host.replaceWith(wrapper)
-            } else {
-                // Move the figure after the (still leading-text-bearing) <p>.
-                host.after(wrapper)
-                if (trailing.some(n => n.textContent?.trim())) {
-                    const tailP = doc.createElement('p')
-                    for (const t of trailing) tailP.appendChild(t)
-                    wrapper.after(tailP)
-                } else {
-                    for (const t of trailing) host.appendChild(t)
-                }
+            const after: Node[] = []
+            n = wrapper.nextSibling
+            while (n) {
+                const next: Node | null = n.nextSibling
+                after.push(n)
+                n = next
             }
+            for (const b of before) b.parentNode?.removeChild(b)
+            wrapper.parentNode?.removeChild(wrapper)
+
+            // A node is meaningful if it is an element (e.g. another media) or
+            // carries non-whitespace text. Pure text nodes of whitespace are
+            // dropped so we do not emit empty <p> shells.
+            const meaningful = (nodes: Node[]) =>
+                nodes.some(x => x.nodeType === 1 || !!x.textContent?.trim())
+
+            const frag = doc.createDocumentFragment()
+            if (meaningful(before)) {
+                const p = doc.createElement('p')
+                for (const b of before) p.appendChild(b)
+                frag.appendChild(p)
+            }
+            frag.appendChild(wrapper)
+            if (meaningful(after)) {
+                const p = doc.createElement('p')
+                for (const a of after) p.appendChild(a)
+                frag.appendChild(p)
+            }
+            host.replaceWith(frag)
         }
     }
 

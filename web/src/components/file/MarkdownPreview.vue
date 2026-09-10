@@ -147,7 +147,7 @@ const { handleDblClick } = useDoubleClickCopy({
 function captureCurrentScrollState(): FileScrollEntry | null {
     const el = bodyRef.value
     if (!el || !props.file?.path) return null
-    const entry = captureMarkdownScroll(el, props.file.content || '')
+    const entry = captureMarkdownScroll(el)
     if (entry) {
         setFileScroll(props.file.path, entry)
         emit('captureScroll', entry)
