@@ -44,4 +44,7 @@ sequenceDiagram
 - **检查与执行分离**：检查端点只提供版本决策，执行阶段重新完成必要校验，避免检查与替换之间的状态变化
 - **备份优先于替换**：升级状态暴露备份路径，使失败恢复和人工排障有明确落点
 - **WS 优先、轮询兜底**：正常阶段使用低延迟事件，进程重启阶段使用无状态 HTTP 查询，两种通道覆盖升级的完整生命周期
+- **容器内强制走就地替换路径**：容器（Docker / Podman / Kubernetes，经 `platform.IsContainer` 判定）一律视为"受托管"，走就地替换 + 退出，由容器重启策略拉起新版本。该判定优先于 supervisor 探测——k8s / runit / supervisord 探测不到时会错误地指向自重启子进程路径，而该路径在容器中必然失败：PID 1 退出时运行时会拆除命名空间并杀掉 `upgrade-replace` 子进程，替换永远执行不到，服务静默回到旧二进制。同样的强制也适用于 `IsRunningUnderSupervisor()`，从而覆盖配置面板重启（哨兵进程同样会被容器拆除杀掉）
+- **容器类型区分提示与决策**：`platform.IsDockerLike`（Docker/Podman）用于 UI 提示，`platform.IsContainer`（含 k8s）用于路径决策。k8s Pod 是容器（自重启不可行）但 Docker CLI 建议不适用，故 `/api/upgrade/check` 的 `is_docker` 只对 Docker/Podman 为真
+- **Docker 环境提示而非拒绝**：`/api/upgrade/check` 返回 `is_docker` 时，升级界面提示改用 `docker pull` + `docker compose up -d`。就地升级仍可执行，但镜像重建会回退版本，因此镜像拉取才是权威路径。就地升级依赖容器重启策略拉起新版本，且必须为 `always` / `unless-stopped`——优雅退出码为 0，`on-failure` 不会触发（详见 [Docker 部署](docker-deployment.md)）
 - **所有升级端点均鉴权**：二进制替换是高权限操作，不能使用公开状态接口

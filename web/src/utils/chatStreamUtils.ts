@@ -27,6 +27,12 @@ export interface ContentBlock {
   duration_ms?: number
   _key?: string
   reason?: string
+  /**
+   * Parent Agent tool-call id when this block was produced by a sub-agent
+   * spawned by that Agent call; empty/undefined for top-level content. Used to
+   * group a sub-agent's thinking/text/tool_use under its parent Agent card.
+   */
+  parent_tool_call_id?: string
   [key: string]: unknown
 }
 
@@ -77,6 +83,8 @@ export interface ChatMessage {
 /** SSE event data for content events */
 export interface ContentEventData {
   content?: string
+  /** Parent Agent tool-call id when this content belongs to a sub-agent. */
+  parent_tool_call_id?: string
 }
 
 /** Extract the textual content of a message: blocks' text concat, else content. */
@@ -118,6 +126,8 @@ function isJsonContent(c: string): boolean {
 /** SSE event data for thinking events */
 export interface ThinkingEventData {
   text?: string
+  /** Parent Agent tool-call id when this thinking belongs to a sub-agent. */
+  parent_tool_call_id?: string
 }
 
 /** SSE event data for tool_use/tool_result events */
@@ -131,6 +141,8 @@ export interface ToolUseEventData {
   display_name?: string
   file_path?: string
   duration_ms?: number
+  /** Parent Agent tool-call id when this tool call belongs to a sub-agent. */
+  parent_tool_call_id?: string
 }
 
 /** SSE event data for mode/config/thinking_effort events */
@@ -800,8 +812,8 @@ export type ChatMessageAction =
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
-  | { type: 'ws_content'; text: string }
-  | { type: 'ws_thinking'; text: string; key?: string }
+  | { type: 'ws_content'; text: string; parentToolCallId?: string }
+  | { type: 'ws_thinking'; text: string; key?: string; parentToolCallId?: string }
   | { type: 'ws_thinking_done' }
   | { type: 'ws_content_reset' }
   | { type: 'ws_tool_use'; data: ToolUseEventData }
@@ -811,8 +823,12 @@ export type ChatMessageAction =
   // ── DB rebuild (loadHistory) ──
   | { type: 'db_load'; dbMessages: ChatMessage[] }
 
-function findBlockByTypeBackward(blocks: ContentBlock[], type: string): ContentBlock | undefined {
+function findBlockByTypeBackward(blocks: ContentBlock[], type: string, parent?: string): ContentBlock | undefined {
+  const wantParent = parent || ''
   for (let i = blocks.length - 1; i >= 0; i--) {
+    // Sub-agent boundary: a block belonging to a different parent (or top-level)
+    // must not absorb this event's deltas.
+    if ((blocks[i].parent_tool_call_id || '') !== wantParent) return undefined
     if (blocks[i].type === type) return blocks[i]
     if (blocks[i].type === 'tool_use') return undefined
   }
@@ -1363,18 +1379,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (!sm) return state
       const blocks = sm.blocks!
-      const existingText = findBlockByTypeBackward(blocks, 'text')
+      const parent = action.parentToolCallId
+      const existingText = findBlockByTypeBackward(blocks, 'text', parent)
       if (existingText) existingText.text += action.text
-      else blocks.push({ type: 'text', text: action.text })
+      else blocks.push({ type: 'text', text: action.text, ...(parent ? { parent_tool_call_id: parent } : {}) })
       return state
     }
     case 'ws_thinking': {
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (!sm) return state
       const blocks = sm.blocks!
-      const existing = findBlockByTypeBackward(blocks, 'thinking')
+      const parent = action.parentToolCallId
+      const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
       if (existing) existing.text += action.text
-      else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}) })
+      else blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
       return state
     }
     case 'ws_error': {
@@ -1414,8 +1432,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
     case 'ws_thinking_done': {
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (!sm || !sm.blocks) return state
-      const existing = findBlockByTypeBackward(sm.blocks, 'thinking')
-      if (existing) existing.done = true
+      // thinking_done has no parent in the payload; it marks the most recently
+      // emitted thinking block (which may belong to a sub-agent). Scan backward
+      // with the tool_use boundary (original semantics) but WITHOUT the parent
+      // boundary — a parent-aware lookup returns undefined for the whole
+      // duration of a sub-agent run, leaving child thinking marked done in the
+      // DB but not live.
+      for (let i = sm.blocks.length - 1; i >= 0; i--) {
+        const b = sm.blocks[i]
+        if (b.type === 'thinking') {
+          b.done = true
+          break
+        }
+        if (b.type === 'tool_use') break
+      }
       return state
     }
     case 'ws_content_reset': {
@@ -1439,6 +1469,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (data.display_name !== undefined) existing.display_name = data.display_name
         if (data.file_path !== undefined) existing.file_path = data.file_path
         if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
+        if (data.parent_tool_call_id) existing.parent_tool_call_id = data.parent_tool_call_id
         if (data.done) existing.done = true
       } else {
         blocks.push({
@@ -1452,6 +1483,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           ...(data.display_name ? { display_name: data.display_name } : {}),
           ...(data.file_path ? { file_path: data.file_path } : {}),
           ...(data.duration_ms !== undefined ? { duration_ms: data.duration_ms } : {}),
+          ...(data.parent_tool_call_id ? { parent_tool_call_id: data.parent_tool_call_id } : {}),
         } as ContentBlock)
       }
       return state
@@ -1464,6 +1496,7 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       if (block) {
         if (data.name) block.name = data.name
         if (data.status !== undefined) block.status = data.status
+        if (data.parent_tool_call_id) block.parent_tool_call_id = data.parent_tool_call_id
         block.done = true
         if (data.duration_ms !== undefined) block.duration_ms = data.duration_ms
       }

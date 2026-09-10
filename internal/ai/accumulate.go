@@ -23,9 +23,14 @@ import (
 //nolint:gocognit,gocyclo // complex stream parsing logic
 func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 	// findLastBlockOfType searches backward for the most recent block of the
-	// given type, but stops at tool_use boundaries (they are natural separators).
-	findLastBlockOfType := func(typ string) (int, bool) {
+	// given type, but stops at tool_use boundaries (they are natural separators)
+	// and at a sub-agent parent boundary (a block belonging to a different
+	// parent — or top-level — must not absorb a sub-agent's deltas).
+	findLastBlockOfType := func(typ, parent string) (int, bool) {
 		for i := len(*blocks) - 1; i >= 0; i-- {
+			if (*blocks)[i].ParentToolCallID != parent {
+				return -1, false
+			}
 			if (*blocks)[i].Type == typ {
 				return i, true
 			}
@@ -39,18 +44,20 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 
 	switch event.Type {
 	case "content":
+		parent := event.ParentToolCallID
 		// Coalesce incremental content deltas into the most recent text block.
-		if idx, found := findLastBlockOfType("text"); found {
+		if idx, found := findLastBlockOfType("text", parent); found {
 			(*blocks)[idx].Text += event.Content
 		} else {
-			*blocks = append(*blocks, model.ContentBlock{Type: "text", Text: event.Content})
+			*blocks = append(*blocks, model.ContentBlock{Type: "text", Text: event.Content, ParentToolCallID: parent})
 		}
 	case "thinking":
+		parent := event.ParentToolCallID
 		// Coalesce incremental thinking deltas into the most recent thinking block.
-		if idx, found := findLastBlockOfType("thinking"); found {
+		if idx, found := findLastBlockOfType("thinking", parent); found {
 			(*blocks)[idx].Text += event.Content
 		} else {
-			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content})
+			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content, ParentToolCallID: parent})
 		}
 	case "thinking_done":
 		// Mark the last thinking block as done — the thinking content is complete.
@@ -115,14 +122,15 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					input = make(map[string]any)
 				}
 				*blocks = append(*blocks, model.ContentBlock{
-					Type:       "tool_use",
-					Name:       event.Tool.Name,
-					ID:         event.Tool.ID,
-					Input:      input,
-					Done:       event.Tool.Done,
-					Output:     event.Tool.Output,
-					Status:     event.Tool.Status,
-					DurationMs: event.Tool.DurationMs,
+					Type:             "tool_use",
+					Name:             event.Tool.Name,
+					ID:               event.Tool.ID,
+					Input:            input,
+					Done:             event.Tool.Done,
+					Output:           event.Tool.Output,
+					Status:           event.Tool.Status,
+					DurationMs:       event.Tool.DurationMs,
+					ParentToolCallID: event.Tool.ParentToolCallID,
 				})
 				upsertToolCallMeta(&(*blocks)[len(*blocks)-1])
 			}
@@ -205,6 +213,12 @@ func MergeConsecutiveThinkingBlocks(blocks []model.ContentBlock) []model.Content
 
 	for _, b := range blocks {
 		if b.Type == "thinking" {
+			// Do not merge across a sub-agent parent boundary: a top-level
+			// thinking block and a sub-agent thinking block (or two different
+			// sub-agents) are distinct and must stay separate for grouping.
+			if currentThinking != nil && currentThinking.ParentToolCallID != b.ParentToolCallID {
+				flushThinking()
+			}
 			if currentThinking != nil {
 				currentThinking.Text += b.Text
 				// If any merged block is done, the combined block is done

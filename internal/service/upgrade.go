@@ -58,6 +58,28 @@ func SetUpgradeIsSupervised(f func() bool) {
 	upgradeIsSupervised = f
 }
 
+// upgradeIsContainer reports whether the process runs inside a container.
+// Overridden in tests.
+var upgradeIsContainer = platform.IsContainer
+
+// resolveReplaceInPlace decides whether the upgrade should replace the binary
+// in place and rely on an external restart, rather than spawning the
+// self-restart `upgrade-replace` subprocess.
+//
+// A container always returns true. The subprocess path cannot work there: the
+// runtime destroys the namespace when PID 1 exits, killing the helper before it
+// can replace anything, so the service would silently come back on the old
+// binary. This holds regardless of the supervisor probe — k8s, runit and
+// supervisord are all unrecognized by it, which must not change the container's
+// behavior.
+//
+// Outside a container the probe is authoritative: a truly unsupervised
+// deployment (e.g. a plain nohup/setsid process) needs the subprocess path,
+// since nothing else would restart it.
+func resolveReplaceInPlace(isContainer, probeSupervised bool) bool {
+	return isContainer || probeSupervised
+}
+
 // upgradeCancel is the cancellation function for the current upgrade goroutine.
 var upgradeCancel context.CancelFunc
 
@@ -352,15 +374,16 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	}
 	slog.Info("upgrade: current binary", "path", currentBin)
 
-	isSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
-	isDockerEnv := isDocker()
-	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDockerEnv)
+	isContainerEnv := upgradeIsContainer()
+	probeSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
+	isSupervised := resolveReplaceInPlace(isContainerEnv, probeSupervised)
+	slog.Info("upgrade: supervisor check",
+		"isSupervised", isSupervised, "isContainer", isContainerEnv,
+		"probeSupervised", probeSupervised)
 
-	// Docker refuses self-replace — replacement is done by pulling a new image.
-	if isSupervised && isDockerEnv {
-		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
-		broadcastUpgradeUpdate()
-		return
+	if isContainerEnv {
+		slog.Info("upgrade: container detected — using in-place replace + restart-policy restart",
+			"dockerLike", platform.IsDockerLike())
 	}
 
 	// 1c. Preflight: the install directory (and the backup path) must be
@@ -783,15 +806,14 @@ func CheckInstallDirWritable() (string, error) {
 	return dir, nil
 }
 
-// isDocker checks if running inside a Docker container.
-func isDocker() bool {
-	if os.Getenv("container") != "" {
-		return true
-	}
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-	return false
+// IsDocker reports whether the process runs under Docker or Podman — i.e.
+// where the `docker pull` / `docker compose` advice is actionable.
+//
+// Kept as a thin wrapper over platform.IsDockerLike for the upgrade API's
+// `is_docker` field. Use platform.IsContainer for supervision decisions: a k8s
+// pod is a container (so self-restart is impossible) but not Docker-like.
+func IsDocker() bool {
+	return platform.IsDockerLike()
 }
 
 // setStateAndBroadcast sets upgrade state and broadcasts it via WS.

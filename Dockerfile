@@ -5,11 +5,17 @@
 #
 # Or manually:
 #   docker build -t clawbench .
-#   docker run -p 20000:20000 -v clawbench-data:/data clawbench
+#   docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data clawbench
 #
 # Pull from GitHub Container Registry:
 #   docker pull ghcr.io/clawbench-dev/clawbench:latest
-#   docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+#   docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+#
+# --restart always / unless-stopped is required for in-app upgrades: the
+# container replaces its own binary and exits (code 0), and the restart policy
+# brings the new version back up. `--restart on-failure` does NOT work — a
+# graceful shutdown exits 0, so it never triggers. Prefer `docker pull` +
+# recreate over an in-place upgrade.
 
 FROM ubuntu:24.04
 

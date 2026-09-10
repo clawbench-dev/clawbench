@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/speech"
 	"clawbench/internal/version"
 
@@ -1695,10 +1696,15 @@ func LaunchSentinelProcess() (*exec.Cmd, error) {
 	return launchSentinel()
 }
 
-// IsRunningUnderSupervisor detects if the process is managed by systemd, Docker, etc.
+// IsRunningUnderSupervisor detects if the process is managed by a supervisor
+// that will restart it after exit: systemd, Docker/Podman, Kubernetes, etc.
+//
+// A container is reported as supervised unconditionally: the runtime destroys
+// the namespace when PID 1 exits, so a sentinel child would be killed before it
+// could restart anything — the runtime's restart policy is the only recovery.
 func IsRunningUnderSupervisor() bool {
-	if os.Getenv("CLAWBENCH_NO_SUPERVISOR") != "" {
-		return false
+	if isContainerized() {
+		return true
 	}
 	// systemd: only a process that IS the MainPID of its unit is actually
 	// supervised. Merely inheriting INVOCATION_ID is not enough — a process
@@ -1711,14 +1717,7 @@ func IsRunningUnderSupervisor() bool {
 		if mainPID != "" && mainPID == strconv.Itoa(os.Getpid()) {
 			return true
 		}
-		// Member of a unit but not its MainPID → not supervised. Keep going
-		// so the container branches below get a chance to decide.
-	}
-	if os.Getenv("container") != "" {
-		return true
-	}
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
+		// Member of a unit but not its MainPID → not supervised.
 	}
 	// NOTE: PPid==1 (re-parented to init) is NOT evidence of a supervisor. It
 	// happens whenever the parent dies — e.g. a server launched by the restart
@@ -1727,6 +1726,11 @@ func IsRunningUnderSupervisor() bool {
 	// shut down, leaving the service permanently down.
 	return false
 }
+
+// isContainerized reports whether the process runs inside a container. It is a
+// package-level var so tests can force the container branch without a real
+// container.
+var isContainerized = platform.IsContainer
 
 // systemdCgroupPath points at the cgroup file used to discover the current
 // systemd unit. It is a package-level var so tests can point it at fixtures.

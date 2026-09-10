@@ -24,10 +24,6 @@ import (
 // as a marker for orphan detection.
 const OrphanChildEnvVar = "CLAWBENCH_CHILD=1"
 
-// OrphanSupervisorVar is an older marker used by previous ClawBench versions.
-// Some long-running processes from before the env var rename may still carry it.
-const OrphanSupervisorVar = "CLAWBENCH_NO_SUPERVISOR=1"
-
 // orphanCmdlinePatterns are patterns that identify an orphan ACP agent process
 // by its command line. Each pattern is a pair of (binarySubstring, argSubstring).
 // Both must be present in the cmdline for a match. Used as a fallback when
@@ -41,9 +37,9 @@ var orphanCmdlinePatterns = [][2]string{
 // CleanupOrphans kills any AI subprocess left running after a previous
 // server crash. Called once at startup, before any new subprocesses spawn.
 //
-// On Linux: scans /proc/<pid>/environ for CLAWBENCH_CHILD=1 or
-// CLAWBENCH_NO_SUPERVISOR=1, and also checks /proc/<pid>/cmdline for
-// known ACP agent patterns (e.g., "--acp") as a fallback.
+// On Linux: scans /proc/<pid>/environ for CLAWBENCH_CHILD=1, and also checks
+// /proc/<pid>/cmdline for known ACP agent patterns (e.g., "--acp") as a
+// fallback.
 // Processes whose parent is still alive are skipped — they are actively
 // managed, not orphans.
 // On macOS/Windows: no-op (orphaned processes exit when stdin pipe closes).
@@ -54,7 +50,6 @@ func CleanupOrphans() {
 	// marker), strip it now so it does not propagate to our own children
 	// (terminals, agents) and does not mark this server as an orphan later.
 	_ = os.Unsetenv(strings.SplitN(OrphanChildEnvVar, "=", 2)[0])
-	_ = os.Unsetenv(strings.SplitN(OrphanSupervisorVar, "=", 2)[0])
 
 	if runtime.GOOS != "linux" {
 		return
@@ -119,7 +114,7 @@ func isOrphanProcess(entryName string) (isOrphan, parentAlive bool) {
 		return false, false // permission denied or process exited
 	}
 
-	matched := hasClawBenchChildMarker(data) || hasClawBenchSupervisorMarker(data)
+	matched := hasClawBenchChildMarker(data)
 
 	if !matched {
 		// Fallback: check cmdline for known ACP agent patterns
@@ -240,12 +235,6 @@ func isClawBenchServerProcess(cmdData []byte) bool {
 // null bytes (\0) as delimiters between entries.
 func hasClawBenchChildMarker(environData []byte) bool {
 	return bytesContainsSep(environData, []byte(OrphanChildEnvVar), 0)
-}
-
-// hasClawBenchSupervisorMarker checks for the older CLAWBENCH_NO_SUPERVISOR=1
-// marker used by previous ClawBench versions.
-func hasClawBenchSupervisorMarker(environData []byte) bool {
-	return bytesContainsSep(environData, []byte(OrphanSupervisorVar), 0)
 }
 
 // hasOrphanCmdlinePattern checks if the /proc/<pid>/cmdline data contains

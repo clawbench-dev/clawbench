@@ -55,6 +55,13 @@ const showProgressDialog = ref(false)
 const installWritable = ref(true)
 const installDir = ref('')
 
+// Whether the server runs in a container, reported by /api/upgrade/check.
+// Docker can self-upgrade (the writable layer accepts the new binary and the
+// container restart policy brings it up), but a later rebuild from the
+// unchanged image reverts it — so the UI shows an advisory hint recommending
+// `docker pull`. Kept outside `state` for the same reason as installWritable.
+const isDocker = ref(false)
+
 let wsUnsubscribe: (() => void) | null = null
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null
 let pollStartTime: number | null = null
@@ -213,6 +220,7 @@ export function useUpgrade() {
         has_upgrade: boolean
         install_writable?: boolean
         install_dir?: string
+        is_docker?: boolean
       }>('/api/upgrade/check')
       state.current_version = data.current_version
       state.latest_version = data.latest_version
@@ -220,6 +228,8 @@ export function useUpgrade() {
       // Absent on older servers — default to writable so the UI is unchanged.
       installWritable.value = data.install_writable !== false
       installDir.value = data.install_dir ?? ''
+      // Absent on older servers — default to false (no advisory).
+      isDocker.value = data.is_docker === true
     } catch (e) {
       appLog.w(TAG, 'Check failed', e)
       hasUpgrade.value = false
@@ -318,6 +328,7 @@ export function useUpgrade() {
     showProgressDialog,
     installWritable,
     installDir,
+    isDocker,
     isInProgress,
     isRestarting,
     isCompleted,

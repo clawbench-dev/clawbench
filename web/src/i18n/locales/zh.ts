@@ -700,6 +700,10 @@ export default {
       resetSessionFailed: '重置会话失败',
       detailsUnavailable: '详情暂不可用',
       detailsLoadFailed: '加载失败',
+      subagentGroup: '子智能体',
+      subagentSteps: '{count} 步',
+      subagentExpand: '展开子智能体输出',
+      subagentCollapse: '收起子智能体输出',
       warningReasons: {
         user_cancel: '用户已中断',
         disconnect: '连接已断开，AI 响应中断',
@@ -2445,6 +2449,9 @@ export default {
     installDirNotWritableTitle: '无法自动升级：安装目录不可写',
     installDirNotWritableBody: '当前用户对 {dir} 没有写权限，升级无法在该目录创建备份并替换二进制。',
     installDirNotWritableHint: '请用 sudo 手动更新，或将 ClawBench 安装到用户可写目录（如 ~/.local/bin）后重试。',
+    dockerHintTitle: '当前运行在 Docker 中',
+    dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。建议改用镜像更新：',
+    dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
   },
   share: {
     loading: '加载中...',

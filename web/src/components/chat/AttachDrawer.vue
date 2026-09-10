@@ -111,12 +111,15 @@
 
       <!-- Recently uploaded + pending uploads -->
       <template v-if="activeTab === 'uploads'">
-        <!-- Pending uploads: only show while uploading (failed items removed by useFileUpload) -->
+        <!-- Pending uploads: only the in-flight ones (failed items are removed by
+             useFileUpload). Loop over `uploadingFiles` rather than `pendingFiles`
+             with v-show, so finished-but-retained entries leave no hidden rows. The
+             loading/empty fallbacks below key off the same visible count, otherwise
+             a retained non-uploading entry hides every row while also suppressing the
+             empty state → the content area collapses. -->
         <button
-          v-for="(f, idx) in pendingFiles" :key="'pending-' + idx"
-          v-show="f.uploading"
-          class="ad-file-row" :class="{ 'ad-file-attached': f.path && isAttached(f.path) }"
-          @click="f.path && !f.uploading && toggleAttached(f.path)"
+          v-for="(f, idx) in uploadingFiles" :key="'pending-' + idx"
+          class="ad-file-row"
         >
           <div class="ad-icon-wrap ad-uploading-icon">
             <span class="ad-upload-pct">{{ f.progress }}%</span>
@@ -127,8 +130,8 @@
           </div>
         </button>
         <!-- Completed uploads from server -->
-        <LoadingIndicator v-if="loading && !recentUploads?.length && pendingFiles.length === 0" size="md" />
-        <div v-else-if="!recentUploads?.length && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
+        <LoadingIndicator v-if="loading && !recentUploads?.length && uploadingFiles.length === 0" size="md" />
+        <div v-else-if="!recentUploads?.length && uploadingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
           v-for="item in recentUploads" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"

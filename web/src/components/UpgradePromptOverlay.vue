@@ -7,6 +7,10 @@
         </div>
         <p class="up-body">{{ t('upgrade.promptMessage', { version: latestVersion, currentVersion }) }}</p>
         <div class="up-version-badge">v{{ latestVersion }}</div>
+        <p v-if="isDocker" class="up-docker-hint">
+          {{ t('upgrade.dockerHintBody') }}
+          <span class="up-docker-restart">{{ t('upgrade.dockerHintRestart') }}</span>
+        </p>
         <a v-if="releaseNotesUrl" class="up-release-link" :href="releaseNotesUrl" target="_blank" rel="noopener noreferrer">
           {{ t('upgrade.releaseNotes', { version: latestVersion }) }}
         </a>
@@ -27,7 +31,7 @@ import { useUpgrade } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 
 const { t } = useI18n()
-const { skipVersion: doSkip, startUpgrade, releaseNotesUrl } = useUpgrade()
+const { skipVersion: doSkip, startUpgrade, releaseNotesUrl, isDocker } = useUpgrade()
 
 const visible = ref(false)
 const latestVersion = ref('')
@@ -134,6 +138,23 @@ watch(visible, (v) => {
   color: var(--accent-color);
   text-decoration: none;
   cursor: pointer;
+}
+
+.up-docker-hint {
+  margin: 0 16px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.up-docker-restart {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-warning, #d69e2e);
 }
 
 .up-release-link:hover {
