@@ -3410,6 +3410,51 @@ func TestCreateSession_AutoApproveUnknownAgent(t *testing.T) {
 	assert.False(t, service.GetSessionAutoApprove(sid))
 }
 
+// TestCreateSession_AutoApproveAppliesToScheduledSessions documents that the
+// agent default also applies to scheduled-task sessions created via
+// CreateSession. Harmless for both transports: ACP forces auto-approve anyway,
+// CLI ignores the flag.
+func TestCreateSession_AutoApproveAppliesToScheduledSessions(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "⏰ Scheduled", "auto-agent", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(sid))
+}
+
+// TestForkSession_InheritsAgentAutoApproveDefault verifies a forked session
+// picks up the agent's auto-approve default, matching a freshly created session
+// for the same agent.
+func TestForkSession_InheritsAgentAutoApproveDefault(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	src, err := service.CreateSession("/project", "claude", "Source", "auto-agent", "", "user", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", src, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", src, "assistant", "Hi", nil, false, "")
+	require.NoError(t, err)
+
+	forked, err := service.ForkSession(src, "/project", "[Fork] Source", 0, "")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(forked),
+		"forked session must inherit the agent's auto-approve default")
+}
+
 // ---------- GetStreamingMessageID ----------
 
 func TestGetStreamingMessageID_Found(t *testing.T) {

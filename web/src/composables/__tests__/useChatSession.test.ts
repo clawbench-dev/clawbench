@@ -3338,7 +3338,9 @@ describe('createSession', () => {
     )
   })
 
-  it('enables autoApprove display default when agent.autoApprove is true', async () => {
+  it('reflects server-persisted autoApprove for a new session', async () => {
+    // The backend persists the agent's auto-approve default into the session at
+    // creation; the frontend must simply reflect the server value.
     mockAgentFns.getAgent.mockReturnValue({ id: 'agent2', autoApprove: true })
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -3350,6 +3352,7 @@ describe('createSession', () => {
           backend: 'codebuddy',
           agentId: 'agent2',
           sessionCount: 5,
+          autoApprove: true,
         }),
       })
       .mockResolvedValueOnce({
@@ -3363,7 +3366,7 @@ describe('createSession', () => {
           agentId: 'agent2',
           modelId: '',
           thinkingEffort: '',
-          autoApprove: false, // server has not persisted auto-approve for this fresh session
+          autoApprove: true, // server persisted the agent's auto-approve default
           running: false,
         }),
       })
@@ -3393,13 +3396,15 @@ describe('createSession', () => {
     const session = useChatSession(options)
     await session.createSession('agent2')
 
-    // switchSession's loadHistory syncs autoApprove=false from the server,
-    // then the per-agent default flips it back ON for display.
+    // loadHistory synced autoApprove=true from the server response.
     expect(mockIdentity.autoApprove).toBe(true)
   })
 
-  it('keeps autoApprove off when the agent has no auto-approve default', async () => {
-    mockAgentFns.getAgent.mockReturnValue({ id: 'agent2', autoApprove: false })
+  it('does not client-override autoApprove when the server reports it off', async () => {
+    // Guard: even if the agent config says autoApprove=true, the UI must follow
+    // the server value. This is the exact divergence class the fix removes —
+    // the persisted flag (not the agent default) is authoritative.
+    mockAgentFns.getAgent.mockReturnValue({ id: 'agent2', autoApprove: true })
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -3410,6 +3415,7 @@ describe('createSession', () => {
           backend: 'codebuddy',
           agentId: 'agent2',
           sessionCount: 5,
+          autoApprove: false,
         }),
       })
       .mockResolvedValueOnce({
@@ -3423,7 +3429,7 @@ describe('createSession', () => {
           agentId: 'agent2',
           modelId: '',
           thinkingEffort: '',
-          autoApprove: false,
+          autoApprove: false, // server flag is off
           running: false,
         }),
       })

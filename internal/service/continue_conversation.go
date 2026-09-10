@@ -175,6 +175,9 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
 	}
+	// Apply the agent's auto-approve default like CreateSession does, so the
+	// continued interactive session matches a freshly created one.
+	applyAgentAutoApproveDefault(newSessionID, agentID)
 	slog.Info("continued session created",
 		slog.String("session", newSessionID),
 		slog.String("source_session", sourceSessionID),
@@ -353,6 +356,9 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
 	}
+	// Inherit the agent's auto-approve default like CreateSession does, so a
+	// forked session matches a freshly created one for the same agent.
+	applyAgentAutoApproveDefault(newSessionID, agentID)
 	slog.Info("session forked",
 		slog.String("session", newSessionID),
 		slog.String("source_session", sourceSessionID),

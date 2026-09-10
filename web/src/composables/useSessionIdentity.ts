@@ -710,12 +710,11 @@ export function useSessionIdentity() {
         }
         // Initialize thinking effort from agent preference
         thinkingEffortState.loadPref(currentAgentId.value)
-        // Per-agent new-session auto-approve default: show the session's
-        // Auto-Approve toggle ON when the agent is configured so (display
-        // default only — the session flag is persisted when the user toggles).
-        const agentForDefault = agentsApi.getAgent(currentAgentId.value)
-        if (agentForDefault?.autoApprove) {
-          autoApprove.value = true
+        // Auto-approve is server-authoritative: the backend persists the
+        // session's auto_approve flag (initialized from the agent's configured
+        // default) at creation time and returns it in the create response.
+        if (data.autoApprove !== undefined) {
+          autoApprove.value = !!data.autoApprove
         }
       }
     } catch (err: unknown) {

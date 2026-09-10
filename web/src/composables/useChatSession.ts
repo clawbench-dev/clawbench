@@ -932,16 +932,11 @@ export function useChatSession(options: UseChatSessionOptions) {
           appLog.w(TAG, 'populateACPStateFromCache failed for new session, will rely on SSE')
         }
       }
-      // Per-agent new-session auto-approve default: when the agent is configured
-      // with autoApprove=true, show the session's Auto-Approve toggle ON for the
-      // freshly created session. Display default only — the session's real
-      // auto_approve flag is still persisted when the user flips the toggle in
-      // the session drawer (switchSession's loadHistory above already synced
-      // autoApprove from the server, so this runs last and wins for a new session).
-      const agentForDefault = getAgent(effectiveAgentId)
-      if (agentForDefault?.autoApprove) {
-        autoApprove.value = true
-      }
+      // Auto-approve is now server-authoritative: the backend initializes the
+      // session's auto_approve flag from the agent's configured default at
+      // creation time, and switchSession's loadHistory above already synced it.
+      // No client-side override is applied here — that would make the UI claim
+      // ON even if the persisted flag is off (e.g. the guarded UPDATE failed).
       // Update session count from creation response and show toast
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })

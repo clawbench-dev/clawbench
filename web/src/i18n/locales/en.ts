@@ -1791,7 +1791,7 @@ export default {
       agentPreferredMode: 'Preferred Mode',
       agentTransport: 'Protocol',
       agentAutoApprove: 'Auto-Approve by Default',
-      agentAutoApproveDesc: 'New sessions created with this agent show Auto-Approve switched on (session-level toggle only, not applied until you turn it on manually)',
+      agentAutoApproveDesc: 'New sessions created with this agent start with Auto-Approve on, saved to the session so it survives a reload; you can still turn it off per session',
       agentName: 'Name',
       agentSpecialty: 'Description',
       agentSystemPrompt: 'System Prompt',

@@ -200,9 +200,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		setSessionID(w, r, sessionID)
-		// Return session count for UI indicator
+		// Return session count for UI indicator, plus the persisted
+		// auto-approve flag (initialized from the agent's configured default) so
+		// the frontend reflects server state instead of re-deriving it.
 		sessionCount, _ := service.GetSessionCount(projectPath)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title, "autoApprove": service.GetSessionAutoApprove(sessionID)})
 
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")

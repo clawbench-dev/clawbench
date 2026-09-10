@@ -1428,18 +1428,7 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if err != nil {
 		return "", err
 	}
-	// Initialize the per-session auto-approve flag from the agent's configured
-	// default. Guarded UPDATE (not part of the INSERT) so session creation does
-	// not depend on the auto_approve column being present in minimal schemas.
-	// Failure is non-fatal: the session exists, only the flag would be missing.
-	if agent, ok := model.Agents[agentID]; ok && agent.AutoApprove {
-		if _, uerr := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); uerr != nil {
-			slog.Warn("failed to initialize session auto-approve from agent default",
-				slog.String("session", sessionID),
-				slog.String("agent", agentID),
-				slog.String("err", uerr.Error()))
-		}
-	}
+	applyAgentAutoApproveDefault(sessionID, agentID)
 	slog.Info("session created",
 		slog.String("session", sessionID),
 		slog.String("backend", backend),
@@ -1447,6 +1436,28 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 		slog.String("type", sessionType),
 		slog.String("source", agentSource))
 	return sessionID, nil
+}
+
+// applyAgentAutoApproveDefault initializes a freshly created session's
+// chat_sessions.auto_approve from the agent's configured default. Called by
+// every session-creation path (new session, fork, continue-from-execution) so
+// the agent-level "auto-approve new sessions" preference is persisted
+// consistently instead of living only in frontend display state.
+//
+// Implemented as a guarded UPDATE rather than part of the INSERT so session
+// creation does not depend on the auto_approve column being present in minimal
+// schemas. Failure is non-fatal: the session exists, only the flag is missing.
+func applyAgentAutoApproveDefault(sessionID, agentID string) {
+	agent, ok := model.Agents[agentID]
+	if !ok || !agent.AutoApprove {
+		return
+	}
+	if _, err := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); err != nil {
+		slog.Warn("failed to initialize session auto-approve from agent default",
+			slog.String("session", sessionID),
+			slog.String("agent", agentID),
+			slog.String("err", err.Error()))
+	}
 }
 
 // UpdateSessionSourceID sets the source_session_id for a chat session.

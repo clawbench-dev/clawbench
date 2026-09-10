@@ -277,6 +277,54 @@ describe('useSessionIdentity', () => {
 
             expect(mockCreate).toHaveBeenCalledWith('agent-2')
         })
+
+        it('reads autoApprove from the create response (server-authoritative)', async () => {
+            // resetIdentity clears the registered callbacks so the fallback runs.
+            resetIdentity()
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    ok: true,
+                    sessionId: 'srv-auto-1',
+                    title: 'New Session',
+                    backend: 'codebuddy',
+                    agentId: 'agent-2',
+                    autoApprove: true,
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const identity = useSessionIdentity()
+            expect(identity.autoApprove.value).toBe(false)
+            await identity.createSession('agent-2')
+
+            expect(identity.currentSessionId.value).toBe('srv-auto-1')
+            expect(identity.autoApprove.value).toBe(true)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('keeps autoApprove off when the create response reports it off', async () => {
+            resetIdentity()
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    ok: true,
+                    sessionId: 'srv-auto-2',
+                    backend: 'codebuddy',
+                    agentId: 'agent-2',
+                    autoApprove: false,
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const identity = useSessionIdentity()
+            await identity.createSession('agent-2')
+
+            expect(identity.autoApprove.value).toBe(false)
+
+            vi.unstubAllGlobals()
+        })
     })
 
     // ── archiveSession ──

@@ -658,6 +658,8 @@ func TestServeSessions_Post_InitializesAutoApproveFromAgentDefault(t *testing.T)
 
 	assert.True(t, service.GetSessionAutoApprove(sessionID),
 		"POST /api/ai/sessions must persist the agent's auto-approve default into chat_sessions")
+	assert.Equal(t, true, result["autoApprove"],
+		"POST response must expose the persisted autoApprove so the frontend stays server-authoritative")
 }
 
 // TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault guards against
@@ -679,6 +681,7 @@ func TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault(t *testing.T)
 
 	assert.False(t, service.GetSessionAutoApprove(sessionID),
 		"session with a non-auto-approve agent must stay auto_approve=0")
+	assert.Equal(t, false, result["autoApprove"])
 }
 
 func TestServeSessions_Post_CustomTitleAndBackend(t *testing.T) {

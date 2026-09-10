@@ -1791,7 +1791,7 @@ export default {
       agentPreferredMode: '首选模式',
       agentTransport: '协议',
       agentAutoApprove: '新建会话默认自动审批',
-      agentAutoApproveDesc: '用此智能体新建会话时，自动审批开关默认开启（仅作为会话内开关的初始展示，是否真正生效仍由你在会话中开启）',
+      agentAutoApproveDesc: '用此智能体新建会话时，自动审批默认开启并写入会话，重启后仍保留；之后仍可在会话中单独关闭',
       agentName: '名称',
       agentSpecialty: '描述',
       agentSystemPrompt: '系统提示',
