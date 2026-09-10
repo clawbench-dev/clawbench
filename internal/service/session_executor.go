@@ -972,10 +972,13 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 			} else if b.Done && b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
 				// Only blocks that actually reached chat_thinking get markers — an
 				// empty done block has no row to lazy-load and would 404.
+				// ParentToolCallID must ride along so a reload keeps a sub-agent's
+				// thinking grouped under its parent Agent card.
 				serializedBlocks = append(serializedBlocks, model.ContentBlock{
-					Type:    blockTypeThinking,
-					ThinkID: b.ThinkID,
-					Done:    true,
+					Type:             blockTypeThinking,
+					ThinkID:          b.ThinkID,
+					Done:             true,
+					ParentToolCallID: b.ParentToolCallID,
 				})
 			}
 			continue

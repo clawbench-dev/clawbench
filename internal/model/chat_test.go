@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -450,3 +451,42 @@ func TestChatMessageQueueFieldsMarshal(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestContentBlockParentToolCallIDRoundTrip(t *testing.T) {
+	// Sub-agent parent link must survive serialization for every block kind so a
+	// reload can regroup a sub-agent's output under its parent Agent card.
+	cases := []struct {
+		name  string
+		block ContentBlock
+	}{
+		{"slim tool_use", ContentBlock{Type: "tool_use", Name: "Read", ID: "t1", Done: true, ParentToolCallID: "call_p"}},
+		{"interactive tool_use", ContentBlock{Type: "tool_use", Name: "AskUserQuestion", ID: "t2", Input: map[string]any{}, ParentToolCallID: "call_p"}},
+		{"thinking marker", ContentBlock{Type: "thinking", ThinkID: "th1", Done: true, ParentToolCallID: "call_p"}},
+		{"text", ContentBlock{Type: "text", Text: "hi", ParentToolCallID: "call_p"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			data, err := json.Marshal(c.block)
+			if err != nil {
+				t.Fatalf("marshal failed: %v", err)
+			}
+			var parsed map[string]any
+			if err := json.Unmarshal(data, &parsed); err != nil {
+				t.Fatalf("unmarshal failed: %v", err)
+			}
+			if parsed["parent_tool_call_id"] != "call_p" {
+				t.Errorf("expected parent_tool_call_id=call_p, got %v", parsed["parent_tool_call_id"])
+			}
+		})
+	}
+}
+
+func TestContentBlockParentToolCallIDOmittedWhenEmpty(t *testing.T) {
+	data, err := json.Marshal(ContentBlock{Type: "text", Text: "hi"})
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if strings.Contains(string(data), "parent_tool_call_id") {
+		t.Errorf("empty parent link should be omitted, got %s", data)
+	}
+}

@@ -148,3 +148,33 @@ func TestExtractSummaryCardsWarnings(t *testing.T) {
 	}
 	// text/tool blocks must not be collected as warnings.
 }
+
+func TestExtractSummaryCards_ExcludesSubAgentBlocks(t *testing.T) {
+	blocks := []model.ContentBlock{
+		// Top-level agent actions — should appear.
+		{Type: "tool_use", Name: "Write", ID: "top-w", FilePath: "/src/top.go", Done: true},
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "top-ask", Done: true, Input: map[string]any{}},
+		// Sub-agent actions (parent_tool_call_id set) — must NOT leak into the
+		// top-level summary cards.
+		{Type: "tool_use", Name: "Write", ID: "sub-w", FilePath: "/src/sub.go", Done: true, ParentToolCallID: "call_p"},
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "sub-ask", Done: true, Input: map[string]any{}, ParentToolCallID: "call_p"},
+	}
+	cards := extractSummaryCards(blocks)
+
+	for _, f := range cards.CreatedFiles {
+		if f.Path == "/src/sub.go" {
+			t.Fatalf("sub-agent file change leaked into summary cards: %+v", f)
+		}
+	}
+	for _, tool := range cards.Tools {
+		if tool.ID == "sub-ask" {
+			t.Fatalf("sub-agent AskUserQuestion leaked into summary cards: %+v", tool)
+		}
+	}
+	if len(cards.CreatedFiles) != 1 || cards.CreatedFiles[0].Path != "/src/top.go" {
+		t.Fatalf("expected only the top-level file change, got %+v", cards.CreatedFiles)
+	}
+	if len(cards.Tools) != 1 || cards.Tools[0].ID != "top-ask" {
+		t.Fatalf("expected only the top-level ask card, got %+v", cards.Tools)
+	}
+}

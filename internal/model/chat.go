@@ -261,6 +261,12 @@ type ContentBlock struct {
 	DisplayName string         `json:"display_name,omitempty"` // subagent_type for Agent tools (tool_use) — redundant, replaces toolDisplayName() lookup
 	FilePath    string         `json:"file_path,omitempty"`    // detected file path (tool_use) — redundant, for FILE_MODIFYING_TOOLS detection
 	DurationMs  int            `json:"duration_ms,omitempty"`  // tool execution wall-clock duration in ms (tool_use)
+	// ParentToolCallID links sub-agent content to the Agent tool call that
+	// spawned it: set on thinking/text/tool_use blocks produced by a sub-agent,
+	// empty for top-level content. Extracted from the backend's ACP _meta
+	// parent-link key (see internal/ai/acp_parent_link.go). Used by the frontend
+	// to group a sub-agent's output under its parent Agent card.
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 }
 
 // MarshalJSON implements custom serialization for ContentBlock.
@@ -288,19 +294,22 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 				DisplayName string         `json:"display_name,omitempty"`
 				FilePath    string         `json:"file_path,omitempty"`
 				DurationMs  int            `json:"duration_ms,omitempty"`
+				// ParentToolCallID must round-trip for sub-agent grouping on reload.
+				ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 			}
 			return json.Marshal(InteractiveBlock{
-				Type:        b.Type,
-				Name:        b.Name,
-				ID:          b.ID,
-				Input:       b.Input,
-				Output:      b.Output,
-				Status:      b.Status,
-				Done:        b.Done,
-				Summary:     b.Summary,
-				DisplayName: b.DisplayName,
-				FilePath:    b.FilePath,
-				DurationMs:  b.DurationMs,
+				Type:             b.Type,
+				Name:             b.Name,
+				ID:               b.ID,
+				Input:            b.Input,
+				Output:           b.Output,
+				Status:           b.Status,
+				Done:             b.Done,
+				Summary:          b.Summary,
+				DisplayName:      b.DisplayName,
+				FilePath:         b.FilePath,
+				DurationMs:       b.DurationMs,
+				ParentToolCallID: b.ParentToolCallID,
 			})
 		}
 		// Slim serialization: type+name+id+status+done+summary+display_name+file_path
@@ -314,17 +323,20 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			DisplayName string `json:"display_name,omitempty"`
 			FilePath    string `json:"file_path,omitempty"`
 			DurationMs  int    `json:"duration_ms,omitempty"`
+			// ParentToolCallID must round-trip for sub-agent grouping on reload.
+			ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		}
 		return json.Marshal(SlimBlock{
-			Type:        b.Type,
-			Name:        b.Name,
-			ID:          b.ID,
-			Status:      b.Status,
-			Done:        b.Done,
-			Summary:     b.Summary,
-			DisplayName: b.DisplayName,
-			FilePath:    b.FilePath,
-			DurationMs:  b.DurationMs,
+			Type:             b.Type,
+			Name:             b.Name,
+			ID:               b.ID,
+			Status:           b.Status,
+			Done:             b.Done,
+			Summary:          b.Summary,
+			DisplayName:      b.DisplayName,
+			FilePath:         b.FilePath,
+			DurationMs:       b.DurationMs,
+			ParentToolCallID: b.ParentToolCallID,
 		})
 	}
 	// Standard serialization using Alias to avoid infinite recursion

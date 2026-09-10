@@ -212,11 +212,19 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 }
 
 // simpleTextPayload maps a bare-text event (content/thinking) to its keyed value.
+// Sub-agent content carries parent_tool_call_id so the frontend can group it
+// under the Agent card that spawned it.
 func simpleTextPayload(event ai.StreamEvent) any {
+	payload := map[string]string{}
 	if event.Type == "thinking" {
-		return map[string]string{"text": event.Content}
+		payload["text"] = event.Content
+	} else {
+		payload["content"] = event.Content
 	}
-	return map[string]string{"content": event.Content}
+	if event.ParentToolCallID != "" {
+		payload["parent_tool_call_id"] = event.ParentToolCallID
+	}
+	return payload
 }
 
 // streamStartPayload builds the stream_start message payload. Returns nil when
@@ -269,6 +277,9 @@ func toolUsePayload(event ai.StreamEvent) any {
 	if event.Tool.Status != "" {
 		payload["status"] = event.Tool.Status
 	}
+	if event.Tool.ParentToolCallID != "" {
+		payload["parent_tool_call_id"] = event.Tool.ParentToolCallID
+	}
 	attachToolMeta(payload, event.ToolMeta)
 	// Interactive tools: include input so frontend can render permission UI
 	nameLower := strings.ToLower(event.Tool.Name)
@@ -297,6 +308,9 @@ func toolResultPayload(event ai.StreamEvent) any {
 	}
 	if event.Tool.Status != "" {
 		payload["status"] = event.Tool.Status
+	}
+	if event.Tool.ParentToolCallID != "" {
+		payload["parent_tool_call_id"] = event.Tool.ParentToolCallID
 	}
 	attachToolMeta(payload, event.ToolMeta)
 	return payload

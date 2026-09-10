@@ -316,3 +316,30 @@ func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {
 		t.Errorf("expected original content back on parse error, got %q", got)
 	}
 }
+
+func TestSlimThinkingInContent_PreservesParentToolCallID(t *testing.T) {
+	// A sub-agent thinking block must keep its parent link through slimming, so
+	// a reload can regroup it under the parent Agent card.
+	in := `{"blocks":[
+		{"type":"thinking","text":"child reasoning","done":true,"parent_tool_call_id":"call_p"}
+	]}`
+	slim, records, err := slimThinkingInContent(in)
+	if err != nil {
+		t.Fatalf("slimThinkingInContent: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	var parsed struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(slim), &parsed); err != nil {
+		t.Fatalf("unmarshal slim: %v", err)
+	}
+	if parsed.Blocks[0]["parent_tool_call_id"] != "call_p" {
+		t.Errorf("parent_tool_call_id lost in slim block: %v", parsed.Blocks[0])
+	}
+	if _, hasText := parsed.Blocks[0]["text"]; hasText {
+		t.Error("slim block should not have text")
+	}
+}

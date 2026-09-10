@@ -6,6 +6,7 @@ import (
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAccumulateBlock_Content(t *testing.T) {
@@ -774,4 +775,72 @@ func TestMergeConsecutiveThinkingBlocks_TwoBlocks(t *testing.T) {
 	result := MergeConsecutiveThinkingBlocks(blocks)
 	assert.Len(t, result, 1)
 	assert.Equal(t, "ab", result[0].Text)
+}
+
+// --- Sub-agent parent boundary tests ---
+
+func TestAccumulateBlock_SubAgentThinkingDoesNotMergeIntoParent(t *testing.T) {
+	var blocks []model.ContentBlock
+	// Parent thinking
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "parent think"})
+	// Child thinking (different parent) must start a NEW block
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "child think", ParentToolCallID: "call_a"})
+	// More child thinking merges into the child block
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " more", ParentToolCallID: "call_a"})
+
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "", blocks[0].ParentToolCallID)
+	assert.Equal(t, "parent think", blocks[0].Text)
+	assert.Equal(t, "call_a", blocks[1].ParentToolCallID)
+	assert.Equal(t, "child think more", blocks[1].Text)
+}
+
+func TestAccumulateBlock_TwoSubAgentsStaySeparate(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A", ParentToolCallID: "call_a"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "B", ParentToolCallID: "call_b"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A2", ParentToolCallID: "call_a"})
+	// call_a's second chunk must NOT merge back into its first block (blocked by
+	// the interleaved call_b block + parent boundary), so a third block is made.
+	require.Len(t, blocks, 3)
+	assert.Equal(t, "call_a", blocks[0].ParentToolCallID)
+	assert.Equal(t, "call_b", blocks[1].ParentToolCallID)
+	assert.Equal(t, "call_a", blocks[2].ParentToolCallID)
+}
+
+func TestAccumulateBlock_ToolCallCarriesParent(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+		Name: "Read", ID: "t1", ParentToolCallID: "call_parent",
+	}})
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "call_parent", blocks[0].ParentToolCallID)
+}
+
+func TestMergeConsecutiveThinkingBlocks_DoesNotMergeAcrossParent(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "thinking", Text: "p1"},
+		{Type: "tool_use", Name: "Read", ID: "t1"},
+		{Type: "thinking", Text: "c1", ParentToolCallID: "call_a"},
+		{Type: "tool_use", Name: "Grep", ID: "t2"},
+		{Type: "thinking", Text: "p2"},
+	}
+	merged := MergeConsecutiveThinkingBlocks(blocks)
+	// p1 and p2 are top-level but separated by tool_use blocks → stay separate.
+	// c1 stays distinct (different parent). Verify no parent-crossing merge.
+	for _, b := range merged {
+		if b.Type == "thinking" {
+			assert.NotEqual(t, "p1c1", b.Text)
+			assert.NotEqual(t, "c1p2", b.Text)
+		}
+	}
+	// The sub-agent thinking block keeps its parent.
+	var found bool
+	for _, b := range merged {
+		if b.Type == "thinking" && b.Text == "c1" {
+			found = true
+			assert.Equal(t, "call_a", b.ParentToolCallID)
+		}
+	}
+	assert.True(t, found, "sub-agent thinking block should survive")
 }

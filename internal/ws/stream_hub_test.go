@@ -933,3 +933,45 @@ func TestStreamHub_EmitACPStateEvents_DBUsageFallback(t *testing.T) {
 	require.NotNil(t, usage)
 	assert.Equal(t, 999, usage.Used)
 }
+
+func TestStreamEventToPayload_ContentParentLink(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "content", Content: "child", ParentToolCallID: "call_p"})
+	m, ok := payload.(map[string]string)
+	assert.True(t, ok)
+	assert.Equal(t, "child", m["content"])
+	assert.Equal(t, "call_p", m["parent_tool_call_id"])
+}
+
+func TestStreamEventToPayload_ThinkingParentLink(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "thinking", Content: "child thought", ParentToolCallID: "call_p"})
+	m, ok := payload.(map[string]string)
+	assert.True(t, ok)
+	assert.Equal(t, "child thought", m["text"])
+	assert.Equal(t, "call_p", m["parent_tool_call_id"])
+}
+
+func TestStreamEventToPayload_TopLevelContentNoParentKey(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "content", Content: "parent"})
+	m, ok := payload.(map[string]string)
+	assert.True(t, ok)
+	_, has := m["parent_tool_call_id"]
+	assert.False(t, has, "top-level content must not carry a parent key")
+}
+
+func TestStreamEventToPayload_ToolUseParentLink(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{
+		Name: "Read", ID: "t1", ParentToolCallID: "call_p",
+	}})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "call_p", m["parent_tool_call_id"])
+}
+
+func TestStreamEventToPayload_ToolResultParentLink(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "tool_result", Tool: &ai.ToolCall{
+		Name: "Read", ID: "t1", ParentToolCallID: "call_p",
+	}})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "call_p", m["parent_tool_call_id"])
+}

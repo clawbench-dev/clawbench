@@ -648,3 +648,35 @@ func assertNoEvents(t *testing.T, ch <-chan StreamEvent) {
 		// expected — slightly longer than debounce interval to be sure
 	}
 }
+
+// --- handleToolCallUpdate: sub-agent parent link survives merging ---
+
+func TestHandleToolCallUpdate_PreservesParentAcrossMerge(t *testing.T) {
+	d, ch := newTestDebouncer()
+
+	// First update carries the parent link.
+	status := acp.ToolCallStatusInProgress
+	tcu1 := acp.SessionToolCallUpdate{
+		ToolCallId: acp.ToolCallId("tool-sub"),
+		Status:     &status,
+		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent"},
+	}
+	d.handleToolCallUpdate(tcu1)
+
+	// Second update for the same tool OMITS the parent key (some ACP updates
+	// carry only toolResponse/_meta without it). The merge must preserve it.
+	tcu2 := acp.SessionToolCallUpdate{
+		ToolCallId: acp.ToolCallId("tool-sub"),
+		Status:     &status,
+	}
+	d.handleToolCallUpdate(tcu2)
+
+	select {
+	case evt := <-ch:
+		require.NotNil(t, evt.Tool)
+		assert.Equal(t, "call_parent", evt.Tool.ParentToolCallID,
+			"parent link must survive a merge that omits it")
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("event was not forwarded after debounce interval")
+	}
+}

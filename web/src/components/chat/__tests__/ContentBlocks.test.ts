@@ -112,6 +112,10 @@ const i18n = createI18n({
         retry: 'Retry',
         continue: 'Continue',
         resetSession: 'Reset session',
+        subagentGroup: 'Sub-agent',
+        subagentSteps: '{count} steps',
+        subagentExpand: 'Expand sub-agent output',
+        subagentCollapse: 'Collapse sub-agent output',
       },
     },
     tool: {
@@ -141,6 +145,7 @@ function mountBlocks(props: Record<string, unknown> = {}) {
         // icon" test verifies the real component renders. Stub every other
         // lucide icon explicitly instead of the package-level stub.
         Brain: LucideStub,
+        Bot: LucideStub,
         ChevronRight: LucideStub,
         ChevronDown: LucideStub,
         ChevronUp: LucideStub,
@@ -1373,5 +1378,119 @@ describe('AskUserQuestion card interactive dispatch', () => {
 
     expect(handleToolAction).toHaveBeenCalled()
     expect(handleToolAction.mock.calls[0][0]).toBe('AskUserQuestion')
+  })
+})
+
+describe('ContentBlocks — sub-agent grouping', () => {
+  it('merges the group into the Agent pill (one row, not two stacked bars)', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'thinking', text: 'child reasoning', parent_tool_call_id: 'call_p' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+        { type: 'text', text: 'child answer', parent_tool_call_id: 'call_p' },
+      ],
+    })
+    // The expand/collapse toggle lives INSIDE the Agent pill — no separate
+    // group header bar duplicating the agent name.
+    const pill = wrapper.find('.chat-tool-call-group')
+    expect(pill.exists()).toBe(true)
+    expect(pill.find('.subagent-group-toggle').exists()).toBe(true)
+    expect(wrapper.find('.subagent-group-header').exists()).toBe(false)
+    // The child Read pill must live INSIDE the group body, not at the top level.
+    const group = wrapper.find('.subagent-group')
+    expect(group.find('.chat-tool-call').exists()).toBe(true)
+    // The root content-blocks container has exactly one direct tool pill: Agent.
+    const root = wrapper.find('.content-blocks')
+    const directPills = root.element.children && Array.from(root.element.children).filter(
+      (el) => (el as HTMLElement).classList.contains('chat-tool-call'),
+    )
+    expect(directPills.length).toBe(1)
+  })
+
+  it('toggling the in-pill chevron emits toggle-tool with the group key', async () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+    })
+    await wrapper.find('.subagent-group-toggle').trigger('click')
+    const events = wrapper.emitted('toggle-tool')
+    expect(events).toBeTruthy()
+    expect(events![0][0]).toBe('subagent-call_p')
+  })
+
+  it('renders step count from child tool calls', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+        { type: 'tool_use', name: 'Grep', id: 't2', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+    })
+    expect(wrapper.html()).toContain('2 steps')
+  })
+
+  it('expands child content when the group is open', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'text', text: 'nested answer', parent_tool_call_id: 'call_p' },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+    })
+    expect(wrapper.find('.subagent-group-body-open').exists()).toBe(true)
+    expect(wrapper.html()).toContain('nested answer')
+  })
+
+  it('does not group blocks without a parent link', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'text', text: 'top level' },
+      ],
+    })
+    expect(wrapper.find('.subagent-group').exists()).toBe(false)
+    expect(wrapper.html()).toContain('top level')
+  })
+
+  it('renders orphan child blocks flat (parent absent) instead of dropping them', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'orphan child content', parent_tool_call_id: 'call_missing' },
+      ],
+    })
+    expect(wrapper.find('.subagent-group').exists()).toBe(false)
+    expect(wrapper.html()).toContain('orphan child content')
+  })
+
+  it('recursively groups a depth-2 sub-agent under its own Agent block', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        // depth-2: call_c is itself a child, but it is a known block id, so its
+        // own children group under it recursively.
+        { type: 'tool_use', name: 'Agent', id: 'call_c', done: true, input: {}, parent_tool_call_id: 'call_p' },
+        { type: 'text', text: 'grandchild content', parent_tool_call_id: 'call_c' },
+      ],
+    })
+    // Both Agent blocks render a group; the grandchild nests under call_c.
+    expect(wrapper.findAll('.subagent-group').length).toBe(2)
+    expect(wrapper.html()).toContain('grandchild content')
+  })
+
+  it('reuses the same tool pill markup for child tools (no bespoke styling)', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true, input: {}, parent_tool_call_id: 'call_p' },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+    })
+    // The child tool renders through the recursive ContentBlocks instance, so it
+    // gets the exact same .chat-tool-call pill as a top-level tool.
+    const group = wrapper.find('.subagent-group')
+    expect(group.find('.chat-tool-call').exists()).toBe(true)
   })
 })

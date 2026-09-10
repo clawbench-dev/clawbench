@@ -343,6 +343,11 @@ type StreamEvent struct {
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+	// ParentToolCallID is the parent Agent tool-call id for sub-agent content
+	// (Type=content, Type=thinking). Empty for top-level content. Extracted from
+	// the backend's _meta parent-link key; lets the frontend group a sub-agent's
+	// thinking/text under the Agent card that spawned it.
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 }
 
 // StreamStartData carries the streaming message DB id for the stream_start event.
@@ -376,6 +381,11 @@ type ToolCall struct {
 	// Injected by SessionExecutor when the tool completes; backend parsers
 	// leave it 0 (unknown).
 	DurationMs int `json:"duration_ms,omitempty"`
+	// ParentToolCallID is the id of the parent Agent tool call that spawned the
+	// sub-agent which produced this tool call, or "" for top-level calls. Set
+	// by the ACP parse layer from the backend's _meta parent-link key (see
+	// acp_parent_link.go). Used to group sub-agent content in the UI.
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 }
 
 // maxToolOutputBytes limits tool output stored per tool call to prevent

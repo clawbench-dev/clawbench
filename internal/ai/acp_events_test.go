@@ -1550,3 +1550,96 @@ func TestMapACPSessionUpdate_UsageUpdate_WithoutCost(t *testing.T) {
 	}
 	assert.True(t, foundUsage, "usage_update event not found")
 }
+
+// --- Sub-agent parent linkage threading ---
+
+func TestMapACPSessionUpdate_ThinkingCarriesParentLink(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	text := "child reasoning"
+	update := acp.SessionUpdate{
+		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
+			Meta:          map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_1"},
+			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
+			SessionUpdate: "agent_thought_chunk",
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+	evt := <-ch
+	assert.Equal(t, "thinking", evt.Type)
+	assert.Equal(t, text, evt.Content)
+	assert.Equal(t, "call_parent_1", evt.ParentToolCallID)
+}
+
+func TestMapACPSessionUpdate_ContentCarriesParentLink(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	text := "child text"
+	update := acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Meta:          map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_2"},
+			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
+			SessionUpdate: "agent_message_chunk",
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+	// First event may be thinking_done; drain until content.
+	var got *StreamEvent
+	for len(ch) > 0 {
+		e := <-ch
+		if e.Type == "content" {
+			got = &e
+		}
+	}
+	require.NotNil(t, got)
+	assert.Equal(t, text, got.Content)
+	assert.Equal(t, "call_parent_2", got.ParentToolCallID)
+}
+
+func TestMapACPSessionUpdate_TopLevelContentHasNoParent(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	text := "parent text"
+	update := acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Meta:          map[string]any{"codebuddy.ai/requestId": "r1"},
+			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: text, Type: "text"}},
+			SessionUpdate: "agent_message_chunk",
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+	for len(ch) > 0 {
+		e := <-ch
+		if e.Type == "content" {
+			assert.Equal(t, "", e.ParentToolCallID)
+		}
+	}
+}
+
+func TestMapACPToolCallUpdate_CarriesParentLink(t *testing.T) {
+	id := "call_child_tool"
+	tcu := acp.SessionToolCallUpdate{
+		ToolCallId: acp.ToolCallId(id),
+		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_3", "codebuddy.ai/toolName": "Read"},
+	}
+	evt := mapACPToolCallUpdate(tcu, "codebuddy")
+	require.NotNil(t, evt.Tool)
+	assert.Equal(t, "call_parent_3", evt.Tool.ParentToolCallID)
+}
+
+func TestMapACPToolCall_CarriesParentLink(t *testing.T) {
+	tc := acp.SessionUpdateToolCall{
+		ToolCallId: acp.ToolCallId("call_child_start"),
+		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_4", "codebuddy.ai/toolName": "Grep"},
+	}
+	evt := mapACPToolCall(tc, "codebuddy")
+	require.NotNil(t, evt.Tool)
+	assert.Equal(t, "call_parent_4", evt.Tool.ParentToolCallID)
+}
+
+func TestMapACPToolCall_ClaudeParentToolUseID(t *testing.T) {
+	tc := acp.SessionUpdateToolCall{
+		ToolCallId: acp.ToolCallId("call_child_claude"),
+		Meta:       map[string]any{"claudeCode": map[string]any{"parentToolUseId": "toolu_parent_9", "toolName": "Read"}},
+	}
+	evt := mapACPToolCall(tc, "claude")
+	require.NotNil(t, evt.Tool)
+	assert.Equal(t, "toolu_parent_9", evt.Tool.ParentToolCallID)
+}

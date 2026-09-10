@@ -2954,3 +2954,86 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     expect(merged.filter((m: any) => m.role === 'user' && m.content === 'msg2')).toHaveLength(0)
   })
 })
+
+describe('sub-agent parent grouping (reducer)', () => {
+  const streamingMsg = (): any => ({
+    id: 1,
+    role: 'assistant',
+    content: '',
+    blocks: [],
+    streaming: true,
+    createdAt: '2026-01-01T00:00:00Z',
+  })
+
+  it('ws_content with parentToolCallId tags the block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'child', parentToolCallId: 'call_p' })
+    expect(s[0].blocks![0]).toMatchObject({ type: 'text', text: 'child', parent_tool_call_id: 'call_p' })
+  })
+
+  it('ws_content top-level has no parent field', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'parent' })
+    expect(s[0].blocks![0].parent_tool_call_id).toBeUndefined()
+  })
+
+  it('parent and child text do not merge into one block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'parent ' })
+    s = chatMessageReducer(s, { type: 'ws_content', text: 'child', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_content', text: ' parent2' })
+    // parent text resumes must NOT merge into the child block: 3 text blocks
+    const texts = s[0].blocks!.filter((b: any) => b.type === 'text')
+    expect(texts.length).toBe(3)
+    expect(texts[0]).toMatchObject({ text: 'parent ' })
+    expect(texts[1]).toMatchObject({ text: 'child', parent_tool_call_id: 'call_p' })
+    expect(texts[2]).toMatchObject({ text: ' parent2' })
+  })
+
+  it('ws_thinking with parentToolCallId tags the block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'reason', key: 'k1', parentToolCallId: 'call_p' })
+    expect(s[0].blocks![0]).toMatchObject({ type: 'thinking', text: 'reason', parent_tool_call_id: 'call_p' })
+  })
+
+  it('child thinking does not merge into parent thinking', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'pt' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'ct', parentToolCallId: 'call_p' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(2)
+    expect(thinks[0].text).toBe('pt')
+    expect(thinks[1]).toMatchObject({ text: 'ct', parent_tool_call_id: 'call_p' })
+  })
+
+  it('ws_tool_use records parent_tool_call_id', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_tool_use', data: { id: 't1', name: 'Read', parent_tool_call_id: 'call_p' } as any })
+    expect(s[0].blocks![0]).toMatchObject({ type: 'tool_use', id: 't1', parent_tool_call_id: 'call_p' })
+  })
+})
+
+describe('sub-agent thinking_done', () => {
+  const streamingMsg = (): any => ({
+    id: 1, role: 'assistant', content: '', blocks: [], streaming: true, createdAt: '2026-01-01T00:00:00Z',
+  })
+
+  it('marks a sub-agent thinking block done (parent boundary must not block it)', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+    expect(think.parent_tool_call_id).toBe('call_p')
+  })
+
+  it('marks the last thinking block done when child follows parent', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'parent thought' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks[1].done).toBe(true)
+    expect(thinks[0].done).toBeUndefined()
+  })
+})

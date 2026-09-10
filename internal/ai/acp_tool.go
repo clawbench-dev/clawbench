@@ -194,6 +194,7 @@ func acpRemapsForBackend(backendID string) map[string]string {
 // Delegates to parseACPToolCall for per-agent routing.
 func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string) StreamEvent {
 	tool := parseACPToolCall(backendID, tc)
+	attachParentToolCallIDToTool(tool, backendID, tc.Meta)
 	return StreamEvent{Type: "tool_use", Tool: tool}
 }
 
@@ -201,6 +202,7 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string) StreamEvent 
 // Delegates to parseACPToolCallUpdate for per-agent routing.
 func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string) StreamEvent {
 	tool := parseACPToolCallUpdate(backendID, tcu)
+	attachParentToolCallIDToTool(tool, backendID, tcu.Meta)
 
 	eventType := "tool_use"
 	if tool.Done {
@@ -212,4 +214,16 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string) Strea
 		"raw_input", fmt.Sprintf("%v", tcu.RawInput))
 
 	return StreamEvent{Type: eventType, Tool: tool}
+}
+
+// attachParentToolCallIDToTool stamps the sub-agent parent link (if any) onto a
+// parsed tool call. Shared by the start/update mappers so the debouncer path
+// (which also routes through mapACPToolCallUpdate) carries the link too.
+func attachParentToolCallIDToTool(tool *ToolCall, backendID string, meta map[string]any) {
+	if tool == nil {
+		return
+	}
+	if id := extractParentToolCallID(backendID, meta); id != "" {
+		tool.ParentToolCallID = id
+	}
 }

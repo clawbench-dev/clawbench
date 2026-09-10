@@ -700,6 +700,10 @@ export default {
       resetSessionFailed: 'Failed to reset session',
       detailsUnavailable: 'Details unavailable',
       detailsLoadFailed: 'Failed to load details',
+      subagentGroup: 'Sub-agent',
+      subagentSteps: '{count} steps',
+      subagentExpand: 'Expand sub-agent output',
+      subagentCollapse: 'Collapse sub-agent output',
       warningReasons: {
         user_cancel: 'User cancelled',
         disconnect: 'Connection lost, AI response interrupted',

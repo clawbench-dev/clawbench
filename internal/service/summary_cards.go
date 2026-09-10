@@ -35,6 +35,15 @@ func isSummaryCardTool(name string) bool {
 func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 	cards := &model.SummaryCards{}
 	for _, b := range blocks {
+		// Sub-agent content (parent_tool_call_id set) is rendered nested under its
+		// Agent card, not at the top level. In the summary view the heavy blocks
+		// are stripped and only these cards survive — so a sub-agent's tool calls
+		// must NOT leak into the top-level summary cards (they would masquerade as
+		// the main agent's actions). Skip them here; the summary view is a compact
+		// top-level digest.
+		if b.ParentToolCallID != "" {
+			continue
+		}
 		switch b.Type {
 		case "tool_use":
 			if isSummaryCardTool(b.Name) {

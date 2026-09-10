@@ -77,8 +77,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 		if !replayed {
+			parentID := extractParentToolCallID(backendID, update.AgentMessageChunk.Meta)
 			if content.Text != nil {
-				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text})
+				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID})
 			}
 			// Per-agent _meta on the chunk (e.g. CodeBuddy OpenAI-style usage +
 			// codebuddy.ai/* trace) — accumulate onto the connection so the
@@ -91,7 +92,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentThoughtChunk != nil:
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
-			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text})
+			parentID := extractParentToolCallID(backendID, update.AgentThoughtChunk.Meta)
+			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID})
 		}
 
 	case update.ToolCall != nil:

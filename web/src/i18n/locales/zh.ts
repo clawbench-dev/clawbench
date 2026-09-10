@@ -700,6 +700,10 @@ export default {
       resetSessionFailed: '重置会话失败',
       detailsUnavailable: '详情暂不可用',
       detailsLoadFailed: '加载失败',
+      subagentGroup: '子智能体',
+      subagentSteps: '{count} 步',
+      subagentExpand: '展开子智能体输出',
+      subagentCollapse: '收起子智能体输出',
       warningReasons: {
         user_cancel: '用户已中断',
         disconnect: '连接已断开，AI 响应中断',

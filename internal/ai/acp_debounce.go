@@ -71,6 +71,11 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 			if event.Tool.Input == "" && existing.event.Tool.Input != "" {
 				event.Tool.Input = existing.event.Tool.Input
 			}
+			// Preserve the sub-agent parent link if this delta omitted it (some
+			// ACP updates carry only toolResponse/_meta without the parent key).
+			if event.Tool.ParentToolCallID == "" && existing.event.Tool.ParentToolCallID != "" {
+				event.Tool.ParentToolCallID = existing.event.Tool.ParentToolCallID
+			}
 		}
 		if event.ToolMeta == nil && existing.event.ToolMeta != nil {
 			event.ToolMeta = existing.event.ToolMeta
