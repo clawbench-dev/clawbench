@@ -1397,6 +1397,12 @@ func GetLatestUserModel(agentID, projectPath string) string {
 // CreateSession creates a new chat session and returns its ID.
 // agentSource tracks how the agent was chosen: "default" (auto-assigned) or "user" (manually selected).
 // sessionType is "chat" or "scheduled"; empty string defaults to "chat".
+//
+// When the agent is configured with AutoApprove=true, the session's
+// chat_sessions.auto_approve flag is initialized to 1 at creation time, so the
+// choice survives a frontend reload instead of living only in in-memory UI
+// state. This is a creation-time snapshot: toggling the agent default later
+// does not rewrite existing sessions.
 func CreateSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
 	if sessionType == "" {
 		sessionType = "chat"
@@ -1411,6 +1417,18 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	)
 	if err != nil {
 		return "", err
+	}
+	// Initialize the per-session auto-approve flag from the agent's configured
+	// default. Guarded UPDATE (not part of the INSERT) so session creation does
+	// not depend on the auto_approve column being present in minimal schemas.
+	// Failure is non-fatal: the session exists, only the flag would be missing.
+	if agent, ok := model.Agents[agentID]; ok && agent.AutoApprove {
+		if _, uerr := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); uerr != nil {
+			slog.Warn("failed to initialize session auto-approve from agent default",
+				slog.String("session", sessionID),
+				slog.String("agent", agentID),
+				slog.String("err", uerr.Error()))
+		}
 	}
 	slog.Info("session created",
 		slog.String("session", sessionID),

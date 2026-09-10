@@ -54,9 +54,11 @@ type Agent struct {
 	SortOrder int `json:"sortOrder"`
 
 	// AutoApprove defaults new sessions of this agent to auto-approve ON.
-	// This is a front-end "default toggle" preference — the session's real
-	// auto_approve flag is still set by the user in the session drawer and
-	// persisted per-session in chat_sessions.auto_approve.
+	// On session creation, service.CreateSession initializes the new row's
+	// chat_sessions.auto_approve from this value, so the choice is persisted
+	// rather than living only in frontend state. It is a creation-time
+	// snapshot: changing this default later does not rewrite existing sessions,
+	// and the user can still toggle it per session in the session drawer.
 	AutoApprove bool `json:"autoApprove"`
 }
 

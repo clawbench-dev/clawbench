@@ -3278,6 +3278,60 @@ func TestUpdateSessionAutoApprove_Disable(t *testing.T) {
 	assert.False(t, service.GetSessionAutoApprove(sid))
 }
 
+// ---------- CreateSession initializes auto_approve from the agent default ----------
+
+// TestCreateSession_AutoApproveFromAgentDefault verifies that creating a session
+// with an agent configured AutoApprove=true persists auto_approve=1 in the DB at
+// creation time (not just as in-memory frontend display state).
+func TestCreateSession_AutoApproveFromAgentDefault(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Auto Default", "auto-agent", "", "user", "chat")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(sid),
+		"session created with an auto-approve agent must be persisted with auto_approve=1")
+}
+
+// TestCreateSession_AutoApproveOffWhenAgentDefaultOff verifies the flag stays
+// off for an agent that has not opted in.
+func TestCreateSession_AutoApproveOffWhenAgentDefaultOff(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"plain-agent": {ID: "plain-agent", Backend: "claude", AutoApprove: false},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Plain Default", "plain-agent", "", "user", "chat")
+	require.NoError(t, err)
+
+	assert.False(t, service.GetSessionAutoApprove(sid),
+		"session with a non-auto-approve agent must default to auto_approve=0")
+}
+
+// TestCreateSession_AutoApproveUnknownAgent verifies an unknown/empty agent ID
+// does not panic and leaves the flag off.
+func TestCreateSession_AutoApproveUnknownAgent(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Unknown Agent", "ghost-agent", "", "default", "chat")
+	require.NoError(t, err)
+
+	assert.False(t, service.GetSessionAutoApprove(sid))
+}
+
 // ---------- GetStreamingMessageID ----------
 
 func TestGetStreamingMessageID_Found(t *testing.T) {
