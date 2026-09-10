@@ -63,6 +63,7 @@
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length || msg.summary)" class="chat-meta-bar">
       <span class="chat-meta-info">
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
+        <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
         <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
@@ -72,7 +73,7 @@
         <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
           <LoadingIndicator size="sm" inline />
         </span>
-        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
+        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="t('chat.message.readAloud')" :aria-label="t('chat.message.readAloud')" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
             <Clock :size="14" class="speak-spinner" />
@@ -86,7 +87,6 @@
           <!-- Default idle state -->
           <template v-else>
             <Volume2 :size="14" />
-            <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
         <button v-if="!msg.streaming" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
@@ -142,7 +142,7 @@
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind } from 'lucide-vue-next'
-import { formatDuration } from '@/utils/format.ts'
+import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -238,6 +238,11 @@ const msgText = computed(() => {
   if (showSummary.value && props.msg?.summary) return props.msg.summary
   return ''
 })
+
+// Friendly relative timestamp shown next to the elapsed duration in the meta bar.
+// formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
+// times), so the label and its separator stay hidden when there is nothing to show.
+const relativeTime = computed(() => (props.msg?.createdAt ? formatRelativeTime(props.msg.createdAt) : ''))
 
 // Whether to render the summary view. Computed from message state (summary
 // exists, content stripped), the user's explicit preference, and the global
@@ -457,6 +462,16 @@ function handleCopyMessage() {
 
 .chat-meta-duration {
     font-variant-numeric: tabular-nums;
+}
+
+.chat-meta-time {
+    white-space: nowrap;
+}
+
+/* When both duration and time are shown, insert a middot between them. The
+   separator margin is offset by the parent's gap to keep even spacing. */
+.chat-meta-time.chat-meta-sep::before {
+    margin-right: 0;
 }
 
 /* Speak button active state */
