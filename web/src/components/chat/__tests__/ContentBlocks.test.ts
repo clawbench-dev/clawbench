@@ -816,6 +816,27 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('AskUserQuestion')
     })
 
+    it('filters PermissionApproval case-insensitively regardless of list order', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [
+            { name: 'permissionapproval', id: 'perm-lc', input: { toolName: 'Bash' } },
+            { name: 'AskUserQuestion', id: 'ask-a', input: { question: 'first?' } },
+            { name: 'PERMISSIONAPPROVAL', id: 'perm-uc', input: { toolName: 'Read' } },
+            { name: 'AskUserQuestion', id: 'ask-b', input: { question: 'second?' } },
+          ],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      // Both casings of the permission card are dropped; both ask cards remain.
+      expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(2)
+      expect(wrapper.html()).not.toContain('Permission Request')
+    })
+
     it('renders no permission card when summaryCards.tools only holds PermissionApproval', () => {
       const wrapper = mountBlocks({
         blocks: [],
@@ -830,6 +851,17 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(false)
       expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
       expect(wrapper.html()).not.toContain('Permission Request')
+    })
+
+    it('handles summaryCards.tools being null/absent without crashing', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: { taskIDs: [], askQuestions: [] },
+      })
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(false)
+      expect(wrapper.html()).toContain('sum text')
     })
 
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {

@@ -160,8 +160,8 @@ func TestRecentConversation_BrokenJSONAssistantFallback(t *testing.T) {
 // --- askQuestionText ---
 
 func TestAskQuestionText_NonInteractiveToolSkipped(t *testing.T) {
-	// PermissionApproval is excluded from summary cards entirely, and even if it
-	// were present its name != AskUserQuestion → the tool is skipped (continue path).
+	// PermissionApproval is excluded from summary cards entirely, so it never
+	// reaches the cards.Tools loop; askQuestionText returns empty (no question).
 	blocks := []model.ContentBlock{
 		{Type: "tool_use", Name: "PermissionApproval", ID: "t1", Input: map[string]any{}},
 	}

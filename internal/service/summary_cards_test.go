@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -22,6 +23,12 @@ func TestExtractSummaryCards(t *testing.T) {
 	}
 	if cards.Tools[0].Name != "AskUserQuestion" || cards.Tools[0].ID != "t2" {
 		t.Fatalf("expected AskUserQuestion t2 tool, got: %+v", cards.Tools[0])
+	}
+	// Explicit absence check: the PermissionApproval block (t3) must not leak in.
+	for _, tool := range cards.Tools {
+		if strings.EqualFold(tool.Name, "PermissionApproval") {
+			t.Fatalf("PermissionApproval must not be persisted into summary cards: %+v", tool)
+		}
 	}
 	if len(cards.TaskIDs) != 1 || cards.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", cards.TaskIDs)

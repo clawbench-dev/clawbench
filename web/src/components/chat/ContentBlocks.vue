@@ -47,9 +47,10 @@
           </button>
         </div>
       </template>
-      <!-- Tool cards from summaryCards.tools -->
+      <!-- Tool cards from summaryCards.tools (AskUserQuestion only —
+           PermissionApproval is filtered out upstream in summaryTools) -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
-        <!-- AskUserQuestion / PermissionApproval: unified interactive card
+        <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
         <div v-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
