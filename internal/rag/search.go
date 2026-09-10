@@ -226,14 +226,15 @@ type SessionSearchResponse struct {
 
 // RecentSessions lists a page of the project's sessions for the "browse all"
 // state of session search (no query entered). archiveFilter narrows to
-// active/archived sessions (or all), and sortOrder selects newest/oldest time
-// ordering. It returns up to limit sessions with title, backend, project,
-// archived flag and creation time, plus whether a further page exists. Pass the
-// last row's created_at (RFC3339) and id as cursor to fetch the next page. No
-// message content is attached: the browse list stays cheap, and the detail view
-// lazily fetches the first message on demand.
-func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder, cursor, cursorID string) (*SessionSearchResponse, error) {
-	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder, cursor, cursorID)
+// active/archived sessions (or all), fromTime/toTime bound the session
+// creation time, and sortOrder selects newest/oldest time ordering. It returns
+// up to limit sessions with title, backend, project, archived flag and creation
+// time, plus whether a further page exists. Pass the last row's created_at
+// (RFC3339) and id as cursor to fetch the next page. No message content is
+// attached: the browse list stays cheap, and the detail view lazily fetches the
+// first message on demand.
+func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID string) (*SessionSearchResponse, error) {
+	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -1123,6 +1124,89 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:12345"
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ---------- Time-range filtering ----------
+
+func TestNormalizeTimeBound(t *testing.T) {
+	// Date-only from: expands to the start of that local day.
+	assert.Equal(t, "2024-03-01 00:00:00", normalizeTimeBound("2024-03-01", false))
+	// Date-only to: expands to the last second of that local day, so a session
+	// created later the same day is still included.
+	assert.Equal(t, "2024-03-01 23:59:59", normalizeTimeBound("2024-03-01", true))
+	// Whitespace is trimmed; empty stays empty.
+	assert.Equal(t, "2024-03-01 00:00:00", normalizeTimeBound("  2024-03-01  ", false))
+	assert.Equal(t, "", normalizeTimeBound("", false))
+	assert.Equal(t, "", normalizeTimeBound("   ", true))
+	// RFC3339 converts to the local wall-clock text SQLite stores.
+	local := time.Date(2024, 3, 1, 10, 30, 0, 0, time.Local)
+	assert.Equal(t, local.Format("2006-01-02 15:04:05"), normalizeTimeBound(local.Format(time.RFC3339), false))
+	// Unparseable input passes through so the caller binds something predictable.
+	assert.Equal(t, "not-a-date", normalizeTimeBound("not-a-date", false))
+}
+
+func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "jan", "Jan", "2024-01-15 10:00:00", false)
+	insertSession(t, env.ProjectDir, "feb", "Feb", "2024-02-15 10:00:00", false)
+	insertSession(t, env.ProjectDir, "mar", "Mar", "2024-03-15 10:00:00", false)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+		Total int `json:"total"`
+	}
+
+	// Date-only bounds select the whole February window.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2024-02-01",
+		"to":   "2024-02-29",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var feb resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &feb))
+	require.Len(t, feb.Sessions, 1)
+	assert.Equal(t, "feb", feb.Sessions[0].SessionID)
+
+	// A single-day bound must include sessions created later that day (the
+	// endOfDay expansion is what makes this work with the stored timestamp).
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2024-03-15",
+		"to":   "2024-03-15",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var day resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &day))
+	require.Len(t, day.Sessions, 1)
+	assert.Equal(t, "mar", day.Sessions[0].SessionID)
+
+	// Lower bound only → everything from February onward.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"from": "2024-02-01"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var fromFeb resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fromFeb))
+	assert.Equal(t, 2, fromFeb.Total)
+
+	// Window with no sessions → empty list, not an error.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2025-01-01",
+		"to":   "2025-12-31",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var empty resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &empty))
+	assert.Equal(t, 0, empty.Total)
 }
 
 // ---------- ServeRAGReset ----------

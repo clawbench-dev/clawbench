@@ -39,6 +39,41 @@ const DEBOUNCE_MS = 300
 
 export type SessionArchiveFilter = 'all' | 'active' | 'archived'
 export type SessionSortOrder = 'relevance' | 'newest' | 'oldest'
+export type SessionTimeRange = 'all' | 'today' | '7d' | '30d' | 'custom'
+
+// formatLocalDate renders a Date as "YYYY-MM-DD" in local time. Using
+// toISOString() here would shift the day for users east/west of UTC, so the
+// components are read directly.
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+// resolveTimeRange converts a preset/custom selection into the date-only
+// "from"/"to" bounds the API accepts (the backend expands them to the start and
+// end of the selected days). An unset custom bound is omitted, so the user can
+// pick only one side of the range.
+export function resolveTimeRange(
+  range: SessionTimeRange,
+  customFrom: string,
+  customTo: string,
+): { from: string; to: string } {
+  if (range === 'custom') {
+    return { from: customFrom.trim(), to: customTo.trim() }
+  }
+  if (range === 'all') {
+    return { from: '', to: '' }
+  }
+  const now = new Date()
+  const to = formatLocalDate(now)
+  const start = new Date(now)
+  // Presets are inclusive of today, so "7d" spans today plus the previous six.
+  const daysBack = range === 'today' ? 0 : range === '7d' ? 6 : 29
+  start.setDate(start.getDate() - daysBack)
+  return { from: formatLocalDate(start), to }
+}
 
 // fetchSessionFirstMessage lazily loads a session's earliest message for the
 // browse-mode detail preview. The browse list omits message content for
@@ -77,6 +112,9 @@ export function useSessionSearch() {
     preferMode: 'hybrid' as 'hybrid' | 'fts',
     archivedFilter: 'all' as SessionArchiveFilter,
     sortOrder: 'relevance' as SessionSortOrder,
+    timeRange: 'all' as SessionTimeRange,
+    customFrom: '',
+    customTo: '',
   })
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -117,6 +155,9 @@ export function useSessionSearch() {
       archived: state.archivedFilter,
       sort: state.sortOrder,
     }
+    const { from, to } = resolveTimeRange(state.timeRange, state.customFrom, state.customTo)
+    if (from) body.from = from
+    if (to) body.to = to
     if (cursor && cursorId) {
       body.cursor = cursor
       body.cursor_id = cursorId
@@ -221,11 +262,22 @@ export function useSessionSearch() {
     }, DEBOUNCE_MS)
   }
 
-  // Apply an archive filter and/or sort order, then re-run the current query
-  // (or browse) so the visible list reflects the new selection immediately.
-  function setFilters(filters: { archived?: SessionArchiveFilter; sort?: SessionSortOrder }) {
+  // Apply an archive filter, sort order and/or time range, then re-run the
+  // current query (or browse) so the visible list reflects the new selection
+  // immediately. Time-range changes always re-fetch, even when the selection is
+  // unchanged, because the custom bounds may have moved.
+  function setFilters(filters: {
+    archived?: SessionArchiveFilter
+    sort?: SessionSortOrder
+    timeRange?: SessionTimeRange
+    customFrom?: string
+    customTo?: string
+  }) {
     if (filters.archived !== undefined) state.archivedFilter = filters.archived
     if (filters.sort !== undefined) state.sortOrder = filters.sort
+    if (filters.timeRange !== undefined) state.timeRange = filters.timeRange
+    if (filters.customFrom !== undefined) state.customFrom = filters.customFrom
+    if (filters.customTo !== undefined) state.customTo = filters.customTo
     if (state.query.trim()) {
       search(state.query)
     } else {

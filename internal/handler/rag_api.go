@@ -29,6 +29,37 @@ func normalizeCursorTime(cursor string) string {
 	return cursor
 }
 
+// normalizeTimeBound converts a frontend time-range bound into the local
+// "2006-01-02 15:04:05" text SQLite compares created_at against.
+//
+// Two input shapes are accepted:
+//   - date-only "2024-03-01" (from <input type="date">): `endOfDay` expands it
+//     to 23:59:59 so the whole selected day is included; otherwise it becomes
+//     00:00:00. Without this a date-only upper bound would lexicographically
+//     sort before any same-day timestamp ("2024-03-01" < "2024-03-01 10:00:00").
+//   - RFC3339 "2024-03-01T10:00:00Z": parsed and converted to local time so it
+//     lines up with the local timestamps SQLite stores.
+//
+// Unparseable input is returned trimmed so callers never bind garbage that
+// would silently match nothing.
+func normalizeTimeBound(value string, endOfDay bool) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	const layout = "2006-01-02 15:04:05"
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		if endOfDay {
+			t = t.Add(24*time.Hour - time.Second)
+		}
+		return t.Format(layout)
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t.Local().Format(layout)
+	}
+	return value
+}
+
 // ragResetting prevents concurrent reset requests.
 var ragResetting atomic.Bool
 
@@ -575,18 +606,24 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize the time-range bounds once: date-only inputs expand to the
+	// start/end of the selected day in local time, RFC3339 inputs convert to
+	// local, so both line up with the "2006-01-02 15:04:05" text SQLite stores.
+	fromTime := normalizeTimeBound(req.FromTime, false)
+	toTime := normalizeTimeBound(req.ToTime, true)
+
 	searchLimit := model.ConfigInstance.RAG.SearchLimit
 	if searchLimit <= 0 {
 		searchLimit = 100
 	}
 
 	// Empty query → "browse all" mode: list the project's sessions instead of
-	// rejecting the request. Archive filter, time sort and cursor pagination
-	// apply here too. The frontend requests pages of searchLimit rows and
-	// scrolls to load more, so there is no hard cap on the number shown.
+	// rejecting the request. Archive filter, time range, time sort and cursor
+	// pagination apply here too. The frontend requests pages of searchLimit rows
+	// and scrolls to load more, so there is no hard cap on the number shown.
 	if req.Query == "" {
 		cursor := normalizeCursorTime(req.Cursor)
-		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder, cursor, req.CursorID)
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder, fromTime, toTime, cursor, req.CursorID)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 			return
@@ -607,8 +644,8 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		Role:             req.Role,
 		SessionID:        req.SessionID,
 		ExcludeSessionID: req.ExcludeSessionID,
-		FromTime:         req.FromTime,
-		ToTime:           req.ToTime,
+		FromTime:         fromTime,
+		ToTime:           toTime,
 		PreferMode:       req.PreferMode,
 		Archived:         req.Archived,
 		SortOrder:        req.SortOrder,

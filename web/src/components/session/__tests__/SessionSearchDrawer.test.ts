@@ -31,6 +31,11 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.sortRelevance': 'Relevance',
       'sessionSearch.sortNewest': 'Newest',
       'sessionSearch.sortOldest': 'Oldest',
+      'sessionSearch.timeAll': 'Any time',
+      'sessionSearch.timeToday': 'Today',
+      'sessionSearch.time7d': 'Last 7 days',
+      'sessionSearch.time30d': 'Last 30 days',
+      'sessionSearch.timeCustom': 'Custom',
       'sessionSearch.noPreview': 'No messages in this session',
       'sessionSearch.loadingPreview': 'Loading preview...',
       'sessionSearch.loadingMore': 'Loading more...',
@@ -136,6 +141,9 @@ function createState(overrides = {}) {
     preferMode: 'hybrid' as const,
     archivedFilter: 'all' as const,
     sortOrder: 'relevance' as const,
+    timeRange: 'all' as const,
+    customFrom: '',
+    customTo: '',
     hasMore: false,
     loadingMore: false,
     ...overrides,
@@ -635,6 +643,95 @@ describe('SessionSearchDrawer', () => {
 
     await wrapper.findAll('.filter-dropdown-btn')[2].trigger('click')
     await wrapper.findAll('.filter-menu-item')[0].trigger('click')
+    expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  // ── Time range ──
+  it('renders the time-range chips with "Any time" active by default', () => {
+    const wrapper = mountDrawer()
+    const chips = wrapper.findAll('.time-chip')
+    expect(chips.map(c => c.text())).toEqual([
+      'Any time',
+      'Today',
+      'Last 7 days',
+      'Last 30 days',
+      'Custom',
+    ])
+    expect(chips[0].classes()).toContain('active')
+    // Custom date inputs stay hidden until the "Custom" chip is chosen.
+    expect(wrapper.findAll('.time-date-input')).toHaveLength(0)
+  })
+
+  it('applies a time preset when a chip is clicked', async () => {
+    const state = createState({ query: 'test' })
+    mockSearchState.mockReturnValue(state)
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.time-chip')[2].trigger('click')
+    expect(mockSetFilters).toHaveBeenCalledWith({ timeRange: '7d' })
+  })
+
+  it('does not re-filter when the already-active time chip is clicked', async () => {
+    mockSearchState.mockReturnValue(createState({ timeRange: 'all' }))
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.time-chip')[0].trigger('click')
+    expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  it('highlights the active time chip', () => {
+    mockSearchState.mockReturnValue(createState({ timeRange: '30d' }))
+    const wrapper = mountDrawer()
+    const chips = wrapper.findAll('.time-chip')
+    expect(chips[3].classes()).toContain('active')
+    expect(chips[0].classes()).not.toContain('active')
+  })
+
+  it('reveals date inputs and seeds them when switching to custom', async () => {
+    const state = createState({ query: 'test' })
+    mockSearchState.mockReturnValue(state)
+    const wrapper = mountDrawer()
+
+    await wrapper.findAll('.time-chip')[4].trigger('click')
+
+    // The composable state is seeded so the fields are not blank, then the
+    // selection is applied.
+    expect(state.customFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(state.customTo).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(mockSetFilters).toHaveBeenCalledWith({ timeRange: 'custom' })
+
+    // setFilters is mocked here, so apply the resulting selection manually to
+    // assert the custom date inputs render.
+    state.timeRange = 'custom'
+    const instance = (wrapper.vm as any).$
+    instance.update()
+    expect(wrapper.findAll('.time-date-input')).toHaveLength(2)
+  })
+
+  it('re-runs the search when a custom date bound changes', async () => {
+    mockSearchState.mockReturnValue(createState({
+      query: 'test',
+      timeRange: 'custom',
+      customFrom: '2024-01-01',
+      customTo: '2024-02-01',
+    }))
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.update()
+    await flushPromises()
+
+    await wrapper.findAll('.time-date-input')[0].trigger('change')
+    expect(mockSetFilters).toHaveBeenCalledWith({})
+  })
+
+  it('does not re-run the search when a custom date change leaves both bounds empty', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', timeRange: 'custom' }))
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.update()
+    await flushPromises()
+
+    await wrapper.findAll('.time-date-input')[0].trigger('change')
     expect(mockSetFilters).not.toHaveBeenCalled()
   })
 })

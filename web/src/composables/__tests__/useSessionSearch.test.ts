@@ -15,7 +15,7 @@ vi.mock('vue', () => ({
   onUnmounted: vi.fn(),
 }))
 
-import { useSessionSearch, fetchSessionFirstMessage } from '@/composables/useSessionSearch'
+import { useSessionSearch, fetchSessionFirstMessage, resolveTimeRange } from '@/composables/useSessionSearch'
 
 describe('useSessionSearch', () => {
   beforeEach(() => {
@@ -42,6 +42,48 @@ describe('useSessionSearch', () => {
       expect(state.sortOrder).toBe('relevance')
       expect(state.hasMore).toBe(false)
       expect(state.loadingMore).toBe(false)
+      expect(state.timeRange).toBe('all')
+      expect(state.customFrom).toBe('')
+      expect(state.customTo).toBe('')
+    })
+  })
+
+  describe('resolveTimeRange', () => {
+    function localDate(offsetDays: number): string {
+      const d = new Date()
+      d.setDate(d.getDate() + offsetDays)
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${d.getFullYear()}-${m}-${day}`
+    }
+
+    it('returns empty bounds for the "all" preset', () => {
+      expect(resolveTimeRange('all', '2024-01-01', '2024-02-01')).toEqual({ from: '', to: '' })
+    })
+
+    it('spans today only for the "today" preset', () => {
+      const today = localDate(0)
+      expect(resolveTimeRange('today', '', '')).toEqual({ from: today, to: today })
+    })
+
+    it('spans today plus the previous six days for "7d"', () => {
+      expect(resolveTimeRange('7d', '', '')).toEqual({ from: localDate(-6), to: localDate(0) })
+    })
+
+    it('spans today plus the previous 29 days for "30d"', () => {
+      expect(resolveTimeRange('30d', '', '')).toEqual({ from: localDate(-29), to: localDate(0) })
+    })
+
+    it('passes custom bounds through and trims them', () => {
+      expect(resolveTimeRange('custom', ' 2024-01-01 ', '2024-02-01 ')).toEqual({
+        from: '2024-01-01',
+        to: '2024-02-01',
+      })
+    })
+
+    it('allows a custom range with only one side set', () => {
+      expect(resolveTimeRange('custom', '2024-01-01', '')).toEqual({ from: '2024-01-01', to: '' })
+      expect(resolveTimeRange('custom', '', '2024-02-01')).toEqual({ from: '', to: '2024-02-01' })
     })
   })
 
@@ -336,6 +378,81 @@ describe('useSessionSearch', () => {
 
       expect(state.archivedFilter).toBe('active')
       expect(state.sortOrder).toBe('relevance')
+    })
+
+    it('sends from/to when a time preset is selected', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      await setFilters({ timeRange: '7d' })
+
+      expect(state.timeRange).toBe('7d')
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.from).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(body.to).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      // The preset window is inclusive of today and starts six days back.
+      const from = new Date(`${body.from}T00:00:00`)
+      const to = new Date(`${body.to}T00:00:00`)
+      const days = Math.round((to.getTime() - from.getTime()) / 86400000)
+      expect(days).toBe(6)
+    })
+
+    it('sends custom from/to bounds', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      state.query = 'hello'
+      await setFilters({ timeRange: 'custom', customFrom: '2024-01-01', customTo: '2024-02-01' })
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({
+          q: 'hello',
+          prefer_mode: 'hybrid',
+          archived: 'all',
+          sort: 'relevance',
+          from: '2024-01-01',
+          to: '2024-02-01',
+        }),
+      }))
+    })
+
+    it('omits from/to for the default "all" range', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { setFilters } = useSessionSearch()
+      await setFilters({ archived: 'active' })
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body).not.toHaveProperty('from')
+      expect(body).not.toHaveProperty('to')
+    })
+
+    it('keeps the time range when other filters change', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      state.timeRange = 'custom'
+      state.customFrom = '2024-01-01'
+      state.customTo = '2024-02-01'
+      await setFilters({ archived: 'archived' })
+
+      expect(state.timeRange).toBe('custom')
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.from).toBe('2024-01-01')
+      expect(body.to).toBe('2024-02-01')
+      expect(body.archived).toBe('archived')
     })
   })
 

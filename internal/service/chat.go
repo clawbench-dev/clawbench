@@ -1690,14 +1690,15 @@ type RecentSession struct {
 // GetRecentSessions returns chat sessions for a project in the given time
 // order, including archived ones. When projectPath is empty it returns sessions
 // across all projects (CLI global browse). limit <= 0 returns all sessions.
-// archiveFilter narrows to active/archived (or all); sortOrder selects
-// newest/oldest time ordering (relevance falls back to newest here, since
-// browse mode has no search score).
+// archiveFilter narrows to active/archived (or all); fromTime/toTime (both
+// optional, "2006-01-02 15:04:05" local text) bound the session creation time;
+// sortOrder selects newest/oldest time ordering (relevance falls back to newest
+// here, since browse mode has no search score).
 //
 // Cursor pagination: pass the last row's created_at (formatted "2006-01-02
 // 15:04:05") and id to fetch the next page. The returned bool reports whether
 // more rows remain after this page.
-func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, cursor, cursorID string) ([]RecentSession, bool, error) {
+func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
 	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at
 		FROM chat_sessions s
 		WHERE s.session_type = 'chat'`
@@ -1711,6 +1712,14 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, 
 		query += " AND s.archived = 0"
 	case SessionArchiveFilterArchived:
 		query += " AND s.archived = 1"
+	}
+	if fromTime != "" {
+		query += " AND s.created_at >= ?"
+		args = append(args, fromTime)
+	}
+	if toTime != "" {
+		query += " AND s.created_at <= ?"
+		args = append(args, toTime)
 	}
 	oldestFirst := NormalizeSessionSortOrder(sortOrder) == SessionSortOldest
 	if cursor != "" && cursorID != "" {

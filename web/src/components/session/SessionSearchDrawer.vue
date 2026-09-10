@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <BottomSheet :open="open" auto panel-class="session-search-sheet" @close="handleClose">
     <template #header>
       <!-- Search results list view -->
       <template v-if="!selectedSession">
@@ -124,6 +124,27 @@
         </button>
       </PopupMenu>
 
+      <!-- Time-range presets. Horizontally scrollable so all chips stay
+           reachable on narrow phones; "custom" reveals two date inputs. -->
+      <div class="time-range-row">
+        <button
+          v-for="opt in timeOptions"
+          :key="opt.value"
+          type="button"
+          class="time-chip"
+          :class="{ active: searchState.timeRange === opt.value }"
+          @click="chooseTimeRange(opt.value)"
+        >
+          {{ opt.label }}
+        </button>
+        <template v-if="searchState.timeRange === 'custom'">
+          <span class="time-range-sep">·</span>
+          <input v-model="searchState.customFrom" type="date" class="time-date-input" @change="applyCustomRange" />
+          <span class="time-range-sep">→</span>
+          <input v-model="searchState.customTo" type="date" class="time-date-input" @change="applyCustomRange" />
+        </template>
+      </div>
+
       <div class="session-search-content">
         <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
@@ -207,7 +228,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder } from '@/composables/useSessionSearch'
+import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder, type SessionTimeRange } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
@@ -305,6 +326,14 @@ const sortOptions = computed(() => [
   { value: 'oldest' as SessionSortOrder, label: t('sessionSearch.sortOldest') },
 ])
 
+const timeOptions = computed(() => [
+  { value: 'all' as SessionTimeRange, label: t('sessionSearch.timeAll') },
+  { value: 'today' as SessionTimeRange, label: t('sessionSearch.timeToday') },
+  { value: '7d' as SessionTimeRange, label: t('sessionSearch.time7d') },
+  { value: '30d' as SessionTimeRange, label: t('sessionSearch.time30d') },
+  { value: 'custom' as SessionTimeRange, label: t('sessionSearch.timeCustom') },
+])
+
 const archiveLabel = computed(() =>
   archiveOptions.value.find(o => o.value === searchState.archivedFilter)?.label ?? ''
 )
@@ -378,6 +407,30 @@ function setArchiveFilter(filter: SessionArchiveFilter) {
 function setSortOrder(sort: SessionSortOrder) {
   if (searchState.sortOrder === sort) return
   search.setFilters({ sort })
+}
+
+// ── Time range ──
+function chooseTimeRange(range: SessionTimeRange) {
+  if (searchState.timeRange === range) return
+  // Seed the custom inputs from the current preset so switching to "custom"
+  // starts from the visible window instead of two blank fields.
+  if (range === 'custom' && !searchState.customFrom && !searchState.customTo) {
+    const now = new Date()
+    const from = new Date(now)
+    from.setDate(from.getDate() - 6)
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    searchState.customFrom = fmt(from)
+    searchState.customTo = fmt(now)
+  }
+  search.setFilters({ timeRange: range })
+}
+
+// Re-run the search when either custom bound changes. Guard against firing on
+// a half-filled range: wait until at least one side is set.
+function applyCustomRange() {
+  if (!searchState.customFrom && !searchState.customTo) return
+  search.setFilters({})
 }
 
 // ── Keyboard ↑/↓ + Enter navigation over results ──
@@ -645,6 +698,68 @@ defineExpose({ focusSearchInput })
   .filter-dropdown-btn:hover {
     background: var(--bg-secondary, #f8f9fa);
     color: var(--text-secondary, #666);
+  }
+}
+
+/* ── Time-range preset chips ──
+   A separate, horizontally scrollable row so presets stay one tap away without
+   crowding the search row. Scrollbar is hidden; the row pans on touch. */
+.time-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.time-range-row::-webkit-scrollbar {
+  display: none;
+}
+
+.time-chip {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 11px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-secondary, #666);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.time-chip.active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.time-range-sep {
+  flex-shrink: 0;
+  color: var(--text-muted, #999);
+  font-size: 11px;
+}
+
+.time-date-input {
+  flex-shrink: 0;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+@media (hover: hover) {
+  .time-chip:hover {
+    color: var(--text-primary, #1a1a1a);
   }
 }
 
@@ -1008,6 +1123,15 @@ defineExpose({ focusSearchInput })
 </style>
 
 <style>
+/* Wide-screen: the search dialog benefits from extra width — result rows carry
+   a title, time, preview and badges, and the drilldown renders full chunks.
+   Only takes effect in BottomSheet's wide-screen card mode (the narrow-mode
+   bottom sheet ignores --modal-max-width). Non-scoped because the class is
+   bound inside BottomSheet's own template. */
+.session-search-sheet {
+  --modal-max-width: 960px;
+}
+
 /* Dark theme overrides — non-scoped for [data-theme] selector */
 [data-theme-base="dark"] .session-search-item-preview mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
@@ -1033,6 +1157,24 @@ defineExpose({ focusSearchInput })
   border-color: var(--accent-color, #4a90d9);
   color: var(--accent-color, #4a90d9);
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+}
+
+[data-theme-base="dark"] .time-chip {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary, #999);
+}
+
+[data-theme-base="dark"] .time-chip.active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+}
+
+[data-theme-base="dark"] .time-date-input {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary, #fff);
 }
 
 @media (hover: hover) {
