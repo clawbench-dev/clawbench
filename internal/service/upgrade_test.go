@@ -1505,6 +1505,55 @@ func TestCheckInstallDirWritable_ExecutableError(t *testing.T) {
 	assert.Contains(t, err.Error(), "resolve executable path")
 }
 
+// TestCheckInstallDirWritable_PreservesExistingBackup verifies the probe does
+// not delete a pre-existing ".bak" (it must only remove files it created).
+func TestCheckInstallDirWritable_PreservesExistingBackup(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "clawbench")
+	backup := exe + ".bak"
+	require.NoError(t, os.WriteFile(backup, []byte("existing backup"), 0o600))
+
+	upgradeExecutable = func() (string, error) { return exe, nil }
+
+	gotDir, err := CheckInstallDirWritable()
+	require.NoError(t, err)
+	assert.Equal(t, dir, gotDir)
+
+	data, err := os.ReadFile(backup)
+	require.NoError(t, err, "pre-existing backup must survive the probe")
+	assert.Equal(t, "existing backup", string(data))
+}
+
+// TestCheckInstallDirWritable_BackupNotWritable verifies the probe catches a
+// non-writable existing ".bak" even when the directory itself is writable.
+// This is the case a directory-only probe would miss.
+func TestCheckInstallDirWritable_BackupNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "clawbench")
+	backup := exe + ".bak"
+	require.NoError(t, os.WriteFile(backup, []byte("root backup"), 0o400))
+	defer func() { _ = os.Chmod(backup, 0o600) }() // allow TempDir cleanup
+
+	upgradeExecutable = func() (string, error) { return exe, nil }
+
+	gotDir, err := CheckInstallDirWritable()
+	require.Error(t, err, "a non-writable existing .bak must fail the probe")
+	assert.Equal(t, dir, gotDir)
+}
+
 // TestPerformUpgrade_InstallDirNotWritable verifies the preflight fails fast
 // (before downloading) with the actionable install_dir_not_writable code.
 func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {

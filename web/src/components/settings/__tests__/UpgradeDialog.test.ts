@@ -411,6 +411,33 @@ describe('UpgradeDialog', () => {
       await nextTick()
       expect($('.ug-warn')).toBeFalsy()
     })
+
+    it('does not warn when no upgrade is available', async () => {
+      mockInstallWritable.value = false
+      mockHasUpgrade.value = false
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
+    })
+
+    it('does not warn while the check is still running', async () => {
+      mockInstallWritable.value = false
+      mockChecking.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
+    })
+
+    it('hides the warning after a generic failure (failure block takes over)', async () => {
+      mockInstallWritable.value = false
+      mockIsFailed.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
+    })
   })
 
   describe('canClose computed', () => {

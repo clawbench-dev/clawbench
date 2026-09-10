@@ -233,6 +233,11 @@ export function useUpgrade() {
     showProgressDialog.value = true
     // Allow the auto-reload to fire again for this tab's next upgrade.
     sessionStorage.removeItem(RELOAD_SESSION_KEY)
+    // Clear the previous attempt's failure so a stale error_code cannot
+    // mislabel the new attempt before its first event arrives. The backend
+    // always sends error_code, so this only covers the pre-event window.
+    state.error = ''
+    state.error_code = ''
     try {
       await apiPost('/api/upgrade/start', {})
     } catch (e) {
@@ -289,14 +294,6 @@ export function useUpgrade() {
   /** Whether upgrade failed */
   const isFailed = computed(() => state.phase === 'failed')
 
-  /**
-   * Whether the failure was caused by a non-writable install directory, either
-   * detected upfront by checkUpgrade or reported by the backend on failure.
-   */
-  const isInstallDirNotWritable = computed(() =>
-    !installWritable.value || state.error_code === ERR_INSTALL_DIR_NOT_WRITABLE,
-  )
-
   /** Verify upgrade succeeded by comparing server version after reconnect */
   async function verifyUpgrade(): Promise<boolean> {
     try {
@@ -325,7 +322,6 @@ export function useUpgrade() {
     isRestarting,
     isCompleted,
     isFailed,
-    isInstallDirNotWritable,
     checkUpgrade,
     startUpgrade,
     clearShowProgressDialog,

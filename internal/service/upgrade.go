@@ -341,9 +341,32 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
-	// 1b. Preflight: the install directory must be writable, otherwise the
-	// backup step would fail after downloading the whole tarball. Fail fast
-	// with an actionable code so the UI can tell the user what to do.
+	// 1b. Resolve the running binary and refuse environments where self-replace
+	// does not apply. Done before any network or disk work so a non-applicable
+	// deployment gets the clearest error without downloading the tarball.
+	currentBin, err := os.Executable()
+	if err != nil {
+		SetUpgradeError(fmt.Sprintf("Failed to get current binary path: %v", err))
+		broadcastUpgradeUpdate()
+		return
+	}
+	slog.Info("upgrade: current binary", "path", currentBin)
+
+	isSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
+	isDockerEnv := isDocker()
+	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDockerEnv)
+
+	// Docker refuses self-replace — replacement is done by pulling a new image.
+	if isSupervised && isDockerEnv {
+		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
+		broadcastUpgradeUpdate()
+		return
+	}
+
+	// 1c. Preflight: the install directory (and the backup path) must be
+	// writable, otherwise the backup step would fail after downloading the whole
+	// tarball. Fail fast with an actionable code so the UI can tell the user
+	// what to do.
 	if dir, permErr := CheckInstallDirWritable(); permErr != nil {
 		slog.Warn("upgrade: install directory not writable", "dir", dir, "error", permErr)
 		SetUpgradeErrorCode(UpgradeErrInstallDirNotWritable,
@@ -375,29 +398,7 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
-	// 3. Supervisor handling.
-	isSupervised := upgradeIsSupervised != nil && upgradeIsSupervised()
-	isDockerEnv := isDocker()
-	slog.Info("upgrade: supervisor check", "isSupervised", isSupervised, "isDocker", isDockerEnv)
-
-	currentBin, err := os.Executable()
-	if err != nil {
-		SetUpgradeError(fmt.Sprintf("Failed to get current binary path: %v", err))
-		_ = os.RemoveAll(tmpDir)
-		broadcastUpgradeUpdate()
-		return
-	}
-	slog.Info("upgrade: current binary", "path", currentBin)
-
-	// Docker refuses self-replace — replacement is done by pulling a new image.
-	if isSupervised && isDockerEnv {
-		SetUpgradeError("Running in Docker — please pull new image: docker pull ghcr.io/xulongzhe/clawbench:latest")
-		_ = os.RemoveAll(tmpDir)
-		broadcastUpgradeUpdate()
-		return
-	}
-
-	// 4. Backup current binary (used for rollback and as the replacement launcher).
+	// 3. Backup current binary (used for rollback and as the replacement launcher).
 	setStateAndBroadcast(UpgradePhaseBackingUp, 80, "Backing up current binary...")
 
 	backupPath := currentBin + ".bak"
@@ -428,7 +429,7 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
-	// 5. Unsupervised: launch upgrade-replace subprocess.
+	// 4. Unsupervised: launch upgrade-replace subprocess.
 	setStateAndBroadcast(UpgradePhaseReplacing, 90, "Replacing binary...")
 
 	// Launch .bak with upgrade-replace subcommand
@@ -662,16 +663,49 @@ func copyFile(src, dst string) error {
 var upgradeRename = os.Rename
 
 // replaceBinaryInPlace replaces the target binary with the new binary,
-// preferring an atomic rename and falling back to a copy when the new binary
-// lives on a different filesystem (e.g. /tmp vs the install dir). The target is
-// made executable. On Unix this is safe even while the current process is
-// running — the running process keeps its old inode, and future starts use the
-// new file.
+// preferring an atomic rename and falling back to a staged copy when the new
+// binary lives on a different filesystem (e.g. /tmp vs the install dir). The
+// target is made executable. On Unix this is safe even while the current
+// process is running — the running process keeps its old inode, and future
+// starts use the new file.
+//
+// The fallback copies into a temp file in the target's directory and renames it
+// over the target, rather than writing the target in place. That keeps the
+// requirement to directory write permission, matching what the preflight
+// checks: overwriting the target directly would additionally require the target
+// file itself to be writable, which fails for e.g. a root-owned 0755 binary in
+// a user-writable directory.
 func replaceBinaryInPlace(newPath, target string) error {
 	if err := upgradeRename(newPath, target); err == nil {
 		return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
 	}
-	if err := copyFile(newPath, target); err != nil {
+
+	// Staged copy: temp file in the target dir, then atomic rename over target.
+	src, err := os.Open(newPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = src.Close() }()
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".clawbench-replace-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := io.Copy(tmp, src); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+
+	// Use os.Rename directly (not the test hook): the source now lives in the
+	// target directory, so this is the real same-filesystem rename.
+	if err := os.Rename(tmpName, target); err != nil {
+		_ = os.Remove(tmpName)
 		return err
 	}
 	return os.Chmod(target, 0o755) //nolint:gosec // G302: binary must be executable
@@ -694,17 +728,21 @@ func performSupervisedUpgrade(newBinPath, currentBin string) error {
 	return nil
 }
 
-// CheckInstallDirWritable reports whether the current user can create files in
-// the directory that holds the running binary. Self-upgrade must create a
-// ".bak" file next to the binary and replace it, so a writable install
-// directory is the minimum requirement — the binary's own mode bits are not
-// enough (a rename over a read-only file succeeds as long as the directory is
-// writable).
+// CheckInstallDirWritable reports whether the current user can perform the
+// filesystem operations a self-upgrade needs next to the running binary:
+// creating the ".bak" backup and staging a replacement in the same directory.
+// Both are directory operations — the binary's own mode bits are not enough (a
+// rename over a read-only file succeeds as long as the directory is writable).
 //
-// The check actually creates and removes a temp file rather than inspecting
-// mode bits, so it correctly reflects ACLs, read-only mounts and mandatory
-// access control. It returns the install directory (for user-facing messages)
-// alongside the error.
+// The check actually creates and removes files rather than inspecting mode
+// bits, so it correctly reflects ACLs, read-only mounts and mandatory access
+// control. The backup path is probed explicitly because an existing
+// non-writable ".bak" (e.g. left behind by a previous root-run upgrade) would
+// block the backup even though the directory itself is writable. A pre-existing
+// ".bak" is left in place — only a file this probe created is removed.
+//
+// It returns the install directory (for user-facing messages) alongside the
+// error.
 func CheckInstallDirWritable() (string, error) {
 	exe, err := upgradeExecutable()
 	if err != nil {
@@ -712,13 +750,36 @@ func CheckInstallDirWritable() (string, error) {
 	}
 	dir := filepath.Dir(exe)
 
+	// 1. The directory must accept new files (backup + staged replace).
 	f, err := os.CreateTemp(dir, ".clawbench-permcheck-*")
 	if err != nil {
 		return dir, err
 	}
 	name := f.Name()
 	_ = f.Close()
-	_ = os.Remove(name)
+	if rmErr := os.Remove(name); rmErr != nil {
+		// Surface a leftover probe file rather than silently ignoring it.
+		slog.Warn("upgrade: failed to remove permission probe file", "path", name, "error", rmErr)
+	}
+
+	// 2. The specific backup path must be writable (overwriting/creating it).
+	backupPath := exe + ".bak"
+	_, statErr := os.Stat(backupPath)
+	existedBefore := statErr == nil
+
+	bf, err := os.OpenFile(backupPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return dir, err
+	}
+	if closeErr := bf.Close(); closeErr != nil {
+		slog.Warn("upgrade: failed to close backup probe file", "path", backupPath, "error", closeErr)
+	}
+	// Only remove what we created; never delete a pre-existing backup.
+	if !existedBefore {
+		if rmErr := os.Remove(backupPath); rmErr != nil {
+			slog.Warn("upgrade: failed to remove backup probe file", "path", backupPath, "error", rmErr)
+		}
+	}
 	return dir, nil
 }
 

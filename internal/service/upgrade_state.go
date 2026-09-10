@@ -27,7 +27,12 @@ type UpgradeState struct {
 	BackupPath string       `json:"backup_path"` // populated after backing_up
 	// ErrorCode is a stable machine-readable failure identifier the frontend
 	// maps to a localized, actionable message. Empty for generic failures.
-	ErrorCode string `json:"error_code,omitempty"`
+	//
+	// Deliberately NOT omitempty: the frontend merges updates with
+	// Object.assign, which does not delete keys missing from the payload. If an
+	// empty code were omitted, a stale code from a previous attempt would
+	// survive a retry and mislabel an unrelated failure.
+	ErrorCode string `json:"error_code"`
 	Error     string `json:"error,omitempty"`
 }
 

@@ -79,6 +79,36 @@ func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
 }
 
+// TestServeUpgradeCheck_ProbeInconclusive covers an unresolved executable path:
+// with no directory to report, the probe must not assert "not writable" (that
+// would show a misleading warning with an empty dir).
+func TestServeUpgradeCheck_ProbeInconclusive(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+	}()
+
+	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCompareVersions = func(a, b string) int { return -1 }
+	upgradeIsDevBuild = func(v string) bool { return false }
+	upgradeCheckInstallDirWrit = func() (string, error) {
+		return "", errors.New("failed to resolve executable path")
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["install_writable"], "inconclusive probe must not warn")
+	assert.Equal(t, "", resp["install_dir"])
+}
+
 func TestServeUpgradeCheck_NoUpgrade(t *testing.T) {
 	defer func() {
 		upgradeCheckForUpgrade = service.CheckForUpgrade
@@ -289,6 +319,34 @@ func TestServeUpgradeStatus_FailedWithErrorCode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "failed", resp["phase"])
 	assert.Equal(t, "install_dir_not_writable", resp["error_code"])
+}
+
+// TestServeUpgradeStatus_ErrorCodeAlwaysPresent guards the wire contract that
+// error_code is sent even when empty. The frontend merges updates with
+// Object.assign (which cannot delete keys), so omitting the field on a generic
+// failure would let a stale code from a previous attempt survive a retry.
+func TestServeUpgradeStatus_ErrorCodeAlwaysPresent(t *testing.T) {
+	defer func() { upgradeGetUpgradeState = service.GetUpgradeState }()
+
+	upgradeGetUpgradeState = func() service.UpgradeState {
+		return service.UpgradeState{
+			Phase: service.UpgradePhaseFailed,
+			Error: "generic failure",
+			// ErrorCode intentionally empty.
+		}
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/status", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeStatus, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	_, present := resp["error_code"]
+	assert.True(t, present, "error_code must be present even when empty")
+	assert.Equal(t, "", resp["error_code"])
 }
 
 func TestServeUpgradeStatus_MethodNotAllowed(t *testing.T) {

@@ -181,7 +181,6 @@ describe('useUpgrade', () => {
 
       expect(upgrade.installWritable.value).toBe(false)
       expect(upgrade.installDir.value).toBe('/usr/local/bin')
-      expect(upgrade.isInstallDirNotWritable.value).toBe(true)
     })
 
     it('defaults to writable when the fields are absent (older server)', async () => {
@@ -195,21 +194,6 @@ describe('useUpgrade', () => {
       await upgrade.checkUpgrade()
 
       expect(upgrade.installWritable.value).toBe(true)
-      expect(upgrade.isInstallDirNotWritable.value).toBe(false)
-    })
-  })
-
-  describe('isInstallDirNotWritable', () => {
-    it('is true when the failure carries the install_dir_not_writable code', () => {
-      const upgrade = useUpgrade()
-      upgrade.state.error_code = 'install_dir_not_writable'
-      expect(upgrade.isInstallDirNotWritable.value).toBe(true)
-    })
-
-    it('is false for a generic failure code', () => {
-      const upgrade = useUpgrade()
-      upgrade.state.error_code = 'something_else'
-      expect(upgrade.isInstallDirNotWritable.value).toBe(false)
     })
   })
 
@@ -243,6 +227,18 @@ describe('useUpgrade', () => {
       await upgrade.startUpgrade()
 
       expect(sessionStorage.getItem('clawbench-upgrade-reloaded')).toBeNull()
+    })
+
+    it('clears a previous failure so a stale error_code cannot mislabel the retry', async () => {
+      const upgrade = useUpgrade()
+      upgrade.state.error_code = 'install_dir_not_writable'
+      upgrade.state.error = 'old failure'
+      mockApiPost.mockResolvedValue({})
+
+      await upgrade.startUpgrade()
+
+      expect(upgrade.state.error_code).toBe('')
+      expect(upgrade.state.error).toBe('')
     })
   })
 

@@ -120,12 +120,14 @@ const {
 } = useUpgrade()
 
 /**
- * Show the writability warning only before the upgrade starts: while the user
- * is deciding (version info visible) and after a generic failure. Hidden during
- * an active upgrade and after the install-dir failure (which renders its own
- * dedicated block).
+ * Show the writability warning only while the user is deciding whether to
+ * start: an upgrade must be available and the check must have settled. Hidden
+ * during an active upgrade, after completion, after any failure (failures
+ * render their own dedicated block), and when there is nothing to upgrade.
  */
 const showWritableWarning = computed(() =>
+  hasUpgrade.value &&
+  !checking.value &&
   !installWritable.value &&
   !isInProgress.value &&
   !isCompleted.value &&
