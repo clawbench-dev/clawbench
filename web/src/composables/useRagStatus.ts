@@ -11,6 +11,8 @@ export interface RagStatus {
   total_messages: number
   indexed_messages: number
   embedded_messages: number
+  fts_size_bytes: number
+  vec_size_bytes: number
 }
 
 const status = ref<RagStatus>({
@@ -22,6 +24,8 @@ const status = ref<RagStatus>({
   total_messages: 0,
   indexed_messages: 0,
   embedded_messages: 0,
+  fts_size_bytes: 0,
+  vec_size_bytes: 0,
 })
 
 async function refresh(): Promise<void> {
@@ -44,6 +48,8 @@ export function _resetForTesting() {
     total_messages: 0,
     indexed_messages: 0,
     embedded_messages: 0,
+    fts_size_bytes: 0,
+    vec_size_bytes: 0,
   }
 }
 

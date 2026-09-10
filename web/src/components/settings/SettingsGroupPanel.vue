@@ -60,16 +60,12 @@
         :progress="resolveProgress(entry.field)"
         :refreshable="isRagProgressField(entry.field)"
         :refreshing="ragRefreshing"
-        :rebuildable="isRagRebuildField(entry.field)"
-        :rebuilding="isVectorRebuildField(entry.field) ? ragVectorRebuilding : ragFtsRebuilding"
-        :rebuild-title="getRebuildTitle(entry.field)"
         :no-divider="isLastInSection(idx)"
         @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @click="handleFieldClick(entry.field)"
         @refresh="handleRagRefresh"
-        @rebuild="handleRagRebuildFromProgress(entry.field)"
       />
       <!-- FRP auto_port info injection -->
       <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
@@ -97,6 +93,26 @@
       <div v-if="hotReloadWarning" class="group-panel__warning">{{ hotReloadWarning }}</div>
       <div v-if="needsRestartHint" class="group-panel__restart-hint">
         {{ t('settings.panel.needsRestartHint') }}
+      </div>
+      <div v-if="isRagPanel" class="group-panel__rag-actions">
+        <button
+          class="fbtn fbtn-danger refresh-spin"
+          :class="{ 'refresh-spin--active': ragFtsRebuilding }"
+          :disabled="ragFtsRebuilding || ragVectorRebuilding"
+          @click="handleRagRebuild('fts')"
+        >
+          <RotateCcw :size="14" />
+          {{ t('settings.items.ragFtsRebuild') }}
+        </button>
+        <button
+          class="fbtn fbtn-danger refresh-spin"
+          :class="{ 'refresh-spin--active': ragVectorRebuilding }"
+          :disabled="ragFtsRebuilding || ragVectorRebuilding || !localValues['rag.vector_enabled']"
+          @click="handleRagRebuild('vector')"
+        >
+          <RotateCcw :size="14" />
+          {{ t('settings.items.ragVectorRebuild') }}
+        </button>
       </div>
       <div class="group-panel__save-row">
         <button
@@ -157,7 +173,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight, ListChecks } from 'lucide-vue-next'
+import { ChevronRight, ListChecks, RotateCcw } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
@@ -171,6 +187,7 @@ import { useFrp } from '@/composables/useFrp'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
 import { apiPost } from '@/utils/api'
+import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
 import type { TerminalPreview } from './SettingsItem.vue'
@@ -436,6 +453,10 @@ function getRagStatusValue(key: string): unknown {
       return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages }) : '—'
     case 'rag.status.embed_progress':
       return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_messages, s.total_messages), total: s.total_messages }) : '—'
+    case 'rag.status.fts_size':
+      return s.has_fts_data ? formatFileSize(s.fts_size_bytes) : '—'
+    case 'rag.status.vec_size':
+      return s.has_vec_data ? formatFileSize(s.vec_size_bytes) : '—'
     default:
       return ''
   }
@@ -528,17 +549,7 @@ const ragVectorRebuilding = ref(false)
 const ragFtsRebuilding = ref(false)
 const ragRefreshing = ref(false)
 
-function isRagRebuildField(field: ItemSpec): boolean {
-  return field.key === 'rag.status.index_progress' || field.key === 'rag.status.embed_progress'
-}
-
-function isVectorRebuildField(field: ItemSpec): boolean {
-  return field.key === 'rag.status.embed_progress'
-}
-
-function getRebuildTitle(field: ItemSpec): string {
-  return isVectorRebuildField(field) ? t('settings.items.ragVectorRebuild') : t('settings.items.ragFtsRebuild')
-}
+const isRagPanel = computed(() => props.config.panelId === 'rag')
 
 async function handleRagRefresh() {
   ragRefreshing.value = true
@@ -549,8 +560,13 @@ async function handleRagRefresh() {
   }
 }
 
-async function handleRagRebuildFromProgress(field: ItemSpec) {
-  const isVector = field.key === 'rag.status.embed_progress'
+/**
+ * Rebuild one RAG index independently.
+ * - fts: regenerates the full-text index from existing chunks (vectors untouched)
+ * - vector: re-embeds all chunks with the current model (FTS/chunks untouched)
+ */
+async function handleRagRebuild(kind: 'fts' | 'vector') {
+  const isVector = kind === 'vector'
   const rebuildingRef = isVector ? ragVectorRebuilding : ragFtsRebuilding
   if (rebuildingRef.value) return
   const confirmKey = isVector ? 'settings.items.ragVectorRebuildConfirm' : 'settings.items.ragFtsRebuildConfirm'
@@ -565,7 +581,7 @@ async function handleRagRebuildFromProgress(field: ItemSpec) {
 
   rebuildingRef.value = true
   try {
-    const endpoint = isVector ? '/api/rag/reset-vector' : '/api/rag/reset'
+    const endpoint = isVector ? '/api/rag/reset-vector' : '/api/rag/rebuild-fts'
     await apiPost(endpoint, {})
     toast.show(t(successKey), { icon: '✅', type: 'success', duration: 3000 })
     refreshRagStatus()
@@ -811,6 +827,17 @@ watch(localValues, () => {
 .group-panel__save-row {
   display: flex;
   gap: 8px;
+}
+
+/* RAG index rebuild actions — destructive, so separated from the save row */
+.group-panel__rag-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.group-panel__rag-actions .fbtn {
+  flex: 1;
 }
 
 .group-panel__restart-hint {

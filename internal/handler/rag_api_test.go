@@ -567,6 +567,8 @@ func TestServeRAGStatus_ReturnsFields(t *testing.T) {
 	assert.Contains(t, result, "total_messages")
 	assert.Contains(t, result, "indexed_messages")
 	assert.Contains(t, result, "embedded_messages")
+	assert.Contains(t, result, "fts_size_bytes")
+	assert.Contains(t, result, "vec_size_bytes")
 }
 
 func TestServeRAGStatus_VectorDisabled(t *testing.T) {
@@ -1062,6 +1064,99 @@ func TestServeRAGResetVector_ConcurrencyConflict(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
 	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// ---------- ServeRAGRebuildFTS ----------
+
+func TestServeRAGRebuildFTS_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGRebuildFTS_NilStoreReturns503(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() { rag.GlobalStore = origStore })
+	rag.GlobalStore = nil
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestServeRAGRebuildFTS_Success(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+	store.SetEmbeddingDim(1024)
+
+	// Insert a message, index it, and embed it
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello world", nil, false, "NewSession")
+	require.NoError(t, err)
+	err = service.MarkMessageIndexed(msgID)
+	require.NoError(t, err)
+
+	chunks := []rag.Chunk{{
+		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
+		ChunkTextSegmented: "hello world", ChunkIndex: 0, TokenCount: 2,
+		Embedding: make([]float64, 1024), HasEmbedding: true,
+		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
+	}}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result["status"])
+	assert.Equal(t, float64(1), result["chunks_rebuilt"])
+
+	// Independent rebuild must not reset message indexed flags (FTS layer only)
+	var indexed int
+	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
+	require.NoError(t, err)
+	assert.Equal(t, 1, indexed)
+
+	// Vectors must survive
+	assert.True(t, store.HasVecData())
+}
+
+func TestServeRAGRebuildFTS_ConcurrencyConflict(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		ragResetting.Store(false)
+	})
+
+	rag.GlobalStore = setupRAGStore(t)
+
+	ragResetting.Store(true)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 

@@ -60,9 +60,6 @@
       <span v-if="refreshable" class="settings-item__refresh refresh-spin" :class="{ 'refresh-spin--active': refreshing }" @click.stop="emit('refresh')">
         <RefreshCw :size="12" />
       </span>
-      <span v-if="rebuildable" class="settings-item__rebuild refresh-spin" :class="{ 'refresh-spin--active': rebuilding }" :title="rebuildTitle" @click.stop="emit('rebuild')">
-        <RotateCcw :size="12" />
-      </span>
     </div>
     <!-- Progress bar for info-type items (only when data exists) -->
     <div v-if="type === 'info' && progress && progress.max > 0" class="settings-item__progress">
@@ -244,7 +241,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Eye, EyeOff, RefreshCw, RotateCcw, ChevronsUpDown, Sun, Moon, Palette } from 'lucide-vue-next'
+import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -290,12 +287,6 @@ interface Props {
   refreshable?: boolean
   /** Refresh animation state */
   refreshing?: boolean
-  /** Show a rebuild icon inside the progress bar area */
-  rebuildable?: boolean
-  /** Rebuild animation state */
-  rebuilding?: boolean
-  /** Tooltip text for rebuild icon */
-  rebuildTitle?: string
   /** Terminal theme lazy-load failed — show a retry banner in the terminal grid. */
   terminalThemeLoadError?: boolean
   /** Retry handler for a failed terminal theme lazy-load. */
@@ -325,7 +316,6 @@ const emit = defineEmits<{
   editToggle: [open: boolean]
   discard: []
   refresh: []
-  rebuild: []
 }>()
 
 const editing = ref(false)
@@ -743,29 +733,6 @@ function confirmEdit() {
 
 @media (hover: hover) {
   .settings-item__refresh:hover {
-    color: var(--accent-color);
-  }
-}
-
-/* Rebuild icon beside progress bar */
-.settings-item__rebuild {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  margin: -6px 0;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s ease;
-}
-
-.settings-item__rebuild.refresh-spin--active {
-  color: var(--accent-color);
-}
-
-@media (hover: hover) {
-  .settings-item__rebuild:hover {
     color: var(--accent-color);
   }
 }

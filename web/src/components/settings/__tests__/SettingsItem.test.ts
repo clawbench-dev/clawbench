@@ -20,7 +20,6 @@ vi.mock('lucide-vue-next', () => ({
   Eye: { name: 'Eye', template: '<span class="icon-eye" />' },
   EyeOff: { name: 'EyeOff', template: '<span class="icon-eyeoff" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
-  RotateCcw: { name: 'RotateCcw', template: '<span class="icon-rebuild" />' },
   ChevronsUpDown: { name: 'ChevronsUpDown', template: '<span class="icon-chevron" />' },
 }))
 
@@ -170,20 +169,9 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__refresh.refresh-spin--active').exists()).toBe(true)
     })
 
-    it('renders rebuild icon when rebuildable is true', () => {
-      const wrapper = mountItem({ type: 'info', modelValue: 'val', rebuildable: true })
-      expect(wrapper.find('.settings-item__rebuild').exists()).toBe(true)
-    })
-
-    it('emits rebuild when rebuild icon clicked', async () => {
-      const wrapper = mountItem({ type: 'info', modelValue: 'val', rebuildable: true })
-      await wrapper.find('.settings-item__rebuild').trigger('click')
-      expect(wrapper.emitted('rebuild')).toBeTruthy()
-    })
-
-    it('renders rebuild with active class when rebuilding is true', () => {
-      const wrapper = mountItem({ type: 'info', modelValue: 'val', rebuildable: true, rebuilding: true })
-      expect(wrapper.find('.settings-item__rebuild.refresh-spin--active').exists()).toBe(true)
+    it('does not render a rebuild icon (rebuild actions live in the panel footer)', () => {
+      const wrapper = mountItem({ type: 'info', modelValue: 'val' })
+      expect(wrapper.find('.settings-item__rebuild').exists()).toBe(false)
     })
 
     it('renders info type value in info-detail instead of value span', () => {

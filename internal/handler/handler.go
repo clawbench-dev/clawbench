@@ -329,6 +329,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
 	register("/api/rag/reset", middleware.Auth(ServeRAGReset))
 	register("/api/rag/reset-vector", middleware.Auth(ServeRAGResetVector))
+	register("/api/rag/rebuild-fts", middleware.Auth(ServeRAGRebuildFTS))
 	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
 
 	// Client log collection — intentionally unauthenticated:

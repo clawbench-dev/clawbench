@@ -325,6 +325,45 @@ func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — full-text index rebuild
+// that is independent of the vector layer: it regenerates rag_chunks_fts from the
+// existing chunk text without re-chunking, re-embedding, or resetting message
+// indexed flags. Vector embeddings and chunk rows are left untouched.
+//
+// No project-scoping: the RAG store is shared across all projects, so the FTS
+// index is rebuilt globally (same rationale as ServeRAGReset).
+func ServeRAGRebuildFTS(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	if rag.GlobalStore == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
+		return
+	}
+
+	// Prevent concurrent resets/rebuilds
+	if ragResetting.Swap(true) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
+		return
+	}
+	defer ragResetting.Store(false)
+
+	chunksRebuilt, err := rag.GlobalStore.RebuildFTS()
+	if err != nil {
+		slog.Error("rag: fts rebuild failed", slog.String("err", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+		return
+	}
+
+	slog.Info("rag: fts rebuild triggered", slog.Int64("chunks_rebuilt", chunksRebuilt))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         "ok",
+		"chunks_rebuilt": chunksRebuilt,
+	})
+}
+
 // ServeRAGResetVector handles POST /api/rag/reset-vector — vector-only rebuild:
 // drops rag_vec and resets has_embedding flags, keeping chunk text and FTS intact.
 // The indexer will re-embed existing chunks with the current model.
@@ -404,6 +443,16 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	hasVecData := embeddedMessages > 0 && vectorEnabled
 
+	// Per-index disk footprint. Best-effort: dbstat may be unavailable, in
+	// which case sizes stay at 0 and the UI simply hides them.
+	var ftsBytes, vecBytes int64
+	if rag.GlobalStore != nil {
+		ftsBytes, vecBytes, err = rag.GlobalStore.IndexDiskUsage()
+		if err != nil {
+			slog.Warn("rag: failed to compute index disk usage", slog.String("err", err.Error()))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available":         hasFTSData || hasVecData,
 		"mode":              mode,
@@ -413,6 +462,8 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 		"total_messages":    totalMessages,
 		"indexed_messages":  indexedMessages,
 		"embedded_messages": embeddedMessages,
+		"fts_size_bytes":    ftsBytes,
+		"vec_size_bytes":    vecBytes,
 	})
 }
 

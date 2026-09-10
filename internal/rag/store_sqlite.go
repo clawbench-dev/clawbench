@@ -991,6 +991,63 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 	return nil
 }
 
+// RebuildFTS rebuilds the full-text index from the existing chunk text without
+// touching chunk rows, the vector index, or message indexed flags.
+//
+// Because rag_chunks_fts is an external-content FTS5 table (content='rag_chunks'),
+// its index can be regenerated directly from rag_chunks via the FTS5 'rebuild'
+// command. Dropping and recreating the table first guarantees a clean slate even
+// if the index was corrupted or out of sync, and keeps the operation independent
+// of the vector layer.
+//
+// Returns the number of chunks re-indexed.
+func (s *Store) RebuildFTS() (int64, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin fts rebuild transaction: %w", err)
+	}
+
+	_, err = tx.Exec("DROP TABLE IF EXISTS rag_chunks_fts")
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("drop rag_chunks_fts: %w", err)
+	}
+
+	_, err = tx.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
+			chunk_text_segmented,
+			content='rag_chunks',
+			content_rowid='id',
+			tokenize='unicode61'
+		)
+	`)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("recreate rag_chunks_fts: %w", err)
+	}
+
+	if _, err = tx.Exec(`INSERT INTO rag_chunks_fts(rag_chunks_fts) VALUES('rebuild')`); err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("rebuild rag_chunks_fts: %w", err)
+	}
+
+	var indexed int64
+	if err = tx.QueryRow("SELECT COUNT(*) FROM rag_chunks").Scan(&indexed); err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("count rebuilt chunks: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit fts rebuild: %w", err)
+	}
+
+	slog.Info("rag: FTS index rebuilt from existing chunks", slog.Int64("chunks", indexed))
+	return indexed, nil
+}
+
 // ResetVectorOnly clears vector embedding data only, keeping FTS and chunk text intact.
 // Drops the rag_vec table and resets has_embedding flags so the indexer will re-embed
 // all chunks with the current model. Chunk text, FTS index, and indexed message flags
@@ -1042,6 +1099,31 @@ func (s *Store) ChunkCount() (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM rag_chunks").Scan(&count)
 	return count, err
+}
+
+// IndexDiskUsage returns the logical on-disk footprint (in bytes) of the FTS
+// and vector indexes separately, by summing page sizes from SQLite's dbstat
+// virtual table.
+//
+// Both indexes live in the same ClawBench.db file: the FTS5 index is stored in
+// its shadow tables (rag_chunks_fts_*), and sqlite-vec stores the vector index
+// in rag_vec_* shadow tables plus the sqlite_autoindex_rag_vec_* indexes.
+//
+// Note: these are logical page sizes, not file sizes. Deleting a table returns
+// its pages to SQLite's freelist without shrinking the database file, so the
+// reported usage may not drop until a VACUUM runs. dbstat may be unavailable on
+// some builds; callers should treat an error as "size unknown".
+func (s *Store) IndexDiskUsage() (ftsBytes int64, vecBytes int64, err error) {
+	err = s.db.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE WHEN name LIKE 'rag_chunks_fts%' THEN pgsize ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN name LIKE 'rag_vec%' OR name LIKE 'sqlite_autoindex_rag_vec%' THEN pgsize ELSE 0 END), 0)
+		FROM dbstat
+	`).Scan(&ftsBytes, &vecBytes)
+	if err != nil {
+		return 0, 0, fmt.Errorf("index disk usage: %w", err)
+	}
+	return ftsBytes, vecBytes, nil
 }
 
 // EmbeddedChunkCount returns the number of chunks that have vector embeddings.

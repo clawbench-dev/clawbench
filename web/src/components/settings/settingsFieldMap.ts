@@ -445,10 +445,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         // ── Status indicators (top of panel) ──
         { labelKey: 'settings.items.ragSearchMode', descriptionKey: 'settings.items.ragSearchModeDesc', key: 'rag.status.mode', type: 'info', source: 'server', sectionHeader: 'settings.items.ragStatusSectionHeader' },
         { labelKey: 'settings.items.ragIndexProgress', descriptionKey: 'settings.items.ragIndexProgressDesc', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+        { labelKey: 'settings.items.ragFtsSize', descriptionKey: 'settings.items.ragFtsSizeDesc', key: 'rag.status.fts_size', type: 'info', source: 'server' },
         { labelKey: 'settings.items.ragEmbedProgress', descriptionKey: 'settings.items.ragEmbedProgressDesc', key: 'rag.status.embed_progress', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
+        { labelKey: 'settings.items.ragVecSize', descriptionKey: 'settings.items.ragVecSizeDesc', key: 'rag.status.vec_size', type: 'info', source: 'server', disableUnless: { key: 'rag.vector_enabled', value: true } },
         // ── Indexing & chunking (shared by FTS and vector) ──
         { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server', sectionHeader: 'settings.items.ragIndexSectionHeader' },
         { labelKey: 'settings.items.ragChunkOverlap', descriptionKey: 'settings.items.ragChunkOverlapDesc', key: 'rag.chunk_overlap', type: 'number', source: 'server' },
+        { labelKey: 'settings.items.ragBatchSize', descriptionKey: 'settings.items.ragBatchSizeDesc', key: 'rag.batch_size', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
         { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
         // ── Vector embedding (entire section disabled unless vector_enabled) ──

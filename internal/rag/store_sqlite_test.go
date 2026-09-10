@@ -553,6 +553,70 @@ func TestSQLiteStore_ResetVectorOnly(t *testing.T) {
 	assert.True(t, store.HasFTSData())
 }
 
+// ---------- RebuildFTS ----------
+
+func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 4)
+
+	// Sanity: chunks, FTS, and vectors all present
+	count, err := store.ChunkCount()
+	require.NoError(t, err)
+	require.Equal(t, 4, count)
+	require.True(t, store.HasFTSData())
+	require.True(t, store.HasVecData())
+
+	rebuilt, err := store.RebuildFTS()
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), rebuilt, "should report all chunks re-indexed")
+
+	// Chunks untouched
+	count, err = store.ChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 4, count, "chunk rows must be preserved")
+
+	// Vectors untouched — independent FTS rebuild must not drop rag_vec
+	assert.True(t, store.HasVecData(), "vector index must survive an FTS rebuild")
+	embCount, err := store.EmbeddedChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 4, embCount, "embeddings must be preserved")
+
+	// FTS still queryable after rebuild
+	assert.True(t, store.HasFTSData())
+
+	var ftsCount int
+	require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM rag_chunks_fts").Scan(&ftsCount))
+	assert.Equal(t, 4, ftsCount)
+}
+
+func TestSQLiteStore_RebuildFTS_EmptyStore(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	rebuilt, err := store.RebuildFTS()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), rebuilt)
+	assert.False(t, store.HasFTSData())
+}
+
+// ---------- IndexDiskUsage ----------
+
+func TestStore_IndexDiskUsage(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+
+	// Empty store: dbstat reports no FTS/vec shadow tables yet (or zero pages)
+	ftsBytes, vecBytes, err := store.IndexDiskUsage()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, ftsBytes, int64(0))
+	assert.GreaterOrEqual(t, vecBytes, int64(0))
+
+	insertTestChunksSQLite(t, store, 5)
+
+	ftsBytes, vecBytes, err = store.IndexDiskUsage()
+	require.NoError(t, err)
+	assert.Greater(t, ftsBytes, int64(0), "FTS shadow tables should consume pages")
+	assert.Greater(t, vecBytes, int64(0), "vector shadow tables should consume pages")
+}
+
 // ---------- UpdateEmbedding ----------
 
 func TestSQLiteStore_UpdateEmbedding(t *testing.T) {
