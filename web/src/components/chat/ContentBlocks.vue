@@ -554,7 +554,11 @@ function scheduledTaskKeys(bi: number) {
 }
 
 // ── Summary-mode structured cards (rendered from summaryCards, no block traversal) ──
-const summaryTools = computed(() => props.summaryCards?.tools || [])
+// PermissionApproval is filtered out: it is an actionable-only card (its buttons
+// need the live session ID + tool call ID, which the read-only summary view does
+// not carry), so in summary mode it would only render dead buttons. Older
+// persisted summaries may still contain it, hence the defensive filter.
+const summaryTools = computed(() => (props.summaryCards?.tools || []).filter((t: any) => !isPermissionApproval(t?.name || '')))
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])

@@ -20,22 +20,24 @@ var (
 	askDescRe          = regexp.MustCompile(`(?s)<description>(.*?)</description>`)
 )
 
-// isAutoExpandTool reports whether a tool_use block should be shown as a card
-// in summary view. Mirrors the frontend shouldAutoExpandTool set.
-func isAutoExpandTool(name string) bool {
-	n := strings.ToLower(name)
-	return n == "askuserquestion" || n == "permissionapproval"
+// isSummaryCardTool reports whether a tool_use block should be persisted into
+// summaryCards.tools. Only AskUserQuestion qualifies: PermissionApproval is an
+// actionable prompt bound to a live session (responding needs the session ID +
+// tool call ID), so in the read-only summary view it would only ever render a
+// button that cannot work — it is omitted entirely.
+func isSummaryCardTool(name string) bool {
+	return strings.ToLower(name) == "askuserquestion"
 }
 
 // extractSummaryCards walks content blocks and builds the compact card
-// metadata persisted in summaries.summary_cards. Only tool_use blocks that
-// auto-expand, scheduled-task IDs, and <ask-question> cards are retained.
+// metadata persisted in summaries.summary_cards. Only answerable tool_use
+// blocks, scheduled-task IDs, and <ask-question> cards are retained.
 func extractSummaryCards(blocks []model.ContentBlock) *model.SummaryCards {
 	cards := &model.SummaryCards{}
 	for _, b := range blocks {
 		switch b.Type {
 		case "tool_use":
-			if isAutoExpandTool(b.Name) {
+			if isSummaryCardTool(b.Name) {
 				cards.Tools = append(cards.Tools, model.SummaryTool{
 					Name:   b.Name,
 					ID:     b.ID,

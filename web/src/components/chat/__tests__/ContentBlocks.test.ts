@@ -796,21 +796,40 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
     })
 
-    it('renders a resolved PermissionApproval card from summaryCards.tools as a unified inline card', () => {
+    it('hides PermissionApproval cards in summary view (actionable-only, no dead buttons)', () => {
       const wrapper = mountBlocks({
         blocks: [],
         summary: 'sum text',
         showingSummary: true,
         summaryCards: {
-          tools: [{ name: 'PermissionApproval', id: 'perm-s', done: true, status: 'error', output: 'Cancelled', input: { toolName: 'Bash' } }],
+          tools: [
+            { name: 'PermissionApproval', id: 'perm-s', done: true, status: 'error', output: 'Cancelled', input: { toolName: 'Bash' } },
+            { name: 'AskUserQuestion', id: 'ask-s', input: { question: 'go?' } },
+          ],
           taskIDs: [],
           askQuestions: [],
         },
       })
-      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
-      expect(wrapper.find('.chat-card-strip').exists()).toBe(true)
+      // Only the AskUserQuestion card survives; the permission card is dropped.
+      expect(wrapper.html()).not.toContain('Permission Request')
+      expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+      expect(wrapper.html()).toContain('AskUserQuestion')
+    })
+
+    it('renders no permission card when summaryCards.tools only holds PermissionApproval', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{ name: 'PermissionApproval', id: 'perm-only', done: true, status: 'success', output: 'ok', input: { toolName: 'Bash' } }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(false)
       expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
-      expect(wrapper.html()).toContain('Permission Request')
+      expect(wrapper.html()).not.toContain('Permission Request')
     })
 
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {
