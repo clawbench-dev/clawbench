@@ -12,7 +12,7 @@
       </template>
       <!-- Drilldown detail view -->
       <template v-else>
-        <button class="detail-back-btn" @click.stop="selectedSession = null">
+        <button class="detail-back-btn" @click.stop="selectSession(null)">
           <ChevronLeft :size="18" />
         </button>
         <span class="bs-header-title detail-header-title">{{ selectedSession.session_title || t('sessionSearch.untitledSession') }}</span>
@@ -24,9 +24,28 @@
     <div v-if="!selectedSession" class="session-search-body">
       <div class="session-search-input-row">
         <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
-        <div class="mode-selector">
+        <div class="mode-selector search-mode-selector">
           <button class="mode-btn" :class="{ active: searchState.preferMode === 'hybrid' }" @click="setMode('hybrid')">{{ t('sessionSearch.modeHybrid') }}</button>
           <button class="mode-btn" :class="{ active: searchState.preferMode === 'fts' }" @click="setMode('fts')">{{ t('sessionSearch.modeFts') }}</button>
+        </div>
+      </div>
+
+      <div class="session-search-filter-row">
+        <div class="filter-group">
+          <span class="filter-group-label">{{ t('sessionSearch.filterArchive') }}</span>
+          <div class="mode-selector archive-filter-selector">
+            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'all' }" @click="setArchiveFilter('all')">{{ t('sessionSearch.archiveAll') }}</button>
+            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'active' }" @click="setArchiveFilter('active')">{{ t('sessionSearch.archiveActive') }}</button>
+            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'archived' }" @click="setArchiveFilter('archived')">{{ t('sessionSearch.archiveArchived') }}</button>
+          </div>
+        </div>
+        <div class="filter-group">
+          <span class="filter-group-label">{{ t('sessionSearch.sortLabel') }}</span>
+          <div class="mode-selector sort-order-selector">
+            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'relevance' }" @click="setSortOrder('relevance')">{{ t('sessionSearch.sortRelevance') }}</button>
+            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'newest' }" @click="setSortOrder('newest')">{{ t('sessionSearch.sortNewest') }}</button>
+            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'oldest' }" @click="setSortOrder('oldest')">{{ t('sessionSearch.sortOldest') }}</button>
+          </div>
         </div>
       </div>
 
@@ -39,7 +58,7 @@
             {{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}
             <span v-if="searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
           </div>
-          <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectedSession = session">
+          <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectSession(session)">
             <div class="session-search-item-header">
               <span class="session-search-item-title">{{ session.session_title || t('sessionSearch.untitledSession') }}</span>
               <span class="session-search-item-meta">{{ formatRelativeTime(session.created_at) }}</span>
@@ -60,12 +79,14 @@
       <!-- Session meta bar -->
       <div class="detail-meta-bar">
         <span v-if="selectedSession.backend" class="detail-meta-badge detail-meta-backend">{{ selectedSession.backend }}</span>
-        <span v-if="!isBrowseMode && selectedSession.chunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
+        <span v-if="!isBrowseMode && detailChunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
         <span class="detail-meta-time">{{ formatRelativeTime(selectedSession.created_at) }}</span>
       </div>
 
       <!-- Chunk list (scrollable via .bs-body) -->
-      <div v-for="chunk in selectedSession.chunks" :key="chunk.chunk_id" class="detail-chunk">
+      <LoadingIndicator v-if="lazyLoading" size="md" :label="t('sessionSearch.loadingPreview')" />
+      <div v-else-if="detailChunks.length === 0" class="detail-empty">{{ t('sessionSearch.noPreview') }}</div>
+      <div v-for="chunk in detailChunks" :key="chunk.chunk_id" class="detail-chunk">
         <div class="detail-chunk-role" :class="'role-' + chunk.role">
           <User :size="11" v-if="chunk.role === 'user'" />
           <Bot :size="11" v-else />
@@ -106,7 +127,7 @@ import { Search, ChevronLeft, User, Bot, RotateCcw, Import, MessageSquare, Trash
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
-import { useSessionSearch, type SessionSearchResult } from '@/composables/useSessionSearch'
+import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
@@ -120,11 +141,48 @@ const { t } = useI18n()
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult]; destroy: [session: SessionSearchResult]; 'open-acp-sessions': [] }>()
 
-const { state: searchState, setQuery, browse, clear } = useSessionSearch()
-const search = { state: searchState, setQuery, browse, clear }
+const { state: searchState, setQuery, browse, clear, setFilters } = useSessionSearch()
+const search = { state: searchState, setQuery, browse, clear, setFilters }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
+
+// ── Lazy first-message preview (browse mode only) ──
+// Browse results carry no chunk content; fetch the session's first message on
+// demand when its detail view is opened. Search results already have chunks.
+const lazyChunks = ref<ChunkHit[]>([])
+const lazyLoading = ref(false)
+let lazyRequestId = 0
+
+async function loadFirstMessage(session: SessionSearchResult) {
+  const requestId = ++lazyRequestId
+  lazyChunks.value = []
+  lazyLoading.value = true
+  const chunk = await fetchSessionFirstMessage(session.session_id)
+  // Ignore stale responses if the user navigated away or picked another session.
+  if (requestId !== lazyRequestId) return
+  lazyLoading.value = false
+  lazyChunks.value = chunk ? [chunk] : []
+}
+
+// Open a session's detail view. Browse results have no chunk content, so their
+// first message is fetched lazily; search results already carry their hits.
+function selectSession(session: SessionSearchResult | null | undefined) {
+  selectedSession.value = session ?? null
+  if (!session) {
+    lazyRequestId++
+    lazyChunks.value = []
+    lazyLoading.value = false
+    return
+  }
+  if (isBrowseMode.value) {
+    void loadFirstMessage(session)
+  } else {
+    lazyRequestId++
+    lazyChunks.value = []
+    lazyLoading.value = false
+  }
+}
 
 // ── Search mode selector ──
 function setMode(mode: 'hybrid' | 'fts') {
@@ -135,11 +193,22 @@ function setMode(mode: 'hybrid' | 'fts') {
   }
 }
 
+// ── Archive filter / sort order ──
+function setArchiveFilter(filter: SessionArchiveFilter) {
+  if (searchState.archivedFilter === filter) return
+  search.setFilters({ archived: filter })
+}
+
+function setSortOrder(sort: SessionSortOrder) {
+  if (searchState.sortOrder === sort) return
+  search.setFilters({ sort })
+}
+
 // ── Keyboard ↑/↓ + Enter navigation over results ──
 const listNav = useListNav({
   getCount: () => searchState.results.length,
   onConfirm: (idx) => {
-    selectedSession.value = searchState.results[idx]
+    selectSession(searchState.results[idx])
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -165,12 +234,18 @@ const searchModeLabel = computed(() => {
 // is not a search hit, so the match count label is hidden.
 const isBrowseMode = computed(() => searchState.searchMode === 'recent')
 
+// Chunks shown in the detail view. Search results carry their hits; browse
+// results carry none, so their first message is lazily fetched on drilldown.
+const detailChunks = computed<ChunkHit[]>(() =>
+  isBrowseMode.value ? lazyChunks.value : (selectedSession.value?.chunks ?? [])
+)
+
 // ── Back handler for drilldown ──
 const unregisterBack = registerBackHandler({
   id: 'session-search-detail',
   priority: PRIORITY_OVERLAY + 1,
   canGoBack: () => selectedSession.value !== null,
-  goBack: () => { selectedSession.value = null },
+  goBack: () => { selectSession(null) },
 })
 onUnmounted(unregisterBack)
 
@@ -186,9 +261,8 @@ onBeforeUnmount(() => chunkRefs.clear())
 
 // ── Markdown rendering ──
 const renderedChunks = computed(() => {
-  if (!selectedSession.value) return {} as Record<number, string>
   const map: Record<number, string> = {}
-  for (const chunk of selectedSession.value.chunks) {
+  for (const chunk of detailChunks.value) {
     map[chunk.chunk_id] = renderMarkdownHtml(chunk.chunk_text, {
       skipEnhancements: true,
       wrapTables: false,
@@ -198,14 +272,14 @@ const renderedChunks = computed(() => {
 })
 
 // ── Apply highlights via DOM after rendering ──
-watch(selectedSession, () => {
+watch([selectedSession, lazyChunks], () => {
   if (!selectedSession.value) return
   nextTick(() => applyHighlights())
 })
 
 function applyHighlights() {
   if (!selectedSession.value) return
-  for (const chunk of selectedSession.value.chunks) {
+  for (const chunk of detailChunks.value) {
     const el = chunkRefs.get(chunk.chunk_id)
     if (!el) continue
     // Clear previous highlights
@@ -315,7 +389,7 @@ watch(() => props.open, async (val) => {
     search.browse()
   } else {
     search.clear()
-    selectedSession.value = null
+    selectSession(null)
   }
 })
 
@@ -351,6 +425,29 @@ defineExpose({ focusSearchInput })
 
 .session-search-input-row :deep(.search-pill) {
   flex: 1;
+}
+
+.session-search-filter-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-group-label {
+  font-size: 11px;
+  color: var(--text-muted, #999);
+  white-space: nowrap;
 }
 
 .mode-selector {
@@ -638,6 +735,13 @@ defineExpose({ focusSearchInput })
 .detail-chunk {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
+}
+
+.detail-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-size: 13px;
 }
 
 .detail-chunk-role {

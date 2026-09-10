@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -467,6 +468,60 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ServeRAGSessionFirstMessage handles GET /api/rag/session-first-message?session_id=<id>
+// — lazily returns the earliest message of a session for the session-search
+// browse detail view. The browse list intentionally omits message content for
+// performance, so the detail preview is fetched on demand. Archived sessions
+// are supported. Project isolation: remote requires the project cookie.
+func ServeRAGSessionFirstMessage(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" && !middleware.IsLocalhost(r) {
+		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	// Verify the session belongs to the authenticated project (skip for
+	// localhost global access). Archived sessions are allowed.
+	if projectPath != "" {
+		sessionProject := service.GetSessionProjectPathIncludeArchived(sessionID)
+		if sessionProject == "" || sessionProject != projectPath {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+	}
+
+	msg, err := service.GetSessionFirstMessage(sessionID)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "MessageNotFound")
+		return
+	}
+
+	resp := struct {
+		MessageID int64      `json:"message_id"`
+		Role      string     `json:"role"`
+		Content   string     `json:"content"`
+		CreatedAt *time.Time `json:"created_at"`
+	}{}
+	if msg != nil {
+		resp.MessageID = msg.MessageID
+		resp.Role = msg.Role
+		resp.Content = msg.Content
+		resp.CreatedAt = &msg.CreatedAt
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // ServeRAGSessionSearch handles POST /api/rag/session-search — session-aggregated RAG search.
 func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
@@ -488,6 +543,8 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		FromTime         string `json:"from"`
 		ToTime           string `json:"to"`
 		PreferMode       string `json:"prefer_mode"`
+		Archived         string `json:"archived"`
+		SortOrder        string `json:"sort"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -498,10 +555,10 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		searchLimit = 100
 	}
 
-	// Empty query → "browse all" mode: list the project's sessions newest-first
-	// instead of rejecting the request.
+	// Empty query → "browse all" mode: list the project's sessions instead of
+	// rejecting the request. Archive filter and time sort apply here too.
 	if req.Query == "" {
-		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit)
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 			return
@@ -525,6 +582,8 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		FromTime:         req.FromTime,
 		ToTime:           req.ToTime,
 		PreferMode:       req.PreferMode,
+		Archived:         req.Archived,
+		SortOrder:        req.SortOrder,
 	}
 
 	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)

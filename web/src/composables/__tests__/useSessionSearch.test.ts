@@ -15,7 +15,7 @@ vi.mock('vue', () => ({
   onUnmounted: vi.fn(),
 }))
 
-import { useSessionSearch } from '@/composables/useSessionSearch'
+import { useSessionSearch, fetchSessionFirstMessage } from '@/composables/useSessionSearch'
 
 describe('useSessionSearch', () => {
   beforeEach(() => {
@@ -38,6 +38,8 @@ describe('useSessionSearch', () => {
       expect(state.error).toBeNull()
       expect(state.searchMode).toBe('')
       expect(state.preferMode).toBe('hybrid')
+      expect(state.archivedFilter).toBe('all')
+      expect(state.sortOrder).toBe('relevance')
     })
   })
 
@@ -69,7 +71,7 @@ describe('useSessionSearch', () => {
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q: 'test query', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: 'test query', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
       expect(state.results).toHaveLength(1)
       expect(state.results[0]).toEqual(mockResult)
@@ -89,7 +91,7 @@ describe('useSessionSearch', () => {
       await search('  test  ')
 
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -114,7 +116,7 @@ describe('useSessionSearch', () => {
       // Empty query fetches the recent-session list instead of a stale result.
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -207,7 +209,7 @@ describe('useSessionSearch', () => {
       await search('test')
 
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'test', prefer_mode: 'fts' }),
+        body: JSON.stringify({ q: 'test', prefer_mode: 'fts', archived: 'all', sort: 'relevance' }),
       }))
     })
   })
@@ -236,7 +238,7 @@ describe('useSessionSearch', () => {
       // Only one search should fire, with the latest query
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: 'abc', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: 'abc', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -256,7 +258,7 @@ describe('useSessionSearch', () => {
       // Browse fires immediately (no debounce) since the list is preloaded.
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
     })
 
@@ -271,8 +273,105 @@ describe('useSessionSearch', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1)
       expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
-        body: JSON.stringify({ q: '', prefer_mode: 'hybrid' }),
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'relevance' }),
       }))
+    })
+  })
+
+  describe('setFilters', () => {
+    it('sends archive filter and sort order and re-runs the query', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'fts' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      state.query = 'test'
+      await setFilters({ archived: 'archived', sort: 'oldest' })
+
+      expect(state.archivedFilter).toBe('archived')
+      expect(state.sortOrder).toBe('oldest')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: 'test', prefer_mode: 'hybrid', archived: 'archived', sort: 'oldest' }),
+      }))
+    })
+
+    it('browses when the query is empty', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      await setFilters({ sort: 'newest' })
+
+      expect(state.sortOrder).toBe('newest')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-search', expect.objectContaining({
+        body: JSON.stringify({ q: '', prefer_mode: 'hybrid', archived: 'all', sort: 'newest' }),
+      }))
+    })
+
+    it('only changes the provided field', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], total: 0, mode: 'recent' }),
+      })
+
+      const { state, setFilters } = useSessionSearch()
+      await setFilters({ archived: 'active' })
+
+      expect(state.archivedFilter).toBe('active')
+      expect(state.sortOrder).toBe('relevance')
+    })
+  })
+
+  describe('fetchSessionFirstMessage', () => {
+    it('maps the API response into a chunk hit', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          message_id: 7,
+          role: 'user',
+          content: 'hello world',
+          created_at: '2025-01-01T00:00:00Z',
+        }),
+      })
+
+      const chunk = await fetchSessionFirstMessage('s1')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-first-message?session_id=s1')
+      expect(chunk).toEqual({
+        chunk_id: 7,
+        chunk_text: 'hello world',
+        match_positions: [],
+        score: 0,
+        role: 'user',
+        message_id: 7,
+        created_at: '2025-01-01T00:00:00Z',
+      })
+    })
+
+    it('encodes the session id', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ content: 'x' }) })
+      await fetchSessionFirstMessage('a/b c')
+      expect(mockFetch).toHaveBeenCalledWith('/api/rag/session-first-message?session_id=a%2Fb%20c')
+    })
+
+    it('returns null when the session has no messages', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ message_id: 0, role: '', content: '', created_at: null }),
+      })
+      expect(await fetchSessionFirstMessage('empty')).toBeNull()
+    })
+
+    it('returns null on HTTP error', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 403 })
+      expect(await fetchSessionFirstMessage('s1')).toBeNull()
+    })
+
+    it('returns null on network error', async () => {
+      mockFetch.mockRejectedValue(new Error('network down'))
+      expect(await fetchSessionFirstMessage('s1')).toBeNull()
     })
   })
 

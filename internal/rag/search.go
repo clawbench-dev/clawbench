@@ -33,6 +33,8 @@ type SearchParams struct {
 	FromTime         string `json:"from"`
 	ToTime           string `json:"to"`
 	PreferMode       string `json:"prefer_mode,omitempty"` // "hybrid" (default) or "fts"
+	Archived         string `json:"archived,omitempty"`    // "all" (default) | "active" | "archived"
+	SortOrder        string `json:"sort,omitempty"`        // "relevance" (default) | "newest" | "oldest"
 }
 
 // SearchResult represents the response from a RAG search.
@@ -220,19 +222,21 @@ type SessionSearchResponse struct {
 	Mode     SearchMode            `json:"mode"`
 }
 
-// RecentSessions lists the project's sessions newest-first (reverse
-// chronological order) for the "browse all" state of session search, when no
-// query has been entered yet. It returns up to limit sessions with title,
-// backend, project, archived flag, creation time and message count.
-func RecentSessions(ctx context.Context, projectPath string, limit int) (*SessionSearchResponse, error) {
-	sessions, err := service.GetRecentSessions(projectPath, limit)
+// RecentSessions lists the project's sessions for the "browse all" state of
+// session search (no query entered). archiveFilter narrows to active/archived
+// sessions (or all), and sortOrder selects newest/oldest time ordering. It
+// returns up to limit sessions with title, backend, project, archived flag and
+// creation time. No message content is attached: the browse list stays cheap,
+// and the detail view lazily fetches the first message on demand.
+func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, sortOrder string) (*SessionSearchResponse, error) {
+	sessions, err := service.GetRecentSessions(projectPath, limit, archiveFilter, sortOrder)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]SessionSearchResult, 0, len(sessions))
 	for _, s := range sessions {
-		res := SessionSearchResult{
+		out = append(out, SessionSearchResult{
 			SessionID:    s.ID,
 			SessionTitle: s.Title,
 			Backend:      s.Backend,
@@ -242,20 +246,7 @@ func RecentSessions(ctx context.Context, projectPath string, limit int) (*Sessio
 			// No search happened in browse mode — no match count.
 			MatchCount: 0,
 			Chunks:     []ChunkHit{},
-		}
-		// Attach the session's first message as a preview chunk so the detail
-		// view (and list preview) has content to show without any search query.
-		if s.FirstContent != "" {
-			res.Chunks = append(res.Chunks, ChunkHit{
-				ChunkID:        s.FirstMessageID,
-				ChunkText:      s.FirstContent,
-				MatchPositions: []MatchRange{},
-				Role:           s.FirstRole,
-				MessageID:      s.FirstMessageID,
-				CreatedAt:      s.FirstCreatedAt,
-			})
-		}
-		out = append(out, res)
+		})
 	}
 
 	return &SessionSearchResponse{
@@ -267,7 +258,8 @@ func RecentSessions(ctx context.Context, projectPath string, limit int) (*Sessio
 
 // RAGSessionSearch performs RAG search and aggregates results by session.
 // It fetches an expanded pool of chunks, groups by session_id with a per-session
-// chunk cap, and returns up to searchLimit sessions sorted by best chunk score.
+// chunk cap, applies the archive filter, sorts by relevance or session time, and
+// returns up to searchLimit sessions.
 func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) {
 	if store == nil {
 		return nil, fmt.Errorf("RAG not initialized: store is nil")
@@ -329,27 +321,72 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		}
 	}
 
-	// Sort sessions by score descending
+	// Materialize the aggregated sessions in first-seen order.
 	sessions := make([]*SessionSearchResult, 0, len(sessionMap))
 	for _, id := range sessionOrder {
 		sessions = append(sessions, sessionMap[id])
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Score > sessions[j].Score
-	})
 
-	// Truncate to searchLimit
-	if len(sessions) > searchLimit {
-		sessions = sessions[:searchLimit]
-	}
-
-	// Enrich with session titles and archived status
+	// Enrich with session titles, archived status and the session's own
+	// creation time. In search mode CreatedAt initially comes from the matched
+	// chunk; the session-level timestamp is authoritative for display and for
+	// time sorting, so overwrite it when known.
 	sessionIDs := make(map[string]bool)
 	for _, s := range sessions {
 		sessionIDs[s.SessionID] = true
 	}
 	titles := getSessionTitles(sessionIDs)
-	archivedMap := getSessionArchivedStatus(sessionIDs)
+	metaMap := getSessionMetaBatch(sessionIDs)
+	for _, s := range sessions {
+		if m, ok := metaMap[s.SessionID]; ok {
+			s.Archived = m.Archived
+			if !m.CreatedAt.IsZero() {
+				s.CreatedAt = m.CreatedAt
+			}
+		}
+	}
+
+	// Filter by archive status now that each session's archived flag is known.
+	archiveFilter := service.NormalizeSessionArchiveFilter(params.Archived)
+	if archiveFilter != service.SessionArchiveFilterAll {
+		wantArchived := archiveFilter == service.SessionArchiveFilterArchived
+		filtered := sessions[:0]
+		for _, s := range sessions {
+			if s.Archived == wantArchived {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
+	// Sort sessions. Default keeps search-engine relevance (best chunk score
+	// desc); time orders re-sort the relevance result set by the session's
+	// creation time, tie-broken by session id.
+	switch service.NormalizeSessionSortOrder(params.SortOrder) {
+	case service.SessionSortNewest:
+		sort.Slice(sessions, func(i, j int) bool {
+			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+				return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
+			}
+			return sessions[i].SessionID < sessions[j].SessionID
+		})
+	case service.SessionSortOldest:
+		sort.Slice(sessions, func(i, j int) bool {
+			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
+				return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+			}
+			return sessions[i].SessionID < sessions[j].SessionID
+		})
+	default:
+		sort.Slice(sessions, func(i, j int) bool {
+			return sessions[i].Score > sessions[j].Score
+		})
+	}
+
+	// Truncate to searchLimit
+	if len(sessions) > searchLimit {
+		sessions = sessions[:searchLimit]
+	}
 
 	// Build response
 	out := make([]SessionSearchResult, len(sessions))
@@ -357,9 +394,6 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 		out[i] = *s
 		if title, ok := titles[s.SessionID]; ok {
 			out[i].SessionTitle = title
-		}
-		if arch, ok := archivedMap[s.SessionID]; ok {
-			out[i].Archived = arch
 		}
 	}
 
@@ -378,11 +412,19 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 	}, nil
 }
 
-// getSessionArchivedStatus fetches the archived status for a set of session IDs.
-func getSessionArchivedStatus(sessionIDs map[string]bool) map[string]bool {
-	archivedMap := make(map[string]bool, len(sessionIDs))
+// sessionMeta holds the DB-sourced session attributes needed to enrich and
+// filter session search results.
+type sessionMeta struct {
+	Archived  bool
+	CreatedAt time.Time
+}
+
+// getSessionMetaBatch fetches archived status and creation time for a set of
+// session IDs in a single query. Missing entries fall back to the zero value.
+func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
+	meta := make(map[string]sessionMeta, len(sessionIDs))
 	if !service.DBReady() || len(sessionIDs) == 0 {
-		return archivedMap
+		return meta
 	}
 	ids := make([]string, 0, len(sessionIDs))
 	for id := range sessionIDs {
@@ -394,18 +436,19 @@ func getSessionArchivedStatus(sessionIDs map[string]bool) map[string]bool {
 		args[i] = id
 	}
 	rows, err := service.ReadDB().Query(
-		"SELECT id, archived FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
+		"SELECT id, archived, created_at FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
 	)
 	if err != nil {
-		return archivedMap
+		return meta
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id string
 		var archived int
-		if err := rows.Scan(&id, &archived); err == nil {
-			archivedMap[id] = archived == 1
+		var createdAt time.Time
+		if err := rows.Scan(&id, &archived, &createdAt); err == nil {
+			meta[id] = sessionMeta{Archived: archived == 1, CreatedAt: createdAt}
 		}
 	}
-	return archivedMap
+	return meta
 }

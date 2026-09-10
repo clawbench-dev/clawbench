@@ -398,3 +398,98 @@ func TestRAGSearch_EnrichesSessionTitles(t *testing.T) {
 	// SessionTitle may be empty since service.DB is nil in tests, but should not panic
 	assert.Equal(t, SearchModeFTS, result.Mode)
 }
+
+// ---------- RAGSessionSearch aggregation, sort and archive filter ----------
+
+func TestRAGSessionSearch_DefaultRelevanceOrder(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	for i, sid := range []string{"sess-a", "sess-b", "sess-c"} {
+		chunk := makeTestChunk(sid, int64(i+1), 0, "database query optimization")
+		chunk.CreatedAt = base.Add(time.Duration(i) * time.Hour)
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 3)
+	// Default order keeps search relevance (score desc); assert the strongest
+	// result is first without assuming which session that is.
+	assert.GreaterOrEqual(t, result.Sessions[0].Score, result.Sessions[2].Score)
+}
+
+func TestRAGSessionSearch_SortOldestUsesSessionTime(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	specs := []struct {
+		sid string
+		at  time.Time
+	}{
+		{"sess-new", base.Add(3 * time.Hour)},
+		{"sess-old", base},
+		{"sess-mid", base.Add(2 * time.Hour)},
+	}
+	for i, s := range specs {
+		chunk := makeTestChunk(s.sid, int64(i+1), 0, "database query optimization")
+		chunk.CreatedAt = s.at
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	oldest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SortOrder:   "oldest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, oldest.Sessions, 3)
+	assert.Equal(t, "sess-old", oldest.Sessions[0].SessionID)
+	assert.Equal(t, "sess-mid", oldest.Sessions[1].SessionID)
+	assert.Equal(t, "sess-new", oldest.Sessions[2].SessionID)
+
+	newest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SortOrder:   "newest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, newest.Sessions, 3)
+	assert.Equal(t, "sess-new", newest.Sessions[0].SessionID)
+	assert.Equal(t, "sess-mid", newest.Sessions[1].SessionID)
+	assert.Equal(t, "sess-old", newest.Sessions[2].SessionID)
+}
+
+func TestRAGSessionSearch_ArchiveFilterActiveKeepsAllWhenNoSessionDB(t *testing.T) {
+	// With no service DB, archived status is unknown and defaults to active, so
+	// filtering for "active" must not drop any results.
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	for i, sid := range []string{"sess-a", "sess-b"} {
+		chunk := makeTestChunk(sid, int64(i+1), 0, "database query optimization")
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		Archived:    "active",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Len(t, result.Sessions, 2)
+
+	// "archived" with unknown status → nothing matches.
+	result, err = RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		Archived:    "archived",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Empty(t, result.Sessions)
+}

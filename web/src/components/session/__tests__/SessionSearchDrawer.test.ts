@@ -22,6 +22,16 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.openSession': 'Open',
       'sessionSearch.modeHybrid': 'Hybrid',
       'sessionSearch.modeFts': 'Full-text',
+      'sessionSearch.filterArchive': 'Status',
+      'sessionSearch.archiveAll': 'All',
+      'sessionSearch.archiveActive': 'Active',
+      'sessionSearch.archiveArchived': 'Archived',
+      'sessionSearch.sortLabel': 'Sort',
+      'sessionSearch.sortRelevance': 'Relevance',
+      'sessionSearch.sortNewest': 'Newest',
+      'sessionSearch.sortOldest': 'Oldest',
+      'sessionSearch.noPreview': 'No messages in this session',
+      'sessionSearch.loadingPreview': 'Loading preview...',
     }
     return map[key] ?? key
   }}),
@@ -58,7 +68,9 @@ vi.mock('@/composables/useBackHandler', () => ({
 const mockClear = vi.fn()
 const mockSetQuery = vi.fn()
 const mockBrowse = vi.fn()
+const mockSetFilters = vi.fn()
 const mockSearchState = vi.fn()
+const mockFetchFirstMessage = vi.fn()
 
 vi.mock('@/composables/useSessionSearch', () => ({
   useSessionSearch: () => ({
@@ -66,7 +78,9 @@ vi.mock('@/composables/useSessionSearch', () => ({
     setQuery: mockSetQuery,
     browse: mockBrowse,
     clear: mockClear,
+    setFilters: mockSetFilters,
   }),
+  fetchSessionFirstMessage: (...args: unknown[]) => mockFetchFirstMessage(...args),
 }))
 
 // Stub child components
@@ -94,6 +108,8 @@ function createState(overrides = {}) {
     error: null as string | null,
     searchMode: '',
     preferMode: 'hybrid' as const,
+    archivedFilter: 'all' as const,
+    sortOrder: 'relevance' as const,
     ...overrides,
   }
 }
@@ -249,6 +265,56 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.find('.session-search-body').exists()).toBe(false)
   })
 
+  it('lazily fetches the first message when drilling into a browse result', async () => {
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent' }))
+    mockFetchFirstMessage.mockResolvedValue({
+      chunk_id: 42,
+      chunk_text: 'first message body',
+      match_positions: [],
+      score: 0,
+      role: 'user',
+      message_id: 42,
+      created_at: '2025-01-01',
+    })
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(sampleResult)
+    await flushPromises()
+    instance.update()
+
+    expect(mockFetchFirstMessage).toHaveBeenCalledWith('s1')
+    expect(wrapper.find('.detail-page').exists()).toBe(true)
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+  })
+
+  it('shows an empty preview when a browse session has no first message', async () => {
+    mockSearchState.mockReturnValue(createState({ query: '', results: [sampleResult], searchMode: 'recent' }))
+    mockFetchFirstMessage.mockResolvedValue(null)
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(sampleResult)
+    await flushPromises()
+    instance.update()
+
+    expect(wrapper.find('.detail-empty').exists()).toBe(true)
+    expect(wrapper.find('.detail-chunk').exists()).toBe(false)
+  })
+
+  it('does not lazily fetch for search-mode results (they already carry chunks)', async () => {
+    mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult], searchMode: 'hybrid' }))
+
+    const wrapper = mountDrawer()
+    const instance = (wrapper.vm as any).$
+    instance.setupState.selectSession(sampleResult)
+    await flushPromises()
+    instance.update()
+
+    expect(mockFetchFirstMessage).not.toHaveBeenCalled()
+    expect(wrapper.find('.detail-chunk').exists()).toBe(true)
+  })
+
   it('returns to search list from detail view via back button', async () => {
     mockSearchState.mockReturnValue(createState({ query: 'test', results: [sampleResult] }))
 
@@ -353,7 +419,7 @@ describe('SessionSearchDrawer', () => {
 
   it('renders mode selector with hybrid active by default', () => {
     const wrapper = mountDrawer()
-    const buttons = wrapper.findAll('.mode-btn')
+    const buttons = wrapper.findAll('.search-mode-selector .mode-btn')
     expect(buttons).toHaveLength(2)
     expect(buttons[0].classes()).toContain('active')
     expect(buttons[0].text()).toBe('Hybrid')
@@ -364,7 +430,7 @@ describe('SessionSearchDrawer', () => {
     const state = createState({ query: 'test' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.mode-btn')[1]
+    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
 
     await ftsBtn.trigger('click')
     expect(state.preferMode).toBe('fts')
@@ -424,7 +490,7 @@ describe('SessionSearchDrawer', () => {
     const state = createState({ query: 'active' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.mode-btn')[1]
+    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
     await ftsBtn.trigger('click')
     expect(mockSetQuery).toHaveBeenCalledWith('active')
   })
@@ -434,8 +500,62 @@ describe('SessionSearchDrawer', () => {
     const state = createState({ query: '' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.mode-btn')[1]
+    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
     await ftsBtn.trigger('click')
     expect(mockSetQuery).not.toHaveBeenCalled()
+  })
+
+  it('renders archive filter with All active by default', () => {
+    const wrapper = mountDrawer()
+    const buttons = wrapper.findAll('.archive-filter-selector .mode-btn')
+    expect(buttons).toHaveLength(3)
+    expect(buttons.map(b => b.text())).toEqual(['All', 'Active', 'Archived'])
+    expect(buttons[0].classes()).toContain('active')
+  })
+
+  it('applies archive filter via setFilters', async () => {
+    const state = createState({ query: 'test' })
+    mockSearchState.mockReturnValue(state)
+    const wrapper = mountDrawer()
+    const archivedBtn = wrapper.findAll('.archive-filter-selector .mode-btn')[2]
+
+    await archivedBtn.trigger('click')
+    expect(mockSetFilters).toHaveBeenCalledWith({ archived: 'archived' })
+  })
+
+  it('does not re-filter when clicking the already-active archive option', async () => {
+    mockSearchState.mockReturnValue(createState({ archivedFilter: 'all' }))
+    const wrapper = mountDrawer()
+    const allBtn = wrapper.findAll('.archive-filter-selector .mode-btn')[0]
+
+    await allBtn.trigger('click')
+    expect(mockSetFilters).not.toHaveBeenCalled()
+  })
+
+  it('renders sort selector with Relevance active by default', () => {
+    const wrapper = mountDrawer()
+    const buttons = wrapper.findAll('.sort-order-selector .mode-btn')
+    expect(buttons).toHaveLength(3)
+    expect(buttons.map(b => b.text())).toEqual(['Relevance', 'Newest', 'Oldest'])
+    expect(buttons[0].classes()).toContain('active')
+  })
+
+  it('applies sort order via setFilters', async () => {
+    const state = createState({ query: 'test' })
+    mockSearchState.mockReturnValue(state)
+    const wrapper = mountDrawer()
+    const oldestBtn = wrapper.findAll('.sort-order-selector .mode-btn')[2]
+
+    await oldestBtn.trigger('click')
+    expect(mockSetFilters).toHaveBeenCalledWith({ sort: 'oldest' })
+  })
+
+  it('does not re-sort when clicking the already-active sort option', async () => {
+    mockSearchState.mockReturnValue(createState({ sortOrder: 'relevance' }))
+    const wrapper = mountDrawer()
+    const relevanceBtn = wrapper.findAll('.sort-order-selector .mode-btn')[0]
+
+    await relevanceBtn.trigger('click')
+    expect(mockSetFilters).not.toHaveBeenCalled()
   })
 })

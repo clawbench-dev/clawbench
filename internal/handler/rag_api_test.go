@@ -763,7 +763,79 @@ func TestServeRAGSessionSearch_EmptyQueryRemoteNoProjectDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
+func TestServeRAGSessionSearch_BrowseArchiveFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "active-1", "Active", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "arch-1", "Archived", "2024-02-01 10:00:00", true)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+			Archived  bool   `json:"archived"`
+		} `json:"sessions"`
+		Total int `json:"total"`
+	}
+
+	// Active only.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"archived": "active"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var active resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &active))
+	require.Len(t, active.Sessions, 1)
+	assert.Equal(t, "active-1", active.Sessions[0].SessionID)
+	assert.False(t, active.Sessions[0].Archived)
+
+	// Archived only.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"archived": "archived"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var arch resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &arch))
+	require.Len(t, arch.Sessions, 1)
+	assert.Equal(t, "arch-1", arch.Sessions[0].SessionID)
+	assert.True(t, arch.Sessions[0].Archived)
+
+	// All (default) includes both.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var all resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+	assert.Equal(t, 2, all.Total)
+}
+
+func TestServeRAGSessionSearch_BrowseSortOldest(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "new", "New", "2024-03-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "old", "Old", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "mid", "Mid", "2024-02-01 10:00:00", false)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"sort": "oldest"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Sessions, 3)
+	assert.Equal(t, "old", result.Sessions[0].SessionID)
+	assert.Equal(t, "mid", result.Sessions[1].SessionID)
+	assert.Equal(t, "new", result.Sessions[2].SessionID)
+}
+
+func TestServeRAGSessionSearch_BrowseOmitsMessageContent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -793,10 +865,125 @@ func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Sessions, 1)
 	assert.Zero(t, result.Sessions[0].MatchCount)
-	// The first message is attached as a preview chunk for the detail view.
-	require.Len(t, result.Sessions[0].Chunks, 1)
-	assert.Equal(t, "First message here", result.Sessions[0].Chunks[0].ChunkText)
-	assert.Equal(t, "user", result.Sessions[0].Chunks[0].Role)
+	// Browse mode must not attach message content: it is fetched lazily by the
+	// detail view to keep the list query cheap.
+	assert.Empty(t, result.Sessions[0].Chunks)
+}
+
+// ---------- ServeRAGSessionFirstMessage ----------
+
+func TestServeRAGSessionFirstMessage_MethodCheck(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-first-message?session_id=x", nil)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_MissingSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_ReturnsEarliestMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false)
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_history (project_path, role, content, session_id, backend, created_at) VALUES
+		 (?, 'assistant', 'second', 'sess-fm', 'claude', '2024-01-02 10:00:00'),
+		 (?, 'user', 'first', 'sess-fm', 'claude', '2024-01-01 10:00:00')`,
+		env.ProjectDir, env.ProjectDir,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-fm", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "user", result.Role)
+	assert.Equal(t, "first", result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_ArchivedSessionAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true)
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
+		env.ProjectDir,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-arch", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "hello", result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_EmptySessionReturnsEmpty(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-empty", "Empty", "2024-01-01 10:00:00", false)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-empty", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		MessageID int64  `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Zero(t, result.MessageID)
+	assert.Empty(t, result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_WrongProjectDenied(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-p", "Session", "2024-01-01 10:00:00", false)
+
+	otherProject := filepath.Join(filepath.Dir(env.ProjectDir), "other-first-msg")
+	_ = os.MkdirAll(otherProject, 0o755)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-p", nil)
+	req = withProjectCookie(req, otherProject)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_RemoteNoProjectDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=x", nil)
+	// Default RemoteAddr is 192.0.2.1 (non-localhost)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestServeRAGSessionSearch_BrowseModeDBError(t *testing.T) {
