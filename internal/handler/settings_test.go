@@ -1742,6 +1742,63 @@ func TestServeConfig_Get_RAGBatchSize(t *testing.T) {
 	assert.Equal(t, float64(37), rag["batch_size"])
 }
 
+// --- validatePatchValues: RAG numeric bounds ---
+
+func TestServeConfig_Patch_RAGBatchSizeZeroRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// batch_size becomes the SQL LIMIT for GetUnindexedMessages: 0 would stop
+	// indexing entirely, so it must be rejected rather than silently persisted.
+	body := `{"rag":{"batch_size":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.batch_size must be at least 1")
+}
+
+func TestServeConfig_Patch_RAGBatchSizeNegativeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// A negative LIMIT means "no limit" in SQLite — would pull every unindexed
+	// message at once.
+	body := `{"rag":{"batch_size":-5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.batch_size must be at least 1")
+}
+
+func TestServeConfig_Patch_RAGChunkSizeZeroRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"rag":{"chunk_size":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.chunk_size must be at least 1")
+}
+
 // --- validatePatchValues: default_agent with nil Agents ---
 
 func TestServeConfig_Patch_DefaultAgentEmptyAgents(t *testing.T) {

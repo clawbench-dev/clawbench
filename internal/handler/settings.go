@@ -953,6 +953,30 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// RAG numeric fields. batch_size is load-bearing: it becomes the SQL LIMIT
+	// for GetUnindexedMessages, so 0 silently stops indexing and a negative
+	// value means "no limit" and would pull every unindexed message at once.
+	if ragVal, ok := patch["rag"].(map[string]any); ok {
+		if v, ok := ragVal["batch_size"].(float64); ok && v < 1 {
+			return fmt.Errorf("rag.batch_size must be at least 1")
+		}
+		if v, ok := ragVal["chunk_size"].(float64); ok && v < 1 {
+			return fmt.Errorf("rag.chunk_size must be at least 1")
+		}
+		if v, ok := ragVal["chunk_overlap"].(float64); ok && v < 0 {
+			return fmt.Errorf("rag.chunk_overlap must be non-negative")
+		}
+		if v, ok := ragVal["search_limit"].(float64); ok && v < 1 {
+			return fmt.Errorf("rag.search_limit must be at least 1")
+		}
+		if v, ok := ragVal["search_pool_size"].(float64); ok && v < 1 {
+			return fmt.Errorf("rag.search_pool_size must be at least 1")
+		}
+		if v, ok := ragVal["retention_days"].(float64); ok && v < 0 {
+			return fmt.Errorf("rag.retention_days must be non-negative")
+		}
+	}
+
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 
 	// Validate push_mode value

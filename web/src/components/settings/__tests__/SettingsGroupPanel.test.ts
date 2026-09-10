@@ -1407,6 +1407,34 @@ describe('SettingsGroupPanel', () => {
       expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('—')
       expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('—')
     })
+
+    it('shows dash (not "0 B") when data exists but dbstat reported no size', () => {
+      // dbstat may be unavailable, leaving size at 0 while has_*_data is true.
+      // Rendering "0 B" would wrongly imply an empty index.
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'fts', has_fts_data: true, has_vec_data: false,
+        embedder_healthy: false, total_messages: 10, indexed_messages: 10, embedded_messages: 0,
+        fts_size_bytes: 0, vec_size_bytes: 0,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('—')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('—')
+    })
+
+    it('formats a multi-GB index in GB, not MB', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'hybrid', has_fts_data: true, has_vec_data: true,
+        embedder_healthy: true, total_messages: 10, indexed_messages: 10, embedded_messages: 10,
+        fts_size_bytes: 3 * 1024 * 1024 * 1024, vec_size_bytes: 1024,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('3.0 GB')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('1.0 KB')
+    })
   })
 
   // ─── RAG rebuild buttons (footer) ──────────────────────

@@ -453,10 +453,12 @@ function getRagStatusValue(key: string): unknown {
       return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.indexed_messages, s.total_messages), total: s.total_messages }) : '—'
     case 'rag.status.embed_progress':
       return s.total_messages > 0 ? t('settings.items.ragProgressFormat', { done: Math.min(s.embedded_messages, s.total_messages), total: s.total_messages }) : '—'
+    // Sizes are 0 when the index is empty or dbstat is unavailable; show a
+    // dash rather than a misleading "0 B".
     case 'rag.status.fts_size':
-      return s.has_fts_data ? formatFileSize(s.fts_size_bytes) : '—'
+      return s.fts_size_bytes > 0 ? formatFileSize(s.fts_size_bytes) : '—'
     case 'rag.status.vec_size':
-      return s.has_vec_data ? formatFileSize(s.vec_size_bytes) : '—'
+      return s.vec_size_bytes > 0 ? formatFileSize(s.vec_size_bytes) : '—'
     default:
       return ''
   }
@@ -593,7 +595,8 @@ async function handleRagRebuild(kind: 'fts' | 'vector') {
 }
 
 async function handleFieldClick(_field: ItemSpec) {
-  // No action items in RAG panel now — rebuilds are triggered via progress bar icons
+  // The RAG panel has no clickable action items — index rebuilds live in the
+  // panel footer buttons, not in per-row action fields.
 }
 
 // ── Connectivity test ──
