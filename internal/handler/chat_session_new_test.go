@@ -573,6 +573,34 @@ func TestServeAISessionUpdate_Title(t *testing.T) {
 	assert.Equal(t, "My Custom Session Name", got)
 }
 
+// TestServeAISessionUpdate_TitleMarksRenamed verifies that a manual rename sets
+// title_renamed so the first-message auto-title will not clobber it.
+func TestServeAISessionUpdate_TitleMarksRenamed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "New Session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update?session_id="+sessionID, map[string]any{
+		"title": "User Chosen Name",
+	})
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.True(t, renamed, "manual rename must set title_renamed")
+
+	// The first user message must not overwrite the user's title.
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "this is a long first message", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	got, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "User Chosen Name", got)
+}
+
 func TestServeAISessionUpdate_AutoApproveWithACPConn(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

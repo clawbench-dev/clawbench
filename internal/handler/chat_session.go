@@ -454,8 +454,10 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Title != "" {
+		// Manual rename: mark title_renamed so the first-message auto-title
+		// does not overwrite the user's explicit choice.
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionTitle(sessionID, req.Title)
+		service.SetSessionTitleByUser(sessionID, req.Title)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

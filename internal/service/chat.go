@@ -638,23 +638,33 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 		return 0, txErr
 	}
 
-	// If this is the first user message, update session title
+	// If this is the first user message, update session title — unless the user
+	// already renamed the session manually (title_renamed=1) or the session was
+	// created with a meaningful title of its own (scheduled task sessions).
 	if role == "user" {
 		var count int
 		if txErr = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
-			title := ExtractPlainText(content)
-			if title == "" && len(files) > 0 {
-				title = titleFromFileEntries(files)
-			}
-			if title == "" {
-				title = fallbackTitle
-			}
-			runes := []rune(title)
-			if len(runes) > 50 {
-				title = string(runes[:50]) + "..."
-			}
-			if _, txErr = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); txErr != nil {
-				return 0, txErr
+			var renamed int
+			var sessionType string
+			// Best-effort reads: a missing column (minimal test schemas) leaves the
+			// zero value, preserving the historical auto-title behavior.
+			_ = tx.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed)
+			_ = tx.QueryRow("SELECT COALESCE(session_type, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionType)
+			if renamed == 0 && sessionType != "scheduled" {
+				title := ExtractPlainText(content)
+				if title == "" && len(files) > 0 {
+					title = titleFromFileEntries(files)
+				}
+				if title == "" {
+					title = fallbackTitle
+				}
+				runes := []rune(title)
+				if len(runes) > 50 {
+					title = string(runes[:50]) + "..."
+				}
+				if _, txErr = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); txErr != nil {
+					return 0, txErr
+				}
 			}
 		}
 	}
@@ -1446,9 +1456,19 @@ func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
 	return err
 }
 
-// UpdateSessionTitle updates the title of a chat session.
+// UpdateSessionTitle updates the title of a chat session. This is the
+// system/auto path (ACP import, etc.) and does NOT mark the title as
+// user-renamed — the first-message auto-title may still replace it.
 func UpdateSessionTitle(sessionID, title string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
+	return err
+}
+
+// SetSessionTitleByUser updates the title of a chat session and marks it as
+// user-renamed (title_renamed=1) so the first-message auto-title will not
+// overwrite the user's explicit choice. Used by the manual rename endpoint.
+func SetSessionTitleByUser(sessionID, title string) error {
+	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_renamed = 1 WHERE id = ?", title, sessionID)
 	return err
 }
 
@@ -1605,6 +1625,17 @@ func GetSessionTitle(sessionID string) (string, error) {
 		return "", err
 	}
 	return title, nil
+}
+
+// GetSessionTitleRenamed reports whether the session title was set manually by
+// the user (title_renamed=1), which suppresses first-message auto-titling.
+func GetSessionTitleRenamed(sessionID string) (bool, error) {
+	var renamed int
+	err := dbRead.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed)
+	if err != nil {
+		return false, err
+	}
+	return renamed == 1, nil
 }
 
 // GetSessionTitlesBatch fetches titles for multiple sessions in a single query.

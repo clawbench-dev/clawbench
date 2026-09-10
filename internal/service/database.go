@@ -684,6 +684,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add title_renamed column. Set to 1 when the user manually renames
+	// a session, so the first-message auto-title does not overwrite their choice.
+	var hasTitleRenamed int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_renamed'").Scan(&hasTitleRenamed)
+	if hasTitleRenamed == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_renamed INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add title_renamed column: %w", err)
+		}
+	}
+
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)

@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	transport TEXT DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
+	title_renamed INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -294,6 +295,83 @@ func TestAddChatMessage_AutoTitle(t *testing.T) {
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
 	assert.Equal(t, "This is my question about Go testing", title)
+}
+
+// TestAddChatMessage_AutoTitleSkippedWhenUserRenamed verifies that a manual
+// rename performed before the first message survives the auto-title step.
+func TestAddChatMessage_AutoTitleSkippedWhenUserRenamed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	// User renames the session before sending anything.
+	require.NoError(t, service.SetSessionTitleByUser(sid, "My Custom Name"))
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.True(t, renamed)
+
+	// First user message must NOT overwrite the custom title.
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "This should not become the title", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "My Custom Name", title)
+}
+
+// TestAddChatMessage_AutoTitleSkippedForScheduledSession verifies that a
+// scheduled task session keeps its created title (⏰ <task name>) instead of
+// being overwritten by the task prompt on the first message.
+func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateScheduledSession(t, "/project", "claude", "⏰ Daily Code Review")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "review the code please", nil, false, "Daily Code Review")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "⏰ Daily Code Review", title)
+}
+
+// TestAddChatMessage_AutoTitleStillAppliesForChatSession is a guard against the
+// scheduled-session exception accidentally suppressing normal auto-titling.
+func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "normal chat title", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "normal chat title", title)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	assert.NoError(t, err)
+	assert.False(t, renamed, "auto-titled sessions must not be marked as user-renamed")
+}
+
+// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the system/auto title path
+// (ACP import etc.) leaves the user-renamed flag untouched.
+func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+	require.NoError(t, service.UpdateSessionTitle(sid, "Imported Title"))
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.False(t, renamed)
+
+	// Because it was not marked, the first message may still auto-title it.
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites import", nil, false, "NewSession")
+	assert.NoError(t, err)
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "overwrites import", title)
 }
 
 func TestAddChatMessage_AutoTitleTruncated(t *testing.T) {
