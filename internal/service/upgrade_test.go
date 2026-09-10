@@ -797,6 +797,9 @@ func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 		return nil, fmt.Errorf("no tarball URL in registry response")
 	}
 
+	// Mirror the production pipeline in fetchUpgradeInfoFromBase: normalize the
+	// package-name segment first, then repoint the host at the query base.
+	tarballURL = normalizeTarballURL(tarballURL)
 	tarballURL = rewriteTarballURL(tarballURL, baseURL)
 
 	return &UpgradeInfo{
@@ -1457,4 +1460,92 @@ func TestRewriteTarballURL(t *testing.T) {
 	assert.Equal(t,
 		"https://registry.npmmirror.com/x.tgz",
 		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmmirror.com"))
+}
+
+// TestNormalizeTarballURL covers both the malformed mirror URLs that triggered
+// the 404 and the standard URLs that must pass through untouched.
+func TestNormalizeTarballURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			// Root cause of the 404: Nexus mirror leaves the dist-tag in the
+			// package-name segment.
+			name: "strips @latest from scoped package segment",
+			in:   "http://rd-registry.uniview.com/repository/npm-public/@xulongzhe/clawbench-linux-x64@latest/-/clawbench-linux-x64-0.91.0.tgz",
+			want: "http://rd-registry.uniview.com/repository/npm-public/@xulongzhe/clawbench-linux-x64/-/clawbench-linux-x64-0.91.0.tgz",
+		},
+		{
+			// Any dist-tag is stripped, not just "@latest" — the mirror may be
+			// queried with an arbitrary tag in the future.
+			name: "strips arbitrary dist-tag",
+			in:   "https://mirror.example.com/@scope/pkg@next/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/@scope/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "strips tag from unscoped package",
+			in:   "https://mirror.example.com/pkg@latest/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "standard scoped URL unchanged",
+			in:   "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz",
+			want: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "standard unscoped URL unchanged",
+			in:   "https://registry.npmmirror.com/pkg/-/pkg-1.2.3.tgz",
+			want: "https://registry.npmmirror.com/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			// The leading "@" is the scope marker, not a tag separator. The
+			// "at > 0" guard must not mistake it for one.
+			name: "scope marker alone is preserved",
+			in:   "https://mirror.example.com/@scope/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/@scope/-/pkg-1.2.3.tgz",
+		},
+		{
+			// Without "/-/" the URL is not recognized as an npm tarball path,
+			// so the function must be a no-op rather than mangling it.
+			name: "no /-/ separator unchanged",
+			in:   "https://mirror.example.com/@scope/pkg@latest",
+			want: "https://mirror.example.com/@scope/pkg@latest",
+		},
+		{
+			name: "empty string unchanged",
+			in:   "",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeTarballURL(tt.in))
+		})
+	}
+}
+
+func TestFetchUpgradeInfo_NormalizesMalformedMirrorTarball(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Regression test for the 404: the registry response carries a dist-tag in
+	// the package-name segment, which must be cleaned before download.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "0.91.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/@scope/pkg@latest/-/pkg-0.91.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	info, err := fetchUpgradeInfoWithBase(ts.URL)
+	require.NoError(t, err)
+	assert.NotContains(t, info.TarballURL, "@latest")
+	assert.Contains(t, info.TarballURL, "/@scope/pkg/-/pkg-0.91.0.tgz")
 }

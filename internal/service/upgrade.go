@@ -243,7 +243,10 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 		return nil, fmt.Errorf("no tarball URL in registry response")
 	}
 
-	// Point the tarball at the same base used for the query (e.g. a mirror).
+	// Some mirrors (e.g. Nexus) return a malformed dist.tarball that keeps the
+	// dist-tag in the package-name segment ("@scope/pkg@latest/-/..."); strip it
+	// before pointing the tarball at the base used for the query.
+	tarballURL = normalizeTarballURL(tarballURL)
 	tarballURL = rewriteTarballURL(tarballURL, registryBase)
 
 	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
@@ -255,6 +258,38 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 		Integrity:      npmResp.Dist.Integrity,
 		HasUpgrade:     hasUpgrade,
 	}, nil
+}
+
+// normalizeTarballURL removes a dist-tag suffix (e.g. "@latest") that some
+// registry mirrors incorrectly leave in the package-name segment of a tarball
+// URL. A standard npm URL looks like ".../@scope/pkg/-/pkg-1.2.3.tgz", but
+// Nexus-backed mirrors have been observed returning
+// ".../@scope/pkg@latest/-/pkg-1.2.3.tgz", which 404s. The dist-tag is the
+// trailing "@tag" on the path segment immediately preceding "/-/". URLs
+// without "/-/" or without such a suffix are returned unchanged.
+func normalizeTarballURL(tarball string) string {
+	// Everything from "/-/" onward is the filename part ("-/pkg-1.2.3.tgz") and
+	// is never touched; only the package-name segment before it can be malformed.
+	const sep = "/-/"
+	idx := strings.Index(tarball, sep)
+	if idx < 0 {
+		// Not a standard npm tarball path — leave it alone rather than guess.
+		return tarball
+	}
+	prefix, suffix := tarball[:idx], tarball[idx:]
+
+	// The package name is the final path segment of prefix, e.g. "pkg@latest"
+	// or "@scope/pkg@latest".
+	segStart := strings.LastIndex(prefix, "/") + 1
+	seg := prefix[segStart:]
+
+	// Strip a trailing "@tag". at > 0 (not at >= 0) preserves a leading "@",
+	// which marks an npm scope rather than a dist-tag, so "@scope/pkg" stays
+	// intact while "@scope/pkg@latest" loses only the "@latest".
+	if at := strings.LastIndex(seg, "@"); at > 0 {
+		return prefix[:segStart] + seg[:at] + suffix
+	}
+	return tarball
 }
 
 // rewriteTarballURL points the tarball at the same registry base used for the query.
