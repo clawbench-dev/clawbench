@@ -22,6 +22,7 @@ vi.mock('vue-i18n', () => ({
       'sessionSearch.openSession': 'Open',
       'sessionSearch.modeHybrid': 'Hybrid',
       'sessionSearch.modeFts': 'Full-text',
+      'sessionSearch.modeLabel': 'Search Mode',
       'sessionSearch.filterArchive': 'Status',
       'sessionSearch.archiveAll': 'All',
       'sessionSearch.archiveActive': 'Active',
@@ -96,6 +97,16 @@ vi.mock('@/components/common/SearchInput.vue', () => ({
     name: 'SearchInput',
     template: '<div class="search-input-stub" />',
     methods: { focus: vi.fn() },
+  },
+}))
+
+// PopupMenu teleports to body; stub it to render its slot inline so menu items
+// are queryable within the wrapper.
+vi.mock('@/components/common/PopupMenu.vue', () => ({
+  default: {
+    name: 'PopupMenu',
+    props: ['show', 'targetElement', 'maxWidth', 'menuItemsCount', 'anchor'],
+    template: '<div v-if="show" class="popup-menu-stub"><slot /></div>',
   },
 }))
 
@@ -417,22 +428,27 @@ describe('SessionSearchDrawer', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
-  it('renders mode selector with hybrid active by default', () => {
+  it('renders mode dropdown showing the current mode', () => {
     const wrapper = mountDrawer()
-    const buttons = wrapper.findAll('.search-mode-selector .mode-btn')
-    expect(buttons).toHaveLength(2)
-    expect(buttons[0].classes()).toContain('active')
-    expect(buttons[0].text()).toBe('Hybrid')
-    expect(buttons[1].text()).toBe('Full-text')
+    // First trigger on the row is the search-mode dropdown.
+    const trigger = wrapper.findAll('.filter-dropdown-btn')[0]
+    expect(trigger.text()).toContain('Hybrid')
   })
 
-  it('switches to FTS mode and re-searches when clicking FTS button', async () => {
+  it('opens the mode dropdown and lists both options', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.filter-dropdown-btn')[0].trigger('click')
+    const items = wrapper.findAll('.filter-menu-item')
+    expect(items.map(i => i.text())).toEqual(['Hybrid', 'Full-text'])
+  })
+
+  it('switches to FTS mode and re-searches via the mode dropdown', async () => {
     const state = createState({ query: 'test' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
 
-    await ftsBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[0].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[1].trigger('click')
     expect(state.preferMode).toBe('fts')
     // setMode triggers re-search via setQuery
     expect(mockSetQuery).toHaveBeenCalledWith('test')
@@ -490,8 +506,8 @@ describe('SessionSearchDrawer', () => {
     const state = createState({ query: 'active' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
-    await ftsBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[0].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[1].trigger('click')
     expect(mockSetQuery).toHaveBeenCalledWith('active')
   })
 
@@ -500,62 +516,82 @@ describe('SessionSearchDrawer', () => {
     const state = createState({ query: '' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const ftsBtn = wrapper.findAll('.search-mode-selector .mode-btn')[1]
-    await ftsBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[0].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[1].trigger('click')
     expect(mockSetQuery).not.toHaveBeenCalled()
   })
 
-  it('renders archive filter with All active by default', () => {
+  it('renders archive and sort dropdown triggers on the search row', () => {
     const wrapper = mountDrawer()
-    const buttons = wrapper.findAll('.archive-filter-selector .mode-btn')
-    expect(buttons).toHaveLength(3)
-    expect(buttons.map(b => b.text())).toEqual(['All', 'Active', 'Archived'])
-    expect(buttons[0].classes()).toContain('active')
+    const triggers = wrapper.findAll('.filter-dropdown-btn')
+    expect(triggers).toHaveLength(3)
+    // Triggers: mode / archive / sort. Defaults: Hybrid / All / Relevance.
+    expect(triggers[0].text()).toContain('Hybrid')
+    expect(triggers[1].text()).toContain('All')
+    expect(triggers[2].text()).toContain('Relevance')
+    // Mode trigger is never highlighted; archive/sort are when non-default.
+    expect(triggers[0].classes()).not.toContain('filter-active')
+    expect(triggers[1].classes()).not.toContain('filter-active')
+    expect(triggers[2].classes()).not.toContain('filter-active')
   })
 
-  it('applies archive filter via setFilters', async () => {
+  it('opens the archive dropdown and lists the three options', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.filter-dropdown-btn')[1].trigger('click')
+    const items = wrapper.findAll('.filter-menu-item')
+    expect(items.map(i => i.text())).toEqual(['All', 'Active', 'Archived'])
+  })
+
+  it('applies archive filter via the dropdown', async () => {
     const state = createState({ query: 'test' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const archivedBtn = wrapper.findAll('.archive-filter-selector .mode-btn')[2]
 
-    await archivedBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[1].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[2].trigger('click')
     expect(mockSetFilters).toHaveBeenCalledWith({ archived: 'archived' })
   })
 
-  it('does not re-filter when clicking the already-active archive option', async () => {
+  it('does not re-filter when choosing the already-active archive option', async () => {
     mockSearchState.mockReturnValue(createState({ archivedFilter: 'all' }))
     const wrapper = mountDrawer()
-    const allBtn = wrapper.findAll('.archive-filter-selector .mode-btn')[0]
 
-    await allBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[1].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[0].trigger('click')
     expect(mockSetFilters).not.toHaveBeenCalled()
   })
 
-  it('renders sort selector with Relevance active by default', () => {
+  it('highlights the archive trigger when a non-default filter is active', () => {
+    mockSearchState.mockReturnValue(createState({ archivedFilter: 'archived' }))
     const wrapper = mountDrawer()
-    const buttons = wrapper.findAll('.sort-order-selector .mode-btn')
-    expect(buttons).toHaveLength(3)
-    expect(buttons.map(b => b.text())).toEqual(['Relevance', 'Newest', 'Oldest'])
-    expect(buttons[0].classes()).toContain('active')
+    const trigger = wrapper.findAll('.filter-dropdown-btn')[1]
+    expect(trigger.classes()).toContain('filter-active')
+    expect(trigger.text()).toContain('Archived')
   })
 
-  it('applies sort order via setFilters', async () => {
+  it('opens the sort dropdown and lists the three options', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.findAll('.filter-dropdown-btn')[2].trigger('click')
+    const items = wrapper.findAll('.filter-menu-item')
+    expect(items.map(i => i.text())).toEqual(['Relevance', 'Newest', 'Oldest'])
+  })
+
+  it('applies sort order via the dropdown', async () => {
     const state = createState({ query: 'test' })
     mockSearchState.mockReturnValue(state)
     const wrapper = mountDrawer()
-    const oldestBtn = wrapper.findAll('.sort-order-selector .mode-btn')[2]
 
-    await oldestBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[2].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[2].trigger('click')
     expect(mockSetFilters).toHaveBeenCalledWith({ sort: 'oldest' })
   })
 
-  it('does not re-sort when clicking the already-active sort option', async () => {
+  it('does not re-sort when choosing the already-active sort option', async () => {
     mockSearchState.mockReturnValue(createState({ sortOrder: 'relevance' }))
     const wrapper = mountDrawer()
-    const relevanceBtn = wrapper.findAll('.sort-order-selector .mode-btn')[0]
 
-    await relevanceBtn.trigger('click')
+    await wrapper.findAll('.filter-dropdown-btn')[2].trigger('click')
+    await wrapper.findAll('.filter-menu-item')[0].trigger('click')
     expect(mockSetFilters).not.toHaveBeenCalled()
   })
 })

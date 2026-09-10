@@ -836,6 +836,7 @@ export default {
     archived: '已归档',
     modeHybrid: '混合',
     modeFts: '全文',
+    modeLabel: '检索模式',
     filterArchive: '状态',
     archiveAll: '全部',
     archiveActive: '未归档',

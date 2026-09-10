@@ -836,6 +836,7 @@ export default {
     archived: 'Archived',
     modeHybrid: 'Hybrid',
     modeFts: 'Full-text',
+    modeLabel: 'Search Mode',
     filterArchive: 'Status',
     archiveAll: 'All',
     archiveActive: 'Active',

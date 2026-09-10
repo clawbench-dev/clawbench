@@ -24,30 +24,105 @@
     <div v-if="!selectedSession" class="session-search-body">
       <div class="session-search-input-row">
         <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
-        <div class="mode-selector search-mode-selector">
-          <button class="mode-btn" :class="{ active: searchState.preferMode === 'hybrid' }" @click="setMode('hybrid')">{{ t('sessionSearch.modeHybrid') }}</button>
-          <button class="mode-btn" :class="{ active: searchState.preferMode === 'fts' }" @click="setMode('fts')">{{ t('sessionSearch.modeFts') }}</button>
-        </div>
+        <button
+          ref="modeTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :title="t('sessionSearch.modeLabel')"
+          @click.stop="toggleMenu('mode')"
+        >
+          <span class="filter-dropdown-label">{{ modeLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
+        <button
+          ref="archiveTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :class="{ 'filter-active': searchState.archivedFilter !== 'all' }"
+          :title="t('sessionSearch.filterArchive')"
+          @click.stop="toggleMenu('archive')"
+        >
+          <span class="filter-dropdown-label">{{ archiveLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
+        <button
+          ref="sortTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :class="{ 'filter-active': searchState.sortOrder !== 'relevance' }"
+          :title="t('sessionSearch.sortLabel')"
+          @click.stop="toggleMenu('sort')"
+        >
+          <span class="filter-dropdown-label">{{ sortLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
       </div>
 
-      <div class="session-search-filter-row">
-        <div class="filter-group">
-          <span class="filter-group-label">{{ t('sessionSearch.filterArchive') }}</span>
-          <div class="mode-selector archive-filter-selector">
-            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'all' }" @click="setArchiveFilter('all')">{{ t('sessionSearch.archiveAll') }}</button>
-            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'active' }" @click="setArchiveFilter('active')">{{ t('sessionSearch.archiveActive') }}</button>
-            <button class="mode-btn" :class="{ active: searchState.archivedFilter === 'archived' }" @click="setArchiveFilter('archived')">{{ t('sessionSearch.archiveArchived') }}</button>
-          </div>
-        </div>
-        <div class="filter-group">
-          <span class="filter-group-label">{{ t('sessionSearch.sortLabel') }}</span>
-          <div class="mode-selector sort-order-selector">
-            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'relevance' }" @click="setSortOrder('relevance')">{{ t('sessionSearch.sortRelevance') }}</button>
-            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'newest' }" @click="setSortOrder('newest')">{{ t('sessionSearch.sortNewest') }}</button>
-            <button class="mode-btn" :class="{ active: searchState.sortOrder === 'oldest' }" @click="setSortOrder('oldest')">{{ t('sessionSearch.sortOldest') }}</button>
-          </div>
-        </div>
-      </div>
+      <PopupMenu
+        :show="openMenu === 'mode'"
+        :target-element="modeTriggerRef"
+        :max-width="150"
+        :menu-items-count="2"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in modeOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.preferMode === opt.value }"
+          @click="chooseMode(opt.value)"
+        >
+          <Check v-if="searchState.preferMode === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
+      <PopupMenu
+        :show="openMenu === 'archive'"
+        :target-element="archiveTriggerRef"
+        :max-width="150"
+        :menu-items-count="3"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in archiveOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.archivedFilter === opt.value }"
+          @click="chooseArchive(opt.value)"
+        >
+          <Check v-if="searchState.archivedFilter === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
+      <PopupMenu
+        :show="openMenu === 'sort'"
+        :target-element="sortTriggerRef"
+        :max-width="150"
+        :menu-items-count="3"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in sortOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.sortOrder === opt.value }"
+          @click="chooseSort(opt.value)"
+        >
+          <Check v-if="searchState.sortOrder === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
 
       <div class="session-search-content">
         <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
@@ -123,10 +198,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ChevronLeft, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
+import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -146,6 +222,62 @@ const search = { state: searchState, setQuery, browse, clear, setFilters }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
+
+// ── Search mode / filter / sort dropdowns ──
+// All three collapse into compact triggers on the search row, keeping the
+// header to a single line. Their options live in PopupMenu popovers.
+const openMenu = ref<'mode' | 'archive' | 'sort' | null>(null)
+const modeTriggerRef = ref<HTMLElement | null>(null)
+const archiveTriggerRef = ref<HTMLElement | null>(null)
+const sortTriggerRef = ref<HTMLElement | null>(null)
+
+function toggleMenu(menu: 'mode' | 'archive' | 'sort') {
+  openMenu.value = openMenu.value === menu ? null : menu
+}
+
+const modeOptions = computed(() => [
+  { value: 'hybrid' as const, label: t('sessionSearch.modeHybrid') },
+  { value: 'fts' as const, label: t('sessionSearch.modeFts') },
+])
+
+const modeLabel = computed(() =>
+  modeOptions.value.find(o => o.value === searchState.preferMode)?.label ?? ''
+)
+
+function chooseMode(mode: 'hybrid' | 'fts') {
+  openMenu.value = null
+  setMode(mode)
+}
+
+const archiveOptions = computed(() => [
+  { value: 'all' as SessionArchiveFilter, label: t('sessionSearch.archiveAll') },
+  { value: 'active' as SessionArchiveFilter, label: t('sessionSearch.archiveActive') },
+  { value: 'archived' as SessionArchiveFilter, label: t('sessionSearch.archiveArchived') },
+])
+
+const sortOptions = computed(() => [
+  { value: 'relevance' as SessionSortOrder, label: t('sessionSearch.sortRelevance') },
+  { value: 'newest' as SessionSortOrder, label: t('sessionSearch.sortNewest') },
+  { value: 'oldest' as SessionSortOrder, label: t('sessionSearch.sortOldest') },
+])
+
+const archiveLabel = computed(() =>
+  archiveOptions.value.find(o => o.value === searchState.archivedFilter)?.label ?? ''
+)
+
+const sortLabel = computed(() =>
+  sortOptions.value.find(o => o.value === searchState.sortOrder)?.label ?? ''
+)
+
+function chooseArchive(filter: SessionArchiveFilter) {
+  openMenu.value = null
+  setArchiveFilter(filter)
+}
+
+function chooseSort(sort: SessionSortOrder) {
+  openMenu.value = null
+  setSortOrder(sort)
+}
 
 // ── Lazy first-message preview (browse mode only) ──
 // Browse results carry no chunk content; fetch the session's first message on
@@ -416,7 +548,7 @@ defineExpose({ focusSearchInput })
 .session-search-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -425,61 +557,84 @@ defineExpose({ focusSearchInput })
 
 .session-search-input-row :deep(.search-pill) {
   flex: 1;
+  min-width: 0;
 }
 
-.session-search-filter-row {
-  display: flex;
+/* ── Compact filter/sort dropdown triggers ──
+   Kept on the search row so the header stays a single line. Each trigger shows
+   the current value; a non-default selection is highlighted. */
+.filter-dropdown-btn {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  background: var(--bg-secondary, #f8f9fa);
+  gap: 3px;
   flex-shrink: 0;
-}
-
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.filter-group-label {
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  white-space: nowrap;
-}
-
-.mode-selector {
-  display: flex;
+  max-width: 88px;
+  height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.mode-btn {
-  padding: 4px 8px;
-  font-size: 11px;
-  border: none;
   background: var(--bg-primary, #fff);
   color: var(--text-muted, #999);
+  font-size: 10px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.filter-dropdown-btn.filter-active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.filter-dropdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mode-btn:not(:last-child) {
-  border-right: 1px solid var(--border-color, #e5e5e5);
-}
-
-.mode-btn.active {
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
+.filter-dropdown-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 @media (hover: hover) {
-  .mode-btn:not(.active):hover {
+  .filter-dropdown-btn:hover {
+    background: var(--bg-secondary, #f8f9fa);
+    color: var(--text-secondary, #666);
+  }
+}
+
+/* ── Dropdown menu items (rendered inside PopupMenu, teleported to body) ── */
+.filter-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text-primary, #1a1a1a);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.filter-menu-item.selected {
+  color: var(--accent-color, #4a90d9);
+  font-weight: 500;
+}
+
+.filter-menu-check {
+  flex-shrink: 0;
+  width: 13px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+@media (hover: hover) {
+  .filter-menu-item:hover {
     background: var(--bg-secondary, #f8f9fa);
   }
 }
@@ -811,26 +966,25 @@ defineExpose({ focusSearchInput })
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme-base="dark"] .mode-selector {
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-[data-theme-base="dark"] .mode-btn {
+[data-theme-base="dark"] .filter-dropdown-btn {
   background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
   color: var(--text-muted, #999);
 }
 
-[data-theme-base="dark"] .mode-btn:not(:last-child) {
-  border-right-color: rgba(255, 255, 255, 0.12);
-}
-
-[data-theme-base="dark"] .mode-btn.active {
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
+[data-theme-base="dark"] .filter-dropdown-btn.filter-active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
 }
 
 @media (hover: hover) {
-  [data-theme-base="dark"] .mode-btn:not(.active):hover {
+  [data-theme-base="dark"] .filter-dropdown-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #fff);
+  }
+
+  [data-theme-base="dark"] .filter-menu-item:hover {
     background: rgba(255, 255, 255, 0.06);
   }
 }
