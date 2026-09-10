@@ -2420,6 +2420,9 @@ export default {
     promptMessage: 'Version {version} is available (current: {currentVersion})',
     versionMismatch: 'Upgrade error — current version does not match expected',
     alreadyLatest: 'Already on the latest version',
+    installDirNotWritableTitle: 'Cannot upgrade automatically: install directory not writable',
+    installDirNotWritableBody: 'The current user cannot write to {dir}, so the upgrade cannot create a backup or replace the binary there.',
+    installDirNotWritableHint: 'Update manually with sudo, or install ClawBench to a user-writable directory (e.g. ~/.local/bin) and try again.',
   },
   share: {
     loading: 'Loading...',

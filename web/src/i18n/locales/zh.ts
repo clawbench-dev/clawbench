@@ -2420,6 +2420,9 @@ export default {
     promptMessage: '新版本 {version} 可用，当前版本 {currentVersion}',
     versionMismatch: '升级异常 — 当前版本与预期不符',
     alreadyLatest: '当前已是最新版本',
+    installDirNotWritableTitle: '无法自动升级：安装目录不可写',
+    installDirNotWritableBody: '当前用户对 {dir} 没有写权限，升级无法在该目录创建备份并替换二进制。',
+    installDirNotWritableHint: '请用 sudo 手动更新，或将 ClawBench 安装到用户可写目录（如 ~/.local/bin）后重试。',
   },
   share: {
     loading: '加载中...',

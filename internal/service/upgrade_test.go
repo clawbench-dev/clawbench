@@ -1447,6 +1447,124 @@ func TestPerformUpgrade_UnreachableRegistry(t *testing.T) {
 	assert.Contains(t, s.Error, "Failed to check version")
 }
 
+// --- CheckInstallDirWritable ---
+
+func TestCheckInstallDirWritable_Writable(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	gotDir, err := CheckInstallDirWritable()
+	require.NoError(t, err)
+	assert.Equal(t, dir, gotDir)
+
+	// The probe file must be cleaned up, leaving the directory empty.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "probe temp file should have been removed")
+}
+
+func TestCheckInstallDirWritable_NotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer func() { _ = os.Chmod(dir, 0o755) }() // allow TempDir cleanup
+
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	gotDir, err := CheckInstallDirWritable()
+	require.Error(t, err)
+	assert.Equal(t, dir, gotDir, "install dir should still be reported for the message")
+}
+
+func TestCheckInstallDirWritable_ExecutableError(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	upgradeExecutable = func() (string, error) {
+		return "", fmt.Errorf("boom")
+	}
+
+	_, err := CheckInstallDirWritable()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve executable path")
+}
+
+// TestPerformUpgrade_InstallDirNotWritable verifies the preflight fails fast
+// (before downloading) with the actionable install_dir_not_writable code.
+func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	// Registry reports an upgrade is available.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China → default base is npmjs
+
+	// Binary lives in a read-only directory.
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		performUpgrade(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("performUpgrade timed out")
+	}
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrInstallDirNotWritable, s.ErrorCode)
+	assert.Contains(t, s.Error, dir)
+}
+
 func TestRewriteTarballURL(t *testing.T) {
 	// Tarball not from npmjs → returned unchanged (fall-through branch).
 	assert.Equal(t,

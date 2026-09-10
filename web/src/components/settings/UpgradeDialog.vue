@@ -45,6 +45,14 @@
           <p>{{ t('upgrade.alreadyLatest') }}</p>
         </div>
 
+        <!-- Pre-flight warning: install directory not writable. Shown before the
+             user starts, so they never download 40MB only to fail at backup. -->
+        <div v-if="showWritableWarning" class="ug-warn">
+          <p class="ug-warn-title">{{ t('upgrade.installDirNotWritableTitle') }}</p>
+          <p class="ug-warn-body">{{ t('upgrade.installDirNotWritableBody', { dir: installDir || '—' }) }}</p>
+          <p class="ug-warn-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
+        </div>
+
         <!-- Progress area -->
         <div v-if="isInProgress || isRestarting" class="ug-progress-area">
           <template v-if="state.phase === 'downloading'">
@@ -64,10 +72,18 @@
           </p>
         </div>
 
-        <!-- Failed -->
+        <!-- Failed: install-dir failures get an actionable, localized message
+             instead of the raw "permission denied" string. -->
         <div v-if="isFailed" class="ug-failed">
-          <p>{{ t('upgrade.failed') }}</p>
-          <p class="ug-error">{{ state.error }}</p>
+          <template v-if="state.error_code === ERR_INSTALL_DIR_NOT_WRITABLE">
+            <p class="ug-error-title">{{ t('upgrade.installDirNotWritableTitle') }}</p>
+            <p class="ug-error">{{ t('upgrade.installDirNotWritableBody', { dir: installDir || '—' }) }}</p>
+            <p class="ug-error-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
+          </template>
+          <template v-else>
+            <p>{{ t('upgrade.failed') }}</p>
+            <p class="ug-error">{{ state.error }}</p>
+          </template>
         </div>
 
         <!-- Actions -->
@@ -89,7 +105,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useUpgrade } from '@/composables/useUpgrade'
+import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import '@/assets/modal-footer-btn.css'
 
@@ -98,7 +114,23 @@ let unregisterBack: (() => void) | null = null
 defineExpose({ show })
 
 const { t } = useI18n()
-const { state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed, checkUpgrade, startUpgrade, releaseNotesUrl } = useUpgrade()
+const {
+  state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
+  installWritable, installDir, checkUpgrade, startUpgrade, releaseNotesUrl,
+} = useUpgrade()
+
+/**
+ * Show the writability warning only before the upgrade starts: while the user
+ * is deciding (version info visible) and after a generic failure. Hidden during
+ * an active upgrade and after the install-dir failure (which renders its own
+ * dedicated block).
+ */
+const showWritableWarning = computed(() =>
+  !installWritable.value &&
+  !isInProgress.value &&
+  !isCompleted.value &&
+  !isFailed.value,
+)
 
 /** Show the dialog and check for upgrades */
 function show() {
@@ -293,6 +325,49 @@ watch(visible, (v) => {
   font-size: 12px;
   color: var(--text-danger, #e53e3e);
   word-break: break-word;
+}
+
+/* Pre-flight install-directory warning (amber, non-fatal) */
+.ug-warn {
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-warning, #d69e2e) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-warning, #d69e2e) 35%, transparent);
+  text-align: left;
+}
+
+.ug-warn-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-warning, #d69e2e);
+}
+
+.ug-warn-body {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.ug-warn-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.ug-error-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-danger, #e53e3e);
+}
+
+.ug-error-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .ug-footer {

@@ -26,6 +26,9 @@ const i18n = createI18n({
         close: '关闭',
         releaseNotes: '发行说明 {version}',
         backupPath: '备份路径: {path}',
+        installDirNotWritableTitle: '无法自动升级：安装目录不可写',
+        installDirNotWritableBody: '当前用户对 {dir} 没有写权限。',
+        installDirNotWritableHint: '请用 sudo 手动更新，或安装到用户可写目录。',
       },
     },
   },
@@ -38,6 +41,7 @@ const mockState = reactive({
   current_version: '1.0.0',
   latest_version: '1.1.0',
   message: '',
+  error_code: '',
   error: '',
   backup_path: '',
 })
@@ -49,24 +53,34 @@ const mockIsRestarting = ref(false)
 const mockIsCompleted = ref(false)
 const mockIsFailed = ref(false)
 const mockReleaseNotesUrl = ref('https://example.com/releases')
+const mockInstallWritable = ref(true)
+const mockInstallDir = ref('')
 
 const mockCheckUpgrade = vi.fn()
 const mockStartUpgrade = vi.fn()
 
-vi.mock('@/composables/useUpgrade', () => ({
-  useUpgrade: () => ({
-    state: mockState,
-    checking: mockChecking,
-    hasUpgrade: mockHasUpgrade,
-    isInProgress: mockIsInProgress,
-    isRestarting: mockIsRestarting,
-    isCompleted: mockIsCompleted,
-    isFailed: mockIsFailed,
-    checkUpgrade: mockCheckUpgrade,
-    startUpgrade: mockStartUpgrade,
-    releaseNotesUrl: mockReleaseNotesUrl,
-  }),
-}))
+// The component imports both `useUpgrade` and the error-code constant from this
+// module, so the mock must re-export the real constant alongside the stubs.
+vi.mock('@/composables/useUpgrade', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useUpgrade')>()
+  return {
+    ERR_INSTALL_DIR_NOT_WRITABLE: actual.ERR_INSTALL_DIR_NOT_WRITABLE,
+    useUpgrade: () => ({
+      state: mockState,
+      checking: mockChecking,
+      hasUpgrade: mockHasUpgrade,
+      isInProgress: mockIsInProgress,
+      isRestarting: mockIsRestarting,
+      isCompleted: mockIsCompleted,
+      isFailed: mockIsFailed,
+      checkUpgrade: mockCheckUpgrade,
+      startUpgrade: mockStartUpgrade,
+      releaseNotesUrl: mockReleaseNotesUrl,
+      installWritable: mockInstallWritable,
+      installDir: mockInstallDir,
+    }),
+  }
+})
 
 vi.mock('@/composables/useBackHandler', () => ({
   registerBackHandler: vi.fn(() => vi.fn()),
@@ -112,6 +126,7 @@ beforeEach(() => {
     current_version: '1.0.0',
     latest_version: '1.1.0',
     message: '',
+    error_code: '',
     error: '',
     backup_path: '',
   })
@@ -122,6 +137,8 @@ beforeEach(() => {
   mockIsCompleted.value = false
   mockIsFailed.value = false
   mockReleaseNotesUrl.value = 'https://example.com/releases'
+  mockInstallWritable.value = true
+  mockInstallDir.value = ''
 })
 
 describe('UpgradeDialog', () => {
@@ -349,6 +366,50 @@ describe('UpgradeDialog', () => {
       expect($('.ug-failed')).toBeTruthy()
       expect(document.body.textContent).toContain('失败')
       expect(document.body.textContent).toContain('Network error')
+    })
+
+    it('shows actionable message for install-dir failure instead of raw error', async () => {
+      mockIsFailed.value = true
+      mockState.error_code = 'install_dir_not_writable'
+      mockState.error = 'open /usr/local/bin/clawbench.bak: permission denied'
+      mockInstallDir.value = '/usr/local/bin'
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-failed')).toBeTruthy()
+      expect(document.body.textContent).toContain('安装目录不可写')
+      expect(document.body.textContent).toContain('/usr/local/bin')
+      // Raw backend error must not leak through.
+      expect(document.body.textContent).not.toContain('permission denied')
+    })
+  })
+
+  describe('install directory warning', () => {
+    it('warns before starting when install dir is not writable', async () => {
+      mockInstallWritable.value = false
+      mockInstallDir.value = '/usr/local/bin'
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeTruthy()
+      expect(document.body.textContent).toContain('/usr/local/bin')
+    })
+
+    it('does not warn when install dir is writable', async () => {
+      mockInstallWritable.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
+    })
+
+    it('hides the warning while an upgrade is in progress', async () => {
+      mockInstallWritable.value = false
+      mockIsInProgress.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn')).toBeFalsy()
     })
   })
 

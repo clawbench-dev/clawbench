@@ -25,7 +25,10 @@ type UpgradeState struct {
 	Progress   int          `json:"progress"`    // 0-100
 	Message    string       `json:"message"`     // human-readable status
 	BackupPath string       `json:"backup_path"` // populated after backing_up
-	Error      string       `json:"error,omitempty"`
+	// ErrorCode is a stable machine-readable failure identifier the frontend
+	// maps to a localized, actionable message. Empty for generic failures.
+	ErrorCode string `json:"error_code,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 var (
@@ -56,11 +59,26 @@ func SetUpgradeState(phase UpgradePhase, progress int, message string) {
 	upgradeState.Message = message
 }
 
+// Upgrade error codes surfaced to the frontend. Kept stable across releases
+// so the client can render a localized, actionable message.
+const (
+	// UpgradeErrInstallDirNotWritable means the running user cannot create
+	// files in the directory holding the binary, so backup/replace will fail.
+	UpgradeErrInstallDirNotWritable = "install_dir_not_writable"
+)
+
 // SetUpgradeError sets phase to failed with an error message.
 func SetUpgradeError(errMsg string) {
+	SetUpgradeErrorCode("", errMsg)
+}
+
+// SetUpgradeErrorCode sets phase to failed with a machine-readable code and a
+// human-readable message. An empty code means a generic failure.
+func SetUpgradeErrorCode(code, errMsg string) {
 	upgradeMu.Lock()
 	defer upgradeMu.Unlock()
 	upgradeState.Phase = UpgradePhaseFailed
+	upgradeState.ErrorCode = code
 	upgradeState.Error = errMsg
 }
 

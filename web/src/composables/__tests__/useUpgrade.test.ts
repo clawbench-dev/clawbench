@@ -101,6 +101,12 @@ describe('useUpgrade', () => {
     // Reset localStorage and sessionStorage
     localStorage.clear()
     sessionStorage.clear()
+
+    // Reset module-level singleton state that is not covered by clearAllMocks.
+    const upgrade = useUpgrade()
+    upgrade.state.error_code = ''
+    upgrade.installWritable.value = true
+    upgrade.installDir.value = ''
   })
 
   // ── checkUpgrade ──
@@ -159,6 +165,51 @@ describe('useUpgrade', () => {
 
       expect(upgrade.hasUpgrade.value).toBe(false)
       expect(upgrade.checking.value).toBe(false)
+    })
+
+    it('records install_writable and install_dir from the response', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        install_writable: false,
+        install_dir: '/usr/local/bin',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.installWritable.value).toBe(false)
+      expect(upgrade.installDir.value).toBe('/usr/local/bin')
+      expect(upgrade.isInstallDirNotWritable.value).toBe(true)
+    })
+
+    it('defaults to writable when the fields are absent (older server)', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.installWritable.value).toBe(true)
+      expect(upgrade.isInstallDirNotWritable.value).toBe(false)
+    })
+  })
+
+  describe('isInstallDirNotWritable', () => {
+    it('is true when the failure carries the install_dir_not_writable code', () => {
+      const upgrade = useUpgrade()
+      upgrade.state.error_code = 'install_dir_not_writable'
+      expect(upgrade.isInstallDirNotWritable.value).toBe(true)
+    })
+
+    it('is false for a generic failure code', () => {
+      const upgrade = useUpgrade()
+      upgrade.state.error_code = 'something_else'
+      expect(upgrade.isInstallDirNotWritable.value).toBe(false)
     })
   })
 

@@ -23,8 +23,13 @@ export interface UpgradeState {
   progress: number
   message: string
   backup_path: string
+  /** Machine-readable failure id; empty for generic failures. */
+  error_code: string
   error: string
 }
+
+/** Failure id emitted when the install directory is not writable. */
+export const ERR_INSTALL_DIR_NOT_WRITABLE = 'install_dir_not_writable'
 
 const SKIP_KEY = 'clawbench-upgrade-skip'
 
@@ -36,12 +41,19 @@ const state = reactive<UpgradeState>({
   progress: 0,
   message: '',
   backup_path: '',
+  error_code: '',
   error: '',
 })
 
 const checking = ref(false)
 const hasUpgrade = ref(false)
 const showProgressDialog = ref(false)
+
+// Install-directory writability, reported by /api/upgrade/check. Kept outside
+// `state` because upgrade_update WS events (which overwrite state wholesale)
+// do not carry these fields.
+const installWritable = ref(true)
+const installDir = ref('')
 
 let wsUnsubscribe: (() => void) | null = null
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null
@@ -199,10 +211,15 @@ export function useUpgrade() {
         current_version: string
         latest_version: string
         has_upgrade: boolean
+        install_writable?: boolean
+        install_dir?: string
       }>('/api/upgrade/check')
       state.current_version = data.current_version
       state.latest_version = data.latest_version
       hasUpgrade.value = data.has_upgrade
+      // Absent on older servers — default to writable so the UI is unchanged.
+      installWritable.value = data.install_writable !== false
+      installDir.value = data.install_dir ?? ''
     } catch (e) {
       appLog.w(TAG, 'Check failed', e)
       hasUpgrade.value = false
@@ -272,6 +289,14 @@ export function useUpgrade() {
   /** Whether upgrade failed */
   const isFailed = computed(() => state.phase === 'failed')
 
+  /**
+   * Whether the failure was caused by a non-writable install directory, either
+   * detected upfront by checkUpgrade or reported by the backend on failure.
+   */
+  const isInstallDirNotWritable = computed(() =>
+    !installWritable.value || state.error_code === ERR_INSTALL_DIR_NOT_WRITABLE,
+  )
+
   /** Verify upgrade succeeded by comparing server version after reconnect */
   async function verifyUpgrade(): Promise<boolean> {
     try {
@@ -294,10 +319,13 @@ export function useUpgrade() {
     hasUpgrade,
     releaseNotesUrl,
     showProgressDialog,
+    installWritable,
+    installDir,
     isInProgress,
     isRestarting,
     isCompleted,
     isFailed,
+    isInstallDirNotWritable,
     checkUpgrade,
     startUpgrade,
     clearShowProgressDialog,

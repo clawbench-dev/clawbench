@@ -47,6 +47,9 @@ func SetUpgradeShutdownFunc(f func()) {
 	upgradeShutdownFunc = f
 }
 
+// upgradeExecutable resolves the running binary path. Overridden in tests.
+var upgradeExecutable = os.Executable
+
 // upgradeIsSupervised reports whether the process is running under a supervisor.
 var upgradeIsSupervised func() bool
 
@@ -334,6 +337,18 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 
 	if !info.HasUpgrade {
 		SetUpgradeError("Already on the latest version")
+		broadcastUpgradeUpdate()
+		return
+	}
+
+	// 1b. Preflight: the install directory must be writable, otherwise the
+	// backup step would fail after downloading the whole tarball. Fail fast
+	// with an actionable code so the UI can tell the user what to do.
+	if dir, permErr := CheckInstallDirWritable(); permErr != nil {
+		slog.Warn("upgrade: install directory not writable", "dir", dir, "error", permErr)
+		SetUpgradeErrorCode(UpgradeErrInstallDirNotWritable,
+			fmt.Sprintf("Install directory %s is not writable by the current user: %v. "+
+				"Re-run with sudo or install ClawBench to a user-writable directory.", dir, permErr))
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -677,6 +692,34 @@ func performSupervisedUpgrade(newBinPath, currentBin string) error {
 		upgradeShutdownFunc()
 	}
 	return nil
+}
+
+// CheckInstallDirWritable reports whether the current user can create files in
+// the directory that holds the running binary. Self-upgrade must create a
+// ".bak" file next to the binary and replace it, so a writable install
+// directory is the minimum requirement — the binary's own mode bits are not
+// enough (a rename over a read-only file succeeds as long as the directory is
+// writable).
+//
+// The check actually creates and removes a temp file rather than inspecting
+// mode bits, so it correctly reflects ACLs, read-only mounts and mandatory
+// access control. It returns the install directory (for user-facing messages)
+// alongside the error.
+func CheckInstallDirWritable() (string, error) {
+	exe, err := upgradeExecutable()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve executable path: %w", err)
+	}
+	dir := filepath.Dir(exe)
+
+	f, err := os.CreateTemp(dir, ".clawbench-permcheck-*")
+	if err != nil {
+		return dir, err
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return dir, nil
 }
 
 // isDocker checks if running inside a Docker container.
