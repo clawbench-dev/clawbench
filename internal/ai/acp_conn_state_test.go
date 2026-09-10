@@ -1842,15 +1842,27 @@ func TestEmitPromptResponseUsage_CodeBuddyCostDiscarded(t *testing.T) {
 	conn.emitPromptResponseUsage(usage, respMeta, "", streamCh)
 	close(streamCh)
 
-	var metadataEvt *StreamEvent
+	var metadataEvt, usageEvt *StreamEvent
 	for ev := range streamCh {
 		if ev.Type == "metadata" {
 			metadataEvt = &ev
+		}
+		if ev.Type == "usage_update" {
+			usageEvt = &ev
 		}
 	}
 	require.NotNil(t, metadataEvt)
 	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "CodeBuddy credit must not be persisted as USD cost")
 	assert.Equal(t, 1.48, metadataEvt.Meta.Credit, "the real credit is persisted on its own field")
+
+	// The forwarded usage_update payload is persisted into
+	// chat_sessions.context_state.usage.cost, so it must be guarded too — not
+	// only the metadata event.
+	require.NotNil(t, usageEvt)
+	require.NotNil(t, usageEvt.Usage)
+	assert.Equal(t, 0.0, usageEvt.Usage.Cost, "the forwarded usage payload must not leak credit as cost")
+	assert.Equal(t, "", usageEvt.Usage.Currency, "no fabricated currency for the discarded cost")
+	assert.Equal(t, 1.48, usageEvt.Usage.Credit, "real credit still flows to the frontend")
 }
 
 // TestEmitPromptResponseUsage_NilUsage verifies that a nil PromptResponse.Usage

@@ -353,8 +353,15 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, respMeta map[string]
 	if cached != nil {
 		used = cached.Used
 		size = cached.Size
-		cost = cached.Cost
-		currency = cached.Currency
+		// Same guard as the metadata path above: a cached cost for CodeBuddy is
+		// a credit value, not money, and this payload is forwarded to the
+		// frontend and persisted into chat_sessions.context_state.usage.cost.
+		// Leaving it unguarded would rely on the connection cache always being
+		// clean, which is not an invariant anything enforces.
+		if !costFieldCarriesCredit(backendID) {
+			cost = cached.Cost
+			currency = cached.Currency
+		}
 	}
 	usageState := &UsageState{
 		Used:     used,
