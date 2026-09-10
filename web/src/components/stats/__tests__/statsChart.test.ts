@@ -84,4 +84,17 @@ describe('formatMetricValue token tiers (raw / K / M / B)', () => {
     expect(formatMetricValue('cost', 0.05)).toBe('$0.05')
     expect(formatMetricValue('credit', 1234)).toBe('1,234')
   })
+
+  it('formats cost with exactly two decimals', () => {
+    // Sub-cent amounts round to $0.00 instead of switching to a
+    // higher-precision format (raw precision stays in the metadata modal).
+    expect(formatMetricValue('cost', 0.000036)).toBe('$0.00')
+    expect(formatMetricValue('cost', 0.001888)).toBe('$0.00')
+    expect(formatMetricValue('cost', 0.006671479)).toBe('$0.01')
+    expect(formatMetricValue('cost', 0.05126895)).toBe('$0.05')
+    expect(formatMetricValue('cost', 1.43)).toBe('$1.43')
+    // A thousands separator is kept for large totals.
+    expect(formatMetricValue('cost', 8283.125)).toBe('$8,283.13')
+    expect(formatMetricValue('cost', 0)).toBe('$0.00')
+  })
 })

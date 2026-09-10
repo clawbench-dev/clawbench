@@ -262,11 +262,11 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
   if (v == null || Number.isNaN(v)) return '—'
   switch (metric) {
     case 'credit': return `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
-    case 'cost': {
-      const abs = Math.abs(v)
-      if (abs > 0 && abs < 0.0001) return '$0.0001'
-      return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`
-    }
+    case 'cost':
+      // Cost is always shown with exactly two decimals (thousands separator
+      // kept for large totals). Sub-cent amounts round to $0.00 — the raw
+      // precision is still available in the per-message metadata modal.
+      return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     default:
       // input / output / total / cacheHit — raw token counts compacted to
       // K/M tiers (unit shown on the labels, e.g. "输入 Tokens").

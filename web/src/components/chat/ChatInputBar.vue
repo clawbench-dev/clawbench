@@ -463,7 +463,9 @@ const contextCostDisplay = computed(() => {
   const amount = contextCost.value
   if (amount <= 0) return ''
   const cur = contextCurrency.value
-  const formatted = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2)
+  // Always two decimals — sub-cent amounts round to 0.00 rather than
+  // switching to a higher-precision format.
+  const formatted = amount.toFixed(2)
   if (!cur) return formatted
   const sym = currencySymbols[cur] ?? ''
   return sym ? `${sym}${formatted}` : `${formatted} ${cur}`

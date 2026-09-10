@@ -1067,6 +1067,28 @@ describe('ChatInputBar', () => {
     mockContextCurrency.value = 'USD'
   })
 
+  it('cost row rounds sub-cent amounts to two decimals', async () => {
+    mockContextSize.value = 200000
+    mockContextUsed.value = 5000
+    // pi/opencode report genuinely tiny USD costs (e.g. $0.000036 per turn).
+    // The row always uses two decimals now, so those render as $0.00 rather
+    // than a higher-precision string.
+    mockContextCost.value = 0.000036
+    mockContextCurrency.value = 'USD'
+
+    const wrapper = mountBar()
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Cost')
+    expect(wrapper.text()).toContain('$0.00')
+    expect(wrapper.text()).not.toContain('0.0000')
+
+    // Reset for other tests.
+    mockContextCost.value = 0
+    mockContextCurrency.value = 'USD'
+  })
+
   it('cost row shows the bare number when backend reports no currency', async () => {
     mockContextSize.value = 200000
     mockContextUsed.value = 5000
