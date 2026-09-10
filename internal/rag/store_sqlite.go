@@ -1113,18 +1113,41 @@ func (s *Store) ChunkCount() (int, error) {
 // its pages to SQLite's freelist without shrinking the database file, so the
 // reported usage may not drop until a VACUUM runs. dbstat may be unavailable on
 // some builds; callers should treat an error as "size unknown".
+//
+// Performance: dbstat only uses its name index when the table name is filtered
+// by a direct `name IN (SELECT ...)` WHERE clause. Expressing the same filter
+// as `SUM(CASE WHEN name LIKE 'prefix%' ...)` degrades to a full scan of every
+// page in the database — ~57s on a 14 GB store versus ~0.3s with the indexed
+// form — so the two prefixes are summed by separate indexed queries.
+// TestStore_IndexDiskUsage_UsesIndexedPlan guards against regressing to the
+// full-scan form.
 func (s *Store) IndexDiskUsage() (ftsBytes int64, vecBytes int64, err error) {
-	err = s.db.QueryRow(`
-		SELECT
-			COALESCE(SUM(CASE WHEN name LIKE 'rag_chunks_fts%' THEN pgsize ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN name LIKE 'rag_vec%' OR name LIKE 'sqlite_autoindex_rag_vec%' THEN pgsize ELSE 0 END), 0)
-		FROM dbstat
-	`).Scan(&ftsBytes, &vecBytes)
-	if err != nil {
-		return 0, 0, fmt.Errorf("index disk usage: %w", err)
+	if err = s.db.QueryRow(ftsDiskUsageQuery).Scan(&ftsBytes); err != nil {
+		return 0, 0, fmt.Errorf("fts disk usage: %w", err)
+	}
+	if err = s.db.QueryRow(vecDiskUsageQuery).Scan(&vecBytes); err != nil {
+		return 0, 0, fmt.Errorf("vector disk usage: %w", err)
 	}
 	return ftsBytes, vecBytes, nil
 }
+
+// dbstatDiskUsageQueries. The `name IN (SELECT ...)` form is load-bearing:
+// dbstat only uses its name index for a direct IN-subquery filter (query plan
+// "SCAN dbstat VIRTUAL TABLE INDEX 2"). Any rewrite that keeps the prefix match
+// in a CASE/SUM expression turns this into a full page scan (INDEX 0).
+const (
+	ftsDiskUsageQuery = `
+		SELECT COALESCE(SUM(pgsize), 0)
+		FROM dbstat
+		WHERE name IN (SELECT name FROM sqlite_master WHERE name LIKE 'rag_chunks_fts%')
+	`
+	vecDiskUsageQuery = `
+		SELECT COALESCE(SUM(pgsize), 0)
+		FROM dbstat
+		WHERE name IN (SELECT name FROM sqlite_master
+			WHERE name LIKE 'rag_vec%' OR name LIKE 'sqlite_autoindex_rag_vec%')
+	`
+)
 
 // EmbeddedChunkCount returns the number of chunks that have vector embeddings.
 func (s *Store) EmbeddedChunkCount() (int, error) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -615,6 +616,53 @@ func TestStore_IndexDiskUsage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, ftsBytes, int64(0), "FTS shadow tables should consume pages")
 	assert.Greater(t, vecBytes, int64(0), "vector shadow tables should consume pages")
+}
+
+// TestStore_IndexDiskUsage_UsesIndexedPlan guards the dbstat query shape.
+//
+// dbstat is a virtual table that materializes one row per database page. It
+// only uses its name index when the filter is a direct `name IN (SELECT ...)`
+// WHERE clause (plan: "SCAN dbstat VIRTUAL TABLE INDEX 2"). If the prefix match
+// is instead folded into a CASE/SUM expression, SQLite falls back to a full
+// scan of every page in the file (INDEX 0), which took ~57s on a real 14 GB
+// store and made the settings panel hang. This test asserts the indexed plan
+// so that regression cannot land silently (it is invisible on tiny test DBs).
+func TestStore_IndexDiskUsage_UsesIndexedPlan(t *testing.T) {
+	store := setupSQLiteStore(t)
+	insertTestChunksSQLite(t, store, 3)
+
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"fts", ftsDiskUsageQuery},
+		{"vector", vecDiskUsageQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := store.db.Query("EXPLAIN QUERY PLAN " + tc.query)
+			require.NoError(t, err)
+			defer rows.Close()
+
+			var plan strings.Builder
+			for rows.Next() {
+				var id, parent, notused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
+				plan.WriteString(detail)
+				plan.WriteString("\n")
+			}
+			require.NoError(t, rows.Err())
+
+			got := plan.String()
+			// dbstat uses its name index when the plan reads "INDEX 2"; a full
+			// page scan reads "INDEX 0". The driver may print the index number
+			// in hex ("0x2" / "0x0"), so accept both spellings.
+			assert.Regexp(t, `dbstat VIRTUAL TABLE INDEX (2|0x2)\b`, got,
+				"dbstat query must use the name index, not a full scan; plan was:\n%s", got)
+			assert.NotRegexp(t, `dbstat VIRTUAL TABLE INDEX (0|0x0)\b`, got,
+				"dbstat query regressed to a full page scan; plan was:\n%s", got)
+		})
+	}
 }
 
 // ---------- UpdateEmbedding ----------
