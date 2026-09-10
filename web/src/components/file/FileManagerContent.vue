@@ -2,13 +2,37 @@
   <div class="file-manager-content" @paste="onPaste">
     <!-- Dir nav -->
     <div id="dirNav" class="dir-nav">
-      <!-- Browse toolbar (stays visible while searching; the search row is
-           appended below so directory context is never lost) -->
+      <!-- Top toolbar. Shows the browse toolbar, or the multi-select toolbar
+           while multi-select is active (the resident search bar sits below). -->
       <div ref="dirToolbarRef" class="dir-toolbar">
-        <div class="dir-toolbar-btns">
-          <button class="toolbar-btn" :class="{ 'search-active': searchMode }" @click="toggleSearch()" :title="t('file.search.title')">
-            <Search :size="16" />
+        <!-- Multi-select toolbar — replaces the browse toolbar while
+             multi-select is active, reusing the exact top-toolbar chrome so the
+             header never changes height. -->
+        <div v-if="multiSelect.active" class="dir-toolbar-btns ms-toolbar-btns">
+          <button class="toolbar-btn" :title="t('file.multiSelect.exit')" @click="exitMultiSelect">
+            <X :size="16" />
           </button>
+          <span class="ms-toolbar-text">{{ multiSelect.selected.size > 0 ? t('file.multiSelect.selectedCount', { n: multiSelect.selected.size }) : t('file.multiSelect.tapToSelect') }}</span>
+          <button class="ms-select-all-btn" @click="toggleSelectAll">
+            {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
+          </button>
+          <button class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.context.copy')" @click="doBatchCopy">
+            <Copy :size="16" />
+          </button>
+          <button class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.context.cut')" @click="doBatchCut">
+            <Scissors :size="16" />
+          </button>
+          <button class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.archive')" @click="doBatchArchive">
+            <Package :size="16" />
+          </button>
+          <button v-if="isAppMode && allSelectedAreFiles" class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.share')" @click="doBatchShare">
+            <Share2 :size="16" />
+          </button>
+          <button class="toolbar-btn ms-toolbar-danger" :disabled="multiSelect.selected.size === 0" :title="t('common.delete')" @click="doBatchDelete">
+            <Trash2 :size="16" />
+          </button>
+        </div>
+        <div v-else class="dir-toolbar-btns">
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -149,19 +173,9 @@
         </div>
       </div>
 
-      <!-- Breadcrumb / Multi-select info bar -->
-      <div v-if="multiSelect.active" class="dir-nav-bottom">
-        <div class="ms-info-bar">
-          <button class="ms-info-btn" @click="exitMultiSelect">
-            <X :size="14" />
-          </button>
-          <span class="ms-info-text">{{ multiSelect.selected.size > 0 ? t('file.multiSelect.selectedCount', { n: multiSelect.selected.size }) : t('file.multiSelect.tapToSelect') }}</span>
-          <button class="ms-info-btn ms-select-all-btn" @click="toggleSelectAll">
-            {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
-          </button>
-        </div>
-      </div>
-      <div v-else-if="currentDir" class="dir-nav-bottom">
+      <!-- Breadcrumb (multi-select info is merged into the bottom bar so the
+           directory context is never obscured) -->
+      <div v-if="currentDir" class="dir-nav-bottom">
         <DirBreadcrumb :path="currentDir" @navigate="$emit('navigateDir', $event)" />
       </div>
     </div>
@@ -187,8 +201,8 @@
          paste) stay fixed over the visible viewport instead of scrolling away
          with the list content -->
     <div class="file-list-area">
-    <!-- Search-mode result count header (fixed above the scrollable list/grid) -->
-    <div v-if="searchMode && search.state.query.trim() && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
+    <!-- Search result count header (fixed above the scrollable list/grid) -->
+    <div v-if="searchHasQuery && !(search.state.searching && search.state.results.length === 0)" class="fs-results-count">
       {{ search.state.truncated ? t('file.search.resultCountPlus', { limit: search.getDisplayLimit() }) : t('file.search.resultCount', { count: search.state.total }) }}
     </div>
     <!-- File list -->
@@ -219,7 +233,7 @@
         <div
           v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
-          :draggable="isWideScreen && !searchMode"
+          :draggable="isWideScreen && !searchHasQuery"
           @dragstart="onItemDragStart(entry, $event)"
           :class="{
             'dir-item': entry.type === 'dir',
@@ -234,7 +248,7 @@
         >
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
             <img v-if="entry.type !== 'dir' && isThumbLoaded(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-            <FileIcon v-else :path="searchMode ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
+            <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
             </span>
@@ -287,7 +301,7 @@
       <div v-for="entry in displayEntries" :key="keyOf(entry)"
         v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
-        :draggable="isWideScreen && !searchMode"
+        :draggable="isWideScreen && !searchHasQuery"
         @dragstart="onItemDragStart(entry, $event)"
         :class="{
           'grid-dir': entry.type === 'dir',
@@ -301,7 +315,7 @@
       >
         <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }">
           <img v-if="isThumbLoaded(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-          <FileIcon v-else :path="searchMode ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
+          <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
           </span>
@@ -328,41 +342,14 @@
     <Transition name="loading-fade">
       <LoadingIndicator v-if="dirLoading" overlay size="md" />
     </Transition>
-    <div v-if="searchMode && search.state.truncated" class="fs-truncated">
+    <div v-if="searchHasQuery && search.state.truncated" class="fs-truncated">
       {{ t('file.search.truncated') }}
     </div>
     </div>
 
-    <!-- Multi-select bottom action bar -->
-    <div v-if="multiSelect.active && multiSelect.selected.size > 0" class="ms-action-bar">
-      <button class="ms-action-btn" @click="doBatchCopy">
-        <Copy :size="14" />
-        {{ t('file.context.copy') }}
-      </button>
-      <button class="ms-action-btn" @click="doBatchCut">
-        <Scissors :size="14" />
-        {{ t('file.context.cut') }}
-      </button>
-      <button class="ms-action-btn" @click="doBatchArchive">
-        <Package :size="14" />
-        {{ t('file.multiSelect.archive') }}
-      </button>
-      <button v-if="isAppMode && allSelectedAreFiles" class="ms-action-btn" @click="doBatchShare">
-        <Share2 :size="14" />
-        {{ t('file.multiSelect.share') }}
-      </button>
-      <button class="ms-action-btn ms-danger" @click="doBatchDelete">
-        <Trash2 :size="14" />
-        {{ t('common.delete') }}
-      </button>
-    </div>
-
-    <!-- Search bar (bottom dock; toolbar/breadcrumb/list stay visible) -->
-    <div v-if="searchMode && !multiSelect.active" class="fs-nav-bottom" @keydown.esc.stop="exitSearch">
+    <!-- Bottom dock: resident search bar -->
+    <div class="fs-nav-bottom" @keydown.esc.stop="exitSearch">
       <div class="fs-input-row">
-        <button class="fs-toggle-btn fs-close-btn" :title="t('file.search.close')" @click="exitSearch">
-          <X :size="15" />
-        </button>
         <SearchInput
           ref="searchInputRef"
           v-model="search.state.query"
@@ -406,8 +393,8 @@
           {{ t('file.context.paste') }}
         </div>
         <!-- New file/folder when no entry selected (empty area) — only in
-             directory browsing; the search view has no "current directory" -->
-        <template v-if="!ctxMenu.entry && !searchMode">
+             directory browsing; the search results view has no "current directory" -->
+        <template v-if="!ctxMenu.entry && !searchHasQuery">
           <div class="context-menu-divider" />
           <div class="context-menu-item" @click.stop="doNewFile">
             <FilePlus :size="14" />
@@ -488,7 +475,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, Search, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2 } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2 } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -571,8 +558,9 @@ async function onFolderUploadSelect(e) {
 // ── Drag-and-drop handlers (file-list / file-grid) ──
 
 function onDragEnter(e) {
-  // Dropping files into the current directory is meaningless while searching
-  if (searchMode.value) return
+  // Dropping files into the current directory is meaningless while showing
+  // search results (the listing no longer represents the current directory)
+  if (searchHasQuery.value) return
   // Internal drags (file → chat) must not trigger the OS "drop to upload" overlay
   if (hasAttachDragData(e.dataTransfer)) return
   dragCounter.value++
@@ -588,7 +576,7 @@ function onDragLeave() {
 }
 
 async function onDrop(e) {
-    if (searchMode.value) return
+    if (searchHasQuery.value) return
     dragCounter.value = 0
     isDragOver.value = false
     dropTargetPath.value = null
@@ -606,7 +594,7 @@ async function onDrop(e) {
 /** Highlight a directory as the move-drop target while dragging over it. */
 function onContainerDragOver(e) {
     e.preventDefault()
-    if (searchMode.value) return
+    if (searchHasQuery.value) return
     if (!dragSourcePaths.value?.length) return
     const item = e.target.closest('.file-item, .grid-item')
     dropTargetPath.value = item && item.dataset.action === 'dir' ? item.dataset.path : null
@@ -653,7 +641,7 @@ async function handleInternalMoveDrop(e) {
  * or moved onto another directory in the file manager. */
 function onItemDragStart(entry, e) {
     if (!isWideScreen.value) return
-    if (searchMode.value) return // moving search results around the dir tree is ambiguous
+    if (searchHasQuery.value) return // moving search results around the dir tree is ambiguous
     const path = pathOf(entry)
     dragSourcePaths.value = collectDraggedPaths(entry, path)
     setAttachDragData(e.dataTransfer, path, entry.type === 'dir')
@@ -669,8 +657,9 @@ function onItemDragStart(entry, e) {
 function onPaste(e) {
   // Only handle paste when browse tab is active
   if (activeTab.value !== 'browse') return
-  // Clipboard image paste targets the current directory — skip while searching
-  if (searchMode.value) return
+  // Clipboard image paste targets the current directory — skip while showing
+  // search results (the current directory is no longer what is listed)
+  if (searchHasQuery.value) return
   // Skip if a dialog/prompt is open or focus is in an input field
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
   // Skip if context menu or modal dialog is open
@@ -788,7 +777,7 @@ const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
   () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden', 'jump', 'sharedFiles'],
-  { inlineCount: 3, gap: 6 },
+  { inlineCount: 2, gap: 6 },
 )
 
 const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length)
@@ -800,18 +789,26 @@ watch(viewMode, v => setLocalConfig('fileView', v))
 
 // ── Unified selection for both files and directories ──
 const selectedPath = ref('')
+/**
+ * PC Shift+click anchor — the last plainly-clicked entry. Shift+click selects
+ * the contiguous range from this anchor to the clicked entry (inclusive), in
+ * the current display order.
+ */
+const rangeAnchorPath = ref('')
+/** Selection snapshot taken when the anchor is set; the range rebuilds on it. */
+let rangeBaseSelection = new Set()
 // Sync from external file selection (e.g. chat annotation, search)
 watch(() => props.currentFile?.path ?? '', p => { selectedPath.value = p })
 
 // ── Thumbnail loading errors ──
 const thumbErrors = reactive(new Set())
 function thumbKey(entry) {
-    return searchMode.value ? entry.path : entry.name
+    return searchHasQuery.value ? entry.path : entry.name
 }
 function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
-    if (searchMode.value) {
+    if (searchHasQuery.value) {
         return `/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`
     }
     return buildThumbUrl(props.currentDir || '', entry.name)
@@ -823,7 +820,7 @@ function onThumbError(entry) {
 // SVG, WebP, AVIF, PDF, BMP, TIFF are excluded — they'll cause a 404 round-trip if attempted.
 
 function isThumbable(entry) {
-    if (searchMode.value) return isThumbableExt(entry.path)
+    if (searchHasQuery.value) return isThumbableExt(entry.path)
     return isThumbableEntry(entry)
 }
 
@@ -848,12 +845,18 @@ let highlightRetryTimer = null
 const fileListRef = ref(null)
 const fileGridRef = ref(null)
 
-// ── Inline search mode (fused into the file manager, no bottom sheet) ──
-const searchMode = ref(false)
+// ── Resident search ──
+// The search bar is always visible; typing filters the listing into search
+// results. There is no search "mode" to enter or exit — an empty query simply
+// shows the current directory listing (search acts as a filter over what you
+// are already looking at).
 const search = useFileSearch()
 const searchInputRef = ref(null)
 
-// Search-mode description used as the search box placeholder (no separate
+/** True while the search box has a non-empty query (results view). */
+const searchHasQuery = computed(() => !!search.state.query.trim())
+
+// Search-options description used as the search box placeholder (no separate
 // prompt prefix). Word order and spacing follow the active locale, matching
 // the pre-refactor FileSearchDrawer header wording.
 const searchPlaceholder = computed(() => {
@@ -882,42 +885,26 @@ const searchPlaceholder = computed(() => {
     return parts.join('')
 })
 
-function enterSearch() {
-    if (searchMode.value) return
-    searchMode.value = true
-    if (multiSelect.active) exitMultiSelect()
-    selectedPath.value = ''
-    thumbErrors.clear()
-    // Results may be stale or already populated from a previous session in this
-    // mounted component (search state survives tab switches).
-    if (search.state.query.trim()) {
-        search.startSearch(props.currentDir, true)
-    }
-}
-
+/** Clear the search query/results. The search bar itself stays visible, so this
+ * is the "dismiss the results layer" action used by back-navigation, directory
+ * changes and reveal-in-directory. Multi-select is an independent layer and is
+ * deliberately left untouched. */
 function exitSearch() {
-    if (!searchMode.value) return
-    searchMode.value = false
+    if (!search.state.query.trim() && search.state.results.length === 0) return
     search.reset() // cancelSearch + clears query/results/total/truncated/searchBasePath
-    if (multiSelect.active) exitMultiSelect()
     selectedPath.value = ''
     thumbErrors.clear()
 }
 
-function toggleSearch() {
-    if (searchMode.value) exitSearch()
-    else enterSearch()
-}
-
-/** Open (or focus) the inline search — used by App Ctrl+F. */
+/** Focus the resident search box — used by App Ctrl+F. */
 function openSearch() {
-    if (!searchMode.value) enterSearch()
     nextTick(() => searchInputRef.value?.focus())
 }
 
 /** Enter in the search box opens the highlighted result (files keep search).
  * With no arrow-key highlight yet, the first result is opened — matching the
- * pre-fusion drawer's Enter-on-first-result behavior. */
+ * pre-fusion drawer's Enter-on-first-result behavior. In multi-select mode it
+ * toggles the highlighted result's selection instead of opening it. */
 function confirmSelected() {
     let path = selectedPath.value
     if (!path || !entryByPath(path)) {
@@ -928,21 +915,26 @@ function confirmSelected() {
     }
     const entry = entryByPath(path)
     if (!entry) return
+    if (multiSelect.active) {
+        selectedPath.value = path
+        toggleSelect(path)
+        return
+    }
     openItem(entry.type === 'dir' ? 'dir' : 'file', path)
 }
 
 /** Re-run the active search (after rename/delete/move) so stale results disappear. */
 function refreshSearchResults() {
-    if (searchMode.value && search.state.query.trim()) {
+    if (search.state.query.trim()) {
         search.startSearch(props.currentDir)
     }
 }
 
 /** Reveal a search result's containing directory in the file manager.
- * Exits search and navigates to the result's parent dir (highlighting it). */
+ * Clears the query and navigates to the result's parent dir (highlighting it). */
 async function onSearchRevealInDir(path) {
     if (!path) return
-    if (searchMode.value) exitSearch()
+    exitSearch()
     await navToFileInManager(path)
 }
 
@@ -963,14 +955,12 @@ function toggleScope() {
 
 // Debounced search while typing in the search box
 watch(() => search.state.query, () => {
-    if (!searchMode.value) return
     search.startSearch(props.currentDir)
 })
 
 // Drop the stale arrow-key highlight whenever the result set is replaced, so
 // Enter never opens an entry that no longer belongs to the visible results.
 watch(() => search.state.results, () => {
-    if (!searchMode.value) return
     if (search.state.query.trim()) selectedPath.value = ''
 })
 
@@ -1016,8 +1006,8 @@ function scrollToEntryAndSelect(path, { openFile = false } = {}) {
 
 function handleHighlightFileItem(e) {
   // External highlight (e.g. open-file-in-directory) targets the directory
-  // listing — exit the search view first so the entry can be shown.
-  if (searchMode.value) exitSearch()
+  // listing — clear any active search first so the entry can be shown.
+  exitSearch()
   scrollToEntryAndSelect(e.detail?.path, { openFile: true })
 }
 
@@ -1041,11 +1031,8 @@ onUnmounted(() => {
 // from displayEntries and resolve paths via pathOf(), so the same handlers
 // serve both browse and search views.
 //
-// While the search view is open but nothing has been typed yet, the current
-// directory listing is shown as-is — searching acts as a filter over the
-// files you are already looking at.
-const searchHasQuery = computed(() => searchMode.value && !!search.state.query.trim())
-
+// With an empty query the current directory listing is shown as-is — searching
+// acts as a filter over the files you are already looking at.
 function browseToDisplay(entry) {
     return {
         name: entry.name,
@@ -1059,7 +1046,6 @@ function browseToDisplay(entry) {
 }
 
 const displayEntries = computed(() => {
-    if (!searchMode.value) return visibleEntries.value
     if (search.state.query.trim()) {
         const list = search.state.results.map(toDisplayEntry)
         if (props.sortField) list.sort(compareEntries)
@@ -1095,11 +1081,28 @@ function metaForPath(path) {
 }
 
 // ── Multi-select ──
-const { state: multiSelect, enterMultiSelect, enterMultiSelectKeepSelection, exitMultiSelect, toggleSelect } = _createMultiSelect()
+const { state: multiSelect, enterMultiSelect: _enterMultiSelect, enterMultiSelectKeepSelection, exitMultiSelect: _exitMultiSelect, toggleSelect } = _createMultiSelect()
+
+/** Enter multi-select with a clean selection — the range anchor resets too. */
+function enterMultiSelect() {
+    _enterMultiSelect()
+    rangeAnchorPath.value = ''
+    rangeBaseSelection = new Set()
+}
+
+/** Exit multi-select and drop the range anchor along with the selection. */
+function exitMultiSelect() {
+    _exitMultiSelect()
+    rangeAnchorPath.value = ''
+    rangeBaseSelection = new Set()
+}
+
 defineExpose({
     multiSelectState: multiSelect,
     viewMode,
-    searchActive: searchMode,
+    // "Search active" now means the results layer is showing (non-empty query),
+    // not a separate mode — back-navigation dismisses it by clearing the query.
+    searchActive: searchHasQuery,
     _setViewMode(val) { viewMode.value = val },
     _setSelectedPath(val) { selectedPath.value = val },
     _getSelectedPath() { return selectedPath.value },
@@ -1126,10 +1129,11 @@ function toggleSelectAll() {
     }
 }
 
-// Auto-exit multi-select and search on directory change
+// Clear the active search and multi-selection on directory change — both layers
+// refer to the entries of the directory being left.
 watch(() => props.currentDir, () => {
-    if (searchMode.value) exitSearch()
-    else if (multiSelect.active) exitMultiSelect()
+    exitSearch()
+    if (multiSelect.active) exitMultiSelect()
     thumbErrors.clear()
     selectedPath.value = ''
 })
@@ -1157,8 +1161,8 @@ function onContainerLongPress(e) {
     // Ignore if touch originated on a file/dir item — child v-long-press handles it
     if (e.target?.closest('.file-item, .grid-item')) return
     // Empty-area menu (paste, new file/folder, terminal) targets the current
-    // directory — meaningless while searching, so don't show it.
-    if (searchMode.value) return
+    // directory — meaningless while search results are shown, so don't show it.
+    if (searchHasQuery.value) return
     // Long-press on empty area — show menu without entry (paste, new file/folder, terminal)
     const touch = e.touches[0]
     ctxMenu.x = toFixedCSS(touch.clientX)
@@ -1189,8 +1193,9 @@ function handleCtxMenu(e) {
     ctxMenu.x = toFixedCSS(e.clientX)
     ctxMenu.y = toFixedCSS(e.clientY)
     if (!item) {
-        // Empty-area menu targets the current directory — skip while searching.
-        if (searchMode.value) { closeCtxMenu(); return }
+        // Empty-area menu targets the current directory — skip while showing
+        // search results.
+        if (searchHasQuery.value) { closeCtxMenu(); return }
         ctxMenu.entry = null
         ctxMenu.visible = true
         nextTick(() => clampCtxMenu())
@@ -1497,12 +1502,58 @@ const filteredEntries = computed(() => {
 const hasMoreEntries = computed(() => filteredEntries.value.length > MAX_VISIBLE_ENTRIES)
 const visibleEntries = computed(() => filteredEntries.value.slice(0, MAX_VISIBLE_ENTRIES))
 
+/** Add every entry between two paths (inclusive) to the multi-selection. */
+function selectRange(fromPath, toPath) {
+    const entries = displayEntries.value
+    const from = entries.findIndex(en => pathOf(en) === fromPath)
+    const to = entries.findIndex(en => pathOf(en) === toPath)
+    if (from === -1 || to === -1) return
+    const lo = Math.min(from, to)
+    const hi = Math.max(from, to)
+    for (let i = lo; i <= hi; i++) {
+        multiSelect.selected.add(pathOf(entries[i]))
+    }
+}
+
+/**
+ * Record the range anchor and snapshot the selection it extends from. Repeated
+ * Shift+clicks then rebuild the range on top of this snapshot instead of
+ * accumulating stale ranges, while selections made before the anchor survive.
+ */
+function setRangeAnchor(path) {
+    rangeAnchorPath.value = path
+    rangeBaseSelection = new Set(multiSelect.selected)
+}
+
+/** Shift+click: select the contiguous range from the anchor to `path`. */
+function extendRangeTo(path) {
+    if (!rangeAnchorPath.value) {
+        setRangeAnchor(path)
+        multiSelect.selected.add(path)
+        selectedPath.value = path
+        return
+    }
+    multiSelect.selected.clear()
+    for (const p of rangeBaseSelection) multiSelect.selected.add(p)
+    selectRange(rangeAnchorPath.value, path)
+    selectedPath.value = path
+}
+
 function handleItemClick(e) {
     if (props.dirLoading) return
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     const action = item.dataset.action
     const path = item.dataset.path
+
+    // PC Shift+click extends the selection over the contiguous range from the
+    // anchor. It never opens the entry and does not move the anchor, so
+    // repeated Shift+clicks re-extend from the same starting point.
+    if (isPC.value && e.shiftKey) {
+        if (!multiSelect.active) enterMultiSelectKeepSelection()
+        extendRangeTo(path)
+        return
+    }
 
     // PC Ctrl/Cmd+click toggles multi-select without entering the explicit mode first.
     // Keep any previously selected paths: Ctrl+click accumulates a multi-selection.
@@ -1517,6 +1568,7 @@ function handleItemClick(e) {
         }
         selectedPath.value = path
         toggleSelect(path)
+        setRangeAnchor(path)
         return
     }
 
@@ -1524,10 +1576,12 @@ function handleItemClick(e) {
     if (multiSelect.active) {
         selectedPath.value = path
         toggleSelect(path)
+        setRangeAnchor(path)
         return
     }
 
     selectedPath.value = path
+    setRangeAnchor(path)
     // PC: single click only selects — opening requires a double-click (or Enter).
     if (isPC.value) return
     openItem(action, path)
@@ -1545,8 +1599,8 @@ function handleItemDblClick(e) {
 }
 
 function openItem(action, path) {
-    if (searchMode.value && action === 'dir') {
-        // Opening a directory result leaves search and navigates into it.
+    if (searchHasQuery.value && action === 'dir') {
+        // Opening a directory result clears the query and navigates into it.
         exitSearch()
         emit('navigateDir', path)
         return
@@ -1554,8 +1608,8 @@ function openItem(action, path) {
     if (action === 'dir') {
         emit('navigateDir', path)
     } else {
-        // Files (and search-mode files) preview in the viewer — search stays
-        // active so the user can keep picking results.
+        // Files (and search-result files) preview in the viewer — the query
+        // stays so the user can keep picking results.
         emit('selectFile', path)
     }
 }
@@ -1937,9 +1991,10 @@ async function handleKeydown(e) {
         return
     }
 
-    // Escape — exit search first, then multi-select mode
+    // Escape — clear the search results first (multi-select survives), then
+    // exit multi-select mode
     if (e.key === 'Escape') {
-        if (searchMode.value) {
+        if (searchHasQuery.value) {
             e.preventDefault()
             exitSearch()
             return
@@ -1964,14 +2019,14 @@ async function handleKeydown(e) {
     }
 
     // Backspace — parent directory (only makes sense in directory browsing)
-    if (e.key === 'Backspace' && !searchMode.value) {
+    if (e.key === 'Backspace' && !searchHasQuery.value) {
         e.preventDefault()
         emit('navigateBack')
         return
     }
 
     // Ctrl+N — new file; Ctrl+Shift+N — new folder (only in directory browsing)
-    if (isCtrl && e.key === 'n' && !searchMode.value) {
+    if (isCtrl && e.key === 'n' && !searchHasQuery.value) {
         e.preventDefault()
         if (e.shiftKey) doNewFolder()
         else doNewFile()
@@ -2126,54 +2181,55 @@ function scrollSelectedIntoView(path) {
     min-height: 0;
 }
 
-/* ── Multi-select info bar ── */
-.ms-info-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0;
-    font-size: 12px;
-    color: var(--text-secondary, #666);
+/* ── Multi-select toolbar (replaces the browse toolbar in place) ── */
+.ms-toolbar-btns {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
+.ms-toolbar-btns::-webkit-scrollbar { display: none; }
 
-.ms-info-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    border-radius: 50%;
-    background: transparent;
-    color: var(--text-secondary, #666);
-    cursor: pointer;
-    flex-shrink: 0;
-    padding: 0;
-}
-
-@media (hover: hover) {
-    .ms-info-btn:hover {
-        background: var(--bg-secondary, #e0e0e0);
-        color: var(--accent-color, #4a90d9);
-    }
-}
-
-.ms-select-all-btn {
-    width: auto;
-    height: auto;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-    background: var(--bg-secondary, #e0e0e0);
-    white-space: nowrap;
-}
-
-.ms-info-text {
+/* Selection summary fills the free space so the action buttons stay right-aligned. */
+.ms-toolbar-text {
     flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 12px;
+    color: var(--text-secondary, #666);
+}
+
+.ms-select-all-btn {
+    width: auto;
+    height: auto;
+    padding: 3px 10px;
+    border: none;
+    border-radius: 10px;
+    font-size: 11px;
+    background: var(--bg-secondary, #e0e0e0);
+    color: var(--text-secondary, #666);
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+@media (hover: hover) {
+    .ms-select-all-btn:hover {
+        background: var(--bg-tertiary, #d8d8d8);
+        color: var(--accent-color, #4a90d9);
+    }
+}
+
+.toolbar-btn.ms-toolbar-danger {
+    color: #ef4444;
+}
+
+@media (hover: hover) {
+    .toolbar-btn.ms-toolbar-danger:hover {
+        background: color-mix(in srgb, #ef4444 12%, transparent);
+        color: #ef4444;
+    }
 }
 
 .file-item.ctx-highlight {
@@ -2184,65 +2240,6 @@ function scrollSelectedIntoView(path) {
 .file-item.cut-item,
 .grid-item.cut-item {
     opacity: 0.5;
-}
-
-/* ── Multi-select bottom action bar ── */
-.ms-action-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-    border-top: 1px solid var(--border-color, #e5e5e5);
-    background: var(--bg-secondary, #fff);
-    flex-shrink: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-}
-.ms-action-bar::-webkit-scrollbar { display: none; }
-
-.ms-action-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 12px;
-    border: 1px solid var(--border-color, #e5e5e5);
-    border-radius: 16px;
-    background: var(--bg-tertiary, #f5f5f5);
-    color: var(--text-primary, #1a1a1a);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-@media (hover: hover) {
-    .ms-action-btn:hover {
-        background: var(--bg-secondary, #e0e0e0);
-    }
-}
-
-.ms-action-btn.ms-danger {
-    color: #ef4444;
-    border-color: #fecaca;
-}
-
-@media (hover: hover) {
-    .ms-action-btn.ms-danger:hover {
-        background: #fef2f2;
-    }
-}
-
-[data-theme-base="dark"] .ms-action-btn.ms-danger {
-    border-color: #7f1d1d;
-}
-
-@media (hover: hover) {
-    [data-theme-base="dark"] .ms-action-btn.ms-danger:hover {
-        background: #2d1b1b;
-    }
 }
 
 /* ── File list area ── */
@@ -2296,11 +2293,6 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-btn.sort-active {
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-}
-
-.toolbar-btn.search-active {
     background: var(--accent-color, #4a90d9);
     color: #fff;
 }
@@ -2807,7 +2799,7 @@ function scrollSelectedIntoView(path) {
     opacity: 0;
 }
 
-/* ── Inline search view ── */
+/* ── Bottom dock: resident search bar ── */
 .fs-nav-bottom {
     display: flex;
     flex-direction: column;
@@ -2828,10 +2820,6 @@ function scrollSelectedIntoView(path) {
 .fs-input-row :deep(.search-pill) {
     flex: 1;
     min-width: 0;
-}
-
-.fs-close-btn {
-    color: var(--text-muted, #999);
 }
 
 .fs-toggle-btn {

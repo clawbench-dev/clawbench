@@ -1182,8 +1182,6 @@ export default {
       empty: 'No recently opened files',
     },
     search: {
-      title: 'Search Files',
-      close: 'Close search',
       placeholder: 'Search filenames...',
       recursive: 'Recursive',
       exact: 'Exact match',

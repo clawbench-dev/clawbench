@@ -242,7 +242,15 @@ vi.mock('@/composables/useFileSearch', () => ({
     effectiveDir: { value: '' },
     startSearch: mockSearchStart,
     cancelSearch: mockSearchCancel,
-    reset: mockSearchReset,
+    // Mirror the real reset(): clears the query so the results layer collapses.
+    reset: () => {
+      mockSearchReset()
+      searchState.query = ''
+      searchState.results = []
+      searchState.total = 0
+      searchState.truncated = false
+      searchState.searchBasePath = ''
+    },
     getDisplayLimit: () => 100,
   }),
 }))
@@ -273,7 +281,7 @@ const i18n = createI18n({
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
-        search: { title: '搜索文件', close: '关闭搜索', placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
+        search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -580,6 +588,85 @@ describe('FileManagerContent — handleItemClick', () => {
     expect(wrapper.vm.multiSelectState.selected.has('src')).toBe(false)
   })
 
+  it('PC: Shift+click selects the contiguous range from the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    // Plain click sets the anchor on the first entry.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+
+    // Shift+click the third entry — all three are selected, nothing opens.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.size).toBe(3)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('PC: repeated Shift+click re-extends from the same anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // Extend to readme.md, then shrink back to test.ts — the range is rebuilt
+    // from the anchor, so readme.md is no longer selected.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.size).toBe(2)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(false)
+  })
+
+  it('PC: Shift+click keeps selections made before the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    // Ctrl+click builds an independent selection on readme.md.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+    // Plain click re-anchors on src.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    // Shift+click test.ts selects src+test.ts, preserving the readme.md pick.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+  })
+
+  it('PC: Shift+click does not move the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    // The highlighted path follows the Shift+click...
+    expect(wrapper.vm.selectedPath).toBe('readme.md')
+    // ...but the anchor stays on src: a later Shift+click re-extends from src.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.size).toBe(2)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(false)
+  })
+
   it('does not emit when dirLoading is true', async () => {
     const wrapper = mountContent({ dirLoading: true })
     const dirItem = wrapper.find('.dir-item')
@@ -677,33 +764,110 @@ describe('FileManagerContent — sort', () => {
   })
 })
 
-// ── Inline search view (fused into the file manager) ──
+// ── Resident search view (fused into the file manager) ──
 
-describe('FileManagerContent — inline search', () => {
-  it('toolbar search button toggles the search view', async () => {
+describe('FileManagerContent — resident search', () => {
+  it('renders the search bar permanently with no toggle button', () => {
     const wrapper = mountContent()
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
-    // Find and click the search button by its title
-    const allBtns = wrapper.findAll('.toolbar-btn')
-    const btn = allBtns.find(b => b.attributes('title')?.includes('搜索文件'))
-    expect(btn).toBeTruthy()
-    await btn!.trigger('click')
+    // The search bar is always present — there is no mode to enter.
     expect(wrapper.find('.fs-input-row').exists()).toBe(true)
-    expect(wrapper.vm.searchActive).toBe(true)
-    // Clicking the close button exits the search view
-    await wrapper.find('.fs-close-btn').trigger('click')
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
-    expect(wrapper.vm.searchActive).toBe(false)
+    // No toolbar search toggle and no in-bar close button.
+    const titles = wrapper.findAll('.toolbar-btn').map(b => b.attributes('title') ?? '')
+    expect(titles.some(t => t.includes('搜索文件'))).toBe(false)
+    expect(wrapper.find('.fs-close-btn').exists()).toBe(false)
   })
 
-  it('exits search view on directory change', async () => {
+  it('keeps the search bar while multi-select is active and selecting results', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'cmd/main2.go', type: 'file', matchedIndices: [] },
+    ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
+    await nextTick()
+    // Enter multi-select from the search-results layer.
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    // The search bar stays, and the toolbar swaps to the multi-select variant.
     expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
+
+    // Selecting a search result works while the query stays in the box.
+    await wrapper.find('.file-item').trigger('click')
+    expect(wrapper.vm.multiSelectState.selected.has('cmd/main.go')).toBe(true)
+    expect(searchState.query).toBe('main')
+    expect(wrapper.vm.searchActive).toBe(true)
+  })
+
+  it('clears the query without exiting multi-select', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('cmd/main.go')
+    await nextTick()
+
+    wrapper.vm.closeSearch()
+    await nextTick()
+    // Results layer gone, but the multi-selection and its toolbar survive.
+    expect(wrapper.vm.searchActive).toBe(false)
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(wrapper.vm.multiSelectState.selected.has('cmd/main.go')).toBe(true)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
+  })
+
+  it('swaps the browse toolbar for the multi-select toolbar in place', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    // Browse toolbar: the sort dropdown is present, the multi-select bar is not.
+    expect(wrapper.find('.toolbar-dropdown-wrap').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(false)
+
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    // Same toolbar row, now showing the multi-select variant.
+    const toolbar = wrapper.find('.dir-toolbar')
+    expect(toolbar.find('.ms-toolbar-btns').exists()).toBe(true)
+    expect(wrapper.find('.toolbar-dropdown-wrap').exists()).toBe(false)
+    // The breadcrumb is untouched — the merged bar never covers it.
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
+  })
+
+  it('shows the directory listing while the query is empty and results once typed', async () => {
+    const wrapper = mountContent()
+    // Empty query → current directory listing.
+    expect(wrapper.findAll('.file-item').length).toBe(sampleEntries.length)
+    expect(wrapper.vm.searchActive).toBe(false)
+
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+    ]
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(1)
+    expect(items[0].attributes('data-path')).toBe('cmd/main.go')
+  })
+
+  it('clears the query on directory change and returns to the listing', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
     await wrapper.setProps({ currentDir: 'src' })
     await nextTick()
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
+    // Search bar stays resident; the results layer is dismissed.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.vm.searchActive).toBe(false)
   })
 
   it('renders search results as file items with result paths', async () => {
@@ -713,8 +877,6 @@ describe('FileManagerContent — inline search', () => {
       { name: 'lib', path: 'pkg/lib', type: 'dir', matchedIndices: [0, 1, 2] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     const items = wrapper.findAll('.file-item')
     expect(items.length).toBe(2)
@@ -723,14 +885,12 @@ describe('FileManagerContent — inline search', () => {
     expect(items[0].find('.file-name').text()).toContain('main.go')
   })
 
-  it('double-clicking a file result emits selectFile and keeps search active', async () => {
+  it('double-clicking a file result emits selectFile and keeps the query', async () => {
     searchState.query = 'main'
     searchState.results = [
       { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     await wrapper.find('.file-item').trigger('dblclick')
     expect(wrapper.emitted('selectFile')).toBeTruthy()
@@ -739,14 +899,12 @@ describe('FileManagerContent — inline search', () => {
     expect(wrapper.vm.searchActive).toBe(true)
   })
 
-  it('double-clicking a dir result emits navigateDir and exits search', async () => {
+  it('double-clicking a dir result emits navigateDir and clears the query', async () => {
     searchState.query = 'cmd'
     searchState.results = [
       { name: 'cmd', path: 'cmd', type: 'dir', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     await wrapper.find('.dir-item').trigger('dblclick')
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
@@ -760,21 +918,24 @@ describe('FileManagerContent — inline search', () => {
       { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     await wrapper.find('.file-item').trigger('contextmenu')
     expect(wrapper.find('.context-menu').exists()).toBe(true)
     expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
   })
 
-  it('Escape exits the search view', async () => {
+  it('Escape clears the query and returns to the listing', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
-    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
     await wrapper.find('.search-pill input').trigger('keydown', { key: 'Escape' })
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
+    expect(wrapper.vm.searchActive).toBe(false)
+    // The bar itself stays visible.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
   it('Enter in the search box opens the first result without a prior highlight', async () => {
@@ -784,8 +945,6 @@ describe('FileManagerContent — inline search', () => {
       { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     // No arrow key pressed yet — Enter should open the first result.
     await wrapper.find('.search-pill input').trigger('keydown', { key: 'Enter' })
@@ -800,8 +959,6 @@ describe('FileManagerContent — inline search', () => {
       { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     // Highlight the second result via ArrowDown twice
     await wrapper.find('.search-pill input').trigger('keydown', { key: 'ArrowDown' })
@@ -815,26 +972,18 @@ describe('FileManagerContent — inline search', () => {
     expect(wrapper.vm._getSelectedPath()).toBe('')
   })
 
-  it('keeps the toolbar and breadcrumb visible while the search view is open', async () => {
+  it('keeps the toolbar and breadcrumb visible alongside the resident search bar', () => {
     const wrapper = mountContent({ currentDir: 'src' })
-    expect(wrapper.find('.dir-toolbar').exists()).toBe(true)
-    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
-    await nextTick()
-    // Toolbar + breadcrumb remain; the search row is appended below them
     expect(wrapper.find('.dir-toolbar').exists()).toBe(true)
     expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
     expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('reflects the active search mode in the search box placeholder', async () => {
+  it('reflects the active search options in the search box placeholder', async () => {
     searchState.scope = 'current'
     searchState.recursive = false
     searchState.exact = false
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     // No separate hint line anymore — the mode description lives in the placeholder
     expect(wrapper.find('.fs-mode-hint').exists()).toBe(false)
@@ -859,8 +1008,6 @@ describe('FileManagerContent — inline search', () => {
       { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     const locateBtn = wrapper.find('.file-item .fs-result-dir-btn')
     expect(locateBtn.exists()).toBe(true)
@@ -870,8 +1017,6 @@ describe('FileManagerContent — inline search', () => {
     searchState.query = ''
     searchState.results = []
     const wrapper = mountContent() // default entries = sampleEntries (src dir, test.ts, readme.md)
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     // The whole current dir listing is shown even with no query typed
     const items = wrapper.findAll('.file-item')
@@ -889,8 +1034,6 @@ describe('FileManagerContent — inline search', () => {
       { name: 'a.go', path: 'a.go', type: 'file', size: 10, modified: '2025-01-01T00:00:00Z', matchedIndices: [] },
     ]
     const wrapper = mountContent({ sortField: 'size', sortDir: 'asc' })
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     const items = wrapper.findAll('.file-item')
     // Sorted ascending by size → a.go (10) before big.go (5000)
@@ -2532,13 +2675,13 @@ describe('FileManagerContent — multi-select action bar', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders the multi-select action bar when items are selected', async () => {
+  it('renders the multi-select toolbar when items are selected', async () => {
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     wrapper.vm.multiSelectState.selected.add('test.ts')
     await nextTick()
 
-    expect(wrapper.find('.ms-action-bar').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
   })
 
   it('doBatchCopy copies all selected entries', async () => {
@@ -2653,13 +2796,16 @@ describe('FileManagerContent — multi-select action bar', () => {
     expect(wrapper.vm.isAllSelected).toBe(false)
   })
 
-  it('renders the multi-select info bar with select-all button when active', async () => {
+  it('renders the multi-select toolbar with select-all button when active', async () => {
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     await nextTick()
 
-    expect(wrapper.find('.ms-info-bar').exists()).toBe(true)
-    const exitBtn = wrapper.find('.ms-info-btn')
+    const toolbar = wrapper.find('.ms-toolbar-btns')
+    expect(toolbar.exists()).toBe(true)
+    expect(toolbar.find('.ms-select-all-btn').exists()).toBe(true)
+    // Exit button is the first icon button in the multi-select toolbar.
+    const exitBtn = toolbar.find('.toolbar-btn')
     await exitBtn.trigger('click')
     await nextTick()
     expect(wrapper.vm.multiSelectState.active).toBe(false)
@@ -2950,8 +3096,6 @@ describe('FileManagerContent — thumbnails', () => {
       { name: 'a.png', path: 'nested/deep/a.png', type: 'image', matchedIndices: [] },
     ]
     const wrapper = mountContent()
-    const btn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title')?.includes('搜索文件'))
-    await btn!.trigger('click')
     await nextTick()
     expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'nested/deep/a.png', type: 'file' })).toContain(encodeURIComponent('nested/deep/a.png'))
   })
@@ -3024,26 +3168,31 @@ describe('FileManagerContent — truncation', () => {
   })
 })
 
-// ── Search view open/close API (App Ctrl+F) ──
+// ── Search API (App Ctrl+F / back-navigation) ──
 
-describe('FileManagerContent — search view API', () => {
-  it('openSearch activates the search view and focuses the input', async () => {
+describe('FileManagerContent — search API', () => {
+  it('openSearch focuses the resident search input', async () => {
     const wrapper = mountContent()
     await wrapper.vm.openSearch()
     await nextTick()
     expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('closeSearch exits the search view', async () => {
+  it('closeSearch clears the query but keeps the bar resident', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
     const wrapper = mountContent()
-    await wrapper.vm.openSearch()
     await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
     await wrapper.vm.closeSearch()
     await nextTick()
-    expect(wrapper.find('.fs-input-row').exists()).toBe(false)
+    expect(wrapper.vm.searchActive).toBe(false)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('focusSearchInput does not throw when the search view is closed', async () => {
+  it('focusSearchInput does not throw', async () => {
     const wrapper = mountContent()
     expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
   })

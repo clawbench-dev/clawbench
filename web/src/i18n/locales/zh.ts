@@ -1182,8 +1182,6 @@ export default {
       empty: '暂无最近打开的文件',
     },
     search: {
-      title: '搜索文件',
-      close: '关闭搜索',
       placeholder: '搜索文件名...',
       recursive: '递归搜索',
       exact: '精确匹配',
