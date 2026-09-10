@@ -145,6 +145,22 @@ func Shutdown() {
 	mu.Unlock()
 }
 
+// ResetIndexerDimensionSync clears the running indexer's one-shot dimension-sync
+// latch so the next health check re-reads the embedding dimension.
+//
+// The HTTP reset endpoints drop rag_vec and set a new dimension directly on the
+// store. The indexer caches "dimension already synced" to avoid re-querying on
+// every poll, so without this it would never notice the reset: if the embedder's
+// dimension is not yet known (Dim() == 0), the store's dimension becomes 0 and
+// vector indexing stays dead until a process restart.
+func ResetIndexerDimensionSync() {
+	mu.Lock()
+	defer mu.Unlock()
+	if globalIndexer != nil {
+		globalIndexer.resetDimensionSync()
+	}
+}
+
 // Reconfigure applies new RAG config at runtime (hot-reload).
 // It recreates the embedding client (pointer swap, no field mutation)
 // and restarts the indexer and cleanup worker with the new config.

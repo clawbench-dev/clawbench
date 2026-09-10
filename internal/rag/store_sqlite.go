@@ -3,11 +3,14 @@ package rag
 import (
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/service"
@@ -86,10 +89,50 @@ func (serviceWriteLocker) Unlock() { service.WriteUnlock() }
 
 // Store manages the SQLite connection and FTS5 index.
 type Store struct {
-	db            *sql.DB
+	db *sql.DB
+	// mu guards embDim and vecTableReady. These are written by the indexer
+	// goroutine (dimension sync, lazy vec0 creation) and by HTTP handlers
+	// (reset/rebuild endpoints) concurrently, so plain fields would race.
+	mu            sync.RWMutex
 	embDim        int
 	vecTableReady bool // cached: true after rag_vec table confirmed to exist
 	writeMu       WriteLocker
+}
+
+// getEmbDim returns the current embedding dimension under the read lock.
+func (s *Store) getEmbDim() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.embDim
+}
+
+// setEmbDimInternal updates the embedding dimension under the write lock.
+func (s *Store) setEmbDimInternal(dim int) {
+	s.mu.Lock()
+	s.embDim = dim
+	s.mu.Unlock()
+}
+
+// isVecTableReady reports the cached "rag_vec exists" flag under the read lock.
+func (s *Store) isVecTableReady() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.vecTableReady
+}
+
+// markVecTableReady caches that rag_vec exists under the write lock.
+func (s *Store) markVecTableReady() {
+	s.mu.Lock()
+	s.vecTableReady = true
+	s.mu.Unlock()
+}
+
+// invalidateVecTable clears the cached rag_vec-exists flag after the table is
+// dropped (reset paths), forcing the next ensureVecTable to re-check.
+func (s *Store) invalidateVecTable() {
+	s.mu.Lock()
+	s.vecTableReady = false
+	s.mu.Unlock()
 }
 
 // NewSQLiteStore creates a new SQLite-backed RAG store.
@@ -140,6 +183,14 @@ func newSQLiteStoreWithLocker(dbPath string, locker WriteLocker) (*Store, error)
 	if err := s.initSchema(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("failed to init sqlite schema: %w", err)
+	}
+
+	// Enforce one chunk row per (message_id, chunk_index) so a retried batch
+	// cannot duplicate chunks, FTS entries, or vectors. Runs before the
+	// dimension load because it may delete rows.
+	if err := s.ensureChunkUniqueness(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("failed to enforce chunk uniqueness: %w", err)
 	}
 
 	// Load embedding dimension from existing data BEFORE migration
@@ -209,6 +260,68 @@ func (s *Store) initSchema() error {
 	return nil
 }
 
+// ensureChunkUniqueness deduplicates rag_chunks on (message_id, chunk_index) and
+// adds a unique index enforcing it.
+//
+// Without this, a batch that partially commits (InsertChunks splits into
+// 100-chunk transactions) and then fails will be retried, re-inserting chunks
+// that already landed — producing duplicate chunk, FTS, and vector rows for the
+// same message and polluting search results. Existing duplicates (from older
+// builds) are collapsed to the lowest chunk id, and the FTS entries of the
+// discarded rows are removed in step.
+func (s *Store) ensureChunkUniqueness() error {
+	// Check for duplicates first: the DELETE below is a full scan, so skip it
+	// entirely on the common (already unique) path.
+	var dupes int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM rag_chunks GROUP BY message_id, chunk_index HAVING COUNT(*) > 1
+		)
+	`).Scan(&dupes)
+	if err != nil {
+		return fmt.Errorf("check duplicate chunks: %w", err)
+	}
+
+	if dupes > 0 {
+		s.writeMu.Lock()
+		// Remove the FTS index entries for the rows that are about to be deleted,
+		// otherwise the external-content index keeps pointing at gone rowids.
+		_, ftsErr := s.db.Exec(`
+			DELETE FROM rag_chunks_fts WHERE rowid IN (
+				SELECT id FROM rag_chunks WHERE id NOT IN (
+					SELECT MIN(id) FROM rag_chunks GROUP BY message_id, chunk_index
+				)
+			)
+		`)
+		if ftsErr != nil {
+			s.writeMu.Unlock()
+			return fmt.Errorf("dedupe fts entries: %w", ftsErr)
+		}
+		res, delErr := s.db.Exec(`
+			DELETE FROM rag_chunks WHERE id NOT IN (
+				SELECT MIN(id) FROM rag_chunks GROUP BY message_id, chunk_index
+			)
+		`)
+		if delErr != nil {
+			s.writeMu.Unlock()
+			return fmt.Errorf("dedupe chunks: %w", delErr)
+		}
+		removed, _ := res.RowsAffected()
+		s.writeMu.Unlock()
+		slog.Info("rag: removed duplicate chunks", slog.Int("duplicates", dupes), slog.Int64("rows_removed", removed))
+	}
+
+	s.writeMu.Lock()
+	_, err = s.db.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_rag_chunks_message_chunk ON rag_chunks(message_id, chunk_index)`,
+	)
+	s.writeMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("create chunk uniqueness index: %w", err)
+	}
+	return nil
+}
+
 // loadEmbeddingDimFromDB reads the embedding dimension from existing data.
 func (s *Store) loadEmbeddingDimFromDB() {
 	var dim int
@@ -216,7 +329,7 @@ func (s *Store) loadEmbeddingDimFromDB() {
 		SELECT embedding_dim FROM rag_chunks WHERE has_embedding = 1 AND embedding_dim > 0 LIMIT 1
 	`).Scan(&dim)
 	if err == nil && dim > 0 {
-		s.embDim = dim
+		s.setEmbDimInternal(dim)
 		slog.Info("rag: loaded embedding dimension from existing data", slog.Int("dim", dim))
 	}
 }
@@ -241,7 +354,7 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	}
 
 	// Ensure dimension is set before creating vec0
-	if s.embDim <= 0 {
+	if s.getEmbDim() <= 0 {
 		slog.Info("rag: embedding dimension unknown, skipping vec0 migration until embedder provides it")
 		return nil
 	}
@@ -306,7 +419,7 @@ func (s *Store) migrateEmbeddingsToVec() error {
 // Returns an error if dimension is unknown (0) and no existing table is found.
 // Must NOT be called while holding writeMu or from within a transaction (opens its own queries).
 func (s *Store) ensureVecTable() error {
-	if s.vecTableReady {
+	if s.isVecTableReady() {
 		return nil // already confirmed
 	}
 
@@ -317,11 +430,11 @@ func (s *Store) ensureVecTable() error {
 		return fmt.Errorf("check rag_vec existence: %w", err)
 	}
 	if count > 0 {
-		s.vecTableReady = true
+		s.markVecTableReady()
 		return nil
 	}
 
-	dim := s.embDim
+	dim := s.getEmbDim()
 	if dim <= 0 {
 		return fmt.Errorf("cannot create rag_vec: embedding dimension unknown (set via SetEmbeddingDim first)")
 	}
@@ -340,20 +453,20 @@ func (s *Store) ensureVecTable() error {
 	if err != nil {
 		return fmt.Errorf("create rag_vec: %w", err)
 	}
-	s.vecTableReady = true
+	s.markVecTableReady()
 	slog.Info("rag: created rag_vec table", slog.Int("dim", dim))
 	return nil
 }
 
 // vecTableExists checks if the rag_vec table exists in the database.
 func (s *Store) vecTableExists() bool {
-	if s.vecTableReady {
+	if s.isVecTableReady() {
 		return true
 	}
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&count)
 	if err == nil && count > 0 {
-		s.vecTableReady = true
+		s.markVecTableReady()
 		return true
 	}
 	return false
@@ -369,6 +482,18 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 
 	vecReady := s.prepareVecTable(chunks)
 
+	// Resolve the vec0 table width once, before opening any transaction: the
+	// per-chunk width check must not query the DB from inside a tx (single
+	// connection would deadlock) and the width cannot change mid-insert.
+	vecDim := 0
+	if vecReady {
+		dim, err := s.ragVecDim()
+		if err != nil {
+			return fmt.Errorf("resolve rag_vec dimension: %w", err)
+		}
+		vecDim = dim
+	}
+
 	// Process in sub-batches to limit write-lock duration
 	const chunksPerTx = 100
 	for batchStart := 0; batchStart < len(chunks); batchStart += chunksPerTx {
@@ -376,7 +501,7 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 		if batchEnd > len(chunks) {
 			batchEnd = len(chunks)
 		}
-		if err := s.insertChunkBatch(chunks[batchStart:batchEnd], vecReady); err != nil {
+		if err := s.insertChunkBatch(chunks[batchStart:batchEnd], vecReady, vecDim); err != nil {
 			return err
 		}
 	}
@@ -400,7 +525,7 @@ func (s *Store) prepareVecTable(chunks []Chunk) bool {
 }
 
 // insertChunkBatch inserts a batch of chunks within a single transaction.
-func (s *Store) insertChunkBatch(batch []Chunk, vecReady bool) error {
+func (s *Store) insertChunkBatch(batch []Chunk, vecReady bool, vecDim int) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -410,7 +535,7 @@ func (s *Store) insertChunkBatch(batch []Chunk, vecReady bool) error {
 	}
 
 	for _, c := range batch {
-		chunkID, err := s.insertOneChunk(tx, c, vecReady)
+		chunkID, err := s.insertOneChunk(tx, c, vecReady, vecDim)
 		if err != nil {
 			_ = tx.Rollback()
 			return err
@@ -424,14 +549,67 @@ func (s *Store) insertChunkBatch(batch []Chunk, vecReady bool) error {
 	return nil
 }
 
+// deleteChunkByMessageIndex removes any existing chunk row for the given
+// (message_id, chunk_index), along with its FTS and vec entries, inside tx.
+// It is a no-op when no such row exists, making chunk inserts idempotent across
+// retries of a partially-committed batch.
+func deleteChunkByMessageIndex(tx *sql.Tx, messageID int64, chunkIndex int) error {
+	var oldID int64
+	err := tx.QueryRow(
+		`SELECT id FROM rag_chunks WHERE message_id = ? AND chunk_index = ?`,
+		messageID, chunkIndex,
+	).Scan(&oldID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up existing chunk (message_id=%d, chunk_index=%d): %w", messageID, chunkIndex, err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM rag_chunks_fts WHERE rowid = ?`, oldID); err != nil {
+		return fmt.Errorf("delete existing fts entry for chunk %d: %w", oldID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, oldID); err != nil {
+		// rag_vec may not exist yet (FTS-only mode); that is not an error.
+		if !strings.Contains(err.Error(), "no such table") {
+			return fmt.Errorf("delete existing vec entry for chunk %d: %w", oldID, err)
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM rag_chunks WHERE id = ?`, oldID); err != nil {
+		return fmt.Errorf("delete existing chunk %d: %w", oldID, err)
+	}
+	return nil
+}
+
 // insertOneChunk inserts a single chunk and its FTS + vec entries within a transaction.
-// Returns the chunk ID on success.
-func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool) (int64, error) {
+// vecDim is the rag_vec table's width (0 when unknown), resolved by the caller
+// before the transaction opens. Returns the chunk ID on success.
+//
+// The chunk is only marked has_embedding = 1 when its vector row is actually
+// written to rag_vec. If the embedding is present but vec0 is unavailable (e.g.
+// the dimension is not yet known), the embedding BLOB is stored but the flag
+// stays 0, so the backfill pass (which selects has_embedding = 0) will embed it
+// later. Marking it embedded without a vec row would make it permanently
+// invisible to vector search.
+func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (int64, error) {
+	hasEmbedding := c.HasEmbedding && c.Embedding != nil
 	if c.Embedding != nil {
 		if err := validateEmbedding(c.Embedding); err != nil {
 			return 0, fmt.Errorf("embedding validation for chunk (message_id=%d): %w", c.MessageID, err)
 		}
+		// Reject vectors whose width does not match the vec0 table. Without this
+		// a misconfigured embedder poisons the whole insert transaction and the
+		// batch is retried forever. vecDim is resolved by the caller before the
+		// transaction opens (querying here would deadlock on single-connection DBs).
+		if vecReady && vecDim > 0 && len(c.Embedding) != vecDim {
+			return 0, fmt.Errorf(
+				"embedding dimension mismatch for chunk (message_id=%d): got %d, rag_vec expects %d",
+				c.MessageID, len(c.Embedding), vecDim)
+		}
 	}
+
+	// Only claim the chunk is embedded if the vec row will actually be written.
+	willStoreVector := hasEmbedding && vecReady
 
 	var embBlob []byte
 	var embDim int
@@ -440,13 +618,24 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool) (int64, error
 		embDim = len(c.Embedding)
 	}
 
+	// Replace any existing row for this (message_id, chunk_index).
+	//
+	// InsertChunks commits in 100-chunk sub-batches, so a batch can partially
+	// commit and then fail; the messages stay unindexed and are retried, which
+	// would otherwise re-insert chunks that already landed. The unique index
+	// makes that a hard error, so clear the previous row (plus its FTS and vec
+	// entries) first to make inserts idempotent.
+	if err := deleteChunkByMessageIndex(tx, c.MessageID, c.ChunkIndex); err != nil {
+		return 0, err
+	}
+
 	result, err := tx.Exec(
 		`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
 			project_path, backend, role, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.SessionID, c.MessageID, c.ChunkText, c.ChunkTextSegmented,
-		c.ChunkIndex, c.TokenCount, embBlob, boolToInt(c.HasEmbedding), embDim,
+		c.ChunkIndex, c.TokenCount, embBlob, boolToInt(willStoreVector), embDim,
 		c.ProjectPath, c.Backend, c.Role, c.CreatedAt,
 	)
 	if err != nil {
@@ -460,7 +649,7 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool) (int64, error
 		return 0, fmt.Errorf("insert fts entry for chunk %d: %w", chunkID, err)
 	}
 
-	if c.HasEmbedding && c.Embedding != nil && vecReady {
+	if willStoreVector {
 		vecBlob := serializeFloat32(float64ToFloat32(c.Embedding))
 		if _, err = tx.Exec(
 			`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
@@ -472,6 +661,73 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool) (int64, error
 	}
 
 	return chunkID, nil
+}
+
+// vectorFilterSQL holds the optional metadata predicates for a KNN query.
+type vectorFilterSQL struct {
+	projectPath      string
+	backend          string
+	role             string
+	sessionID        string
+	excludeSessionID string
+	fromTime         string
+	toTime           string
+}
+
+// sql renders the filter predicates, prefixed with " AND ", or "" when no
+// filter is set.
+//
+// The time window is deliberately expressed on v.rowid rather than on the
+// joined c.created_at: sqlite-vec applies filters on vec0's own columns (and on
+// v.rowid) INSIDE the KNN scan, but a predicate on a joined table is applied
+// afterwards. Filtering c.created_at post-KNN only inspects the top-k
+// candidates, so if the nearest k vectors fall outside the window the query
+// returns nothing even when in-range matches exist. A rowid subquery pushes the
+// window into the scan so the ranking honors it.
+func (f vectorFilterSQL) sql() string {
+	var sb strings.Builder
+	addEq := func(col, val string) {
+		if val != "" {
+			sb.WriteString(" AND " + col + " = ?")
+		}
+	}
+	addEq("v.project_path", f.projectPath)
+	addEq("v.backend", f.backend)
+	addEq("v.role", f.role)
+	addEq("v.session_id", f.sessionID)
+	if f.excludeSessionID != "" {
+		sb.WriteString(" AND v.session_id != ?")
+	}
+
+	if f.fromTime != "" || f.toTime != "" {
+		var conds []string
+		if f.fromTime != "" {
+			conds = append(conds, "created_at >= ?")
+		}
+		if f.toTime != "" {
+			conds = append(conds, "created_at <= ?")
+		}
+		sb.WriteString(" AND v.rowid IN (SELECT id FROM rag_chunks WHERE " + strings.Join(conds, " AND ") + ")")
+	}
+	return sb.String()
+}
+
+// args returns the bind values matching sql(), in the same order.
+func (f vectorFilterSQL) args() []any {
+	var args []any
+	appendIfSet := func(val string) {
+		if val != "" {
+			args = append(args, val)
+		}
+	}
+	appendIfSet(f.projectPath)
+	appendIfSet(f.backend)
+	appendIfSet(f.role)
+	appendIfSet(f.sessionID)
+	appendIfSet(f.excludeSessionID)
+	appendIfSet(f.fromTime)
+	appendIfSet(f.toTime)
+	return args
 }
 
 // SearchVector performs vector similarity search using sqlite-vec KNN.
@@ -495,36 +751,21 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 		FROM rag_vec v
 		JOIN rag_chunks c ON c.id = v.rowid
 		WHERE v.embedding MATCH ? AND v.k = ?`
-	args := []any{vecBlob, limit * 2} // over-fetch for post-filtering
-
-	if projectPath != "" {
-		query += " AND v.project_path = ?"
-		args = append(args, projectPath)
+	filter := vectorFilterSQL{
+		projectPath:      projectPath,
+		backend:          backend,
+		role:             role,
+		sessionID:        sessionID,
+		excludeSessionID: excludeSessionID,
+		fromTime:         fromTime,
+		toTime:           toTime,
 	}
-	if backend != "" {
-		query += " AND v.backend = ?"
-		args = append(args, backend)
-	}
-	if role != "" {
-		query += " AND v.role = ?"
-		args = append(args, role)
-	}
-	if sessionID != "" {
-		query += " AND v.session_id = ?"
-		args = append(args, sessionID)
-	}
-	if excludeSessionID != "" {
-		query += " AND v.session_id != ?"
-		args = append(args, excludeSessionID)
-	}
-	if fromTime != "" {
-		query += " AND c.created_at >= ?"
-		args = append(args, fromTime)
-	}
-	if toTime != "" {
-		query += " AND c.created_at <= ?"
-		args = append(args, toTime)
-	}
+	filterArgs := filter.args()
+	// Preallocate: vecBlob + k, the metadata filters, and the trailing LIMIT.
+	args := make([]any, 0, 2+len(filterArgs)+1)
+	args = append(args, vecBlob, limit*2) // over-fetch for post-filtering
+	query += filter.sql()
+	args = append(args, filterArgs...)
 
 	query += " ORDER BY v.distance LIMIT ?"
 	args = append(args, limit)
@@ -757,6 +998,39 @@ func (s *Store) GetPendingEmbeddings(limit int) ([]PendingChunk, error) {
 	return pending, rows.Err()
 }
 
+// backfillOneChunk writes the vec row and then the embedding columns for a
+// single pending chunk. It reports whether the chunk was fully backfilled.
+//
+// The vector row is written FIRST: has_embedding must only be set once the vec
+// row exists, otherwise the chunk is flagged embedded but invisible to vector
+// search and will never be retried by the backfill pass.
+func backfillOneChunk(emb []float64, p PendingChunk, vecDim int, deleteVecStmt, insertVecStmt, updateStmt *sql.Stmt) bool {
+	if err := validateEmbedding(emb); err != nil {
+		return false
+	}
+	// Skip wrong-width vectors rather than letting them fail the vec insert
+	// and leave the chunk flagged embedded without a vector row.
+	if vecDim > 0 && len(emb) != vecDim {
+		slog.Warn("rag: skipping backfill embedding with wrong dimension",
+			slog.Int64("chunk_id", p.ID), slog.Int("got", len(emb)), slog.Int("want", vecDim))
+		return false
+	}
+
+	_, _ = deleteVecStmt.Exec(p.ID)
+	vecBlob := serializeFloat32(float64ToFloat32(emb))
+	if _, err := insertVecStmt.Exec(p.ID, vecBlob, p.ProjectPath, p.Backend, p.Role, p.SessionID); err != nil {
+		slog.Warn("rag: batch insert vec failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
+		return false
+	}
+
+	embBlob := serializeEmbedding(emb)
+	if _, err := updateStmt.Exec(embBlob, len(emb), p.ID); err != nil {
+		slog.Warn("rag: batch update chunk failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
+		return false
+	}
+	return true
+}
+
 // BatchUpdateEmbeddings updates embeddings for multiple chunks.
 // Also inserts vectors into the vec0 index. Returns the number of chunks updated.
 // Caller is responsible for batching at appropriate size (typically embedSubBatchSize).
@@ -769,6 +1043,12 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 	// Must NOT be called while holding writeMu or from within a transaction.
 	if err := s.ensureVecTable(); err != nil {
 		return 0, fmt.Errorf("ensure vec0 table for batch update: %w", err)
+	}
+
+	// Resolve the table width before the transaction (see insertOneChunk).
+	vecDim, err := s.ragVecDim()
+	if err != nil {
+		return 0, fmt.Errorf("resolve rag_vec dimension for batch update: %w", err)
 	}
 
 	s.writeMu.Lock()
@@ -810,24 +1090,9 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 		if i >= len(embeddings) || embeddings[i] == nil {
 			continue
 		}
-		emb := embeddings[i]
-		if err := validateEmbedding(emb); err != nil {
-			continue
+		if backfillOneChunk(embeddings[i], p, vecDim, deleteVecStmt, insertVecStmt, updateStmt) {
+			backfilled++
 		}
-
-		embBlob := serializeEmbedding(emb)
-		if _, err := updateStmt.Exec(embBlob, len(emb), p.ID); err != nil {
-			slog.Warn("rag: batch update chunk failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
-			continue
-		}
-
-		_, _ = deleteVecStmt.Exec(p.ID)
-		vecBlob := serializeFloat32(float64ToFloat32(emb))
-		if _, err := insertVecStmt.Exec(p.ID, vecBlob, p.ProjectPath, p.Backend, p.Role, p.SessionID); err != nil {
-			slog.Warn("rag: batch insert vec failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
-			continue
-		}
-		backfilled++
 	}
 
 	_ = insertVecStmt.Close()
@@ -867,31 +1132,22 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 		return fmt.Errorf("begin update embedding transaction: %w", err)
 	}
 
-	// Update rag_chunks
-	_, err = tx.Exec(
-		`
-		UPDATE rag_chunks
-		SET embedding = ?, has_embedding = 1, embedding_dim = ?
-		WHERE id = ?`,
-		embBlob, len(embedding), chunkID,
-	)
-	if err != nil {
-		_ = tx.Rollback()
-		s.writeMu.Unlock()
-		return fmt.Errorf("update embedding: %w", err)
-	}
-
-	// Upsert into vec0 (delete old + insert new)
+	// Write the vec row first so has_embedding is only set once the chunk is
+	// actually searchable by vector. Setting the flag before (or despite) a
+	// failed vec insert would hide the chunk from the backfill pass, which only
+	// selects has_embedding = 0.
 	_, _ = tx.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
 	vecBlob := serializeFloat32(float64ToFloat32(embedding))
-	_, err = tx.Exec(
+	_, vecErr := tx.Exec(
 		`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		chunkID, vecBlob, "", "", "", "",
 	)
-	if err != nil {
-		// Vec0 insert failed — still commit the rag_chunks update
-		slog.Warn("rag: vec0 insert failed in UpdateEmbedding", slog.String("err", err.Error()))
+	if vecErr != nil {
+		// Vec0 unavailable (no dimension yet) — store the embedding BLOB but
+		// leave has_embedding = 0 so the backfill pass retries later.
+		slog.Warn("rag: vec0 insert failed in UpdateEmbedding, leaving chunk pending",
+			slog.String("err", vecErr.Error()))
 	} else {
 		// Fetch metadata and update vec0 columns
 		var projectPath, backend, role, sessionID string
@@ -905,6 +1161,24 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 		)
 	}
 
+	// Update rag_chunks; has_embedding reflects whether the vec row landed.
+	hasEmb := 0
+	if vecErr == nil {
+		hasEmb = 1
+	}
+	_, err = tx.Exec(
+		`
+		UPDATE rag_chunks
+		SET embedding = ?, has_embedding = ?, embedding_dim = ?
+		WHERE id = ?`,
+		embBlob, hasEmb, len(embedding), chunkID,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return fmt.Errorf("update embedding: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		s.writeMu.Unlock()
 		return fmt.Errorf("commit update embedding: %w", err)
@@ -914,32 +1188,65 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	return nil
 }
 
-// CheckDimensionMismatch checks if existing embeddings have a different dimension
-// than the store's configured dimension. Returns the existing dimension (0 if no data)
-// and whether there is a mismatch.
-func (s *Store) CheckDimensionMismatch() (int, bool, error) {
-	var dim int
-	err := s.db.QueryRow(`
-		SELECT COALESCE(
-			(SELECT embedding_dim FROM rag_chunks WHERE has_embedding = 1 AND embedding_dim > 0 LIMIT 1),
-			0
-		)
-	`).Scan(&dim)
+// ragVecDim returns the embedding dimension of the existing rag_vec table, or 0
+// if the table does not exist. The dimension is fixed at CREATE time, so the
+// table's own DDL is the only authoritative source once it exists.
+func (s *Store) ragVecDim() (int, error) {
+	var ddl string
+	err := s.db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='rag_vec'",
+	).Scan(&ddl)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
-		return 0, false, fmt.Errorf("check dimension: %w", err)
+		return 0, fmt.Errorf("read rag_vec schema: %w", err)
 	}
-	if dim == 0 {
-		return 0, false, nil
+	// The DDL contains `embedding float[N] distance_metric=cosine`.
+	idx := strings.Index(ddl, "float[")
+	if idx < 0 {
+		return 0, fmt.Errorf("rag_vec schema missing dimension: %s", ddl)
 	}
-	return dim, dim != s.embDim, nil
+	rest := ddl[idx+len("float["):]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return 0, fmt.Errorf("rag_vec schema malformed dimension: %s", ddl)
+	}
+	dim, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+	if err != nil {
+		return 0, fmt.Errorf("parse rag_vec dimension %q: %w", rest[:end], err)
+	}
+	return dim, nil
+}
+
+// CheckDimensionMismatch reports whether the embedding dimension the caller is
+// about to use differs from the dimension of the existing rag_vec table.
+//
+// This must compare against the rag_vec table's actual DDL, NOT against
+// s.embDim: s.embDim is loaded from rag_chunks.embedding_dim at startup, so
+// comparing the two would always report "match" and a changed embedding model
+// (e.g. 1024 → 768) would be silently accepted, making every subsequent vector
+// insert fail against the old-width table.
+//
+// Returns the existing dimension (0 when there is no vec table) and whether the
+// caller must reset before inserting vectors of a different width.
+func (s *Store) CheckDimensionMismatch(newDim int) (int, bool, error) {
+	existing, err := s.ragVecDim()
+	if err != nil {
+		return 0, false, err
+	}
+	if existing == 0 || newDim <= 0 {
+		return existing, false, nil
+	}
+	return existing, existing != newDim, nil
 }
 
 // SetEmbeddingDim sets the embedding dimension. Returns true if it changed.
 func (s *Store) SetEmbeddingDim(dim int) bool {
-	if dim == s.embDim {
+	if dim == s.getEmbDim() {
 		return false
 	}
-	s.embDim = dim
+	s.setEmbDimInternal(dim)
 	return true
 }
 
@@ -984,8 +1291,8 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 	}
 	s.writeMu.Unlock()
 
-	s.embDim = newDim
-	s.vecTableReady = false // rag_vec was dropped, need to re-confirm
+	s.setEmbDimInternal(newDim)
+	s.invalidateVecTable() // rag_vec was dropped, need to re-confirm
 	// rag_vec will be recreated by ensureVecTable() on next vector insert
 	slog.Info("rag: dropped rag_vec, will recreate with new dimension", slog.Int("dim", newDim))
 	return nil
@@ -1088,8 +1395,8 @@ func (s *Store) ResetVectorOnly(newDim int) (int64, error) {
 	}
 	s.writeMu.Unlock()
 
-	s.embDim = newDim
-	s.vecTableReady = false
+	s.setEmbDimInternal(newDim)
+	s.invalidateVecTable()
 	slog.Info("rag: vector reset complete, will re-embed with new dimension", slog.Int("dim", newDim), slog.Int64("chunks_reset", chunksReset))
 	return chunksReset, nil
 }

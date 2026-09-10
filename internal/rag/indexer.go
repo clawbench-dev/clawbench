@@ -195,6 +195,15 @@ func (idx *Indexer) indexBatch() bool {
 	return hasMore
 }
 
+// resetDimensionSync clears the one-shot dimension-sync latch so the next health
+// check re-reads the embedding dimension. Called after a vector index reset drops
+// rag_vec and installs a new dimension out of band.
+func (idx *Indexer) resetDimensionSync() {
+	idx.mu.Lock()
+	idx.dimensionSynced = false
+	idx.mu.Unlock()
+}
+
 // checkEmbedderHealth checks embedding API availability and updates the healthy flag.
 func (idx *Indexer) checkEmbedderHealth(ctx context.Context) {
 	if idx.embedder == nil {
@@ -235,20 +244,46 @@ func (idx *Indexer) checkEmbedderHealth(ctx context.Context) {
 		slog.Info("rag: embedding API became healthy, will backfill embeddings")
 	}
 
-	// Sync dimension from embedder to store (one-time)
-	if !idx.dimensionSynced {
+	// Sync dimension from embedder to store (one-time).
+	// Compare the embedder's dimension against the rag_vec table's actual width
+	// so a changed embedding model is detected even after a restart (s.embDim is
+	// loaded from the same data that would otherwise make this a no-op).
+	idx.mu.Lock()
+	needsSync := !idx.dimensionSynced
+	idx.mu.Unlock()
+
+	if needsSync {
 		if dim := idx.embedder.Dim(); dim > 0 {
-			// Check for dimension mismatch against existing data
-			existingDim, mismatch, _ := idx.store.CheckDimensionMismatch()
+			existingDim, mismatch, err := idx.store.CheckDimensionMismatch(dim)
+			if err != nil {
+				// Do not latch dimensionSynced: retry on the next health check
+				// rather than indexing into a table we could not verify.
+				slog.Error("rag: failed to check embedding dimension", slog.String("err", err.Error()))
+				return
+			}
 			if mismatch {
-				slog.Warn("rag: embedding dimension mismatch, resetting store", slog.Int("existing", existingDim), slog.Int("new", dim))
+				slog.Warn("rag: embedding dimension changed, rebuilding vector index",
+					slog.Int("existing", existingDim), slog.Int("new", dim))
 				if err := idx.store.ResetForDimensionMismatch(dim); err != nil {
 					slog.Error("rag: failed to reset store for dimension mismatch", slog.String("err", err.Error()))
+					return
 				}
+				// The reset deletes all chunks (and drops rag_vec), so every
+				// message must be re-indexed. Without this the chunks would be
+				// gone but chat_history.indexed would stay 1, permanently
+				// orphaning those messages from search.
+				if _, err := service.ResetAllIndexed(); err != nil {
+					slog.Error("rag: failed to reset indexed flags after dimension change", slog.String("err", err.Error()))
+					return
+				}
+				slog.Info("rag: vector index reset for new dimension; all messages queued for re-indexing",
+					slog.Int("dim", dim))
 			} else if idx.store.SetEmbeddingDim(dim) {
 				slog.Info("rag: synced embedding dimension from embedder", slog.Int("dim", dim))
 			}
+			idx.mu.Lock()
 			idx.dimensionSynced = true
+			idx.mu.Unlock()
 		}
 	}
 
@@ -286,29 +321,54 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 	allEmbeddings := idx.batchEmbed(ctx, allTexts)
 
 	// Phase 3: Assign embeddings to chunks and collect results
-	allChunks, indexedIDs, skipped := idx.assignEmbeddings(allMsgChunks, allEmbeddings)
+	allChunks, chunkMsgIDs, skippedMsgIDs := idx.assignEmbeddings(allMsgChunks, allEmbeddings)
 
-	// Phase 4: Insert all chunks in a single transaction
+	// Phase 4: Insert all chunks in a single transaction.
+	//
+	// On failure the messages behind those chunks must NOT be marked indexed:
+	// GetUnindexedMessages only returns indexed = 0 rows, so marking them would
+	// silently drop them from both FTS and vector search forever. They stay
+	// unindexed and are retried on the next batch instead.
+	insertOK := true
 	if len(allChunks) > 0 {
 		if err := idx.store.InsertChunks(allChunks); err != nil {
-			slog.Error("rag: failed to insert chunks batch", slog.String("err", err.Error()))
+			insertOK = false
+			slog.Error("rag: failed to insert chunks batch, messages left unindexed for retry",
+				slog.String("err", err.Error()),
+				slog.Int("messages", len(chunkMsgIDs)),
+			)
 		}
 	}
 
-	// Phase 5: Batch mark all indexed messages
-	if len(indexedIDs) > 0 {
-		if err := service.MarkMessagesIndexed(indexedIDs); err != nil {
+	// Phase 5: Batch mark messages as indexed.
+	// - skipped messages have no indexable text: always safe to mark.
+	// - messages whose chunks were inserted: mark only if the insert succeeded.
+	markIDs := append([]int64{}, skippedMsgIDs...)
+	if insertOK {
+		markIDs = append(markIDs, chunkMsgIDs...)
+	}
+	if len(markIDs) > 0 {
+		if err := service.MarkMessagesIndexed(markIDs); err != nil {
 			slog.Error("rag: failed to batch mark messages indexed", slog.String("err", err.Error()))
 		}
 	}
 
 	slog.Info(
 		"rag: batch complete",
-		slog.Int("messages", len(indexedIDs)),
+		slog.Int("messages", len(markIDs)),
 		slog.Int("chunks", len(allChunks)),
-		slog.Int("skipped", skipped),
+		slog.Int("skipped", len(skippedMsgIDs)),
+		slog.Bool("insert_ok", insertOK),
 		slog.Duration("elapsed", time.Since(batchStart)),
 	)
+
+	// On insert failure the same messages remain unindexed, so report "no more
+	// work" to break the continuous loop and wait for the next poll interval.
+	// Without this the caller would immediately re-fetch and retry the same
+	// failing batch in a tight loop (CPU spin, and it would starve the poll).
+	if !insertOK {
+		return false
+	}
 
 	// More work remains if we fetched a full batch
 	return len(messages) >= idx.cfg.BatchSize
@@ -384,13 +444,20 @@ func (idx *Indexer) batchEmbed(ctx context.Context, texts []string) [][]float64 
 }
 
 // assignEmbeddings distributes embeddings across message chunks and collects results.
-func (idx *Indexer) assignEmbeddings(msgChunks []msgChunkResult, allEmbeddings [][]float64) (allChunks []Chunk, indexedIDs []int64, skipped int) {
+//
+// It returns the chunks to persist, the IDs of messages that produced those
+// chunks, and the IDs of messages with no indexable text. The two ID sets are
+// kept separate because a message may only be marked indexed once its chunks
+// are actually stored: marking a message whose chunks failed to insert would
+// drop it from the unindexed queue permanently (GetUnindexedMessages filters on
+// indexed = 0), losing it from both FTS and vector search. Messages with no
+// indexable text have nothing to store and can be marked immediately.
+func (idx *Indexer) assignEmbeddings(msgChunks []msgChunkResult, allEmbeddings [][]float64) (allChunks []Chunk, chunkMsgIDs []int64, skippedMsgIDs []int64) {
 	textIdx := 0
 	for i := range msgChunks {
 		mc := &msgChunks[i]
 		if mc.text == "" || len(mc.chunks) == 0 {
-			skipped++
-			indexedIDs = append(indexedIDs, mc.msg.ID)
+			skippedMsgIDs = append(skippedMsgIDs, mc.msg.ID)
 			continue
 		}
 
@@ -407,9 +474,9 @@ func (idx *Indexer) assignEmbeddings(msgChunks []msgChunkResult, allEmbeddings [
 		}
 
 		allChunks = append(allChunks, mc.chunks...)
-		indexedIDs = append(indexedIDs, mc.msg.ID)
+		chunkMsgIDs = append(chunkMsgIDs, mc.msg.ID)
 	}
-	return allChunks, indexedIDs, skipped
+	return allChunks, chunkMsgIDs, skippedMsgIDs
 }
 
 // backfillEmbeddings generates embeddings for chunks that were stored without them.

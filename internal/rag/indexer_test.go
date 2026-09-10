@@ -70,10 +70,12 @@ func TestIndexer_PartialEmbedBatch_NoPanic(t *testing.T) {
 	err := store.InsertChunks(chunks)
 	require.NoError(t, err, "InsertChunks should succeed with partial embeddings")
 
-	// Verify the chunks were stored correctly
+	// This store has no embedding dimension, so rag_vec cannot exist and no
+	// chunk is flagged embedded — including the one whose embedding was set.
+	// has_embedding=1 requires an actual vec row, so all 3 need backfill.
 	pending, err := store.PendingEmbeddingCount()
 	require.NoError(t, err)
-	assert.Equal(t, 2, pending, "2 chunks should need backfill (index 1 and 2)")
+	assert.Equal(t, 3, pending, "no vec table means every chunk needs backfill")
 }
 
 func TestIndexer_EmptyEmbedBatch_NoPanic(t *testing.T) {

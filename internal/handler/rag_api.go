@@ -310,6 +310,10 @@ func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The store's dimension changed out of band; let the indexer re-sync on its
+	// next health check instead of trusting its stale latch.
+	rag.ResetIndexerDimensionSync()
+
 	// Reset all messages' indexed flag so indexer will re-process them
 	affected, err := service.ResetAllIndexed()
 	if err != nil {
@@ -398,6 +402,10 @@ func ServeRAGResetVector(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
 		return
 	}
+
+	// The store's dimension changed out of band; let the indexer re-sync on its
+	// next health check instead of trusting its stale latch.
+	rag.ResetIndexerDimensionSync()
 
 	slog.Info("rag: vector rebuild triggered", slog.Int64("chunks_reset", chunksReset))
 
