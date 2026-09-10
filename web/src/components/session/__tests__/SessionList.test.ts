@@ -70,8 +70,8 @@ vi.stubGlobal('fetch', mockFetch)
 
 function sessionsFixture() {
   return {
-    s1: { id: 's1', title: 'Session 1', updatedAt: '2025-01-01', agentId: 'agent-1', backend: 'cli', model: 'gpt-4' },
-    s2: { id: 's2', title: 'Session 2', updatedAt: '2025-01-02', agentId: 'agent-2', backend: 'acp' },
+    s1: { id: 's1', title: 'Session 1', createdAt: '2025-01-01', updatedAt: '2025-01-05', agentId: 'agent-1', backend: 'cli', model: 'gpt-4' },
+    s2: { id: 's2', title: 'Session 2', createdAt: '2025-01-02', updatedAt: '2025-01-06', agentId: 'agent-2', backend: 'acp' },
   }
 }
 
@@ -158,7 +158,7 @@ describe('SessionList', () => {
     const wrapper = await mountList()
     await wrapper.vm.loadSessions()
     await flushPromises()
-    wrapper.vm.addSessionLocally({ id: 's9', title: 'S9', updatedAt: '2025-01-09', agentId: 'agent-1', backend: 'cli' })
+    wrapper.vm.addSessionLocally({ id: 's9', title: 'S9', createdAt: '2025-01-09', updatedAt: '2025-01-09', agentId: 'agent-1', backend: 'cli' })
     await nextTick()
     expect(wrapper.vm.sessions[0].id).toBe('s9')
   })
@@ -241,8 +241,8 @@ describe('SessionList', () => {
   it('reload preserves the loaded depth instead of collapsing back to the first page', async () => {
     // Two pages of sessions. Page 1 reports hasMore so loadMoreSessions can
     // append page 2 — simulating a user who scrolled through more than one page.
-    const page1 = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, updatedAt: `2025-01-${String(i + 1).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
-    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `s1${i}`, title: `S1${i}`, updatedAt: `2025-01-${String(i + 11).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
+    const page1 = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, title: `S${i}`, createdAt: `2025-01-${String(i + 1).padStart(2, '0')}`, updatedAt: `2025-02-${String(i + 1).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
+    const page2 = Array.from({ length: 5 }, (_, i) => ({ id: `s1${i}`, title: `S1${i}`, createdAt: `2025-01-${String(i + 11).padStart(2, '0')}`, updatedAt: `2025-02-${String(i + 11).padStart(2, '0')}`, agentId: 'agent-1', backend: 'cli' }))
     mockFetch.mockImplementation((url: string) => {
       const hasCursor = url.includes('cursor=')
       const page = hasCursor ? page2 : page1
@@ -264,6 +264,27 @@ describe('SessionList', () => {
     await flushPromises()
     expect(wrapper.vm.sessions.length).toBe(15)
     expect(mockFetch.mock.calls.filter((c: unknown[]) => String(c[0]).includes('cursor=')).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('paginates using createdAt (not updatedAt) as the cursor', async () => {
+    // Backend orders/filters paged sessions by created_at. Sending updatedAt
+    // (which is >= createdAt and bumped on every message) makes `created_at <
+    // cursor` match rows already shown, duplicating the list.
+    const first = { id: 's1', title: 'S1', createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-06-01T00:00:00Z', agentId: 'agent-1', backend: 'cli' }
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [first], hasMore: true }) })
+    const wrapper = await mountList()
+    await flushPromises()
+
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s2], hasMore: false }) })
+    wrapper.vm.hasMore = true
+    await wrapper.vm.loadMoreSessions()
+    await flushPromises()
+
+    const cursorCall = mockFetch.mock.calls.find((c: unknown[]) => String(c[0]).includes('cursor='))
+    expect(cursorCall).toBeTruthy()
+    const url = String(cursorCall![0])
+    expect(url).toContain(`cursor=${encodeURIComponent('2025-01-01T00:00:00Z')}`)
+    expect(url).not.toContain(encodeURIComponent('2025-06-01T00:00:00Z'))
   })
 
   it('exposes reload() and removes the WS listener on unmount', async () => {

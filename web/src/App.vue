@@ -1233,6 +1233,10 @@ async function handleSessionCreate(agentId) {
     backend: sessionIdentity.currentBackend.value || '',
     agentId: sessionIdentity.currentAgentId.value || '',
     model: sessionIdentity.currentModelName.value || '',
+    // createdAt drives pagination cursors (backend orders by created_at), so it
+    // must be present — otherwise the locally-added row becomes the last item
+    // and loadMore would send `cursor=undefined`.
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     unreadCount: 0,
   }

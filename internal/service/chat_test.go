@@ -2390,6 +2390,56 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	}
 }
 
+// TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt pins the pagination
+// contract: the paged query orders and filters by created_at, so the cursor
+// must be created_at. Using updated_at (which is >= created_at and bumped on
+// every message) as the cursor makes the `created_at < cursor` filter match
+// rows already returned on the previous page, duplicating the list — the
+// regression that produced duplicate sessions in the UI.
+func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
+	setupDB(t)
+
+	// Three sessions ordered by created_at: oldest → newest.
+	sidOld := helperCreateSession(t, "/project", "claude", "Old")
+	sidMid := helperCreateSession(t, "/project", "claude", "Mid")
+	sidNew := helperCreateSession(t, "/project", "claude", "New")
+	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
+		_, err := service.UnsafeDBForTest().Exec(
+			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?",
+			fmt.Sprintf("%d", offset), id)
+		assert.NoError(t, err)
+	}
+
+	// Push the OLDEST session's updated_at far into the future. If the cursor
+	// were updated_at, page 2 would re-return it (and its neighbours) because
+	// their created_at is < that future timestamp.
+	_, err := service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld)
+	assert.NoError(t, err)
+
+	// Page 1 (limit=1) → newest session.
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 1)
+	assert.Equal(t, sidNew, page1[0].ID)
+	assert.True(t, hasMore)
+
+	// Page 2 uses the created_at cursor — must be the middle session, NOT a
+	// repeat of page 1.
+	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, sidMid, page2[0].ID)
+
+	// Sanity: using updated_at as the cursor WOULD re-return page 1's row,
+	// which is exactly the duplicate-producing behaviour we guard against.
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, "2999-01-01 00:00:00", page1[0].ID)
+	assert.NoError(t, err)
+	require.Len(t, badCursor, 1)
+	assert.Equal(t, sidNew, badCursor[0].ID)
+}
+
 // ---------- GetSessionTitlesBatch ----------
 
 func TestGetSessionTitlesBatch_Empty(t *testing.T) {

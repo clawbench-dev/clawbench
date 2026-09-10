@@ -130,6 +130,12 @@ async function loadSessions() {
  * passes minCount=0 and behaves like before: one page of pageSize rows.
  * Each page is fetched after the previous one's last row (cursor semantics
  * identical to loadMoreSessions below).
+ *
+ * The cursor is the row's createdAt, NOT updatedAt: the backend orders and
+ * filters paged sessions by created_at (GetSessionsPaged), so sending
+ * updatedAt — which is >= createdAt and bumped on every message — makes the
+ * `created_at < cursor` filter match rows already shown on the previous page,
+ * duplicating the list.
  */
 async function fetchSessionsUpTo(minCount) {
   const limit = pageSize.value
@@ -159,7 +165,7 @@ async function fetchSessionsUpTo(minCount) {
     const last = list[list.length - 1]
     pages++
     if (!last || !serverHasMore || accumulated.length >= minCount || pages >= 20) break
-    cursorTime = last.updatedAt
+    cursorTime = last.createdAt
     cursorId = last.id
   }
   hasMore.value = serverHasMore
@@ -172,7 +178,8 @@ async function loadMoreSessions() {
   try {
     const last = sessions.value[sessions.value.length - 1]
     if (!last) return
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}&cursor=${encodeURIComponent(last.updatedAt)}&cursor_id=${encodeURIComponent(last.id)}`)
+    // Cursor = createdAt (backend paginates by created_at, see fetchSessionsUpTo).
+    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}&cursor=${encodeURIComponent(last.createdAt)}&cursor_id=${encodeURIComponent(last.id)}`)
     const data = await resp.json()
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]

@@ -11,6 +11,8 @@ export interface SidebarSession {
   backend?: string
   agentId?: string
   model?: string
+  /** Pagination cursor source — backend orders/filters paged sessions by created_at. */
+  createdAt?: string
   updatedAt?: string
   unreadCount?: number
 }

@@ -21,6 +21,7 @@ vi.mock('@/composables/useAgents', () => ({
 }))
 
 import { apiGet, apiPatch, apiPost } from '@/utils/api'
+import { store } from '@/stores/app.ts'
 
 const mockedApiGet = vi.mocked(apiGet)
 const mockedApiPatch = vi.mocked(apiPatch)
@@ -496,6 +497,40 @@ describe('useSettingsConfig', () => {
 
       // Existing cached values should still be there
       expect(serverConfig.value.server.port).toBe(20000)
+    })
+  })
+
+  describe('loadConfig — server limits sync', () => {
+    it('mirrors session.max_count into the store immediately (no page reload)', async () => {
+      const { loadConfig } = useSettingsConfig()
+      mockedApiGet.mockResolvedValue({ session: { max_count: 15 }, chat: { page_size: 20 } })
+      await loadConfig()
+      expect(store.state.sessionMaxCount).toBe(15)
+    })
+
+    it('applies sessionMaxCount=0 (unlimited) instead of keeping a stale non-zero value', async () => {
+      const { loadConfig } = useSettingsConfig()
+      store.state.sessionMaxCount = 10
+      mockedApiGet.mockResolvedValue({ session: { max_count: 0 } })
+      await loadConfig()
+      expect(store.state.sessionMaxCount).toBe(0)
+    })
+
+    it('syncs the other flat limits from their nested sections', async () => {
+      const { loadConfig } = useSettingsConfig()
+      mockedApiGet.mockResolvedValue({
+        session: { max_count: 15 },
+        recent_projects: { max_count: 12 },
+        chat: { initial_messages: 30, page_size: 40 },
+        upload: { max_size_mb: 200, max_files: 25 },
+      })
+      await loadConfig()
+      expect(store.state.sessionMaxCount).toBe(15)
+      expect(store.state.recentProjectsMaxCount).toBe(12)
+      expect(store.state.chatInitialMessages).toBe(30)
+      expect(store.state.chatPageSize).toBe(40)
+      expect(store.state.uploadMaxSizeMB).toBe(200)
+      expect(store.state.uploadMaxFiles).toBe(25)
     })
   })
 
