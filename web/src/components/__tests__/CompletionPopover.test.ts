@@ -584,12 +584,13 @@ describe('CompletionPopover', () => {
         expect(document.querySelector('.completion-popover-collapse')).toBeFalsy()
     })
 
-    it('renders rewritten images (lightbox wrapped), hidden when collapsed and shown when expanded', async () => {
+    it('renders rewritten images (bordered figure), hidden when collapsed and shown when expanded', async () => {
         mockState.active = ref(makeItem({ summary: '![pic](img/a.png)', projectPath: '/proj' }))
         mountPopover()
 
-        // 折叠态：HTML 已完全渲染（图片已按归属项目重写为缩略图），但 CSS 隐藏
+        // 折叠态：HTML 已完全渲染（图片已按归属项目重写为缩略图），但 CSS 隐藏整个 figure
         const collapsed = document.querySelector('.completion-popover-summary.is-collapsed')!
+        const collapsedFig = collapsed.querySelector('.image-block-wrapper')!
         const collapsedImg = collapsed.querySelector('img')!
         expect(window.getComputedStyle(collapsedImg).display).toBe('none')
         // 折叠态下图片同样完成 src 重写（与展开态共用同一份渲染）
@@ -609,9 +610,11 @@ describe('CompletionPopover', () => {
         expect(img.src).toContain('/api/file/thumb?path=img/a.png')
         expect(img.src).toContain('w=')
         expect(img.getAttribute('data-full-src')).toContain('/api/local-file/img/a.png')
-        const wrap = img.closest('.lightbox-img-wrap')!
-        expect(wrap).toBeTruthy()
-        expect(wrap.querySelector('.lightbox-expand-icon')).toBeTruthy()
+        // 图片被提升进统一边框 figure，且 header 带 view 按钮
+        expect(collapsedFig).toBeTruthy()
+        const figure = img.closest('.image-block-wrapper')!
+        expect(figure).toBeTruthy()
+        expect(figure.querySelector('.image-block-view-btn')).toBeTruthy()
     })
 
     it('truncates the title with ellipsis via CSS', () => {

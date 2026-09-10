@@ -199,6 +199,9 @@ watch(() => props.file, () => {
     user-select: none;
 }
 
+/* The image is displayed full-bleed (centered) with no per-image header —
+   the file's action buttons (attach / lightbox view) live in the shared
+   file header above (FileHeader.vue). */
 .image-preview-img {
     max-width: 100%;
     max-height: 100%;

@@ -44,6 +44,7 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 			acp_available_commands TEXT NOT NULL DEFAULT '[]',
 			acp_config_options TEXT NOT NULL DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -317,8 +318,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"models":               true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
-		"acp_config_options": true,
-		"created_at":         true, "updated_at": true,
+		"acp_config_options": true, "auto_approve": true,
+		"created_at": true, "updated_at": true,
 	}
 
 	rows, err := db.Query("SELECT name FROM pragma_table_info('agents')")
@@ -432,6 +433,70 @@ func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "cli", agents[0].Transport)
+}
+
+func TestSaveAgent_AutoApproveRoundTrip(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Default is off when the field is not set
+	agent := &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}
+	require.NoError(t, service.SaveAgent(db, agent))
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.False(t, agents[0].AutoApprove, "auto_approve should default to off")
+
+	// Enable auto-approve and save again (upsert)
+	agent.AutoApprove = true
+	require.NoError(t, service.SaveAgent(db, agent))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.True(t, agents[0].AutoApprove, "auto_approve should be true after upsert")
+
+	// Disable and persist
+	agent.AutoApprove = false
+	require.NoError(t, service.SaveAgent(db, agent))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.False(t, agents[0].AutoApprove)
+}
+
+func TestPatchAgentFields_AutoApprove(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+
+	enabled := true
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{AutoApprove: &enabled}))
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.True(t, agents[0].AutoApprove)
+
+	disabled := false
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{AutoApprove: &disabled}))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.False(t, agents[0].AutoApprove)
+}
+
+func TestPatchAgentFields_AutoApprovePartialPatch(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Specialty: "old", Backend: "pi"}))
+
+	// Patching auto_approve alone must not disturb other fields
+	enabled := true
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{AutoApprove: &enabled}))
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.True(t, agents[0].AutoApprove)
+	assert.Equal(t, "Pi", agents[0].Name)
+	assert.Equal(t, "old", agents[0].Specialty)
 }
 
 // Helper to verify JSON serialization of models
@@ -643,6 +708,7 @@ func TestDuplicateAgent_Success(t *testing.T) {
 		CustomSystemPrompt:      "You are helpful.",
 		Transport:               "acp-stdio",
 		AcpCommand:              "pi --acp",
+		AutoApprove:             true,
 		Models: []model.AgentModel{
 			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Default: true},
 		},
@@ -658,6 +724,7 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	assert.Contains(t, clone.ID, "pi-copy-")
 	assert.Equal(t, "Pi Copy", clone.Name)
 	assert.Equal(t, "pi", clone.Backend)
+	assert.True(t, clone.AutoApprove, "auto_approve should be copied to the clone")
 
 	// Verify both agents in DB
 	agents, err := service.LoadAgentsFromDB()

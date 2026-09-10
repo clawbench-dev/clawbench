@@ -139,7 +139,7 @@
         @close="attachDrawer.close()"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
-        @file-open="(path) => emit('file-tag-click', path)"
+        @file-open="(entry) => emit('file-tag-click', entry)"
       />
       <!-- Teleported quick-send menu -->
       <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
@@ -463,7 +463,9 @@ const contextCostDisplay = computed(() => {
   const amount = contextCost.value
   if (amount <= 0) return ''
   const cur = contextCurrency.value
-  const formatted = amount < 0.01 ? amount.toFixed(4) : amount.toFixed(2)
+  // Always two decimals — sub-cent amounts round to 0.00 rather than
+  // switching to a higher-precision format.
+  const formatted = amount.toFixed(2)
   if (!cur) return formatted
   const sym = currencySymbols[cur] ?? ''
   return sym ? `${sym}${formatted}` : `${formatted} ${cur}`
@@ -814,23 +816,29 @@ const slashMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
   const query = text.slice(1) // strip leading '/'
-  if (!query) return availableCommands.value.map(cmd => ({
-    key: '/' + cmd.name,
-    label: '/' + cmd.name,
-    description: cmd.description,
-    inputHint: cmd.inputHint || '',
-    query: '',
-  }))
-  const lowerQ = query.toLowerCase()
-  return availableCommands.value
-    .filter(cmd => cmd.name.toLowerCase().includes(lowerQ))
-    .map(cmd => ({
-      key: '/' + cmd.name,
-      label: '/' + cmd.name,
+  // Command names arrive inconsistently: CodeBuddy ACP reports skills slashless
+  // ("mmx-cli"), while pre-scanned names may keep a leading "/". Normalize for
+  // display and dedupe on the canonical (slash-stripped) name so the same
+  // command cannot appear twice — otherwise each duplicate renders as a
+  // double-slash entry.
+  const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
+  const seen = new Set()
+  const items = []
+  for (const cmd of availableCommands.value) {
+    const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
+    if (!canonical || seen.has(canonical)) continue
+    seen.add(canonical)
+    items.push({
+      key: toSlash(cmd.name),
+      label: toSlash(cmd.name),
       description: cmd.description,
       inputHint: cmd.inputHint || '',
-      query,
-    }))
+      query: query.toLowerCase(),
+    })
+  }
+  if (!query) return items
+  const lowerQ = query.toLowerCase()
+  return items.filter(item => item.label.toLowerCase().includes(lowerQ))
 })
 
 // Directly control menu visibility from inputText changes
@@ -1485,8 +1493,12 @@ function handleAttachFile(filePath, isDir) {
   emit('add-attached', filePath, isDir)
 }
 
-function handleRemoveAttached(filePath) {
-  emit('remove-attached-by-path', filePath)
+/** Remove an attached reference card. Payload is either the full FileEntry
+ *  (AttachmentTags cards — a line-range reference removes only its own range)
+ *  or a bare path string (AttachDrawer whole-file toggles). */
+function handleRemoveAttached(entryOrPath) {
+  const entry = typeof entryOrPath === 'string' ? { path: entryOrPath } : entryOrPath
+  emit('remove-attached-by-path', entry)
 }
 
 async function toggleAttachMenu() {

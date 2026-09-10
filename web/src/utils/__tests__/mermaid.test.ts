@@ -132,7 +132,10 @@ describe('mermaid', () => {
             const rendered = el.querySelector('div.mermaid')
             expect(rendered).not.toBeNull()
             expect(rendered?.innerHTML).toContain('<svg>rendered</svg>')
-            expect(rendered?.querySelector('.lightbox-expand-icon')).not.toBeNull()
+            // Non file-preview diagrams get a view-only unified figure.
+            expect(rendered?.parentElement?.classList.contains('image-block-wrapper')).toBe(true)
+            expect(rendered?.parentElement?.querySelector('.image-block-view-btn')).not.toBeNull()
+            expect(rendered?.parentElement?.querySelector('.image-block-attach-btn')).toBeNull()
             expect(rendered?.dataset.mermaid).toBe('graph TD; A-->B')
         })
 
@@ -307,6 +310,93 @@ describe('mermaid', () => {
             expect(el.querySelectorAll('div.mermaid').length).toBe(3)
         })
 
+        it('should not arm the attach header in share mode even inside a file preview', async () => {
+            // Import the real shareMode singleton so we can toggle it.
+            const { setShareToken } = await import('@/share/shareMode')
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            setShareToken('tok-share')
+            try {
+                const mdBody = document.createElement('div')
+                mdBody.className = 'markdown-body'
+                mdBody.setAttribute('data-file-path', 'docs/guide.md')
+                const pre = document.createElement('pre')
+                pre.className = 'mermaid'
+                pre.setAttribute('data-source-line', '5')
+                pre.textContent = 'graph TD; A-->B'
+                mdBody.appendChild(pre)
+                await renderMermaidInElement(mdBody)
+                // Share mode still gets the unified figure, but view-only (no
+                // attach — it needs a non-share md file ancestor).
+                expect(mdBody.querySelector('.image-block-wrapper')).not.toBeNull()
+                expect(mdBody.querySelector('.image-block-attach-btn')).toBeNull()
+            } finally {
+                setShareToken(null)
+            }
+        })
+
+        it('should re-arm the attach header after reRenderMermaid wipes innerHTML', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>first</svg>' })
+            // Keep the diagram inside its .markdown-body[data-file-path] and
+            // mount that subtree on document.body so reRenderMermaid (which
+            // queries document-level div.mermaid[data-mermaid]) finds it.
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            document.body.appendChild(mdBody)
+            addedElements.push(mdBody)
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.textContent = 'graph TD; A-->B'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const diagram = mdBody.querySelector('div.mermaid')!
+            expect(mdBody.querySelector('.mermaid-block-attach-btn')).not.toBeNull()
+
+            mockRender.mockResolvedValue({ svg: '<svg>second</svg>' })
+            await reRenderMermaid()
+            expect(mdBody.querySelector('.image-block-attach-btn')).not.toBeNull()
+            expect(diagram.parentElement?.classList.contains('image-block-wrapper')).toBe(true)
+        })
+
+        it('should arm the attach header with the localized aria label', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.textContent = 'graph TD; A-->B'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const btn = mdBody.querySelector('.mermaid-block-attach-btn')!
+            expect(btn.getAttribute('aria-label')).toBeTruthy()
+            expect(btn.getAttribute('title')).toBeTruthy()
+            // View button is also present.
+            expect(mdBody.querySelector('.image-block-view-btn')).not.toBeNull()
+        })
+
+        it('should carry data-source-end onto the rendered container', async () => {
+            mockRender.mockResolvedValue({ svg: '<svg>ok</svg>' })
+            const mdBody = document.createElement('div')
+            mdBody.className = 'markdown-body'
+            mdBody.setAttribute('data-file-path', 'docs/guide.md')
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.setAttribute('data-source-end', '9')
+            pre.textContent = 'graph TD\n  A-->B\n'
+            mdBody.appendChild(pre)
+            await renderMermaidInElement(mdBody)
+            const container = mdBody.querySelector('div.mermaid')!
+            // The attach badge resolves the closing-fence line from this attr —
+            // dropping it made the range one short whenever the fence body had a
+            // trailing blank line (textContent.trim() removes it).
+            expect(container.getAttribute('data-source-line')).toBe('5')
+            expect(container.getAttribute('data-source-end')).toBe('9')
+        })
+
         it('should not leave raw source when mermaid lazy-load fails (chunk fetch error)', async () => {
             // Simulate the observed root cause: the dynamic import of the mermaid
             // chunk fails (e.g. "Failed to fetch dynamically imported module" over
@@ -419,6 +509,36 @@ describe('mermaid', () => {
             expect(el.querySelector('div.mermaid[data-mermaid-error]')).toBeNull()
             const rendered = el.querySelector('div.mermaid')
             expect(rendered?.innerHTML).toContain('<svg>retried</svg>')
+        })
+
+        it('should preserve data-source-end across a retry round-trip', async () => {
+            // First render fails → error div; retry rebuilds a <pre> then renders
+            // again. data-source-end must survive both hops or the attach badge
+            // loses the authoritative closing-fence line.
+            mockRender.mockRejectedValueOnce(new Error('Transient error'))
+            mockRender.mockResolvedValue({ svg: '<svg>retried</svg>' })
+
+            const el = document.createElement('div')
+            document.body.appendChild(el)
+            addedElements.push(el)
+            const pre = document.createElement('pre')
+            pre.className = 'mermaid'
+            pre.setAttribute('data-source-line', '5')
+            pre.setAttribute('data-source-end', '9')
+            pre.textContent = 'graph TD; A-->B'
+            el.appendChild(pre)
+
+            await renderMermaidInElement(el)
+            const errorDiv = el.querySelector('div.mermaid[data-mermaid-error]')!
+            expect(errorDiv.getAttribute('data-source-end')).toBe('9')
+
+            errorDiv.querySelector('.mermaid-retry-btn')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+            await vi.waitFor(() => {
+                expect(el.querySelector('div.mermaid[data-mermaid-error]')).toBeNull()
+            }, { timeout: 3000 })
+            const rendered = el.querySelector('div.mermaid')!
+            expect(rendered.getAttribute('data-source-line')).toBe('5')
+            expect(rendered.getAttribute('data-source-end')).toBe('9')
         })
 
         it('should retry and reset init state for init-error containers', async () => {

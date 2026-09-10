@@ -744,3 +744,43 @@ func TestDirSearch_NoMatch(t *testing.T) {
 		t.Errorf("expected total 0, got %d", done.Total)
 	}
 }
+
+func TestDirSearch_SizeModifiedFields(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// File with known content length
+	content := "package main\n"
+	createTestFile(t, env.ProjectDir, "main.go", content)
+	// Nested match so a project-relative path appears
+	createTestFile(t, env.ProjectDir, "internal/handler/file.go", "package handler")
+
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=main&recursive=true", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+
+	var matched *DirSearchResult
+	for _, raw := range results {
+		var r DirSearchResult
+		if err := json.Unmarshal(raw, &r); err != nil {
+			t.Fatalf("failed to unmarshal result: %v", err)
+		}
+		if r.Name == "main.go" {
+			matched = &r
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatal("expected main.go to match")
+	}
+	if matched.Size != int64(len(content)) {
+		t.Errorf("expected size %d, got %d", len(content), matched.Size)
+	}
+	if matched.Modified == "" {
+		t.Error("expected modified to be populated (RFC3339)")
+	}
+}

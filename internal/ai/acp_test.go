@@ -380,7 +380,9 @@ func TestExtractToolName_KindFallback(t *testing.T) {
 	assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode, ""))
 	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete, ""))
 	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove, ""))
-	assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther, ""))
+	// ToolKindOther no longer collapses to "Skill" (that catch-all mislabeled
+	// unknown/control tools). Empty title + other falls through to string(kind).
+	assert.Equal(t, "other", extractToolName("", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_PrefixOrdering(t *testing.T) {

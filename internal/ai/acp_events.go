@@ -125,6 +125,20 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 
+		// CodeBuddy exposes its task system through Task* tools (TaskCreate/
+		// TaskUpdate/TaskList) rather than ACP plan notifications; each terminal
+		// result carries the full task snapshot in _meta.codebuddy.ai/rawResponse.
+		// Bridge those into plan_update so the frontend PlanPanel renders the
+		// checklist. Placed before the debouncer because the debouncer's terminal
+		// path breaks out of the switch, and the bridge only fires for completed
+		// task-tool results (all other updates no-op). Runs on the notification
+		// goroutine; the lock-safe pattern matches the update.Plan branch below
+		// (task tools never fire inside a LoadSession/ResumeSession RPC window,
+		// so SetCachedPlanState's c.mu acquisition cannot deadlock here).
+		if backendID == "codebuddy" && conn != nil && isCodeBuddyBackend(conn.agent) {
+			bridgeCodeBuddyPlanFromToolUpdate(ch, conn, *tcu)
+		}
+
 		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
 		// streaming. Batching these into a single event per 50ms window cuts
@@ -310,7 +324,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			Used: update.UsageUpdate.Used,
 			Size: update.UsageUpdate.Size,
 		}
-		if update.UsageUpdate.Cost != nil {
+		// Discard the ACP cost for agents that repurpose the field: CodeBuddy
+		// ships its credit consumption as cost.amount (empty currency), so
+		// persisting it would corrupt the cost stats. See
+		// costFieldCarriesCredit.
+		if update.UsageUpdate.Cost != nil && !costFieldCarriesCredit(backendID) {
 			usageState.Cost = update.UsageUpdate.Cost.Amount
 			usageState.Currency = update.UsageUpdate.Cost.Currency
 		}

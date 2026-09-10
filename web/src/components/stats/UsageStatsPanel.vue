@@ -1,14 +1,7 @@
 <template>
+  <!-- v-show="active": only visible while this panel is the active stats tab.
+       The active prop also drives the on-activation data fetch. -->
   <div ref="panelEl" class="usage-stats-panel" v-show="active">
-    <!-- Compact header — matches settings/task panel header style -->
-    <header class="stats-header">
-      <BarChart3 :size="18" class="stats-header-icon" />
-      <span class="stats-header-title">{{ t('nav.stats') }}</span>
-      <div class="stats-header-actions">
-        <RefreshButton class="stats-refresh" :loading="loading" :disabled="loading" :title="t('nav.refresh')" @click="onRefresh" />
-      </div>
-    </header>
-
     <div class="stats-body">
       <!-- Range card -->
       <section class="stats-card-panel">
@@ -203,7 +196,6 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BarChart3, Clock, SlidersHorizontal, Gauge, Table, ChartPie } from 'lucide-vue-next'
-import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
@@ -517,10 +509,6 @@ onMounted(() => {
     void stats.loadStats()
   }
 })
-
-function onRefresh() {
-  void stats.loadStats()
-}
 </script>
 
 <style scoped>
@@ -532,58 +520,7 @@ function onRefresh() {
   background: var(--bg-primary, #fff);
 }
 
-/* ── Compact header (36px, matches settings/task panels) ── */
-.stats-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: var(--header-height, 36px);
-  padding: 0 4px 0 12px;
-  border-bottom: 1px solid var(--border-color);
-  flex-shrink: 0;
-  background: var(--bg-primary);
-}
-.stats-header-icon {
-  color: var(--accent-color);
-  flex-shrink: 0;
-}
-.stats-header-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.stats-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-/* Round header icon button — same family as .header-btn in other panels */
-.stats-refresh {
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-@media (hover: hover) {
-  .stats-refresh:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-  }
-}
-
+/* ── Body scrolls under the host's stats-tab bar ── */
 .stats-body {
   flex: 1;
   overflow-y: auto;

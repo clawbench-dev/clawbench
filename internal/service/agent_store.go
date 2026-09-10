@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
+	auto_approve INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -55,7 +56,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			sort_order,
-			transport, acp_command
+			transport, acp_command, auto_approve
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -67,7 +68,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	for rows.Next() {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON string
-		var modelsAutoDetected int
+		var modelsAutoDetected, autoApprove int
 
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
@@ -75,13 +76,14 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
-			&a.Transport, &a.AcpCommand,
+			&a.Transport, &a.AcpCommand, &autoApprove,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 
 		a.ModelsAutoDetected = modelsAutoDetected == 1
+		a.AutoApprove = autoApprove == 1
 
 		// Parse models JSON
 		if modelsJSON != "" && modelsJSON != "[]" {
@@ -134,14 +136,19 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		}
 	}
 
+	autoApprove := 0
+	if agent.AutoApprove {
+		autoApprove = 1
+	}
+
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			sort_order,
-			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			transport, acp_command, auto_approve)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -159,13 +166,14 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			sort_order = excluded.sort_order,
 			transport = excluded.transport,
 			acp_command = excluded.acp_command,
+			auto_approve = excluded.auto_approve,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
 		sortOrder,
-		transport, agent.AcpCommand)
+		transport, agent.AcpCommand, autoApprove)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
@@ -207,59 +215,56 @@ type AgentPatch struct {
 	Specialty               *string
 	CustomSystemPrompt      *string
 	SortOrder               *int
+	AutoApprove             *bool
 }
 
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
 // Returns nil even if the agent doesn't exist (no rows affected).
 func PatchAgentFields(id string, patch AgentPatch) error {
 	// Build dynamic SET clause
-	setClauses := []string{}
-	args := []any{}
+	var setClauses []string
+	var args []any
+
+	addSet := func(column string, value any) {
+		setClauses = append(setClauses, column+" = ?")
+		args = append(args, value)
+	}
 
 	if patch.PreferredMode != nil {
-		setClauses = append(setClauses, "preferred_mode = ?")
-		args = append(args, *patch.PreferredMode)
+		addSet("preferred_mode", *patch.PreferredMode)
 	}
 	if patch.PreferredModel != nil {
-		setClauses = append(setClauses, "preferred_model = ?")
-		args = append(args, *patch.PreferredModel)
+		addSet("preferred_model", *patch.PreferredModel)
 	}
 	if patch.PreferredThinkingEffort != nil {
-		setClauses = append(setClauses, "preferred_thinking_effort = ?")
-		args = append(args, *patch.PreferredThinkingEffort)
+		addSet("preferred_thinking_effort", *patch.PreferredThinkingEffort)
 	}
 	if patch.Transport != nil {
 		transport := *patch.Transport
 		if transport == "" {
 			transport = transportCLI
 		}
-		setClauses = append(setClauses, "transport = ?")
-		args = append(args, transport)
+		addSet("transport", transport)
 	}
 	if patch.Name != nil {
-		setClauses = append(setClauses, "name = ?")
-		args = append(args, *patch.Name)
+		addSet("name", *patch.Name)
 	}
 	if patch.Specialty != nil {
-		setClauses = append(setClauses, "specialty = ?")
-		args = append(args, *patch.Specialty)
+		addSet("specialty", *patch.Specialty)
 	}
 	if patch.CustomSystemPrompt != nil {
-		setClauses = append(setClauses, "custom_system_prompt = ?", "system_prompt = ?")
-		// Compose system_prompt from common prompt + custom_system_prompt
-		commonPrompt := model.BuildCommonPrompt()
-		custom := *patch.CustomSystemPrompt
-		if commonPrompt != "" && custom != "" {
-			args = append(args, custom, commonPrompt+"\n\n"+custom)
-		} else if commonPrompt != "" {
-			args = append(args, custom, commonPrompt)
-		} else {
-			args = append(args, custom, custom)
-		}
+		addSet("custom_system_prompt", *patch.CustomSystemPrompt)
+		addSet("system_prompt", composedSystemPrompt(*patch.CustomSystemPrompt))
 	}
 	if patch.SortOrder != nil {
-		setClauses = append(setClauses, "sort_order = ?")
-		args = append(args, *patch.SortOrder)
+		addSet("sort_order", *patch.SortOrder)
+	}
+	if patch.AutoApprove != nil {
+		autoApprove := 0
+		if *patch.AutoApprove {
+			autoApprove = 1
+		}
+		addSet("auto_approve", autoApprove)
 	}
 
 	if len(setClauses) == 0 {
@@ -275,6 +280,21 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
 	return nil
+}
+
+// composedSystemPrompt builds the effective system_prompt from the shared
+// common prompt plus an agent's custom prompt, mirroring the read path in
+// LoadAgentsIntoMemory.
+func composedSystemPrompt(custom string) string {
+	commonPrompt := model.BuildCommonPrompt()
+	switch {
+	case commonPrompt != "" && custom != "":
+		return commonPrompt + "\n\n" + custom
+	case commonPrompt != "":
+		return commonPrompt
+	default:
+		return custom
+	}
 }
 
 // LoadAgentsIntoMemory loads agents from DB into the global model.Agents map and model.AgentList slice.
@@ -358,6 +378,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,
+		AutoApprove:             source.AutoApprove,
 	}
 	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)
 	if len(source.Models) > 0 {

@@ -398,3 +398,185 @@ func TestRAGSearch_EnrichesSessionTitles(t *testing.T) {
 	// SessionTitle may be empty since service.DB is nil in tests, but should not panic
 	assert.Equal(t, SearchModeFTS, result.Mode)
 }
+
+// ---------- RAGSessionSearch aggregation, sort and archive filter ----------
+
+func TestRAGSessionSearch_DefaultRelevanceOrder(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	for i, sid := range []string{"sess-a", "sess-b", "sess-c"} {
+		chunk := makeTestChunk(sid, int64(i+1), 0, "database query optimization")
+		chunk.CreatedAt = base.Add(time.Duration(i) * time.Hour)
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, result.Sessions, 3)
+	// Default order keeps search relevance (score desc); assert the strongest
+	// result is first without assuming which session that is.
+	assert.GreaterOrEqual(t, result.Sessions[0].Score, result.Sessions[2].Score)
+}
+
+func TestRAGSessionSearch_SortOldestUsesSessionTime(t *testing.T) {
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	specs := []struct {
+		sid string
+		at  time.Time
+	}{
+		{"sess-new", base.Add(3 * time.Hour)},
+		{"sess-old", base},
+		{"sess-mid", base.Add(2 * time.Hour)},
+	}
+	for i, s := range specs {
+		chunk := makeTestChunk(s.sid, int64(i+1), 0, "database query optimization")
+		chunk.CreatedAt = s.at
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	oldest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SortOrder:   "oldest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, oldest.Sessions, 3)
+	assert.Equal(t, "sess-old", oldest.Sessions[0].SessionID)
+	assert.Equal(t, "sess-mid", oldest.Sessions[1].SessionID)
+	assert.Equal(t, "sess-new", oldest.Sessions[2].SessionID)
+
+	newest, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		SortOrder:   "newest",
+	}, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, newest.Sessions, 3)
+	assert.Equal(t, "sess-new", newest.Sessions[0].SessionID)
+	assert.Equal(t, "sess-mid", newest.Sessions[1].SessionID)
+	assert.Equal(t, "sess-old", newest.Sessions[2].SessionID)
+}
+
+func TestRAGSessionSearch_ArchiveFilterActiveKeepsAllWhenNoSessionDB(t *testing.T) {
+	// With no service DB, archived status is unknown and defaults to active, so
+	// filtering for "active" must not drop any results.
+	store := setupSQLiteStore(t)
+	SetEmbedderHealthy(false)
+
+	for i, sid := range []string{"sess-a", "sess-b"} {
+		chunk := makeTestChunk(sid, int64(i+1), 0, "database query optimization")
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+
+	result, err := RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		Archived:    "active",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Len(t, result.Sessions, 2)
+
+	// "archived" with unknown status → nothing matches.
+	result, err = RAGSessionSearch(context.Background(), store, nil, SearchParams{
+		Query:       "database",
+		ProjectPath: testProjectPath,
+		Archived:    "archived",
+	}, 10, 20)
+	require.NoError(t, err)
+	assert.Empty(t, result.Sessions)
+}
+
+// ---------- aggregateSessionHits / sessionIDSet / sortSessionResults ----------
+// Regression coverage for the helpers extracted out of RAGSessionSearch. They
+// encode the aggregation contract (first-seen order, per-session chunk cap,
+// best-score tracking) and the time-sort tie-break, so lock them down directly
+// rather than only through the DB-backed end-to-end path.
+
+func TestAggregateSessionHits_GroupsInFirstSeenOrder(t *testing.T) {
+	base := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	hits := []SearchHit{
+		{SessionID: "sess-b", ChunkID: 1, Score: 0.4, Backend: "claude", ProjectPath: testProjectPath, CreatedAt: base},
+		{SessionID: "sess-a", ChunkID: 2, Score: 0.9, Backend: "codex", ProjectPath: testProjectPath, CreatedAt: base.Add(time.Hour)},
+		{SessionID: "sess-b", ChunkID: 3, Score: 0.7},
+	}
+
+	sessions := aggregateSessionHits(hits)
+	require.Len(t, sessions, 2)
+	// First-seen order: sess-b appeared first even though sess-a scores higher.
+	assert.Equal(t, "sess-b", sessions[0].SessionID)
+	assert.Equal(t, "sess-a", sessions[1].SessionID)
+
+	// Backend/ProjectPath/CreatedAt come from the first hit of the session.
+	assert.Equal(t, "claude", sessions[0].Backend)
+	assert.Equal(t, testProjectPath, sessions[0].ProjectPath)
+	assert.Equal(t, base, sessions[0].CreatedAt)
+
+	// MatchCount counts every hit; Chunks holds the details.
+	assert.Equal(t, 2, sessions[0].MatchCount)
+	require.Len(t, sessions[0].Chunks, 2)
+	assert.Equal(t, int64(1), sessions[0].Chunks[0].ChunkID)
+	assert.Equal(t, int64(3), sessions[0].Chunks[1].ChunkID)
+	// Best score wins even though it was the second hit.
+	assert.Equal(t, 0.7, sessions[0].Score)
+}
+
+func TestAggregateSessionHits_PerSessionChunkCap(t *testing.T) {
+	hits := make([]SearchHit, 0, maxChunksPerSession+3)
+	// maxChunksPerSession+3 hits for one session: details are capped but the
+	// match count still reflects every hit.
+	for i := range maxChunksPerSession + 3 {
+		hits = append(hits, SearchHit{
+			SessionID: "sess-cap",
+			ChunkID:   int64(i + 1),
+			Score:     float64(i) / 100.0,
+		})
+	}
+
+	sessions := aggregateSessionHits(hits)
+	require.Len(t, sessions, 1)
+	assert.Len(t, sessions[0].Chunks, maxChunksPerSession)
+	assert.Equal(t, maxChunksPerSession+3, sessions[0].MatchCount)
+}
+
+func TestSessionIDSet_CollectsDistinctIDs(t *testing.T) {
+	sessions := []*SessionSearchResult{
+		{SessionID: "a"}, {SessionID: "b"}, {SessionID: "a"},
+	}
+	ids := sessionIDSet(sessions)
+	assert.Len(t, ids, 2)
+	assert.True(t, ids["a"])
+	assert.True(t, ids["b"])
+}
+
+func TestSortSessionResults_TimeSortTieBreakByID(t *testing.T) {
+	at := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+	// Equal timestamps must fall back to ascending session id, deterministically.
+	sessions := []*SessionSearchResult{
+		{SessionID: "sess-c", CreatedAt: at, Score: 0.1},
+		{SessionID: "sess-a", CreatedAt: at, Score: 0.9},
+		{SessionID: "sess-b", CreatedAt: at, Score: 0.5},
+	}
+
+	sortSessionResults(sessions, "newest")
+	assert.Equal(t, []string{"sess-a", "sess-b", "sess-c"}, sessionIDs(sessions))
+
+	// Default (relevance) orders by score desc, ignoring ids/timestamps.
+	sortSessionResults(sessions, "")
+	assert.Equal(t, []string{"sess-a", "sess-b", "sess-c"}, sessionIDs(sessions))
+}
+
+func sessionIDs(sessions []*SessionSearchResult) []string {
+	out := make([]string, len(sessions))
+	for i, s := range sessions {
+		out[i] = s.SessionID
+	}
+	return out
+}

@@ -63,6 +63,21 @@ export function useListNav(options: ListNavOptions) {
     onConfirm(index)
   }
 
+  /**
+   * Confirm only when an item is actually HIGHLIGHTED (the user pressed
+   * ArrowUp/Down). Without a highlight this is a no-op.
+   *
+   * Used by document-level Enter handling (useListKeys): a bare Enter — focus
+   * sitting somewhere unrelated to the list — must NOT fall back to selecting
+   * the first item. That fallback made an out-of-focus Enter re-select the
+   * already-active chat session in the session sidebar, re-running the full
+   * switchSession → clear messages → reload cycle (visible chat-list flash).
+   */
+  function confirmHighlighted() {
+    if (activeIndex.value < 0) return
+    confirm()
+  }
+
   /** Clear the highlight (call when the list contents change). */
   function reset() {
     activeIndex.value = -1
@@ -72,5 +87,5 @@ export function useListNav(options: ListNavOptions) {
     moveTo(index)
   }
 
-  return { activeIndex, down, up, confirm, reset, setActive }
+  return { activeIndex, down, up, confirm, confirmHighlighted, reset, setActive }
 }

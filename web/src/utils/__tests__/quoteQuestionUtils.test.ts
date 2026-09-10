@@ -126,24 +126,51 @@ describe('getLineInfo', () => {
     expect(getLineInfo(sel)).toEqual({ startLine: 0, endLine: 0 })
   })
 
-  it('defaults to 0 when data-line attribute is missing', () => {
+  it('returns zeros when a code-line lacks a data-line attribute', () => {
     const anchor = document.createElement('div')
     anchor.classList.add('code-line')
-    // no data-line attribute
+    // no data-line attribute → anchor edge has no valid line → whole range 0
     const focus = makeCodeLine('3')
     const sel = mockSelection(anchor, focus)
-    expect(getLineInfo(sel)).toEqual({ startLine: 0, endLine: 3 })
+    expect(getLineInfo(sel)).toEqual({ startLine: 0, endLine: 0 })
   })
 
-  it('produces NaN when data-line attribute is non-numeric', () => {
+  it('returns zeros when data-line attribute is non-numeric', () => {
     const anchor = document.createElement('div')
     anchor.classList.add('code-line')
     anchor.setAttribute('data-line', 'abc')
     const focus = makeCodeLine('4')
     const sel = mockSelection(anchor, focus)
-    // 'abc' || '0' → 'abc' (truthy), parseInt('abc') → NaN
-    // Math.min(NaN, 4) → NaN
-    expect(getLineInfo(sel)).toEqual({ startLine: NaN, endLine: NaN })
+    // non-numeric data-line → anchor edge has no valid line → whole range 0
+    expect(getLineInfo(sel)).toEqual({ startLine: 0, endLine: 0 })
+  })
+
+  it('falls back to rendered block [data-source-line] when no code-line exists', () => {
+    const anchor = document.createElement('p')
+    anchor.setAttribute('data-source-line', '7')
+    const focus = document.createElement('p')
+    focus.setAttribute('data-source-line', '12')
+    const sel = mockSelection(anchor, focus)
+    expect(getLineInfo(sel)).toEqual({ startLine: 7, endLine: 12 })
+  })
+
+  it('mixes code-line and rendered block lines across a selection', () => {
+    const anchor = makeCodeLine('3')
+    const focus = document.createElement('p')
+    focus.setAttribute('data-source-line', '9')
+    const sel = mockSelection(anchor, focus)
+    expect(getLineInfo(sel)).toEqual({ startLine: 3, endLine: 9 })
+  })
+
+  it('resolves a block line via a descendant text node', () => {
+    const block = document.createElement('p')
+    block.setAttribute('data-source-line', '15')
+    const textNode = document.createTextNode('inside')
+    block.appendChild(textNode)
+    const focus = document.createElement('p')
+    focus.setAttribute('data-source-line', '18')
+    const sel = mockSelection(textNode, focus)
+    expect(getLineInfo(sel)).toEqual({ startLine: 15, endLine: 18 })
   })
 
   it('finds code-line via text node parentElement', () => {

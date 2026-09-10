@@ -1,11 +1,30 @@
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
+import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
+import { isShareMode } from '@/share/shareMode'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
 
 const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
+
+/** Build the "attach to chat" header button (paperclip). Skipped entirely in
+ *  share mode (a public share has no chat to attach to); in chat the button is
+ *  injected but hidden by CSS and inert because no .markdown-body[data-file-path]
+ *  ancestor exists. */
+function makeAttachButton(doc: Document, cls: string, i18nKey: string): HTMLButtonElement | null {
+    if (isShareMode()) return null
+    const btn = doc.createElement('button')
+    btn.className = cls
+    btn.setAttribute('data-action', 'attach')
+    const label = gt(i18nKey)
+    btn.setAttribute('title', label)
+    btn.setAttribute('aria-label', label)
+    btn.setAttribute('type', 'button')
+    btn.innerHTML = ATTACH_BADGE_SVG
+    return btn
+}
 
 // ── String-level annotation ──────────────────────────────────────────────────
 
@@ -68,6 +87,10 @@ export function annotateCodeBlockHeaders(html: string): string {
         copyBtn.setAttribute('type', 'button')
         copyBtn.innerHTML = COPY_ICON_SVG
         actions.appendChild(copyBtn)
+
+        // Attach-to-chat button (referenced md line range; file-preview only)
+        const attachBtn = makeAttachButton(doc, 'code-block-attach-btn', 'chat.attach.attachCodeToChat')
+        if (attachBtn) actions.appendChild(attachBtn)
 
         // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
         const wrapBtn = doc.createElement('button')
@@ -225,6 +248,10 @@ export function annotateTableBlockHeaders(html: string): string {
 
         copyDropdown.appendChild(copyMenu)
         actions.appendChild(copyDropdown)
+
+        // Attach-to-chat button (referenced md line range; file-preview only)
+        const attachBtn = makeAttachButton(doc, 'table-block-attach-btn', 'chat.attach.attachTableToChat')
+        if (attachBtn) actions.appendChild(attachBtn)
 
         // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
         const wrapBtn = doc.createElement('button')

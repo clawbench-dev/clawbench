@@ -1,10 +1,10 @@
 import { appLog } from '@/utils/appLog'
 import { useNavigationContext } from './useNavigationContext'
 
-export type BackReason = 'header' | 'android' | 'edge-swipe' | 'origin-bar' | 'close'
+export type BackReason = 'header' | 'android' | 'edge-swipe' | 'close'
 
 /** The step a back press resolves to. `null` means "nothing to handle". */
-export type BackStep = 'overlay' | 'edit' | 'file' | 'origin' | 'close-overlay' | 'dir' | 'other'
+export type BackStep = 'overlay' | 'edit' | 'search' | 'multi' | 'file' | 'origin' | 'close-overlay' | 'dir' | 'other'
 
 export interface BackStateMachineHooks {
   /** Pure predicate — must not mutate state. */
@@ -12,6 +12,12 @@ export interface BackStateMachineHooks {
   closeTopmostOverlay: () => boolean
   isEditing: () => boolean
   exitEdit: () => void
+  /** Browse search overlay — pure predicate, must not mutate state. */
+  canExitSearch?: () => boolean
+  exitSearch?: () => void
+  /** Browse multi-select mode — pure predicate, must not mutate state. */
+  canExitMultiSelect?: () => boolean
+  exitMultiSelect?: () => void
   canGoBackFile: () => boolean
   goBackFile: () => Promise<boolean>
   hasOrigin: () => boolean
@@ -45,9 +51,6 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
     // 2. 文件编辑状态下退出编辑；未保存修改继续使用现有确认逻辑
     if (hooks.isEditing()) return 'edit'
 
-    // The user clicked the origin banner explicitly
-    if (reason === 'origin-bar' && hooks.hasOrigin()) return 'origin'
-
     // The user clicked the close button. Closing is not "go back one step":
     // falling through to the file/dir steps would turn a dismiss into a
     // navigation (opening the previous file, or walking up a directory).
@@ -57,19 +60,25 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
       return null
     }
 
-    // 3. fileNav.canGoBack 为 true 时恢复上一个文件
+    // 3. Browse 面板的瞬态层：搜索结果层激活时先退出搜索（纯关闭，不导航）。
+    //    搜索栏常驻，与多选可共存（可在搜索结果上多选），因此两条路径可能
+    //    同时命中 —— 顺序即优先级：先剥搜索结果层，再剥多选层。
+    if (hooks.canExitSearch?.()) return 'search'
+    if (hooks.canExitMultiSelect?.()) return 'multi'
+
+    // 4. fileNav.canGoBack 为 true 时恢复上一个文件
     if (hooks.canGoBackFile()) return 'file'
 
-    // 4. navigation.hasOrigin 为 true 时恢复来源
+    // 5. navigation.hasOrigin 为 true 时恢复来源
     if (hooks.hasOrigin()) return 'origin'
 
     // Overlay is open but there is no file history and no origin
     if (hooks.canCloseOverlay?.()) return 'close-overlay'
 
-    // 5. 当前 browse 目录不是根目录时返回父目录
+    // 6. 当前 browse 目录不是根目录时返回父目录
     if (hooks.canGoBackDir()) return 'dir'
 
-    // 6. Fallback for other registered page handlers (settings drill-down, tasks…)
+    // 7. Fallback for other registered page handlers (settings drill-down, tasks…)
     if (hooks.canHandleOther?.()) return 'other'
 
     return null
@@ -81,6 +90,12 @@ export function useNavigationStateMachine(hooks: BackStateMachineHooks) {
         return hooks.closeTopmostOverlay()
       case 'edit':
         hooks.exitEdit()
+        return true
+      case 'search':
+        hooks.exitSearch?.()
+        return true
+      case 'multi':
+        hooks.exitMultiSelect?.()
         return true
       case 'file':
         return await hooks.goBackFile()

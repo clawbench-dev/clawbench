@@ -1678,7 +1678,7 @@ func TestServeConfigPatch_RAGFields(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	body := `{"rag":{"vector_enabled":false,"base_url":"http://localhost:11434","model":"bge-m3","api_key":"valid-full-key","chunk_size":256,"search_limit":10,"search_pool_size":100,"retention_days":60}}`
+	body := `{"rag":{"vector_enabled":false,"base_url":"http://localhost:11434","model":"bge-m3","api_key":"valid-full-key","chunk_size":256,"batch_size":25,"search_limit":10,"search_pool_size":100,"retention_days":60}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -1690,6 +1690,7 @@ func TestServeConfigPatch_RAGFields(t *testing.T) {
 	assert.Equal(t, "bge-m3", model.ConfigInstance.RAG.Model)
 	assert.Equal(t, "valid-full-key", model.ConfigInstance.RAG.APIKey)
 	assert.Equal(t, 256, model.ConfigInstance.RAG.ChunkSize)
+	assert.Equal(t, 25, model.ConfigInstance.RAG.BatchSize)
 	assert.Equal(t, 10, model.ConfigInstance.RAG.SearchLimit)
 	assert.Equal(t, 100, model.ConfigInstance.RAG.SearchPoolSize)
 	assert.Equal(t, 60, model.ConfigInstance.RAG.RetentionDays)
@@ -1716,6 +1717,86 @@ func TestServeConfig_Get_RAGAPIKeyMasked(t *testing.T) {
 
 	rag, _ := resp["rag"].(map[string]any)
 	assert.Equal(t, "sk-1234567890abcdefghijklmnopqrstuvwxyz", rag["api_key"])
+}
+
+// --- serveConfigGet: RAG batch_size is exposed to the settings UI ---
+
+func TestServeConfig_Get_RAGBatchSize(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.RAG.BatchSize = 37
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	rag, _ := resp["rag"].(map[string]any)
+	assert.Equal(t, float64(37), rag["batch_size"])
+}
+
+// --- validatePatchValues: RAG numeric bounds ---
+
+func TestServeConfig_Patch_RAGBatchSizeZeroRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// batch_size becomes the SQL LIMIT for GetUnindexedMessages: 0 would stop
+	// indexing entirely, so it must be rejected rather than silently persisted.
+	body := `{"rag":{"batch_size":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.batch_size must be at least 1")
+}
+
+func TestServeConfig_Patch_RAGBatchSizeNegativeRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	// A negative LIMIT means "no limit" in SQLite — would pull every unindexed
+	// message at once.
+	body := `{"rag":{"batch_size":-5}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.batch_size must be at least 1")
+}
+
+func TestServeConfig_Patch_RAGChunkSizeZeroRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"rag":{"chunk_size":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "rag.chunk_size must be at least 1")
 }
 
 // --- validatePatchValues: default_agent with nil Agents ---

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -567,6 +568,8 @@ func TestServeRAGStatus_ReturnsFields(t *testing.T) {
 	assert.Contains(t, result, "total_messages")
 	assert.Contains(t, result, "indexed_messages")
 	assert.Contains(t, result, "embedded_messages")
+	assert.Contains(t, result, "fts_size_bytes")
+	assert.Contains(t, result, "vec_size_bytes")
 }
 
 func TestServeRAGStatus_VectorDisabled(t *testing.T) {
@@ -751,6 +754,50 @@ func TestServeRAGSessionSearch_EmptyQueryBrowsesRecentSessions(t *testing.T) {
 	assert.Zero(t, result.Sessions[2].MatchCount)
 }
 
+func TestServeRAGSessionSearch_BrowseCursorPagination(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Four sessions; RAG.SearchLimit is 100 by default, so drive pagination by
+	// passing an explicit small limit via config is not possible here. Instead
+	// verify has_more is false when the whole set fits, and that a cursor
+	// narrows the result set correctly.
+	insertSession(t, env.ProjectDir, "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "s3", "S3", "2024-03-01 10:00:00", false)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+		HasMore bool `json:"has_more"`
+	}
+
+	// First page (all three fit) → has_more false.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var page1 resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page1))
+	require.Len(t, page1.Sessions, 3)
+	assert.False(t, page1.HasMore)
+
+	// Cursor after s3 (newest) → only older rows remain.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"cursor":    "2024-03-01T10:00:00Z",
+		"cursor_id": "s3",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var page2 resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page2))
+	require.Len(t, page2.Sessions, 2)
+	assert.Equal(t, "s2", page2.Sessions[0].SessionID)
+	assert.Equal(t, "s1", page2.Sessions[1].SessionID)
+}
+
 func TestServeRAGSessionSearch_EmptyQueryRemoteNoProjectDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -761,7 +808,79 @@ func TestServeRAGSessionSearch_EmptyQueryRemoteNoProjectDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
+func TestServeRAGSessionSearch_BrowseArchiveFilter(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "active-1", "Active", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "arch-1", "Archived", "2024-02-01 10:00:00", true)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+			Archived  bool   `json:"archived"`
+		} `json:"sessions"`
+		Total int `json:"total"`
+	}
+
+	// Active only.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"archived": "active"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var active resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &active))
+	require.Len(t, active.Sessions, 1)
+	assert.Equal(t, "active-1", active.Sessions[0].SessionID)
+	assert.False(t, active.Sessions[0].Archived)
+
+	// Archived only.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"archived": "archived"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var arch resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &arch))
+	require.Len(t, arch.Sessions, 1)
+	assert.Equal(t, "arch-1", arch.Sessions[0].SessionID)
+	assert.True(t, arch.Sessions[0].Archived)
+
+	// All (default) includes both.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var all resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+	assert.Equal(t, 2, all.Total)
+}
+
+func TestServeRAGSessionSearch_BrowseSortOldest(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "new", "New", "2024-03-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "old", "Old", "2024-01-01 10:00:00", false)
+	insertSession(t, env.ProjectDir, "mid", "Mid", "2024-02-01 10:00:00", false)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"sort": "oldest"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(t, result.Sessions, 3)
+	assert.Equal(t, "old", result.Sessions[0].SessionID)
+	assert.Equal(t, "mid", result.Sessions[1].SessionID)
+	assert.Equal(t, "new", result.Sessions[2].SessionID)
+}
+
+func TestServeRAGSessionSearch_BrowseOmitsMessageContent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -791,10 +910,125 @@ func TestServeRAGSessionSearch_EmptyQueryIncludesFirstChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Sessions, 1)
 	assert.Zero(t, result.Sessions[0].MatchCount)
-	// The first message is attached as a preview chunk for the detail view.
-	require.Len(t, result.Sessions[0].Chunks, 1)
-	assert.Equal(t, "First message here", result.Sessions[0].Chunks[0].ChunkText)
-	assert.Equal(t, "user", result.Sessions[0].Chunks[0].Role)
+	// Browse mode must not attach message content: it is fetched lazily by the
+	// detail view to keep the list query cheap.
+	assert.Empty(t, result.Sessions[0].Chunks)
+}
+
+// ---------- ServeRAGSessionFirstMessage ----------
+
+func TestServeRAGSessionFirstMessage_MethodCheck(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/rag/session-first-message?session_id=x", nil)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_MissingSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_ReturnsEarliestMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false)
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_history (project_path, role, content, session_id, backend, created_at) VALUES
+		 (?, 'assistant', 'second', 'sess-fm', 'claude', '2024-01-02 10:00:00'),
+		 (?, 'user', 'first', 'sess-fm', 'claude', '2024-01-01 10:00:00')`,
+		env.ProjectDir, env.ProjectDir,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-fm", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "user", result.Role)
+	assert.Equal(t, "first", result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_ArchivedSessionAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true)
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
+		env.ProjectDir,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-arch", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		Content string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "hello", result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_EmptySessionReturnsEmpty(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-empty", "Empty", "2024-01-01 10:00:00", false)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-empty", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result struct {
+		MessageID int64  `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Zero(t, result.MessageID)
+	assert.Empty(t, result.Content)
+}
+
+func TestServeRAGSessionFirstMessage_WrongProjectDenied(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	insertSession(t, env.ProjectDir, "sess-p", "Session", "2024-01-01 10:00:00", false)
+
+	otherProject := filepath.Join(filepath.Dir(env.ProjectDir), "other-first-msg")
+	_ = os.MkdirAll(otherProject, 0o755)
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=sess-p", nil)
+	req = withProjectCookie(req, otherProject)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestServeRAGSessionFirstMessage_RemoteNoProjectDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/session-first-message?session_id=x", nil)
+	// Default RemoteAddr is 192.0.2.1 (non-localhost)
+	w := callHandlerWithAuth(ServeRAGSessionFirstMessage, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestServeRAGSessionSearch_BrowseModeDBError(t *testing.T) {
@@ -890,6 +1124,194 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 	req.RemoteAddr = "127.0.0.1:12345"
 	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// ---------- Time-range filtering ----------
+
+// withFixedZone runs fn with time.Local pinned to the given offset, restoring
+// it afterwards. The stored timestamps are UTC while the user picks days in
+// their own zone, so the date-only branch is only exercised meaningfully under
+// a non-UTC zone.
+func withFixedZone(t *testing.T, offsetSeconds int, fn func()) {
+	t.Helper()
+	orig := time.Local
+	time.Local = time.FixedZone("TEST", offsetSeconds)
+	t.Cleanup(func() { time.Local = orig })
+	fn()
+}
+
+func TestNormalizeTimeBound(t *testing.T) {
+	// Empty and whitespace-only inputs mean "no bound".
+	assert.Equal(t, "", normalizeTimeBound("", false))
+	assert.Equal(t, "", normalizeTimeBound("   ", true))
+
+	// Unparseable input passes through so the caller binds something predictable.
+	assert.Equal(t, "not-a-date", normalizeTimeBound("not-a-date", false))
+
+	// A date-only bound is a LOCAL calendar day, emitted as the matching UTC
+	// instant. Pinned to UTC+8, "2024-03-01" therefore starts at 2024-02-29
+	// 16:00 UTC — not 2024-03-01 00:00 UTC, which is what a naive parse (and
+	// the original bug) produced.
+	withFixedZone(t, 8*3600, func() {
+		assert.Equal(t, "2024-02-29 16:00:00", normalizeTimeBound("2024-03-01", false))
+		// The upper bound is the last second of the local day, with a
+		// fractional suffix so it sorts after rag_chunks' "… +0000 UTC" text.
+		assert.Equal(t, "2024-03-01 15:59:59.999999", normalizeTimeBound("2024-03-01", true))
+	})
+
+	// The two branches must agree: an RFC3339 instant that equals local
+	// midnight must normalize to the same bound as the date-only form.
+	withFixedZone(t, 8*3600, func() {
+		localMidnight := time.Date(2024, 3, 1, 0, 0, 0, 0, time.Local)
+		assert.Equal(t,
+			normalizeTimeBound("2024-03-01", false),
+			normalizeTimeBound(localMidnight.Format(time.RFC3339), false))
+	})
+
+	// A UTC-5 zone must produce a different instant than UTC+8 for the same
+	// calendar day, proving the offset is actually applied.
+	withFixedZone(t, -5*3600, func() {
+		assert.Equal(t, "2024-03-01 05:00:00", normalizeTimeBound("2024-03-01", false))
+	})
+
+	// RFC3339 is an absolute instant: the same string normalizes identically
+	// regardless of the machine's zone.
+	assert.Equal(t, "2024-03-01 10:30:00", normalizeTimeBound("2024-03-01T10:30:00Z", false))
+	withFixedZone(t, 8*3600, func() {
+		assert.Equal(t, "2024-03-01 10:30:00", normalizeTimeBound("2024-03-01T10:30:00Z", false))
+	})
+
+	// endOfDay only widens date-only input; an explicit RFC3339 upper bound is
+	// used verbatim (plus the suffix that keeps sub-second rows included).
+	assert.Equal(t, "2024-03-01 10:30:00.999999", normalizeTimeBound("2024-03-01T10:30:00Z", true))
+}
+
+func TestNormalizeTimeBound_UpperBoundIncludesSuffixedRow(t *testing.T) {
+	// rag_chunks stores "2026-09-10 15:59:59 +0000 UTC" (UTC with a suffix).
+	// The end-of-day bound must sort at or after that text, otherwise the last
+	// second of the range is silently dropped.
+	withFixedZone(t, 8*3600, func() {
+		// Local day 2026-09-10 in UTC+8 ends at 2026-09-10 15:59:59 UTC.
+		bound := normalizeTimeBound("2026-09-10", true)
+		stored := "2026-09-10 15:59:59 +0000 UTC"
+		assert.LessOrEqual(t, stored, bound, "stored row must fall inside the upper bound")
+
+		// And a row just past the boundary must stay outside.
+		assert.Less(t, bound, "2026-09-10 16:00:00 +0000 UTC")
+	})
+}
+
+func TestNormalizeTimeBound_MatchesStoredUTCFormat(t *testing.T) {
+	// Regression guard: chat_sessions stores UTC (DEFAULT CURRENT_TIMESTAMP)
+	// and rag_chunks stores UTC with a suffix. A session created at local 02:00
+	// in UTC+8 is stored as the previous day 18:00 UTC, and must fall inside the
+	// local day's window.
+	withFixedZone(t, 8*3600, func() {
+		from := normalizeTimeBound("2026-09-10", false)
+		to := normalizeTimeBound("2026-09-10", true)
+
+		// Local 2026-09-10 02:00 in UTC+8 → stored UTC text.
+		localEarly := time.Date(2026, 9, 10, 2, 0, 0, 0, time.Local).UTC()
+		stored := localEarly.Format("2006-01-02 15:04:05")
+		assert.Equal(t, "2026-09-09 18:00:00", stored)
+		assert.LessOrEqual(t, from, stored, "early local session must be inside the range")
+		assert.LessOrEqual(t, stored, to, "early local session must be inside the range")
+
+		// Local 2026-09-10 23:00 is stored as 15:00 UTC the same day.
+		localLate := time.Date(2026, 9, 10, 23, 0, 0, 0, time.Local).UTC()
+		assert.LessOrEqual(t, from, localLate.Format("2006-01-02 15:04:05"))
+		assert.LessOrEqual(t, localLate.Format("2006-01-02 15:04:05"), to)
+
+		// A session from the neighboring local day must stay outside.
+		prevDay := time.Date(2026, 9, 9, 23, 59, 59, 0, time.Local).UTC().Format("2006-01-02 15:04:05")
+		assert.Less(t, prevDay, from)
+	})
+}
+
+func TestNormalizeTimeBound_DSTTransitionDay(t *testing.T) {
+	// America/New_York springs forward on 2024-03-10 (02:00 → 03:00). A 24h
+	// Add would overshoot into the next day; AddDate lands on local midnight.
+	ny, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	orig := time.Local
+	time.Local = ny
+	defer func() { time.Local = orig }()
+
+	assert.Equal(t, "2024-03-11 03:59:59.999999", normalizeTimeBound("2024-03-10", true))
+}
+
+func TestServeRAGSessionSearch_BrowseTimeRangeFilter(t *testing.T) {
+	// Pin the zone: date-only bounds are read as local days, so the day
+	// boundaries (and therefore which sessions fall inside) depend on the
+	// machine's offset. UTC keeps the expected results stable.
+	withFixedZone(t, 0, func() {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+		browseTimeRangeFilter(t, env.ProjectDir)
+	})
+}
+
+func browseTimeRangeFilter(t *testing.T, projectDir string) {
+	t.Helper()
+
+	insertSession(t, projectDir, "jan", "Jan", "2024-01-15 10:00:00", false)
+	insertSession(t, projectDir, "feb", "Feb", "2024-02-15 10:00:00", false)
+	insertSession(t, projectDir, "mar", "Mar", "2024-03-15 10:00:00", false)
+
+	type resp struct {
+		Sessions []struct {
+			SessionID string `json:"session_id"`
+		} `json:"sessions"`
+		Total int `json:"total"`
+	}
+
+	// Date-only bounds select the whole February window.
+	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2024-02-01",
+		"to":   "2024-02-29",
+	})
+	req = withProjectCookie(req, projectDir)
+	w := callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var feb resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &feb))
+	require.Len(t, feb.Sessions, 1)
+	assert.Equal(t, "feb", feb.Sessions[0].SessionID)
+
+	// A single-day bound must include sessions created later that day (the
+	// endOfDay expansion is what makes this work with the stored timestamp).
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2024-03-15",
+		"to":   "2024-03-15",
+	})
+	req = withProjectCookie(req, projectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var day resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &day))
+	require.Len(t, day.Sessions, 1)
+	assert.Equal(t, "mar", day.Sessions[0].SessionID)
+
+	// Lower bound only → everything from February onward.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{"from": "2024-02-01"})
+	req = withProjectCookie(req, projectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var fromFeb resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fromFeb))
+	assert.Equal(t, 2, fromFeb.Total)
+
+	// Window with no sessions → empty list, not an error.
+	req = newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{
+		"from": "2025-01-01",
+		"to":   "2025-12-31",
+	})
+	req = withProjectCookie(req, projectDir)
+	w = callHandlerWithAuth(ServeRAGSessionSearch, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var empty resp
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &empty))
+	assert.Equal(t, 0, empty.Total)
 }
 
 // ---------- ServeRAGReset ----------
@@ -1062,6 +1484,99 @@ func TestServeRAGResetVector_ConcurrencyConflict(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/rag/reset-vector", nil)
 	w := callHandlerWithAuth(ServeRAGResetVector, req)
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// ---------- ServeRAGRebuildFTS ----------
+
+func TestServeRAGRebuildFTS_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestServeRAGRebuildFTS_NilStoreReturns503(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() { rag.GlobalStore = origStore })
+	rag.GlobalStore = nil
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestServeRAGRebuildFTS_Success(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
+	})
+
+	store := setupRAGStore(t)
+	rag.GlobalStore = store
+	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
+	store.SetEmbeddingDim(1024)
+
+	// Insert a message, index it, and embed it
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello world", nil, false, "NewSession")
+	require.NoError(t, err)
+	err = service.MarkMessageIndexed(msgID)
+	require.NoError(t, err)
+
+	chunks := []rag.Chunk{{
+		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
+		ChunkTextSegmented: "hello world", ChunkIndex: 0, TokenCount: 2,
+		Embedding: make([]float64, 1024), HasEmbedding: true,
+		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
+	}}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]any
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result["status"])
+	assert.Equal(t, float64(1), result["chunks_rebuilt"])
+
+	// Independent rebuild must not reset message indexed flags (FTS layer only)
+	var indexed int
+	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
+	require.NoError(t, err)
+	assert.Equal(t, 1, indexed)
+
+	// Vectors must survive
+	assert.True(t, store.HasVecData())
+}
+
+func TestServeRAGRebuildFTS_ConcurrencyConflict(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origStore := rag.GlobalStore
+	t.Cleanup(func() {
+		rag.GlobalStore = origStore
+		ragResetting.Store(false)
+	})
+
+	rag.GlobalStore = setupRAGStore(t)
+
+	ragResetting.Store(true)
+
+	req := newRequest(t, http.MethodPost, "/api/rag/rebuild-fts", nil)
+	w := callHandlerWithAuth(ServeRAGRebuildFTS, req)
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 

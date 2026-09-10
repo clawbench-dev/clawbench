@@ -262,6 +262,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/chat/tool-call", middleware.Auth(ServeToolCallDetail))
 	register("/api/ai/chat/thinking", middleware.Auth(ServeThinkingDetail))
 	register("/api/usage/stats", middleware.Auth(ServeUsageStats))
+	register("/api/git/stats", middleware.Auth(ServeGitStats))
+	register("/api/git/cloc", middleware.Auth(ServeGitCloc))
 	register("/api/ai/permission/respond", middleware.Auth(ServePermissionRespond))
 	register("/api/upload/file", middleware.Auth(UploadFile))
 	register("/api/upload/recent", middleware.Auth(UploadRecent))
@@ -327,7 +329,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
 	register("/api/rag/reset", middleware.Auth(ServeRAGReset))
 	register("/api/rag/reset-vector", middleware.Auth(ServeRAGResetVector))
+	register("/api/rag/rebuild-fts", middleware.Auth(ServeRAGRebuildFTS))
 	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
+	register("/api/rag/session-first-message", middleware.Auth(ServeRAGSessionFirstMessage))
 
 	// Client log collection — intentionally unauthenticated:
 	// Android AppLog sends logs via native HttpURLConnection (no WebView cookies).

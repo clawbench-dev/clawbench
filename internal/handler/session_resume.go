@@ -551,9 +551,11 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 		// Set session title from the first real user-typed message,
 		// skipping machine-generated user turns (see
-		// deriveSessionTitleFromReplay).
+		// deriveSessionTitleFromReplay). Lock it: the title comes from the
+		// CLI's own transcript, so a later first message must not replace it
+		// (reachable when the replay was empty but the transcript had a title).
 		if title := deriveSessionTitleForAgent(agent, projectPath, req.AcpSessionID, messages); title != "" {
-			if err := service.UpdateSessionTitle(sessionID, title); err != nil {
+			if err := service.SetSessionTitleLocked(sessionID, title); err != nil {
 				slog.Warn("handler: failed to set title for acp-load session", "session_id", sessionID, "error", err)
 			}
 		}

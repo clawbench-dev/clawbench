@@ -4,6 +4,7 @@ import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsGroupPanel from '@/components/settings/SettingsGroupPanel.vue'
 import type { GroupPanelConfig, ItemSpec } from '@/components/settings/settingsFieldMap'
+import { apiPost } from '@/utils/api'
 
 // ── Mock composables ──
 
@@ -205,6 +206,12 @@ const i18n = createI18n({
           ragRebuildConfirm: '重建将清空所有向量索引数据',
           ragRebuildSuccess: '向量索引已清空，正在重新构建',
           ragRebuildFailed: '重建向量索引失败',
+          ragFtsRebuild: '重建全文索引',
+          ragFtsRebuildConfirm: '重建全文索引将基于现有文本块重新生成，不影响向量嵌入',
+          ragFtsRebuildSuccess: '全文索引已重建',
+          ragVectorRebuild: '重建向量索引',
+          ragVectorRebuildConfirm: '重建向量将清空所有向量嵌入数据',
+          ragVectorRebuildSuccess: '向量索引已清空，正在重新嵌入',
         },
       },
     },
@@ -316,7 +323,9 @@ function makeRagConfig(): GroupPanelConfig {
       { labelKey: 'settings.items.ragEmbedderStatus', key: 'rag.status.embedder_healthy', type: 'info', source: 'server' },
       { labelKey: 'settings.items.ragMode_none', key: 'rag.status.mode', type: 'info', source: 'server' },
       { labelKey: 'settings.items.ragIndexProgress', key: 'rag.status.index_progress', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragFtsSize', key: 'rag.status.fts_size', type: 'info', source: 'server' },
       { labelKey: 'settings.items.ragEmbedProgress', key: 'rag.status.embed_progress', type: 'info', source: 'server' },
+      { labelKey: 'settings.items.ragVecSize', key: 'rag.status.vec_size', type: 'info', source: 'server' },
       { labelKey: 'settings.items.ragRebuild', key: 'rag.rebuild', type: 'action', source: 'local' },
     ],
   }
@@ -1371,6 +1380,106 @@ describe('SettingsGroupPanel', () => {
       expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.mode' })).toBe(false)
       expect(vm.$.setupState.isRagProgressField({ key: 'rag.status.embedder_healthy' })).toBe(false)
       expect(vm.$.setupState.isRagProgressField({ key: 'rag.rebuild' })).toBe(false)
+    })
+
+    it('resolves FTS and vector index sizes', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'hybrid', has_fts_data: true, has_vec_data: true,
+        embedder_healthy: true, total_messages: 10, indexed_messages: 10, embedded_messages: 10,
+        fts_size_bytes: 2048, vec_size_bytes: 1048576,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('2.0 KB')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('1.0 MB')
+    })
+
+    it('shows dash for index sizes when no data present', () => {
+      Object.assign(mockRagStatus, {
+        available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
+        embedder_healthy: false, total_messages: 0, indexed_messages: 0, embedded_messages: 0,
+        fts_size_bytes: 0, vec_size_bytes: 0,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('—')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('—')
+    })
+
+    it('shows dash (not "0 B") when data exists but dbstat reported no size', () => {
+      // dbstat may be unavailable, leaving size at 0 while has_*_data is true.
+      // Rendering "0 B" would wrongly imply an empty index.
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'fts', has_fts_data: true, has_vec_data: false,
+        embedder_healthy: false, total_messages: 10, indexed_messages: 10, embedded_messages: 0,
+        fts_size_bytes: 0, vec_size_bytes: 0,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('—')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('—')
+    })
+
+    it('formats a multi-GB index in GB, not MB', () => {
+      Object.assign(mockRagStatus, {
+        available: true, mode: 'hybrid', has_fts_data: true, has_vec_data: true,
+        embedder_healthy: true, total_messages: 10, indexed_messages: 10, embedded_messages: 10,
+        fts_size_bytes: 3 * 1024 * 1024 * 1024, vec_size_bytes: 1024,
+      })
+      const wrapper = mountPanel(makeRagConfig())
+      const vm = wrapper.vm as any
+
+      expect(vm.$.setupState.getRagStatusValue('rag.status.fts_size')).toBe('3.0 GB')
+      expect(vm.$.setupState.getRagStatusValue('rag.status.vec_size')).toBe('1.0 KB')
+    })
+  })
+
+  // ─── RAG rebuild buttons (footer) ──────────────────────
+
+  describe('RAG rebuild buttons', () => {
+    beforeEach(() => {
+      localValues['rag.vector_enabled'] = true
+      vi.mocked(apiPost).mockClear()
+      vi.mocked(apiPost).mockResolvedValue(undefined)
+    })
+
+    it('renders two rebuild buttons in the footer for the RAG panel', () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const buttons = wrapper.findAll('.group-panel__rag-actions .fbtn')
+      expect(buttons).toHaveLength(2)
+      expect(buttons[0].text()).toContain('重建全文索引')
+      expect(buttons[1].text()).toContain('重建向量索引')
+    })
+
+    it('does not render rebuild buttons for non-RAG panels', () => {
+      const wrapper = mountPanel(makeSimpleConfig())
+      expect(wrapper.findAll('.group-panel__rag-actions')).toHaveLength(0)
+    })
+
+    it('calls the independent FTS rebuild endpoint', async () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const ftsBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[0]
+      await ftsBtn.trigger('click')
+      await nextTick()
+      expect(apiPost).toHaveBeenCalledWith('/api/rag/rebuild-fts', {})
+    })
+
+    it('calls the vector rebuild endpoint', async () => {
+      const wrapper = mountPanel(makeRagConfig())
+      const vecBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[1]
+      await vecBtn.trigger('click')
+      await nextTick()
+      expect(apiPost).toHaveBeenCalledWith('/api/rag/reset-vector', {})
+    })
+
+    it('disables the vector rebuild button when vector embedding is off', () => {
+      localValues['rag.vector_enabled'] = false
+      const wrapper = mountPanel(makeRagConfig())
+      const vecBtn = wrapper.findAll('.group-panel__rag-actions .fbtn')[1]
+      expect(vecBtn.attributes('disabled')).toBeDefined()
     })
   })
 })

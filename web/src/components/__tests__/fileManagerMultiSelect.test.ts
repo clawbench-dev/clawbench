@@ -438,14 +438,14 @@ describe('FileManagerContent — multi-select toolbar button', () => {
     // Enter multi-select mode via internal state
     // (clicking doesn't work due to directive issues in jsdom)
     await setMultiSelectActive(wrapper, true)
-    expect(wrapper.find('.ms-info-bar').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
 
     // Exit multi-select mode
     await setMultiSelectActive(wrapper, false)
-    expect(wrapper.find('.ms-info-bar').exists()).toBe(false)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(false)
   })
 
-  it('reflects selection via state and info-bar in multi-select mode', async () => {
+  it('reflects selection via state in multi-select mode', async () => {
     const entries = [
       { name: 'test.txt', type: 'file', size: 100, modified: '2025-01-01T00:00:00Z' },
       { name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z' },
@@ -494,7 +494,7 @@ describe('FileManagerContent — multi-select toolbar button', () => {
     expect(rawState.multiSelect.selected.size).toBe(1)
   })
 
-  it('emits batchDelete when delete button in action bar is clicked', async () => {
+  it('emits batchDelete when delete button in multi-select toolbar is clicked', async () => {
     const entries = [
       { name: 'a.txt', type: 'file', size: 100, modified: '2025-01-01T00:00:00Z' },
     ]
@@ -509,7 +509,7 @@ describe('FileManagerContent — multi-select toolbar button', () => {
     await nextTick()
 
     // The dialog.confirm is mocked to return true, so click delete
-    const deleteBtn = wrapper.find('.ms-action-btn.ms-danger')
+    const deleteBtn = wrapper.find('.toolbar-btn.ms-toolbar-danger')
     expect(deleteBtn.exists()).toBe(true)
     await deleteBtn.trigger('click')
     await nextTick()

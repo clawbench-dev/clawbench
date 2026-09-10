@@ -139,6 +139,13 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 
 // acpKindToCanonical maps ACP ToolKind enum values to the PascalCase
 // canonical names expected by the frontend TOOL_ICONS mapping.
+//
+// ToolKindOther is deliberately ABSENT: it used to map to "Skill", which turned
+// every unrecognized kind=other tool into a bogus Skill pill. Real Skill tools
+// resolve via the title/alias tables (title "skill"/"Skill" → "Skill"), so no
+// kind fallback is needed for them. Unknown kind=other tools fall through to a
+// title-preserving passthrough in extractToolName instead (honest label over a
+// misleading one).
 var acpKindToCanonical = map[acp.ToolKind]string{
 	acp.ToolKindRead:       "Read",
 	acp.ToolKindEdit:       "Edit",
@@ -149,7 +156,6 @@ var acpKindToCanonical = map[acp.ToolKind]string{
 	acp.ToolKindThink:      "DeepThink",
 	acp.ToolKindFetch:      "WebFetch",
 	acp.ToolKindSwitchMode: "EnterPlanMode",
-	acp.ToolKindOther:      "Skill", // uncategorized tools → Skill category
 }
 
 // extractToolName resolves the canonical frontend tool name from ACP tool identifiers
@@ -171,6 +177,14 @@ func extractToolName(title string, kind acp.ToolKind, backendID string, toolCall
 	// Map ACP ToolKind to canonical PascalCase names expected by the frontend.
 	if canonical, ok := acpKindToCanonical[kind]; ok {
 		return canonical
+	}
+
+	// Unresolved tool. kind=other with an unrecognized title must NOT become
+	// "Skill" (the old catch-all mislabeled subagent/unknown tools — codex
+	// "Start subagent X" etc.). Prefer the raw title so the UI shows something
+	// truthful, falling back to the kind enum only when no title exists.
+	if kind == acp.ToolKindOther && title != "" {
+		return title
 	}
 	return string(kind)
 }

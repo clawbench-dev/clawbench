@@ -647,8 +647,8 @@ describe('useNavigationCoordinator', () => {
       mockViewActions.requestScrollCapture.mockImplementation(() => {
         coord.handleCaptureFileScroll({
           scrollTop: 2400,
-          anchor: { id: 'sec-two', line: 12, relTop: -30 },
-          blockAnchor: null,
+          sourceLine: 12,
+          sourceOffset: -30,
           ratio: null,
         })
       })
@@ -657,7 +657,8 @@ describe('useNavigationCoordinator', () => {
 
       expect(fileNav.previousLocation.value?.scrollTop).toBe(2400)
       expect(fileNav.previousLocation.value?.scrollEntry?.scrollTop).toBe(2400)
-      expect(fileNav.previousLocation.value?.scrollEntry?.anchor).toEqual({ id: 'sec-two', line: 12, relTop: -30 })
+      expect(fileNav.previousLocation.value?.scrollEntry?.sourceLine).toBe(12)
+      expect(fileNav.previousLocation.value?.scrollEntry?.sourceOffset).toBe(-30)
     })
   })
 

@@ -1,17 +1,25 @@
 <template>
   <div v-if="files.length > 0" class="chat-files">
-    <span v-for="(f, idx) in files" :key="idx"
+    <span v-for="(raw, idx) in files" :key="idx"
       class="chat-file-attachment"
-      :class="[isUploadPath(normalizeFileEntry(f).path) ? 'attachment-upload' : 'attachment-ref', { 'attachment-image-only': isImageFile(normalizeFileEntry(f).path) }]"
-      @click="$emit('file-tag-click', normalizeFileEntry(f).path)"
+      :class="[isUploadPath(normalizeFileEntry(raw).path) ? 'attachment-upload' : 'attachment-ref', { 'attachment-image-only': showsThumb(raw) }]"
+      @click="$emit('file-tag-click', normalizeFileEntry(raw))"
       :title="t('chat.attach.openFile')">
-      <img v-if="isImageFile(normalizeFileEntry(f).path) && isThumbableExt(normalizeFileEntry(f).path) && !thumbErrors.has(normalizeFileEntry(f).path)"
-        class="attachment-thumb-img"
-        :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
-        @error="onThumbError(normalizeFileEntry(f).path)" />
-      <!-- Non-image: icon + filename -->
-      <FileIcon v-if="!isImageFile(normalizeFileEntry(f).path)" :path="normalizeFileEntry(f).path" :is-dir="normalizeFileEntry(f).isDir" :size="22" class="attachment-file-icon" />
-      <span v-if="!isImageFile(normalizeFileEntry(f).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(f).path) }}</span>
+      <template v-if="normalizeFileEntry(raw).startLine !== undefined">
+        <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+        <span class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}<span class="attachment-range">{{ rangeLabel(normalizeFileEntry(raw)) }}</span></span>
+      </template>
+      <template v-else>
+        <img v-if="showsThumb(raw)"
+          class="attachment-thumb-img"
+          :src="thumbUrl(normalizeFileEntry(raw).path)" loading="lazy"
+          @error="onThumbError(normalizeFileEntry(raw).path)" />
+        <!-- Icon + filename fallback: non-images AND images the backend cannot
+             thumbnail (SVG/WebP/BMP/… or a failed thumb request) render as a
+             file card, never a blank square. -->
+        <FileIcon v-if="!showsThumb(raw)" :path="normalizeFileEntry(raw).path" :is-dir="normalizeFileEntry(raw).isDir" :size="22" class="attachment-file-icon" />
+        <span v-if="!showsThumb(raw)" class="attachment-filename">{{ getFileName(normalizeFileEntry(raw).path) }}</span>
+      </template>
     </span>
   </div>
 </template>
@@ -24,6 +32,7 @@ import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttac
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import FileIcon from '@/components/common/FileIcon.vue'
+import { Code2 } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -34,6 +43,22 @@ defineEmits(['file-tag-click'])
 
 function getFileName(path) {
   return baseName(path)
+}
+
+function rangeLabel(f) {
+  if (f.endLine === undefined || f.endLine === f.startLine) return `:${f.startLine}`
+  return `:${f.startLine}-${f.endLine}`
+}
+
+/**
+ * A card shows the square thumbnail only when the backend can serve one and it
+ * has not failed to load. Everything else (non-images, image formats without a
+ * backend thumbnail like SVG/WebP/BMP, and failed thumb loads) falls back to the
+ * icon + filename file card.
+ */
+function showsThumb(raw) {
+  const path = normalizeFileEntry(raw).path
+  return isImageFile(path) && isThumbableExt(path) && !thumbErrors.value.has(path)
 }
 
 const thumbUrl = buildPathThumbUrl

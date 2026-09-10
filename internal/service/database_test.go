@@ -149,6 +149,54 @@ func TestSchema_SessionTypeColumnExists(t *testing.T) {
 	assert.Contains(t, columns, "session_type", "chat_sessions should have session_type column")
 }
 
+// TestSchema_TitleRenamedColumnExists verifies the additive migration that
+// backs the "manual rename must not be overwritten" fix.
+func TestSchema_TitleRenamedColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_renamed", "chat_sessions should have title_renamed column")
+}
+
+// TestSchema_TitleRenamedMigration_Idempotent verifies that running InitDB twice
+// does not fail on the already-present title_renamed column.
+func TestSchema_TitleRenamedMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	// Re-run against the same data dir: the pragma_table_info guard must skip
+	// the ALTER instead of erroring.
+	err = InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_renamed")
+}
+
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir
@@ -383,6 +431,60 @@ func TestMigrateAddsQueueColumns(t *testing.T) {
 		assert.Contains(t, columns, "queue_id")
 		assert.Contains(t, columns, "queued")
 	})
+}
+
+// TestInitDB_UpgradesLegacyChatMetadata is a regression test for the ledger
+// migration: an existing database whose chat_metadata predates the
+// project_path/backend/agent_id/clawbench_session_id columns must still start.
+//
+// The new index idx_chat_metadata_project_created is created inside the
+// createTables multi-statement Exec, which on an existing DB is a CREATE TABLE
+// no-op. Without a pre-createTables ALTER, the index references a missing column
+// and aborts the entire Exec (dropping every table after chat_metadata), so
+// InitDB returns an error and the server exits. This test would have caught it.
+func TestInitDB_UpgradesLegacyChatMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Legacy chat_metadata: only the original columns, no attribution columns.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = oldDB.Exec(`CREATE TABLE chat_metadata (
+		message_id INTEGER PRIMARY KEY,
+		model TEXT DEFAULT '',
+		total_tokens INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+	require.NoError(t, oldDB.Close())
+
+	// Must not fail: the pre-migration adds the columns before the index runs.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_metadata")
+	for _, col := range []string{"project_path", "backend", "agent_id", "clawbench_session_id"} {
+		assert.Contains(t, columns, col, "chat_metadata should have %s after upgrade", col)
+	}
+
+	// Tables created after chat_metadata in the same Exec must exist too — their
+	// absence is the tell-tale sign the multi-statement Exec aborted early.
+	indexes := getIndexes(t, UnsafeDBForTest())
+	assert.True(t, indexes["idx_chat_metadata_project_created"], "ledger project index should exist")
+	var pendingEvents int
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pending_events'",
+	).Scan(&pendingEvents))
+	assert.Equal(t, 1, pendingEvents, "tables after chat_metadata must still be created")
 }
 
 // getIndexes returns a set of index names from sqlite_master.

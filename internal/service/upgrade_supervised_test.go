@@ -68,6 +68,51 @@ func TestReplaceBinaryInPlace_CopyFallback(t *testing.T) {
 	}
 }
 
+// TestReplaceBinaryInPlace_CopyFallback_ReadOnlyTarget verifies the fallback
+// succeeds when the target file is read-only but its directory is writable.
+// The staged-copy implementation must not require the target file to be
+// writable (that is the case that broke for a root-owned 0755 binary in a
+// user-writable directory).
+func TestReplaceBinaryInPlace_CopyFallback_ReadOnlyTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only file semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+
+	dir := t.TempDir()
+	newPath := filepath.Join(dir, "clawbench-new")
+	target := filepath.Join(dir, "clawbench")
+	require.NoError(t, os.WriteFile(newPath, []byte("new-binary"), 0o600))
+	require.NoError(t, os.WriteFile(target, []byte("old-binary"), 0o400))
+	defer func() { _ = os.Chmod(target, 0o600) }() // allow TempDir cleanup
+
+	// Force rename to fail so the staged-copy fallback runs.
+	origRename := upgradeRename
+	upgradeRename = func(oldpath, newpath string) error { return syscall.EXDEV }
+	defer func() { upgradeRename = origRename }()
+
+	err := replaceBinaryInPlace(newPath, target)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "new-binary", string(data))
+
+	info, err := os.Stat(target)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+
+	// No staging temp file should be left behind.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".clawbench-replace-",
+			"staging temp file must be cleaned up")
+	}
+}
+
 func TestReplaceBinaryInPlace_CopyFallbackFails(t *testing.T) {
 	dir := t.TempDir()
 	newPath := filepath.Join(dir, "clawbench-new")

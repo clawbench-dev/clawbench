@@ -162,16 +162,20 @@ func collapseWhitespace(s string) string {
 // SkillsToCommands converts SkillInfo slices to AvailableCommandInfo so skills
 // appear in the slash command menu (/) just like plugin commands. CodeBuddy
 // TUI mode exposes skills this way; we mirror it in ACP mode.
+//
+// Names are emitted WITHOUT a leading slash, matching the convention of the
+// ACP protocol and CodeBuddy's own available_commands_update (which strips the
+// "/" from every command name). The frontend adds the single "/" when it
+// renders the slash menu. Keeping the stored form slashless also makes dedupe
+// against CodeBuddy's own slashless skill commands exact (a "/mmx-cli" here
+// would otherwise surface as a second, double-slash menu entry).
 func SkillsToCommands(skills []SkillInfo) []AvailableCommandInfo {
 	if len(skills) == 0 {
 		return nil
 	}
 	cmds := make([]AvailableCommandInfo, 0, len(skills))
 	for _, s := range skills {
-		name := s.Name
-		if !strings.HasPrefix(name, "/") {
-			name = "/" + name
-		}
+		name := strings.TrimPrefix(s.Name, "/")
 		cmds = append(cmds, AvailableCommandInfo{
 			Name:        name,
 			Description: s.Description,

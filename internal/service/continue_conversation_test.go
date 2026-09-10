@@ -400,6 +400,36 @@ func TestContinueFromExecution_NoMessages(t *testing.T) {
 	assert.Empty(t, msgs)
 }
 
+// TestContinueFromExecution_TitleSurvivesFirstMessage is a regression test: a
+// continued session's "⏰ [time] task" title is deliberately chosen and must not
+// be overwritten by the first user message. This is reachable because
+// ContinueFromExecution creates a session_type='chat' session, and when the
+// source execution had no copyable messages the new session has 0 history rows,
+// so the first message triggers the auto-title path.
+func TestContinueFromExecution_TitleSurvivesFirstMessage(t *testing.T) {
+	setupDB(t)
+
+	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
+	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
+	execID := helperCreateTaskExecution(t, taskID, sessID, "completed")
+
+	// No messages to copy — the continued session starts with empty history.
+	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
+	assert.NoError(t, err)
+
+	titleBefore, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Regexp(t, `^⏰ \[\d{2}-\d{2} \d{2}:\d{2}\] Daily Review$`, titleBefore)
+
+	// The first user message must not replace the deliberate title.
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "follow up question", nil, false, "Daily Review")
+	assert.NoError(t, err)
+
+	titleAfter, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, titleBefore, titleAfter, "continued session title must survive the first message")
+}
+
 // ========== Test Helpers ==========
 
 // helperCreateScheduledTask creates a scheduled task and returns its ID.

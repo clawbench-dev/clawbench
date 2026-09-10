@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @load.capture="onImageLoad">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @dragstart="onMarkdownDragStart" @dragend="onMarkdownDragEnd" @load.capture="onImageLoad">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -46,6 +46,15 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
+import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
+import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
+import { handleMdImageOpenClick } from '@/utils/mdImageOpen'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { dirName } from '@/utils/path.ts'
 import { flashElement } from '@/utils/domFlash'
@@ -121,12 +130,16 @@ const { handleDblClick } = useDoubleClickCopy({
         }
         const block = el?.closest('.markdown-body') ?? null
         const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
+        // Block-level double-click (a paragraph/heading/etc.): the block's
+        // source start line is the best line anchor available.
+        const lineBlock = el?.closest('[data-source-line]') as HTMLElement | null
+        const lineNum = parseInt(lineBlock?.getAttribute('data-source-line') || '0', 10)
         quoteQuestion.showBar({
             text,
             filePath,
             language: '',
-            startLine: 0,
-            endLine: 0,
+            startLine: lineNum || 0,
+            endLine: lineNum || 0,
         })
     },
 })
@@ -134,7 +147,7 @@ const { handleDblClick } = useDoubleClickCopy({
 function captureCurrentScrollState(): FileScrollEntry | null {
     const el = bodyRef.value
     if (!el || !props.file?.path) return null
-    const entry = captureMarkdownScroll(el, props.file.content || '')
+    const entry = captureMarkdownScroll(el)
     if (entry) {
         setFileScroll(props.file.path, entry)
         emit('captureScroll', entry)
@@ -156,7 +169,61 @@ const codeLinkPreview = useCodeLinkPreview({
     },
 })
 
+// Image attach-to-chat badge (touch devices): actions injected from the shared
+// chat-attachment singleton + toast + i18n labels.
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+const mdImageAttachActions: MdImageAttachActions = {
+    add: addAttachedFile,
+    remove: removeAttachedFileByPath,
+    has: hasAttachedFile,
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
+// Mermaid range-reference badge: same singletons, ranged identity.
+const mermaidAttachActions: MermaidAttachActions = {
+    add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+    remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
+    has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
+    toast: (msg, opts) => showToast(msg, opts),
+    messages: {
+        added: gt('chat.attach.addedToChat'),
+        removed: gt('chat.attach.removedFromChat'),
+    },
+}
+
+/** Delegated dragstart: images first, then rendered mermaid diagrams (which
+ *  drag as an md line-range reference). Targets are mutually exclusive (img vs
+ *  svg inside div.mermaid). */
+function onMarkdownDragStart(e: DragEvent) {
+    onMdImageDragStart(e)
+    onMermaidDragStart(e)
+}
+
+function onMarkdownDragEnd(e: DragEvent) {
+    onMdImageDragEnd(e)
+    onMermaidDragEnd(e)
+}
+
 function handleClick(event: MouseEvent) {
+    // Touch image attach badge — first in the chain so its stopPropagation
+    // prevents the click from reaching the image/lightbox handlers below.
+    if (handleMdImageAttachClick(event, mdImageAttachActions)) return
+
+    // Image header "open file" button — opens the source image in the viewer.
+    if (handleMdImageOpenClick(event, openFilePath)) return
+
+    // Touch mermaid range-reference badge (same rationale).
+    if (handleMermaidAttachClick(event, mermaidAttachActions)) return
+
+    // Code/table header attach-to-chat buttons (md line range). Runs before the
+    // copy/wrap header handlers so the paperclip never reaches them.
+    if (handleBlockAttachClick(event, mermaidAttachActions)) return
+
     // Code block header buttons (copy/wrap)
     if (handleCodeBlockClick(event)) return
 
@@ -409,84 +476,16 @@ defineExpose({
 
 /* Override height:100% from CodePreview's global .diff-marker-inline —
    Markdown markers use inline :style for height from DOM measurement */
-.markdown-body .diff-marker-inline {
+.markdown-preview .markdown-body .diff-marker-inline {
     position: absolute;
-    right: 0;
+    /* Keep markers at the right edge of the reading column. The capped
+       .markdown-body used to be centered with `margin: 0 auto`, so a marker at
+       right:0 sat at the element border — i.e. half the slack (W−900)/2 in from
+       the screen edge. Now the element is full-width (padding-based cap), so the
+       same visual spot is `right: max(0px, (100% − 900px)/2)`. */
+    right: max(0px, (100% - 900px) / 2);
     width: 20px;
     height: auto;
     z-index: 2;
-}
-
-/* Lightbox image wrapper — positions the expand icon overlay */
-.markdown-body .lightbox-img-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.markdown-body .lightbox-img-wrap .lightbox-img {
-  cursor: default;
-}
-
-.markdown-body .lightbox-img-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-@media (hover: hover) {
-  .markdown-body .lightbox-img-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-.markdown-body .lightbox-img-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 1;
-}
-
-/* Mermaid expand icon — top-right corner, visible on hover (PC mode) */
-.markdown-body .mermaid {
-  position: relative;
-}
-
-.markdown-body .mermaid .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  font-size: 14px;
-  line-height: 24px;
-  text-align: center;
-  cursor: pointer;
-  z-index: 2;
-  align-items: center;
-  justify-content: center;
-}
-
-.markdown-body .mermaid .lightbox-expand-icon::after {
-  content: '⤢';
-}
-
-@media (hover: hover) {
-  .markdown-body .mermaid:hover .lightbox-expand-icon {
-    display: flex;
-  }
 }
 </style>

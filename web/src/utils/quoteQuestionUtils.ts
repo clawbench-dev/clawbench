@@ -14,16 +14,41 @@ export function closestElement(node: Node | null, selector: string): HTMLElement
 }
 
 /**
- * Get line numbers from a selection range inside a code preview.
- * Walks up from anchor/focus nodes to find .code-line[data-line] elements.
+ * Resolve a source line for a DOM node: prefers the precise `.code-line`
+ * annotation, then falls back to the block-level `[data-source-line]` a
+ * rendered markdown block carries (its own starting source line).
+ */
+function lineOfNode(node: Node | null): number {
+  const codeLine = closestElement(node, '.code-line')
+  if (codeLine) {
+    const n = parseInt(codeLine.getAttribute('data-line') || '0')
+    if (n > 0) return n
+  }
+  const block = closestElement(node, '[data-source-line]')
+  if (block) {
+    const n = parseInt(block.getAttribute('data-source-line') || '0')
+    if (n > 0) return n
+  }
+  return 0
+}
+
+/**
+ * Get line numbers from a selection range inside a preview.
+ * Walks up from the anchor/focus nodes to find a `.code-line[data-line]`
+ * (exact line) or a rendered markdown block's `[data-source-line]` (block
+ * start). Returns the min/max across the two selection edges — 0 when the
+ * selection does not touch any line-annotated content.
+ *
+ * The returned numbers are 1-based FILE lines: precise for code lines, the
+ * enclosing block's start line for rendered markdown (a rendered block cannot
+ * expose finer granularity). Both map directly onto the raw/CodeMirror doc, so
+ * quote-card navigation and the fenced-code line suffix are always in file
+ * coordinates — no offset between the two views.
  */
 export function getLineInfo(selection: Selection): { startLine: number; endLine: number } {
-  const anchor = closestElement(selection.anchorNode, '.code-line')
-  const focus = closestElement(selection.focusNode, '.code-line')
-  if (!anchor || !focus) return { startLine: 0, endLine: 0 }
-
-  const anchorLine = parseInt(anchor.getAttribute('data-line') || '0')
-  const focusLine = parseInt(focus.getAttribute('data-line') || '0')
+  const anchorLine = lineOfNode(selection.anchorNode)
+  const focusLine = lineOfNode(selection.focusNode)
+  if (!anchorLine || !focusLine) return { startLine: 0, endLine: 0 }
   return {
     startLine: Math.min(anchorLine, focusLine),
     endLine: Math.max(anchorLine, focusLine),

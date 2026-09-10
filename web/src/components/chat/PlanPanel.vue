@@ -13,7 +13,7 @@
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
         <ChevronUp :size="12" class="plan-expanded__toggle" />
       </div>
-      <div class="plan-expanded__timeline">
+      <div ref="timelineRef" class="plan-expanded__timeline">
         <div v-for="(entry, idx) in entries" :key="idx" class="plan-entry" :class="'plan-entry--' + entry.status">
           <!-- Vertical connector line -->
           <div v-if="idx < entries.length - 1" class="plan-entry__line"
@@ -40,10 +40,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { PlanEntry } from '@/composables/usePlanProgress'
+import { activeEntryIndex, centeredScrollTop } from '@/utils/planScroll'
 
 const props = defineProps<{
   entries: PlanEntry[]
@@ -64,6 +65,71 @@ const chipText = computed(() => {
   const total = props.entries.length
   return t('chat.plan.completedCount', { completed, total })
 })
+
+// ── Active-entry centering ─────────────────────────────────
+// The running plan step stays visible in the middle of the timeline. Whenever
+// the plan changes — a step advances, entries are appended/replaced, the panel
+// reappears after a session switch, or the user expands the collapsed chip —
+// the in_progress entry is centered. centerActiveEntry is idempotent (writing
+// the same scrollTop is a no-op) and self-guarding (no in_progress entry or a
+// hidden timeline → no scroll), so a single catch-all trigger on any plan
+// mutation is safe. Rows are measured viewport-relative via
+// getBoundingClientRect (the timeline is not a positioned ancestor, so
+// offsetTop would be mis-framed).
+const timelineRef = ref<HTMLElement | null>(null)
+
+/** Scroll so the in_progress entry is vertically centered in the timeline. */
+function centerActiveEntry() {
+  const el = timelineRef.value
+  if (!el) return
+  // Visibility guard: on narrow screens the chat column (and this timeline) is
+  // display:none while the agent keeps streaming plan_updates in the
+  // background. Hidden containers measure all geometry as 0, so the clamp
+  // would reset scrollTop to 0 and corrupt the centered position — and nothing
+  // re-centers when the user switches back to the chat tab. Skip hidden.
+  if (el.offsetHeight === 0) return
+  const idx = activeEntryIndex(props.entries)
+  if (idx < 0) return
+  const row = el.children[idx] as HTMLElement | undefined
+  if (!row) return
+  const rowRect = row.getBoundingClientRect()
+  const elRect = el.getBoundingClientRect()
+  const maxScrollTop = Math.max(el.scrollHeight - el.clientHeight, 0)
+  const target = centeredScrollTop({
+    scrollTop: el.scrollTop,
+    rowCenter: rowRect.top + rowRect.height / 2 - elRect.top,
+    containerHeight: el.clientHeight,
+    maxScrollTop,
+  })
+  if (target !== el.scrollTop) el.scrollTop = target
+}
+
+// Catch-all: any entries mutation (advance, append, replacement, clear→
+// reappear) re-centers on the live step — nextTick so the freshly rendered
+// rows have laid out. clearPlanState leaves entries empty, and an empty list
+// has no in_progress entry, so centerActiveEntry no-ops there. immediate: true
+// covers mount-with-entries; for a mount that starts collapsed, expanding
+// below flips collapsed and re-fires this trigger.
+watch(
+  () => props.entries,
+  () => {
+    if (!props.collapsed) {
+      nextTick(centerActiveEntry)
+    }
+  },
+  { deep: true, immediate: true },
+)
+
+// Expanding the collapsed chip shows the timeline with existing entries — the
+// deep watch above does not fire (entries are unchanged), so center here.
+watch(
+  () => props.collapsed,
+  (collapsed) => {
+    if (!collapsed && props.entries.length > 0) {
+      nextTick(centerActiveEntry)
+    }
+  },
+)
 </script>
 
 <style scoped>
@@ -151,6 +217,8 @@ const chipText = computed(() => {
 .plan-expanded__timeline {
   display: flex;
   flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 /* ── Timeline entry ── */
@@ -262,7 +330,6 @@ const chipText = computed(() => {
 }
 
 .plan-entry__text--done {
-  text-decoration: line-through;
   color: var(--text-muted, #6c757d);
 }
 

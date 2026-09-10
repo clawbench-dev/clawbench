@@ -235,13 +235,7 @@ async function loadProject(): Promise<void> {
         try {
             const wd = await apiGet<{ roots: string[]; uploadMaxSizeMB: number; uploadMaxFiles: number; chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number }>('/api/roots')
             state.rootPaths = wd.roots || []
-            if (wd.uploadMaxSizeMB > 0) state.uploadMaxSizeMB = wd.uploadMaxSizeMB
-            if (wd.uploadMaxFiles > 0) state.uploadMaxFiles = wd.uploadMaxFiles
-            if ((wd.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = wd.chatInitialMessages!
-            if ((wd.chatPageSize ?? 0) > 0) state.chatPageSize = wd.chatPageSize!
-            if ((wd.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = wd.chatSessionPageSize!
-            if ((wd.sessionMaxCount ?? 0) > 0) state.sessionMaxCount = wd.sessionMaxCount!
-            if ((wd.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = wd.recentProjectsMaxCount!
+            applyServerLimits(wd)
         } catch (error) {
             appLog.e(TAG, '[loadProject] roots failed:', error)
         }
@@ -272,14 +266,36 @@ async function setProject(path: string): Promise<string> {
     }
     if (data.homeDir) state.homeDir = data.homeDir
     if (data.roots?.length) state.rootPaths = data.roots
-    if ((data.uploadMaxSizeMB ?? 0) > 0) state.uploadMaxSizeMB = data.uploadMaxSizeMB!
-    if ((data.uploadMaxFiles ?? 0) > 0) state.uploadMaxFiles = data.uploadMaxFiles!
-    if ((data.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = data.chatInitialMessages!
-    if ((data.chatPageSize ?? 0) > 0) state.chatPageSize = data.chatPageSize!
-    if ((data.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = data.chatSessionPageSize!
-    if ((data.sessionMaxCount ?? 0) > 0) state.sessionMaxCount = data.sessionMaxCount!
-    if ((data.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = data.recentProjectsMaxCount!
+    applyServerLimits(data)
     return data.path || path
+}
+
+/**
+ * Mirror the server's hot-reloadable limits into the store.
+ *
+ * These values are read by client-side pre-checks (e.g. createSession's
+ * sessionMaxCount guard, file upload size/count checks) and by the session
+ * header. They used to be populated only by loadProject()/setProject(), so a
+ * settings change did not take effect until the page was reloaded. Calling
+ * this from useSettingsConfig.loadConfig() makes PATCH /api/config changes
+ * apply immediately.
+ *
+ * sessionMaxCount uses `!== undefined` rather than `> 0`: 0 means "unlimited"
+ * server-side, and a stale non-zero default would wrongly block creation.
+ * The other limits keep the `> 0` guard because 0 is not a meaningful value.
+ */
+export function applyServerLimits(limits: {
+    uploadMaxSizeMB?: number; uploadMaxFiles?: number
+    chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
+    sessionMaxCount?: number; recentProjectsMaxCount?: number
+}): void {
+    if (typeof limits.sessionMaxCount === 'number') state.sessionMaxCount = limits.sessionMaxCount
+    if ((limits.uploadMaxSizeMB ?? 0) > 0) state.uploadMaxSizeMB = limits.uploadMaxSizeMB!
+    if ((limits.uploadMaxFiles ?? 0) > 0) state.uploadMaxFiles = limits.uploadMaxFiles!
+    if ((limits.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = limits.chatInitialMessages!
+    if ((limits.chatPageSize ?? 0) > 0) state.chatPageSize = limits.chatPageSize!
+    if ((limits.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = limits.chatSessionPageSize!
+    if ((limits.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = limits.recentProjectsMaxCount!
 }
 
 function resetProjectState(): void {

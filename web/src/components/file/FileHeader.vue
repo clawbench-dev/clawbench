@@ -53,6 +53,13 @@
         <Paperclip :size="14" />
       </button>
 
+      <!-- Lightbox view button (image / svg files only): opens the image full-size
+           in the shared Lightbox (zoom + sibling navigation). Attach lives on the
+           same header — no need for a per-image header. -->
+      <button v-if="isImageFile && toolbarInlineIds.includes('viewImage')" class="file-header-btn" @click.stop="handleViewImage" :title="t('imageBlock.view')">
+        <Maximize2 :size="14" />
+      </button>
+
       <!-- Refresh button -->
       <RefreshButton v-if="toolbarInlineIds.includes('refresh')" icon="RotateCw" class="file-header-btn" :loading="refreshing" :disabled="refreshing" :title="t('nav.refresh')" @click.stop="handleRefresh" />
 
@@ -157,6 +164,10 @@
               <Paperclip :size="14" />
               {{ isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
             </button>
+            <button v-if="isImageFile && toolbarCollapsedIds.includes('viewImage')" class="dropdown-item" @click="handleViewImage(); menuOpen = false">
+              <Maximize2 :size="14" />
+              {{ t('imageBlock.view') }}
+            </button>
             <button v-if="toolbarCollapsedIds.includes('refresh')" class="dropdown-item refresh-spin" :class="{ 'refresh-spin--active': refreshing }" :disabled="refreshing" @click="handleRefresh">
               <RotateCw :size="14" />
               {{ t('nav.refresh') }}
@@ -244,11 +255,11 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -327,6 +338,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasSearch.value) ids.push('search')
     if (hasFitWidth.value) ids.push('fitWidth')
     ids.push('attach')
+    if (isImageFile.value) ids.push('viewImage')
     if (hasTextContent.value) ids.push('refresh')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     // Edit always sits right next to the preview toggle: the two form a single
@@ -375,6 +387,7 @@ function updateMenuPosition() {
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
+const isImageFile = computed(() => fileType.value?.isImage || false)
 const isOpenapi = computed(() => props.file?.subtype === 'openapi')
 const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value) && props.viewMode === 'rendered' && !props.editing)
 // Effective view: when editing from rendered preview, the user sees source code
@@ -547,6 +560,14 @@ function handleAttachToChat() {
             }
         }))
     }
+}
+
+const openLightbox = inject('openLightbox', null)
+
+function handleViewImage() {
+    const path = props.file?.path
+    if (!path || typeof openLightbox !== 'function') return
+    openLightbox(buildLocalFileUrl(path))
 }
 
 // Drag the file name onto the chat column (wide-screen split view) to attach

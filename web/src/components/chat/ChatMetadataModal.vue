@@ -151,7 +151,7 @@
       </div>
       <div v-if="data.costUsd" class="metadata-item">
         <span class="metadata-label">{{ t('chat.metadata.cost') }}</span>
-        <span class="metadata-value">${{ data.costUsd.toFixed(6) }}</span>
+        <span class="metadata-value">${{ data.costUsd.toFixed(2) }}</span>
       </div>
       <div v-if="sessionId" class="metadata-item metadata-copyable" @click="copyValue(sessionId, $event)">
         <span class="metadata-label">{{ t('chat.metadata.sessionId') }}</span>

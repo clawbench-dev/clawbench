@@ -710,6 +710,12 @@ export function useSessionIdentity() {
         }
         // Initialize thinking effort from agent preference
         thinkingEffortState.loadPref(currentAgentId.value)
+        // Auto-approve is server-authoritative: the backend persists the
+        // session's auto_approve flag (initialized from the agent's configured
+        // default) at creation time and returns it in the create response.
+        if (data.autoApprove !== undefined) {
+          autoApprove.value = !!data.autoApprove
+        }
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)

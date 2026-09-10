@@ -51,7 +51,14 @@ export function parseTableDataFromElement(table: HTMLTableElement): { headers: s
   const rows = Array.from(table.querySelectorAll('tbody tr'))
     .map(tr => {
       return Array.from(tr.querySelectorAll('td'))
-        .map(td => td.innerHTML?.trim() || '')
+        .map(td => {
+          // Cell images carry the full image-block figure header (view/attach/
+          // open) in the rendered table; the row-expand modal is a compact
+          // inspection view, so drop the header row and keep the image + wrap.
+          const clone = td.cloneNode(true) as HTMLTableCellElement
+          for (const header of Array.from(clone.querySelectorAll('.image-block-header'))) header.remove()
+          return clone.innerHTML?.trim() || ''
+        })
     })
 
   if (headers.length === 0 && rows.length === 0) return null

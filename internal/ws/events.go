@@ -78,7 +78,23 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() {
-		mgr.DisconnectClient(clientID)
+		// Connection-replace race guard: when this client reconnected, Subscribe
+		// replaced sub.conn with the NEW connection and closed this (old) one.
+		// This handler's teardown can then run AFTER the new connection was
+		// installed and its subscribe processed. Disconnecting or wiping the
+		// StreamHub session subscriptions here would null the new connection's
+		// sub.conn and drop its live stream events server-side — a silent
+		// stall that only a fresh session subscribe can repair. So the
+		// connection-level cleanup runs only while THIS conn is still the
+		// subscription's current connection.
+		if !mgr.DisconnectClientIfCurrent(clientID, conn) {
+			slog.Debug("ws: skipping teardown — connection was replaced by a newer one", "client_id", clientID)
+			// Still stop this (stale) connection's writer, if any. StopWriter's
+			// own writerConn identity check makes this a safe no-op for the new
+			// connection's writer.
+			mgr.StopWriter(clientID, conn)
+			return
+		}
 		// Guard: StreamHub may be nil if a test swapped the global manager
 		// (or the manager was reset) while this handler was connected.
 		if hub := mgr.StreamHub(); hub != nil {

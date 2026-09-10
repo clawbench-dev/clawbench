@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="handleClose">
+  <BottomSheet :open="open" auto panel-class="session-search-sheet" @close="handleClose">
     <template #header>
       <!-- Search results list view -->
       <template v-if="!selectedSession">
@@ -12,7 +12,7 @@
       </template>
       <!-- Drilldown detail view -->
       <template v-else>
-        <button class="detail-back-btn" @click.stop="selectedSession = null">
+        <button class="detail-back-btn" @click.stop="selectSession(null)">
           <ChevronLeft :size="18" />
         </button>
         <span class="bs-header-title detail-header-title">{{ selectedSession.session_title || t('sessionSearch.untitledSession') }}</span>
@@ -24,22 +24,137 @@
     <div v-if="!selectedSession" class="session-search-body">
       <div class="session-search-input-row">
         <SearchInput ref="inputRef" :model-value="searchState.query" :placeholder="t('sessionSearch.placeholder')" @update:model-value="search.setQuery" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
-        <div class="mode-selector">
-          <button class="mode-btn" :class="{ active: searchState.preferMode === 'hybrid' }" @click="setMode('hybrid')">{{ t('sessionSearch.modeHybrid') }}</button>
-          <button class="mode-btn" :class="{ active: searchState.preferMode === 'fts' }" @click="setMode('fts')">{{ t('sessionSearch.modeFts') }}</button>
-        </div>
+        <button
+          ref="modeTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :title="t('sessionSearch.modeLabel')"
+          @click.stop="toggleMenu('mode')"
+        >
+          <span class="filter-dropdown-label">{{ modeLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
+        <button
+          ref="archiveTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :class="{ 'filter-active': searchState.archivedFilter !== 'all' }"
+          :title="t('sessionSearch.filterArchive')"
+          @click.stop="toggleMenu('archive')"
+        >
+          <span class="filter-dropdown-label">{{ archiveLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
+        <button
+          ref="sortTriggerRef"
+          type="button"
+          class="filter-dropdown-btn"
+          :class="{ 'filter-active': searchState.sortOrder !== 'relevance' }"
+          :title="t('sessionSearch.sortLabel')"
+          @click.stop="toggleMenu('sort')"
+        >
+          <span class="filter-dropdown-label">{{ sortLabel }}</span>
+          <ChevronDown :size="12" class="filter-dropdown-caret" />
+        </button>
+      </div>
+
+      <PopupMenu
+        :show="openMenu === 'mode'"
+        :target-element="modeTriggerRef"
+        :max-width="150"
+        :menu-items-count="2"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in modeOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.preferMode === opt.value }"
+          @click="chooseMode(opt.value)"
+        >
+          <Check v-if="searchState.preferMode === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
+      <PopupMenu
+        :show="openMenu === 'archive'"
+        :target-element="archiveTriggerRef"
+        :max-width="150"
+        :menu-items-count="3"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in archiveOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.archivedFilter === opt.value }"
+          @click="chooseArchive(opt.value)"
+        >
+          <Check v-if="searchState.archivedFilter === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
+      <PopupMenu
+        :show="openMenu === 'sort'"
+        :target-element="sortTriggerRef"
+        :max-width="150"
+        :menu-items-count="3"
+        anchor="right"
+        @update:show="(v: boolean) => { if (!v) openMenu = null }"
+      >
+        <button
+          v-for="opt in sortOptions"
+          :key="opt.value"
+          type="button"
+          class="filter-menu-item"
+          :class="{ selected: searchState.sortOrder === opt.value }"
+          @click="chooseSort(opt.value)"
+        >
+          <Check v-if="searchState.sortOrder === opt.value" :size="13" class="filter-menu-check" />
+          <span v-else class="filter-menu-check" />
+          {{ opt.label }}
+        </button>
+      </PopupMenu>
+
+      <!-- Time-range presets. Horizontally scrollable so all chips stay
+           reachable on narrow phones; "custom" reveals two date inputs. -->
+      <div class="time-range-row">
+        <button
+          v-for="opt in timeOptions"
+          :key="opt.value"
+          type="button"
+          class="time-chip"
+          :class="{ active: searchState.timeRange === opt.value }"
+          @click="chooseTimeRange(opt.value)"
+        >
+          {{ opt.label }}
+        </button>
+        <template v-if="searchState.timeRange === 'custom'">
+          <span class="time-range-sep">·</span>
+          <input v-model="searchState.customFrom" type="date" class="time-date-input" @change="applyCustomRange" />
+          <span class="time-range-sep">→</span>
+          <input v-model="searchState.customTo" type="date" class="time-date-input" @change="applyCustomRange" />
+        </template>
       </div>
 
       <div class="session-search-content">
         <LoadingIndicator v-if="searchState.loading" size="md" :label="t('sessionSearch.searching')" />
         <div v-else-if="searchState.error" class="session-search-error">{{ searchState.error }}</div>
         <div v-else-if="searchState.results.length === 0" class="session-search-empty">{{ t('sessionSearch.noResults') }}</div>
-        <div v-else class="session-search-results">
+        <div v-else class="session-search-results" ref="resultsRef">
           <div class="session-search-count">
             {{ t('sessionSearch.resultCount', { count: searchState.results.length }) }}
-            <span v-if="searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
+            <span v-if="!isBrowseMode && searchState.searchMode" class="session-search-mode">{{ searchModeLabel }}</span>
           </div>
-          <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectedSession = session">
+          <div v-for="(session, idx) in searchState.results" :key="session.session_id" class="session-search-item" :class="{ 'session-search-item-active': listNav.activeIndex.value === idx }" @click="selectSession(session)">
             <div class="session-search-item-header">
               <span class="session-search-item-title">{{ session.session_title || t('sessionSearch.untitledSession') }}</span>
               <span class="session-search-item-meta">{{ formatRelativeTime(session.created_at) }}</span>
@@ -51,6 +166,10 @@
               <span v-if="!isBrowseMode && session.chunks.length > 0" class="session-search-item-chunks">{{ t('sessionSearch.chunks', { count: session.match_count }) }}</span>
             </div>
           </div>
+          <!-- Infinite-scroll sentinel: loads the next browse page when visible. -->
+          <div v-if="isBrowseMode" ref="sentinelRef" class="session-search-sentinel"></div>
+          <LoadingIndicator v-if="searchState.loadingMore" size="sm" :label="t('sessionSearch.loadingMore')" />
+          <div v-else-if="isBrowseMode && !searchState.hasMore && searchState.results.length > 0" class="session-search-end">{{ t('sessionSearch.noMore') }}</div>
         </div>
       </div>
     </div>
@@ -60,12 +179,14 @@
       <!-- Session meta bar -->
       <div class="detail-meta-bar">
         <span v-if="selectedSession.backend" class="detail-meta-badge detail-meta-backend">{{ selectedSession.backend }}</span>
-        <span v-if="!isBrowseMode && selectedSession.chunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
+        <span v-if="!isBrowseMode && detailChunks.length > 0" class="detail-meta-badge detail-meta-count">{{ t('sessionSearch.chunks', { count: selectedSession.match_count }) }}</span>
         <span class="detail-meta-time">{{ formatRelativeTime(selectedSession.created_at) }}</span>
       </div>
 
       <!-- Chunk list (scrollable via .bs-body) -->
-      <div v-for="chunk in selectedSession.chunks" :key="chunk.chunk_id" class="detail-chunk">
+      <LoadingIndicator v-if="lazyLoading" size="md" :label="t('sessionSearch.loadingPreview')" />
+      <div v-else-if="detailChunks.length === 0" class="detail-empty">{{ t('sessionSearch.noPreview') }}</div>
+      <div v-for="chunk in detailChunks" :key="chunk.chunk_id" class="detail-chunk">
         <div class="detail-chunk-role" :class="'role-' + chunk.role">
           <User :size="11" v-if="chunk.role === 'user'" />
           <Bot :size="11" v-else />
@@ -102,11 +223,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUpdate, onBeforeUnmount, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Search, ChevronLeft, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
+import { Search, ChevronLeft, ChevronDown, Check, User, Bot, RotateCcw, Import, MessageSquare, Trash2 } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
-import { useSessionSearch, type SessionSearchResult } from '@/composables/useSessionSearch'
+import PopupMenu from '@/components/common/PopupMenu.vue'
+import { useSessionSearch, fetchSessionFirstMessage, type SessionSearchResult, type ChunkHit, type SessionArchiveFilter, type SessionSortOrder, type SessionTimeRange } from '@/composables/useSessionSearch'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
@@ -120,11 +242,152 @@ const { t } = useI18n()
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; resume: [session: SessionSearchResult]; open: [session: SessionSearchResult]; destroy: [session: SessionSearchResult]; 'open-acp-sessions': [] }>()
 
-const { state: searchState, setQuery, browse, clear } = useSessionSearch()
-const search = { state: searchState, setQuery, browse, clear }
+const { state: searchState, setQuery, browse, clear, setFilters, loadMore } = useSessionSearch()
+const search = { state: searchState, setQuery, browse, clear, setFilters, loadMore }
 
 const selectedSession = ref<SessionSearchResult | null>(null)
 const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
+const resultsRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
+let sentinelObserver: IntersectionObserver | null = null
+
+// Infinite scroll for browse mode: when the sentinel at the list bottom becomes
+// visible, append the next page. Re-observed whenever the list grows so the
+// observer stays bound to the current sentinel node.
+function disconnectSentinel() {
+  if (sentinelObserver) {
+    sentinelObserver.disconnect()
+    sentinelObserver = null
+  }
+}
+
+function observeSentinel() {
+  disconnectSentinel()
+  const el = sentinelRef.value
+  const root = resultsRef.value
+  if (!el || !root) return
+  sentinelObserver = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting && searchState.hasMore && !searchState.loadingMore && !searchState.loading) {
+      void loadMore()
+    }
+  }, { root, rootMargin: '120px' })
+  sentinelObserver.observe(el)
+}
+
+onUnmounted(disconnectSentinel)
+
+watch(
+  () => [searchState.searchMode, searchState.results.length, searchState.hasMore, searchState.loadingMore] as const,
+  () => {
+    if (searchState.searchMode === 'recent') {
+      nextTick(() => observeSentinel())
+    } else {
+      disconnectSentinel()
+    }
+  },
+  { immediate: true },
+)
+
+// ── Search mode / filter / sort dropdowns ──
+// All three collapse into compact triggers on the search row, keeping the
+// header to a single line. Their options live in PopupMenu popovers.
+const openMenu = ref<'mode' | 'archive' | 'sort' | null>(null)
+const modeTriggerRef = ref<HTMLElement | null>(null)
+const archiveTriggerRef = ref<HTMLElement | null>(null)
+const sortTriggerRef = ref<HTMLElement | null>(null)
+
+function toggleMenu(menu: 'mode' | 'archive' | 'sort') {
+  openMenu.value = openMenu.value === menu ? null : menu
+}
+
+const modeOptions = computed(() => [
+  { value: 'hybrid' as const, label: t('sessionSearch.modeHybrid') },
+  { value: 'fts' as const, label: t('sessionSearch.modeFts') },
+])
+
+const modeLabel = computed(() =>
+  modeOptions.value.find(o => o.value === searchState.preferMode)?.label ?? ''
+)
+
+function chooseMode(mode: 'hybrid' | 'fts') {
+  openMenu.value = null
+  setMode(mode)
+}
+
+const archiveOptions = computed(() => [
+  { value: 'all' as SessionArchiveFilter, label: t('sessionSearch.archiveAll') },
+  { value: 'active' as SessionArchiveFilter, label: t('sessionSearch.archiveActive') },
+  { value: 'archived' as SessionArchiveFilter, label: t('sessionSearch.archiveArchived') },
+])
+
+const sortOptions = computed(() => [
+  { value: 'relevance' as SessionSortOrder, label: t('sessionSearch.sortRelevance') },
+  { value: 'newest' as SessionSortOrder, label: t('sessionSearch.sortNewest') },
+  { value: 'oldest' as SessionSortOrder, label: t('sessionSearch.sortOldest') },
+])
+
+const timeOptions = computed(() => [
+  { value: 'all' as SessionTimeRange, label: t('sessionSearch.timeAll') },
+  { value: 'today' as SessionTimeRange, label: t('sessionSearch.timeToday') },
+  { value: '7d' as SessionTimeRange, label: t('sessionSearch.time7d') },
+  { value: '30d' as SessionTimeRange, label: t('sessionSearch.time30d') },
+  { value: 'custom' as SessionTimeRange, label: t('sessionSearch.timeCustom') },
+])
+
+const archiveLabel = computed(() =>
+  archiveOptions.value.find(o => o.value === searchState.archivedFilter)?.label ?? ''
+)
+
+const sortLabel = computed(() =>
+  sortOptions.value.find(o => o.value === searchState.sortOrder)?.label ?? ''
+)
+
+function chooseArchive(filter: SessionArchiveFilter) {
+  openMenu.value = null
+  setArchiveFilter(filter)
+}
+
+function chooseSort(sort: SessionSortOrder) {
+  openMenu.value = null
+  setSortOrder(sort)
+}
+
+// ── Lazy first-message preview (browse mode only) ──
+// Browse results carry no chunk content; fetch the session's first message on
+// demand when its detail view is opened. Search results already have chunks.
+const lazyChunks = ref<ChunkHit[]>([])
+const lazyLoading = ref(false)
+let lazyRequestId = 0
+
+async function loadFirstMessage(session: SessionSearchResult) {
+  const requestId = ++lazyRequestId
+  lazyChunks.value = []
+  lazyLoading.value = true
+  const chunk = await fetchSessionFirstMessage(session.session_id)
+  // Ignore stale responses if the user navigated away or picked another session.
+  if (requestId !== lazyRequestId) return
+  lazyLoading.value = false
+  lazyChunks.value = chunk ? [chunk] : []
+}
+
+// Open a session's detail view. Browse results have no chunk content, so their
+// first message is fetched lazily; search results already carry their hits.
+function selectSession(session: SessionSearchResult | null | undefined) {
+  selectedSession.value = session ?? null
+  if (!session) {
+    lazyRequestId++
+    lazyChunks.value = []
+    lazyLoading.value = false
+    return
+  }
+  if (isBrowseMode.value) {
+    void loadFirstMessage(session)
+  } else {
+    lazyRequestId++
+    lazyChunks.value = []
+    lazyLoading.value = false
+  }
+}
 
 // ── Search mode selector ──
 function setMode(mode: 'hybrid' | 'fts') {
@@ -135,11 +398,46 @@ function setMode(mode: 'hybrid' | 'fts') {
   }
 }
 
+// ── Archive filter / sort order ──
+function setArchiveFilter(filter: SessionArchiveFilter) {
+  if (searchState.archivedFilter === filter) return
+  search.setFilters({ archived: filter })
+}
+
+function setSortOrder(sort: SessionSortOrder) {
+  if (searchState.sortOrder === sort) return
+  search.setFilters({ sort })
+}
+
+// ── Time range ──
+function chooseTimeRange(range: SessionTimeRange) {
+  if (searchState.timeRange === range) return
+  // Seed the custom inputs from the current preset so switching to "custom"
+  // starts from the visible window instead of two blank fields.
+  if (range === 'custom' && !searchState.customFrom && !searchState.customTo) {
+    const now = new Date()
+    const from = new Date(now)
+    from.setDate(from.getDate() - 6)
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    searchState.customFrom = fmt(from)
+    searchState.customTo = fmt(now)
+  }
+  search.setFilters({ timeRange: range })
+}
+
+// Re-run the search when either custom bound changes. Guard against firing on
+// a half-filled range: wait until at least one side is set.
+function applyCustomRange() {
+  if (!searchState.customFrom && !searchState.customTo) return
+  search.setFilters({})
+}
+
 // ── Keyboard ↑/↓ + Enter navigation over results ──
 const listNav = useListNav({
   getCount: () => searchState.results.length,
   onConfirm: (idx) => {
-    selectedSession.value = searchState.results[idx]
+    selectSession(searchState.results[idx])
   },
   onActiveChange: scrollActiveIntoView,
 })
@@ -165,12 +463,18 @@ const searchModeLabel = computed(() => {
 // is not a search hit, so the match count label is hidden.
 const isBrowseMode = computed(() => searchState.searchMode === 'recent')
 
+// Chunks shown in the detail view. Search results carry their hits; browse
+// results carry none, so their first message is lazily fetched on drilldown.
+const detailChunks = computed<ChunkHit[]>(() =>
+  isBrowseMode.value ? lazyChunks.value : (selectedSession.value?.chunks ?? [])
+)
+
 // ── Back handler for drilldown ──
 const unregisterBack = registerBackHandler({
   id: 'session-search-detail',
   priority: PRIORITY_OVERLAY + 1,
   canGoBack: () => selectedSession.value !== null,
-  goBack: () => { selectedSession.value = null },
+  goBack: () => { selectSession(null) },
 })
 onUnmounted(unregisterBack)
 
@@ -186,9 +490,8 @@ onBeforeUnmount(() => chunkRefs.clear())
 
 // ── Markdown rendering ──
 const renderedChunks = computed(() => {
-  if (!selectedSession.value) return {} as Record<number, string>
   const map: Record<number, string> = {}
-  for (const chunk of selectedSession.value.chunks) {
+  for (const chunk of detailChunks.value) {
     map[chunk.chunk_id] = renderMarkdownHtml(chunk.chunk_text, {
       skipEnhancements: true,
       wrapTables: false,
@@ -198,14 +501,14 @@ const renderedChunks = computed(() => {
 })
 
 // ── Apply highlights via DOM after rendering ──
-watch(selectedSession, () => {
+watch([selectedSession, lazyChunks], () => {
   if (!selectedSession.value) return
   nextTick(() => applyHighlights())
 })
 
 function applyHighlights() {
   if (!selectedSession.value) return
-  for (const chunk of selectedSession.value.chunks) {
+  for (const chunk of detailChunks.value) {
     const el = chunkRefs.get(chunk.chunk_id)
     if (!el) continue
     // Clear previous highlights
@@ -315,7 +618,7 @@ watch(() => props.open, async (val) => {
     search.browse()
   } else {
     search.clear()
-    selectedSession.value = null
+    selectSession(null)
   }
 })
 
@@ -342,7 +645,7 @@ defineExpose({ focusSearchInput })
 .session-search-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -351,38 +654,146 @@ defineExpose({ focusSearchInput })
 
 .session-search-input-row :deep(.search-pill) {
   flex: 1;
+  min-width: 0;
 }
 
-.mode-selector {
-  display: flex;
+/* ── Compact filter/sort dropdown triggers ──
+   Kept on the search row so the header stays a single line. Each trigger shows
+   the current value; a non-default selection is highlighted. */
+.filter-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  max-width: 88px;
+  height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.mode-btn {
-  padding: 4px 8px;
-  font-size: 11px;
-  border: none;
   background: var(--bg-primary, #fff);
   color: var(--text-muted, #999);
+  font-size: 10px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.filter-dropdown-btn.filter-active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.filter-dropdown-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mode-btn:not(:last-child) {
-  border-right: 1px solid var(--border-color, #e5e5e5);
-}
-
-.mode-btn.active {
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
+.filter-dropdown-caret {
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 @media (hover: hover) {
-  .mode-btn:not(.active):hover {
+  .filter-dropdown-btn:hover {
+    background: var(--bg-secondary, #f8f9fa);
+    color: var(--text-secondary, #666);
+  }
+}
+
+/* ── Time-range preset chips ──
+   A separate, horizontally scrollable row so presets stay one tap away without
+   crowding the search row. Scrollbar is hidden; the row pans on touch. */
+.time-range-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.time-range-row::-webkit-scrollbar {
+  display: none;
+}
+
+.time-chip {
+  flex-shrink: 0;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 11px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-secondary, #666);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.time-chip.active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.time-range-sep {
+  flex-shrink: 0;
+  color: var(--text-muted, #999);
+  font-size: 11px;
+}
+
+.time-date-input {
+  flex-shrink: 0;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+@media (hover: hover) {
+  .time-chip:hover {
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+/* ── Dropdown menu items (rendered inside PopupMenu, teleported to body) ── */
+.filter-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text-primary, #1a1a1a);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+
+.filter-menu-item.selected {
+  color: var(--accent-color, #4a90d9);
+  font-weight: 500;
+}
+
+.filter-menu-check {
+  flex-shrink: 0;
+  width: 13px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+@media (hover: hover) {
+  .filter-menu-item:hover {
     background: var(--bg-secondary, #f8f9fa);
   }
 }
@@ -413,6 +824,19 @@ defineExpose({ focusSearchInput })
 .session-search-results {
   flex: 1;
   overflow-y: auto;
+}
+
+/* Zero-height sentinel observed by IntersectionObserver to trigger the next
+   browse page; rootMargin prefetches slightly before the true bottom. */
+.session-search-sentinel {
+  height: 1px;
+}
+
+.session-search-end {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-size: 11px;
 }
 
 .session-search-count {
@@ -640,6 +1064,13 @@ defineExpose({ focusSearchInput })
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
 }
 
+.detail-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted, #999);
+  font-size: 13px;
+}
+
 .detail-chunk-role {
   display: flex;
   align-items: center;
@@ -692,6 +1123,15 @@ defineExpose({ focusSearchInput })
 </style>
 
 <style>
+/* Wide-screen: the search dialog benefits from extra width — result rows carry
+   a title, time, preview and badges, and the drilldown renders full chunks.
+   Only takes effect in BottomSheet's wide-screen card mode (the narrow-mode
+   bottom sheet ignores --modal-max-width). Non-scoped because the class is
+   bound inside BottomSheet's own template. */
+.session-search-sheet {
+  --modal-max-width: 960px;
+}
+
 /* Dark theme overrides — non-scoped for [data-theme] selector */
 [data-theme-base="dark"] .session-search-item-preview mark {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
@@ -707,26 +1147,43 @@ defineExpose({ focusSearchInput })
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-[data-theme-base="dark"] .mode-selector {
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-[data-theme-base="dark"] .mode-btn {
+[data-theme-base="dark"] .filter-dropdown-btn {
   background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
   color: var(--text-muted, #999);
 }
 
-[data-theme-base="dark"] .mode-btn:not(:last-child) {
-  border-right-color: rgba(255, 255, 255, 0.12);
+[data-theme-base="dark"] .filter-dropdown-btn.filter-active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
 }
 
-[data-theme-base="dark"] .mode-btn.active {
-  background: var(--accent-color, #4a90d9);
-  color: #fff;
+[data-theme-base="dark"] .time-chip {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary, #999);
+}
+
+[data-theme-base="dark"] .time-chip.active {
+  border-color: var(--accent-color, #4a90d9);
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 18%, transparent);
+}
+
+[data-theme-base="dark"] .time-date-input {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary, #fff);
 }
 
 @media (hover: hover) {
-  [data-theme-base="dark"] .mode-btn:not(.active):hover {
+  [data-theme-base="dark"] .filter-dropdown-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-primary, #fff);
+  }
+
+  [data-theme-base="dark"] .filter-menu-item:hover {
     background: rgba(255, 255, 255, 0.06);
   }
 }

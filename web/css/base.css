@@ -2,6 +2,19 @@
    Base Styles (Reset, Box-sizing, HTML/Body)
    ========================================================================== */
 
+/* Native form controls (date/time pickers, checkbox/radio/select UA chrome,
+   number spinners, …) render from the CSS `color-scheme` of their element.
+   The app switches themes through data-theme-base on <html>, so point the
+   UA-drawn surfaces at the matching color scheme — otherwise the date-input
+   calendar icon and its popup card stay in the browser default (light) even
+   under a dark theme. */
+:root {
+    color-scheme: light;
+}
+:root[data-theme-base="dark"] {
+    color-scheme: dark;
+}
+
 /* Reset */
 *, *::before, *::after {
     box-sizing: border-box;
@@ -110,6 +123,14 @@ html.wallpaper-active .file-header-bar {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 
+/* The pinned session-sidebar header rides on the shared global .bs-header
+   (solid bg-secondary) which would otherwise cover the wallpaper already
+   showing through .session-sidebar — make it translucent at the same alpha. */
+html.wallpaper-active .session-sidebar-header {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+    box-shadow: none;
+}
+
 /* The file overlay fills its whole view TabPanel. If both were translucent the
    wallpaper would show through TWO scrim layers (nearly invisible); instead the
    overlay goes fully transparent so the panel beneath it (already at
@@ -149,7 +170,10 @@ html.wallpaper-active .settings-index,
 html.wallpaper-active .settings-category,
 html.wallpaper-active .settings-agents-index,
 html.wallpaper-active .settings-agent-detail,
+html.wallpaper-active .stats-tab-host,
 html.wallpaper-active .usage-stats-panel,
+html.wallpaper-active .git-code-stats-panel,
+html.wallpaper-active .cloc-stats-panel,
 html.wallpaper-active .image-preview-body,
 html.wallpaper-active .audio-preview-body,
 html.wallpaper-active .pdf-preview-container,
@@ -196,6 +220,7 @@ html.wallpaper-active .exec-detail-actions {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
 html.wallpaper-active .terminal-tab-bar,
+html.wallpaper-active .stats-tab-bar,
 html.wallpaper-active .drilldown-header,
 html.wallpaper-active .manage-tabs,
 html.wallpaper-active .toc-dock {
@@ -265,6 +290,46 @@ html.wallpaper-active .cm-viewer.is-editable .cm-gutters {
 }
 html.wallpaper-active .cm-viewer .code-editor-actions {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* Chat message bubbles — let the wallpaper show through the assistant strip
+   (bg-tertiary) and the user bubble (--user-msg-color) at the panel opacity.
+   Only the bubble body goes translucent: inner content canvases (code blocks,
+   tool cards, markdown tables) keep their own solid fills for readability. */
+html.wallpaper-active .chat-message.assistant {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .chat-message.user {
+    background: color-mix(in srgb, var(--user-msg-color) var(--panel-alpha), transparent);
+}
+
+/* Plan progress panel — the collapsed chip (bg-tertiary) and the expanded
+   timeline card (bg-secondary) float in the chat column between the bubbles
+   and the input bar. They get the same translucent tint so the wallpaper
+   shows through; status-node circle bases keep an opaque --bg-secondary
+   (their own scoped rule at equal specificity — a base.css translucent
+   override would need to match the node's 16px disc exactly) except for the
+   completed green fill which is already a status color. */
+html.wallpaper-active .plan-chip {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .plan-expanded {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+
+/* Git history drill-down — the commit-meta bar (shared by the file-list view
+   and the file-diff view) and the interactive commit/file row highlights get
+   the translucent treatment so they sit consistently on the single
+   .tab-panel layer like the rest of the history tab content. */
+html.wallpaper-active .diff-meta-panel {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .diff-meta-sha:hover,
+html.wallpaper-active .drilldown-item:hover {
+    background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .drilldown-item:active {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
 }
 
 /* Scrollbar styling */

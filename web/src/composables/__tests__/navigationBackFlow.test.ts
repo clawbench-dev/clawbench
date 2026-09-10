@@ -201,22 +201,6 @@ describe('navigationBackFlow', () => {
       expect(hooks.returnToOrigin).toHaveBeenCalled()
     })
 
-    it('M3: Chat -> Dir -> origin banner returns to Chat directly without popping parent dir', async () => {
-      nav.start({ surface: 'chat', tab: 'chat', label: 'Back to Chat' })
-      const hooks = createMockHooks({
-        canGoBackFile: vi.fn().mockReturnValue(false),
-        hasOrigin: vi.fn().mockReturnValue(true),
-        canGoBackDir: vi.fn().mockReturnValue(true),
-        returnToOrigin: vi.fn().mockResolvedValue(true),
-        goBackDir: vi.fn().mockResolvedValue(true),
-      })
-      const { navigateBack } = useNavigationStateMachine(hooks)
-      const handled = await navigateBack('origin-bar')
-      expect(handled).toBe(true)
-      expect(hooks.returnToOrigin).toHaveBeenCalled()
-      expect(hooks.goBackDir).not.toHaveBeenCalled()
-    })
-
     it('M4: Markdown -> Dir -> back restores markdown, viewMode and scrollTop', async () => {
       nav.start({
         surface: 'file',
@@ -326,6 +310,118 @@ describe('navigationBackFlow', () => {
       expect(handled).toBe(true)
       expect(hooks.exitEdit).toHaveBeenCalledTimes(1)
       expect(hooks.returnToOrigin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('browse search / multi-select transient layers', () => {
+    it('search open in a subdir exits search instead of going up a directory', async () => {
+      const hooks = createMockHooks({
+        canExitSearch: vi.fn().mockReturnValue(true),
+        exitSearch: vi.fn(),
+        canGoBackDir: vi.fn().mockReturnValue(true),
+        goBackDir: vi.fn().mockResolvedValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.exitSearch).toHaveBeenCalledTimes(1)
+      expect(hooks.goBackDir).not.toHaveBeenCalled()
+    })
+
+    it('search open with a pending origin exits search before returning to the origin', async () => {
+      const hooks = createMockHooks({
+        canExitSearch: vi.fn().mockReturnValue(true),
+        exitSearch: vi.fn(),
+        hasOrigin: vi.fn().mockReturnValue(true),
+        returnToOrigin: vi.fn().mockResolvedValue(true),
+        canGoBackDir: vi.fn().mockReturnValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('edge-swipe')
+      expect(handled).toBe(true)
+      expect(hooks.exitSearch).toHaveBeenCalledTimes(1)
+      expect(hooks.returnToOrigin).not.toHaveBeenCalled()
+      expect(hooks.goBackDir).not.toHaveBeenCalled()
+    })
+
+    it('search dismissed by one back press; a second back then goes up a directory', async () => {
+      const searchActive = { value: true }
+      const hooks = createMockHooks({
+        canExitSearch: vi.fn().mockImplementation(() => searchActive.value),
+        exitSearch: vi.fn().mockImplementation(() => { searchActive.value = false }),
+        canGoBackDir: vi.fn().mockReturnValue(true),
+        goBackDir: vi.fn().mockResolvedValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      expect(await navigateBack('android')).toBe(true)
+      expect(hooks.exitSearch).toHaveBeenCalledTimes(1)
+      expect(hooks.goBackDir).not.toHaveBeenCalled()
+      expect(await navigateBack('android')).toBe(true)
+      expect(hooks.exitSearch).toHaveBeenCalledTimes(1)
+      expect(hooks.goBackDir).toHaveBeenCalledTimes(1)
+    })
+
+    it('multi-select open exits multi-select instead of going up a directory', async () => {
+      const hooks = createMockHooks({
+        canExitMultiSelect: vi.fn().mockReturnValue(true),
+        exitMultiSelect: vi.fn(),
+        canGoBackDir: vi.fn().mockReturnValue(true),
+        goBackDir: vi.fn().mockResolvedValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.exitMultiSelect).toHaveBeenCalledTimes(1)
+      expect(hooks.goBackDir).not.toHaveBeenCalled()
+    })
+
+    it('search takes precedence over multi-select when both predicates report true', async () => {
+      const hooks = createMockHooks({
+        canExitSearch: vi.fn().mockReturnValue(true),
+        exitSearch: vi.fn(),
+        canExitMultiSelect: vi.fn().mockReturnValue(true),
+        exitMultiSelect: vi.fn(),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('header')
+      expect(handled).toBe(true)
+      expect(hooks.exitSearch).toHaveBeenCalledTimes(1)
+      expect(hooks.exitMultiSelect).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('jump origin spent directly on back', () => {
+    it('back returns to the jump origin without popping in-panel drill levels', async () => {
+      nav.start({ surface: 'chat', tab: 'chat', label: 'Back to Chat' })
+      const hooks = createMockHooks({
+        canGoBackFile: vi.fn().mockReturnValue(false),
+        hasOrigin: vi.fn().mockReturnValue(true),
+        returnToOrigin: vi.fn().mockImplementation(async () => {
+          nav.consume()
+          return true
+        }),
+        canHandleOther: vi.fn().mockReturnValue(true),
+        handleOther: vi.fn().mockReturnValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.returnToOrigin).toHaveBeenCalledTimes(1)
+      expect(hooks.handleOther).not.toHaveBeenCalled()
+      expect(nav.hasOrigin.value).toBe(false)
+    })
+
+    it('with no origin pending the in-panel drill handler still consumes back', async () => {
+      const hooks = createMockHooks({
+        hasOrigin: vi.fn().mockReturnValue(false),
+        canGoBackDir: vi.fn().mockReturnValue(false),
+        canHandleOther: vi.fn().mockReturnValue(true),
+        handleOther: vi.fn().mockReturnValue(true),
+      })
+      const { navigateBack } = useNavigationStateMachine(hooks)
+      const handled = await navigateBack('android')
+      expect(handled).toBe(true)
+      expect(hooks.handleOther).toHaveBeenCalledTimes(1)
     })
   })
 })

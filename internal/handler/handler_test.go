@@ -710,13 +710,23 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	firstSessions := firstPage["sessions"].([]interface{})
 	require.Len(t, firstSessions, 2)
 
-	// Extract cursor from the last session
+	// Extract cursor from the last session. The paged endpoint orders/filters
+	// by created_at, so the cursor MUST be createdAt — using updatedAt (which
+	// is >= createdAt) would re-return rows from the first page.
 	lastSession := firstSessions[1].(map[string]interface{})
-	cursorUpdatedAt := lastSession["updatedAt"].(string)
+	cursorCreatedAt := lastSession["createdAt"].(string)
 	cursorID := lastSession["id"].(string)
 
+	// Diverge the last page-1 session's updated_at from its created_at, so a
+	// cursor mix-up (or an ignored cursor) actually produces overlap. Without
+	// this, created_at == updated_at for message-less sessions and the test
+	// cannot distinguish the two cursor fields.
+	_, err := service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 day') WHERE id = ?", cursorID)
+	require.NoError(t, err)
+
 	// Normalize cursor format (replace T/space, strip Z)
-	cursor := strings.ReplaceAll(cursorUpdatedAt, "T", " ")
+	cursor := strings.ReplaceAll(cursorCreatedAt, "T", " ")
 	cursor = strings.TrimSuffix(cursor, "Z")
 
 	// Request second page using cursor (properly encode query params)

@@ -120,23 +120,8 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   )
 
   // Timers & concurrency
-  let leaveTimer: ReturnType<typeof setTimeout> | null = null
   let currentRequestId = 0
   let currentAbortController: AbortController | null = null
-
-  // Pointer & focus states
-  let isPointerInTarget = false
-  let isPointerInCard = false
-  let isTargetFocused = false
-  let isCardFocused = false
-  let lastTouchTime = 0
-
-  const clearLeaveTimer = () => {
-    if (leaveTimer) {
-      clearTimeout(leaveTimer)
-      leaveTimer = null
-    }
-  }
 
   const isTouchDevice = (): boolean => {
     if (typeof window === 'undefined') return false
@@ -146,10 +131,6 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       if (window.matchMedia('(hover: none), (pointer: coarse)').matches) return true
     }
     return false
-  }
-
-  const handleTouchStart = () => {
-    lastTouchTime = Date.now()
   }
 
   const updateSlice = () => {
@@ -260,8 +241,6 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
     activePreviewClose = close
 
-    clearLeaveTimer()
-
     const wasPinned = mode.value === 'pinned'
     target.value = newTarget
     mode.value = wasPinned && previewMode !== 'sheet' ? 'pinned' : previewMode
@@ -285,8 +264,6 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   const close = (opts: { clearCache?: boolean } = {}) => {
-    clearLeaveTimer()
-
     if (activePreviewClose === close) {
       activePreviewClose = null
     }
@@ -311,34 +288,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     mode.value = 'transient'
     renderMode.value = 'source'
 
-    isPointerInTarget = false
-    isPointerInCard = false
-    isTargetFocused = false
-    isCardFocused = false
-
     if (opts.clearCache) {
       previewCache.clear()
-    }
-  }
-
-  const checkAndClose = () => {
-    if (mode.value === 'pinned' || mode.value === 'sheet') return
-    if (!isPointerInTarget && !isPointerInCard && !isTargetFocused && !isCardFocused) {
-      close()
     }
   }
 
   const pin = () => {
     if (!visible.value || mode.value === 'sheet') return
     mode.value = 'pinned'
-    clearLeaveTimer()
   }
 
   const unpin = () => {
     if (!visible.value || mode.value === 'sheet') return
     mode.value = 'transient'
-    clearLeaveTimer()
-    leaveTimer = setTimeout(() => checkAndClose(), 200)
   }
 
   const togglePin = () => {
@@ -406,32 +368,14 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     close()
   }
 
-  // Card pointer/focus events
-  const onCardPointerEnter = () => {
-    isPointerInCard = true
-    clearLeaveTimer()
-  }
-
-  const onCardPointerLeave = () => {
-    isPointerInCard = false
-    if (mode.value === 'transient') {
-      clearLeaveTimer()
-      leaveTimer = setTimeout(() => checkAndClose(), 200)
-    }
-  }
-
-  const onCardFocusIn = () => {
-    isCardFocused = true
-    clearLeaveTimer()
-  }
-
-  const onCardFocusOut = (_e: FocusEvent) => {
-    isCardFocused = false
-    if (mode.value === 'transient') {
-      clearLeaveTimer()
-      leaveTimer = setTimeout(() => checkAndClose(), 200)
-    }
-  }
+  // Card pointer/focus events. These used to feed a transient auto-close
+  // timer; since click-opened cards now persist until an explicit dismiss
+  // (Esc / close button / open full / tab or file switch / replace), they are
+  // kept as no-ops so template bindings and the component surface stay stable.
+  const onCardPointerEnter = () => {}
+  const onCardPointerLeave = () => {}
+  const onCardFocusIn = () => {}
+  const onCardFocusOut = (_e: FocusEvent) => {}
 
   // Target extraction helper
   const extractTargetFromElement = (el: HTMLElement): PreviewTarget | null => {
@@ -455,65 +399,6 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       lineStart,
       lineEnd,
       anchorEl: targetEl,
-    }
-  }
-
-  const handleMouseOver = (e: MouseEvent) => {
-    if (!enabled.value) return
-    // When the pointer re-enters any annotated path (file or dir), treat the
-    // pointer as "in target" again and cancel any pending transient close.
-    // This is the counterpart of handleMouseOut below — without it the flag is
-    // never set back to true, so a transient card would close even while the
-    // user hovers the very path that opened it.
-    const targetEl = (e.target as HTMLElement)?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
-    if (!targetEl) return
-    isPointerInTarget = true
-    clearLeaveTimer()
-  }
-
-  const handleMouseOut = (e: MouseEvent) => {
-    if (!enabled.value) return
-    const targetEl = (e.target as HTMLElement)?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
-    if (!targetEl) return
-
-    const related = e.relatedTarget as HTMLElement | null
-    if (related && targetEl.contains(related)) return
-    // Moving straight from one annotated path onto another: the mouseover of the
-    // next path re-arms the flag, so do not let this mouseout start a close race.
-    if (related && (related as HTMLElement).closest?.('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')) return
-
-    isPointerInTarget = false
-    if (mode.value === 'transient') {
-      clearLeaveTimer()
-      leaveTimer = setTimeout(() => checkAndClose(), 200)
-    }
-  }
-
-  const handleFocusIn = (e: FocusEvent) => {
-    if (!enabled.value) return
-    if (isTouchDevice()) return
-    if (Date.now() - lastTouchTime < 1000) return
-
-    const targetEl = (e.target as HTMLElement)?.closest<HTMLElement>('a.chat-file-path[data-file-path], button.chat-file-open-btn[data-file-path]')
-    if (!targetEl) return
-
-    const extracted = extractTargetFromElement(targetEl)
-    if (!extracted) return
-
-    isTargetFocused = true
-    clearLeaveTimer()
-
-    // Desktop previews are click-triggered. Keep focus bookkeeping for the
-    // bridge/close state, but do not open a card merely through keyboard focus.
-    if (mode.value === 'pinned') return
-  }
-
-  const handleFocusOut = (_e: FocusEvent) => {
-    if (!enabled.value) return
-    isTargetFocused = false
-    if (mode.value === 'transient') {
-      clearLeaveTimer()
-      leaveTimer = setTimeout(() => checkAndClose(), 200)
     }
   }
 
@@ -560,24 +445,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
   }
 
-  // Bind delegation to container
+  // Bind delegation to container. Only the click listener does real work today
+  // (mouse/focus listeners were removed with the transient hover-close logic).
   const bindEvents = (el: HTMLElement | null) => {
     if (!el) return
-    el.addEventListener('touchstart', handleTouchStart, { passive: true })
-    el.addEventListener('mouseover', handleMouseOver)
-    el.addEventListener('mouseout', handleMouseOut)
-    el.addEventListener('focusin', handleFocusIn)
-    el.addEventListener('focusout', handleFocusOut)
     el.addEventListener('click', handleClick, true)
   }
 
   const unbindEvents = (el: HTMLElement | null) => {
     if (!el) return
-    el.removeEventListener('touchstart', handleTouchStart)
-    el.removeEventListener('mouseover', handleMouseOver)
-    el.removeEventListener('mouseout', handleMouseOut)
-    el.removeEventListener('focusin', handleFocusIn)
-    el.removeEventListener('focusout', handleFocusOut)
     el.removeEventListener('click', handleClick, true)
   }
 
@@ -656,12 +532,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     onCardPointerLeave,
     onCardFocusIn,
     onCardFocusOut,
-    handleMouseOver,
-    handleMouseOut,
-    handleFocusIn,
-    handleFocusOut,
     handleClick,
-    handleTouchStart,
     isTouchDevice,
     updatePlacement,
     bindEvents,

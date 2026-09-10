@@ -1,0 +1,187 @@
+/* ==========================================================================
+   Unified media block figure — every inline media (raster <img>, bare inline
+   <svg>, mermaid <div class="mermaid">) renders as a block figure with a thin
+   1px frame and a SEMI-TRANSPARENT INLINE TOOLBAR floating over the media's
+   top-right corner:
+
+     .image-block-wrapper              1px border + radius frame
+       .image-block-header             absolute, top-right, translucent chip
+         .image-block-header-actions
+           button.image-block-view-btn      (always)
+           button.image-block-attach-btn    (local file preview only)
+           button.image-block-open-btn      (local file preview only)
+       .lightbox-img-wrap > img.lightbox-img  | span.lightbox-svg-wrap > svg
+       | div.mermaid
+
+   Markup is produced by the single media-block factory
+   (web/src/utils/mediaBlockFactory.ts) shared by the chat pipeline
+   (useMarkdownRenderer), the file-preview pipeline
+   (useMarkdownRenderPipeline) and mermaid.ts.
+
+   These rules are GLOBAL and unprefixed (no .markdown-body) so the figure is
+   styled identically wherever v-html injects it: file preview, chat message,
+   completion popover, table row modal, task overview, share SPA, HTML export.
+   ========================================================================== */
+
+/* ─── Figure shell ────────────────────────────────────────────────────────
+   Thin 1px frame + radius; overflow:hidden rounds the media corners. The
+   toolbar is positioned INSIDE the wrapper, so it is never clipped. */
+.image-block-wrapper {
+    position: relative;
+    margin: 0.4em 0;
+    width: fit-content;
+    max-width: 100%;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    line-height: 0;
+}
+
+/* ─── Floating toolbar (top-right overlay) ────────────────────────────────
+   Replaces the old full-width header row. Sits over the media's top-right
+   corner as a translucent chip; icons are semi-transparent by default and
+   deepen on hover. */
+.image-block-header {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 2px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    line-height: 1;
+    user-select: none;
+}
+
+.image-block-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* Toolbar buttons: view / attach / open — compact translucent icon buttons. */
+.image-block-view-btn,
+.image-block-attach-btn,
+.image-block-open-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.65;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    outline: none;
+    box-shadow: none;
+}
+
+.image-block-view-btn:hover,
+.image-block-attach-btn:hover,
+.image-block-open-btn:hover {
+    opacity: 1;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.image-block-view-btn svg,
+.image-block-attach-btn svg,
+.image-block-open-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* ─── Raster image content cell ─────────────────────────────────────────── */
+.image-block-wrapper .lightbox-img-wrap {
+    display: block;
+    text-align: center;
+    line-height: 0;
+    padding: 0;
+}
+
+/* Cancel the global inline-img vertical margins inside a block figure. */
+.image-block-wrapper .lightbox-img-wrap img {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0;
+    line-height: 0;
+}
+
+/* ─── Bare inline <svg> content cell ────────────────────────────────────── */
+.image-block-wrapper .lightbox-svg-wrap {
+    display: block;
+    text-align: center;
+    line-height: 0;
+    padding: 0;
+}
+
+.image-block-wrapper .lightbox-svg-wrap svg.lightbox-svg {
+    display: inline-block;
+    vertical-align: middle;
+    max-width: 100%;
+    height: auto;
+}
+
+/* ─── Mermaid content cell (container stays a DIRECT child of the figure) ──
+   Cancel the standalone .mermaid box styles (content.css gives standalone
+   diagrams a padded tile); inside the frame the media fills edge-to-edge. */
+.image-block-wrapper > .mermaid {
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    overflow-x: auto;
+}
+
+.image-block-wrapper > .mermaid svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* .mermaid containers need a positioning context for absolute overlays. */
+.mermaid {
+    position: relative;
+}
+
+/* ─── Chat message: keep media thumbnailed inside the bubble ────────────── */
+.chat-message .image-block-wrapper {
+    max-width: 200px;
+}
+
+.chat-message .image-block-wrapper > .mermaid {
+    max-height: 200px;
+    overflow: hidden;
+}
+
+.chat-message .image-block-wrapper > .mermaid svg {
+    max-width: 100%;
+    max-height: 184px;
+}
+
+.chat-message .image-block-wrapper .lightbox-svg-wrap svg.lightbox-svg {
+    max-width: 200px;
+    max-height: 200px;
+}
+
+/* ─── Table row modal: cell figures are header-stripped (tableRowExpand)
+       before entering the modal; flatten them to plain thumbnails. ───────── */
+.table-row-value .image-block-wrapper {
+    width: 100%;
+    margin: 0;
+}
+
+.table-row-value .lightbox-img-wrap {
+    display: inline-block;
+    text-align: left;
+    line-height: normal;
+}

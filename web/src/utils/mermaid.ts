@@ -2,6 +2,8 @@
 import { getMermaid } from './lazyMermaid.ts'
 import { appLog } from '@/utils/appLog'
 import { isDarkTheme } from './themeMeta'
+import { isShareMode } from '@/share/shareMode'
+import { armMermaidFigure } from '@/utils/mediaBlockFactory.ts'
 
 // Import shared mermaid CSS (loading spinner, error, retry button styles)
 import '@/assets/mermaid.css'
@@ -120,7 +122,33 @@ function retryMermaidBlock(container: HTMLElement): void {
     const pre = document.createElement('pre')
     pre.className = 'mermaid'
     pre.textContent = source
+    // Preserve the source-line range so a retried diagram stays in sync
+    // with the markdown source lines after it re-renders.
+    const srcLine = container.getAttribute('data-source-line')
+    if (srcLine) pre.setAttribute('data-source-line', srcLine)
+    const srcEnd = container.getAttribute('data-source-end')
+    if (srcEnd) pre.setAttribute('data-source-end', srcEnd)
     container.replaceWith(pre)
+}
+
+/** Whether a diagram sits in a file-preview context (has an md file to reference). */
+function isMermaidFilePreview(container: HTMLElement): boolean {
+    if (isShareMode()) return false
+    const mdBody = container.closest<HTMLElement>('.markdown-body[data-file-path]')
+    const mdPath = mdBody?.getAttribute('data-file-path') || ''
+    return !!mdPath
+}
+
+/**
+ * Arm the unified bordered block figure around a rendered diagram. Every
+ * context (file preview / chat / share / export) gets the same
+ * `.image-block-wrapper > .image-block-header` shell with a view button; only
+ * a file-preview context (non-share, has an md file ancestor) additionally
+ * gets the range-reference attach button. Idempotent: re-renders that
+ * wipe/replace the container re-arm via the parent guard.
+ */
+function armMermaidFigureForContext(container: HTMLElement): void {
+    armMermaidFigure(container, { attach: isMermaidFilePreview(container) })
 }
 
 /** Set up event delegation for mermaid retry buttons (called once on module load) */
@@ -178,6 +206,15 @@ export async function renderMermaidInElement(
         container.className = 'mermaid'
         container.dataset.mermaid = source
         container.id = `${prefix}-${_idCounter++}`
+        // Preserve the source-line range anchor from the original <pre> so the
+        // rendered diagram still participates in line-based scroll sync and the
+        // attach-to-chat range reference keeps the authoritative closing-fence
+        // line (data-source-end is dropped by textContent.trim() below, so it
+        // must be carried over explicitly rather than recomputed from the body).
+        const srcLine = (block as HTMLElement).getAttribute('data-source-line')
+        if (srcLine) container.setAttribute('data-source-line', srcLine)
+        const srcEnd = (block as HTMLElement).getAttribute('data-source-end')
+        if (srcEnd) container.setAttribute('data-source-end', srcEnd)
         container.innerHTML = '<div class="mermaid-loading"><span class="mermaid-spinner"></span></div>'
         ;(block as Element).replaceWith(container)
         containers.push({ container, source })
@@ -213,10 +250,9 @@ export async function renderMermaidInElement(
             try {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
-                // Add expand icon for lightbox (real DOM element so PC clicks can target it)
-                const expandIcon = document.createElement('span')
-                expandIcon.className = 'lightbox-expand-icon'
-                container.appendChild(expandIcon)
+                // Uniform bordered figure: header view button always; attach
+                // button only inside a file-preview markdown body.
+                armMermaidFigureForContext(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div into the DOM
                 // with the render id before throwing — remove them so they don't
@@ -257,10 +293,8 @@ export async function reRenderMermaid(): Promise<void> {
                 const result = await mermaid.render(renderId, source)
                 container.innerHTML = result.svg
                 container.id = id
-                // Re-add expand icon after innerHTML replaces content
-                const expandIcon = document.createElement('span')
-                expandIcon.className = 'lightbox-expand-icon'
-                container.appendChild(expandIcon)
+                // Re-arm the bordered figure after the innerHTML wipe.
+                armMermaidFigureForContext(container)
             } catch (err: unknown) {
                 // Mermaid v11 inserts an error SVG + wrapper div before throwing
                 cleanupMermaidOrphan(renderId)

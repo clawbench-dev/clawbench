@@ -39,9 +39,7 @@
             :title="t('file.codePreview.expandAbove', { n: stepAbove })"
             @click="expandAbove(stepAbove)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="18 15 12 9 6 15" />
-            </svg>
+            <ChevronUp :size="13" />
             <span>{{ t('file.codePreview.expandAbove', { n: stepAbove }) }}</span>
           </button>
           <button
@@ -51,10 +49,7 @@
             :title="t('file.codePreview.expandToTop')"
             @click="expandAbove(remainingAbove)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="17 11 12 6 7 11" />
-              <polyline points="17 18 12 13 7 18" />
-            </svg>
+            <ChevronsUp :size="13" />
             <span>{{ t('file.codePreview.expandToTop') }}</span>
           </button>
         </span>
@@ -63,6 +58,9 @@
       <div
         class="markdown-body md-preview-body"
         :data-file-path="filePath"
+        @dragstart="onMarkdownDragStart"
+        @dragend="onMarkdownDragEnd"
+        @click="handleBodyClick"
       >
         <div class="markdown-content" v-html="renderedHtml" />
       </div>
@@ -86,9 +84,7 @@
             :title="t('file.codePreview.expandBelow', { n: stepBelow })"
             @click="expandBelow(stepBelow)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <ChevronDown :size="13" />
             <span>{{ t('file.codePreview.expandBelow', { n: stepBelow }) }}</span>
           </button>
           <button
@@ -98,10 +94,7 @@
             :title="t('file.codePreview.expandToBottom')"
             @click="expandBelow(remainingBelow)"
           >
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="7 13 12 18 17 13" />
-              <polyline points="7 6 12 11 17 6" />
-            </svg>
+            <ChevronsDown :size="13" />
             <span>{{ t('file.codePreview.expandToBottom') }}</span>
           </button>
         </span>
@@ -113,6 +106,17 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronDown, ChevronsDown, ChevronUp, ChevronsUp } from 'lucide-vue-next'
+import { onMdImageDragStart, onMdImageDragEnd } from '@/utils/mdImageDrag'
+import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
+import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
+import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
+import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
+import { handleMdImageOpenClick } from '@/utils/mdImageOpen'
+import { openFilePath } from '@/composables/useFilePathAnnotation'
+import { useChatContext } from '@/composables/useChatContext'
+import { useToast } from '@/composables/useToast'
+import { gt } from '@/composables/useLocale'
 
 /**
  * Rendered-markdown sibling of CodePreviewBody.
@@ -163,6 +167,53 @@ const scrollEl = ref<HTMLElement | null>(null)
 
 const canExpandAbove = computed(() => props.remainingAbove > 0)
 const canExpandBelow = computed(() => props.remainingBelow > 0)
+
+// Image attach-to-chat badge (touch devices). This component is a read-only
+// rendered view; the only interactive bit it owns is the badge toggle.
+const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
+const { show: showToast } = useToast()
+const mdImageAttachActions: MdImageAttachActions = {
+  add: addAttachedFile,
+  remove: removeAttachedFileByPath,
+  has: hasAttachedFile,
+  toast: (msg, opts) => showToast(msg, opts),
+  messages: {
+    added: gt('chat.attach.addedToChat'),
+    removed: gt('chat.attach.removedFromChat'),
+  },
+}
+
+// Mermaid range-reference badge: same singletons, ranged identity.
+const mermaidAttachActions: MermaidAttachActions = {
+  add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+  remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
+  has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
+  toast: (msg, opts) => showToast(msg, opts),
+  messages: {
+    added: gt('chat.attach.addedToChat'),
+    removed: gt('chat.attach.removedFromChat'),
+  },
+}
+
+/** Delegated click: only the image/mermaid attach badges react; everything else
+    in the read-only document view is left untouched (parent / lightbox handles). */
+function handleBodyClick(e: MouseEvent) {
+  handleMdImageAttachClick(e, mdImageAttachActions)
+  handleMdImageOpenClick(e, openFilePath)
+  handleMermaidAttachClick(e, mermaidAttachActions)
+  handleBlockAttachClick(e, mermaidAttachActions)
+}
+
+/** Delegated dragstart: images first, then mermaid diagrams (md range drag). */
+function onMarkdownDragStart(e: DragEvent) {
+  onMdImageDragStart(e)
+  onMermaidDragStart(e)
+}
+
+function onMarkdownDragEnd(e: DragEvent) {
+  onMdImageDragEnd(e)
+  onMermaidDragEnd(e)
+}
 
 // ── Mermaid ────────────────────────────────────────────────────────────────
 // MarkdownPreview.vue renders mermaid diagrams at the DOM level after the HTML

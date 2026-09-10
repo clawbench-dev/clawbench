@@ -63,6 +63,7 @@
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length || msg.summary)" class="chat-meta-bar">
       <span class="chat-meta-info">
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
+        <span v-if="relativeTime" class="chat-meta-time" :class="{ 'chat-meta-sep': msg.metadata?.wallMs }">{{ relativeTime }}</span>
       </span>
       <div class="chat-meta-actions">
         <span v-if="!msg.streaming" ref="toggleWrapRef" class="chat-summary-anchor">
@@ -72,7 +73,7 @@
         <span v-if="msg._loadingOriginal" class="chat-summary-anchor">
           <LoadingIndicator size="sm" inline />
         </span>
-        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
+        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
             <Clock :size="14" class="speak-spinner" />
@@ -86,7 +87,6 @@
           <!-- Default idle state -->
           <template v-else>
             <Volume2 :size="14" />
-            <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
         <button v-if="!msg.streaming" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
@@ -142,7 +142,7 @@
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind } from 'lucide-vue-next'
-import { formatDuration } from '@/utils/format.ts'
+import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -237,6 +237,23 @@ const msgText = computed(() => {
   if (text) return text
   if (showSummary.value && props.msg?.summary) return props.msg.summary
   return ''
+})
+
+// Friendly relative timestamp shown next to the elapsed duration in the meta bar.
+// formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
+// times), so the label and its separator stay hidden when there is nothing to show.
+const relativeTime = computed(() => (props.msg?.createdAt ? formatRelativeTime(props.msg.createdAt) : ''))
+
+// Accessible name/tooltip for the read-aloud button. While audio is playing the
+// button acts as a stop control, so it must not advertise "read aloud".
+const speakBtnLabel = computed(() => {
+  const id = props.msg?.id
+  if (autoSpeech.isPlayingAudio(id)) return t('chat.message.speaking')
+  if (autoSpeech.isGeneratingText(id)) {
+    const phase = autoSpeech.getPhaseLabel(id)
+    return phase ? t('chat.speech.' + phase) : t('chat.message.readAloud')
+  }
+  return t('chat.message.readAloud')
 })
 
 // Whether to render the summary view. Computed from message state (summary
@@ -457,6 +474,10 @@ function handleCopyMessage() {
 
 .chat-meta-duration {
     font-variant-numeric: tabular-nums;
+}
+
+.chat-meta-time {
+    white-space: nowrap;
 }
 
 /* Speak button active state */
@@ -1036,109 +1057,6 @@ function handleCopyMessage() {
 
 .chat-message.assistant td {
     white-space: nowrap;
-}
-
-/* Mermaid diagram thumbnail */
-.chat-message .mermaid {
-  max-width: 200px;
-  max-height: 200px;
-  overflow: hidden;
-  border-radius: 6px;
-  margin: 4px 0;
-  background: var(--bg-secondary);
-  padding: 8px;
-  position: relative;
-}
-
-/* Mermaid expand icon — top-right corner, visible on hover (PC mode) */
-.chat-message .mermaid .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  font-size: 14px;
-  line-height: 24px;
-  text-align: center;
-  cursor: pointer;
-  z-index: 2;
-  align-items: center;
-  justify-content: center;
-}
-
-.chat-message .mermaid .lightbox-expand-icon::after {
-  content: '⤢';
-}
-
-@media (hover: hover) {
-  .chat-message .mermaid:hover .lightbox-expand-icon {
-    display: flex;
-  }
-}
-
-.chat-message .mermaid svg {
-  max-width: 100%;
-  max-height: 184px;
-  height: auto;
-}
-
-/* ── Lightbox: raster image wrapper — positions the expand icon overlay ──
-   These must be NON-scoped: the image/svg markup arrives via v-html, so the
-   injected elements carry no data-v-* attribute and scoped styles never match. */
-.chat-message .lightbox-img-wrap,
-.chat-message .lightbox-svg-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.chat-message .lightbox-img-wrap .lightbox-img {
-  cursor: default;
-}
-
-/* Expand icon — top-right corner, visible on hover (PC mode) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon,
-.chat-message .lightbox-svg-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-@media (hover: hover) {
-  .chat-message .lightbox-img-wrap:hover .lightbox-expand-icon,
-  .chat-message .lightbox-svg-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-
-/* Use a simple "expand" character as the icon (no SVG dependency in HTML strings) */
-.chat-message .lightbox-img-wrap .lightbox-expand-icon::after,
-.chat-message .lightbox-svg-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 1;
-}
-
-/* Inline SVG thumbnail (non-mermaid) — constrained like the mermaid preview */
-.chat-message .lightbox-svg-wrap svg.lightbox-svg {
-  max-width: 200px;
-  max-height: 200px;
-  height: auto;
-  border-radius: 6px;
 }
 
 /* ── Audio player in chat (non-scoped for v-html penetration) ── */

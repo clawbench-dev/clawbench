@@ -32,22 +32,58 @@ export function isImageFile(path: string | null | undefined): boolean {
   return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext))
 }
 
-/** Deduplicate file entries by path, preferring entries with richer metadata (line ranges).
- *  When two entries share the same path, the one with startLine/endLine is kept. */
+/** Composite identity of an entry: a path can carry multiple independent
+ *  line-range references, so dedupe/merge by (path, startLine ?? 0, endLine ?? 0). */
+function entryKey(f: FileEntry): string {
+  return `${f.path}|${f.startLine ?? 0}|${f.endLine ?? 0}`
+}
+
+/**
+ * Deduplicate file entries by their composite key (path + line range).
+ * Distinct line ranges of the same path are all kept; exact duplicates collapse.
+ */
 export function dedupeFiles(files: FileEntry[]): FileEntry[] {
   const result: FileEntry[] = []
-  const byPath = new Map<string, FileEntry>()
+  const seen = new Set<string>()
   for (const f of files) {
-    const existing = byPath.get(f.path)
-    if (!existing) {
-      byPath.set(f.path, f)
-      result.push(f)
-    } else if (f.startLine !== undefined && existing.startLine === undefined) {
-      result[result.indexOf(existing)] = f
-      byPath.set(f.path, f)
-    }
+    const key = entryKey(normalizeFileEntry(f))
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(normalizeFileEntry(f))
   }
   return result
+}
+
+/**
+ * Split attachments into the two backend channels.
+ *
+ * The backend cross-deduplicates: a `Files` entry whose path is also in
+ * `filePaths` is dropped (see internal/handler/chat.go), losing its line
+ * range. So any path that carries a LINE-RANGE reference must go through
+ * `entries` only — every entry for that path is moved there and the path is
+ * excluded from `filePaths`. Paths attached only as whole files keep the
+ * legacy `filePaths` channel.
+ */
+export function buildSendChannels(files: FileEntry[]): { filePaths: string[]; entries: FileEntry[] } {
+  const rangedPaths = new Set(files.filter(f => f.startLine !== undefined).map(f => f.path))
+  const entries: FileEntry[] = []
+  const filePaths: string[] = []
+  const seenFilePaths = new Set<string>()
+  for (const f of files) {
+    const norm = normalizeFileEntry(f)
+    if (rangedPaths.has(norm.path)) {
+      // A path that carries any line-range reference travels ENTIRELY through
+      // the entries channel — never filePaths, or the backend's cross-dedup
+      // would strip the ranged entries (internal/handler/chat.go).
+      entries.push(norm)
+      continue
+    }
+    if (!seenFilePaths.has(norm.path)) {
+      seenFilePaths.add(norm.path)
+      filePaths.push(norm.path)
+    }
+  }
+  return { filePaths, entries }
 }
 
 /**

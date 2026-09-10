@@ -638,28 +638,50 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 		return 0, txErr
 	}
 
-	// If this is the first user message, update session title
 	if role == "user" {
-		var count int
-		if txErr = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
-			title := ExtractPlainText(content)
-			if title == "" && len(files) > 0 {
-				title = titleFromFileEntries(files)
-			}
-			if title == "" {
-				title = fallbackTitle
-			}
-			runes := []rune(title)
-			if len(runes) > 50 {
-				title = string(runes[:50]) + "..."
-			}
-			if _, txErr = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); txErr != nil {
-				return 0, txErr
-			}
+		if err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle); err != nil {
+			return 0, err
 		}
 	}
 
 	return result.LastInsertId()
+}
+
+// maybeAutoTitleSessionTx sets the session title from the first user message,
+// unless the title was deliberately chosen (title_renamed=1): a manual rename,
+// or a meaningful title supplied at creation (scheduled task, fork, continue,
+// imported session). No-op when this is not the session's first message.
+func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
+	var count int
+	// Only the first message auto-titles. A read error (or any other count) means
+	// "not the first message", so the historical behavior is preserved.
+	if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
+		var renamed int
+		// Best-effort read: a missing column (minimal test schemas) leaves the zero
+		// value, preserving the historical auto-title behavior. Any other error is
+		// unexpected and worth surfacing — it would silently overwrite a locked title.
+		if err := tx.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed); err != nil && !strings.Contains(err.Error(), "no such column") {
+			slog.Warn("chat: could not read title_renamed; auto-title may overwrite a locked title",
+				slog.String("session", sessionID), slog.String("err", err.Error()))
+		}
+		if renamed != 0 {
+			return nil
+		}
+		title := ExtractPlainText(content)
+		if title == "" && len(files) > 0 {
+			title = titleFromFileEntries(files)
+		}
+		if title == "" {
+			title = fallbackTitle
+		}
+		if runes := []rune(title); len(runes) > 50 {
+			title = string(runes[:50]) + "..."
+		}
+		if _, err := tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AddQueuedMessage persists a user message to chat_history with queued=1 so it
@@ -1252,6 +1274,19 @@ func GetSessionProjectPath(sessionID string) string {
 	return projectPath
 }
 
+// GetSessionProjectPathIncludeArchived returns the project path of a session
+// regardless of archived status, or empty string if not found. Used by
+// read-only lookups that must work for archived sessions too (e.g. session
+// search's lazy first-message preview).
+func GetSessionProjectPathIncludeArchived(sessionID string) string {
+	var projectPath string
+	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", sessionID).Scan(&projectPath)
+	if err != nil {
+		return ""
+	}
+	return projectPath
+}
+
 // GetLatestSessionID returns the ID and backend of the most recently updated chat session
 // for a project. Returns sql.ErrNoRows if no sessions exist.
 func GetLatestSessionID(projectPath string) (sessionID, backend string, err error) {
@@ -1340,6 +1375,11 @@ func UpdateSessionAutoApprove(sessionID string, enabled bool) error {
 // This enables SQL-based analytical queries (token usage, cost, model stats)
 // while the same metadata remains embedded in chat_history.content JSON for
 // backward compatibility with the frontend.
+//
+// chat_metadata is a standalone usage ledger: it carries no foreign key to
+// chat_history so a row survives the message/session being deleted. The
+// project/backend/agent attribution is denormalized here at write time so the
+// stats query never has to join back to a possibly-deleted session.
 func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	if messageID <= 0 || meta == nil {
 		return nil
@@ -1355,6 +1395,20 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			categoryJSON = string(b)
 		}
 	}
+	// Resolve denormalized attribution from the message's own row. A missing
+	// row (ErrNoRows) is benign — the message was already deleted — and leaves
+	// the columns empty. Any other error is propagated rather than swallowed:
+	// writing a row with empty project_path would make it permanently invisible
+	// to every project-scoped stats query, i.e. silent under-counting.
+	var projectPath, backend, agentID, clawbenchSessionID string
+	if err := dbRead.QueryRow(
+		`SELECT h.project_path, h.backend, h.session_id, COALESCE(s.agent_id, '')
+		 FROM chat_history h
+		 LEFT JOIN chat_sessions s ON s.id = h.session_id
+		 WHERE h.id = ?`, messageID,
+	).Scan(&projectPath, &backend, &clawbenchSessionID, &agentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("resolve metadata attribution for message %d: %w", messageID, err)
+	}
 	_, err := WriteExec(
 		`
 		INSERT OR REPLACE INTO chat_metadata
@@ -1364,8 +1418,9 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			 cache_creation_tokens, cache_hit_tokens, cache_miss_tokens, credit,
 			 usage_by_category, session_id,
 			 request_id, trace_id, agent_message_id, message_request_id, request_model_name,
-			 response_model_id, finish_reason, outcome, agent_phase)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 response_model_id, finish_reason, outcome, agent_phase,
+			 project_path, backend, agent_id, clawbench_session_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, meta.Model,
 		meta.InputTokens, meta.OutputTokens, meta.DurationMs, meta.WallMs,
 		meta.CostUSD, meta.StopReason, isError, meta.ErrorMessage,
@@ -1374,6 +1429,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 		categoryJSON, meta.SessionID,
 		meta.RequestID, meta.TraceID, meta.MessageID, meta.MessageRequestID, meta.RequestModelName,
 		meta.ResponseModelID, meta.FinishReason, meta.Outcome, meta.AgentPhase,
+		projectPath, backend, agentID, clawbenchSessionID,
 	)
 	return err
 }
@@ -1397,7 +1453,30 @@ func GetLatestUserModel(agentID, projectPath string) string {
 // CreateSession creates a new chat session and returns its ID.
 // agentSource tracks how the agent was chosen: "default" (auto-assigned) or "user" (manually selected).
 // sessionType is "chat" or "scheduled"; empty string defaults to "chat".
+//
+// The title is treated as a placeholder that the first user message may
+// replace (auto-titling). Callers that pass a deliberately chosen title
+// (task name, fork title, user-supplied name) should use
+// CreateSessionWithLockedTitle instead so it is not overwritten.
+//
+// When the agent is configured with AutoApprove=true, the session's
+// chat_sessions.auto_approve flag is initialized to 1 at creation time, so the
+// choice survives a frontend reload instead of living only in in-memory UI
+// state. This is a creation-time snapshot: toggling the agent default later
+// does not rewrite existing sessions.
 func CreateSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
+	return createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType, false)
+}
+
+// CreateSessionWithLockedTitle creates a session whose title was deliberately
+// chosen by the caller (e.g. a scheduled task name, a fork/continue title, or a
+// user-supplied name at creation). It marks chat_sessions.title_renamed=1 so
+// the first-message auto-title does not overwrite it.
+func CreateSessionWithLockedTitle(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
+	return createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType, true)
+}
+
+func createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType string, lockTitle bool) (string, error) {
 	if sessionType == "" {
 		sessionType = "chat"
 	}
@@ -1412,6 +1491,10 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if err != nil {
 		return "", err
 	}
+	if lockTitle {
+		markSessionTitleRenamed(sessionID)
+	}
+	applyAgentAutoApproveDefault(sessionID, agentID)
 	slog.Info("session created",
 		slog.String("session", sessionID),
 		slog.String("backend", backend),
@@ -1421,6 +1504,40 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	return sessionID, nil
 }
 
+// markSessionTitleRenamed sets chat_sessions.title_renamed=1 so the first-message
+// auto-title does not overwrite a deliberately chosen title. Implemented as a
+// guarded UPDATE (not part of the INSERT) so session creation does not depend on
+// the column being present in minimal schemas; failure is non-fatal.
+func markSessionTitleRenamed(sessionID string) {
+	if _, err := WriteExec("UPDATE chat_sessions SET title_renamed = 1 WHERE id = ?", sessionID); err != nil {
+		slog.Warn("failed to mark session title as renamed",
+			slog.String("session", sessionID),
+			slog.String("err", err.Error()))
+	}
+}
+
+// applyAgentAutoApproveDefault initializes a freshly created session's
+// chat_sessions.auto_approve from the agent's configured default. Called by
+// every session-creation path (new session, fork, continue-from-execution) so
+// the agent-level "auto-approve new sessions" preference is persisted
+// consistently instead of living only in frontend display state.
+//
+// Implemented as a guarded UPDATE rather than part of the INSERT so session
+// creation does not depend on the auto_approve column being present in minimal
+// schemas. Failure is non-fatal: the session exists, only the flag is missing.
+func applyAgentAutoApproveDefault(sessionID, agentID string) {
+	agent, ok := model.Agents[agentID]
+	if !ok || !agent.AutoApprove {
+		return
+	}
+	if _, err := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); err != nil {
+		slog.Warn("failed to initialize session auto-approve from agent default",
+			slog.String("session", sessionID),
+			slog.String("agent", agentID),
+			slog.String("err", err.Error()))
+	}
+}
+
 // UpdateSessionSourceID sets the source_session_id for a chat session.
 // Used by acp-load to track the ACP session origin (format: "acp:{acpSessionId}").
 func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
@@ -1428,9 +1545,21 @@ func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
 	return err
 }
 
-// UpdateSessionTitle updates the title of a chat session.
+// UpdateSessionTitle updates the title of a chat session WITHOUT locking it.
+// Use this only for titles that are still placeholders and may legitimately be
+// replaced by first-message auto-titling. For a deliberately chosen title, use
+// SetSessionTitleLocked.
 func UpdateSessionTitle(sessionID, title string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
+	return err
+}
+
+// SetSessionTitleLocked updates the title of a chat session and marks it as
+// deliberately chosen (title_renamed=1) so the first-message auto-title will
+// not overwrite it. Used by the manual rename endpoint and by ACP session
+// import, where the title is derived from the CLI's own transcript.
+func SetSessionTitleLocked(sessionID, title string) error {
+	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_renamed = 1 WHERE id = ?", title, sessionID)
 	return err
 }
 
@@ -1501,52 +1630,122 @@ func NextSessionNumber(projectPath, baseTitle string) (int, error) {
 	return maxN + 1, nil
 }
 
-// RecentSession is a lightweight listing row used by session search's "browse
-// all" mode (empty query): every chat session for the project, newest first,
-// including archived ones that can still be resumed/restored. First* fields
-// describe the session's first message, shown as the detail preview chunk.
-type RecentSession struct {
-	ID             string
-	Title          string
-	Backend        string
-	ProjectPath    string
-	Archived       bool
-	CreatedAt      time.Time
-	MessageCount   int
-	FirstContent   string
-	FirstRole      string
-	FirstMessageID int64
-	FirstCreatedAt time.Time
+// Session archive filter values for session search. "all" includes both active
+// and archived sessions.
+const (
+	SessionArchiveFilterAll      = "all"
+	SessionArchiveFilterActive   = "active"
+	SessionArchiveFilterArchived = "archived"
+)
+
+// Session sort order values for session search. "relevance" keeps the
+// search-engine ordering (score desc); the time orders re-sort the result set
+// by the session's displayed timestamp.
+const (
+	SessionSortRelevance = "relevance"
+	SessionSortNewest    = "newest"
+	SessionSortOldest    = "oldest"
+)
+
+// NormalizeSessionArchiveFilter maps a raw filter string to a known value,
+// defaulting to "all" for empty/unknown input.
+func NormalizeSessionArchiveFilter(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case SessionArchiveFilterActive:
+		return SessionArchiveFilterActive
+	case SessionArchiveFilterArchived:
+		return SessionArchiveFilterArchived
+	default:
+		return SessionArchiveFilterAll
+	}
 }
 
-// GetRecentSessions returns all chat sessions for a project ordered newest-first
-// by creation time, including archived ones. When projectPath is empty it
-// returns sessions across all projects (CLI global browse). limit <= 0 returns
-// all sessions.
-func GetRecentSessions(projectPath string, limit int) ([]RecentSession, error) {
-	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at,
-		COUNT(h.id) AS message_count,
-		(SELECT h2.content FROM chat_history h2 WHERE h2.session_id = s.id ORDER BY h2.created_at ASC, h2.id ASC LIMIT 1) AS first_content,
-		(SELECT h2.role FROM chat_history h2 WHERE h2.session_id = s.id ORDER BY h2.created_at ASC, h2.id ASC LIMIT 1) AS first_role,
-		(SELECT h2.id FROM chat_history h2 WHERE h2.session_id = s.id ORDER BY h2.created_at ASC, h2.id ASC LIMIT 1) AS first_message_id,
-		(SELECT h2.created_at FROM chat_history h2 WHERE h2.session_id = s.id ORDER BY h2.created_at ASC, h2.id ASC LIMIT 1) AS first_created_at
+// NormalizeSessionSortOrder maps a raw sort string to a known value, defaulting
+// to "relevance" for empty/unknown input.
+func NormalizeSessionSortOrder(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case SessionSortNewest:
+		return SessionSortNewest
+	case SessionSortOldest:
+		return SessionSortOldest
+	default:
+		return SessionSortRelevance
+	}
+}
+
+// RecentSession is a lightweight listing row used by session search's "browse
+// all" mode (empty query): every chat session for the project, newest first,
+// including archived ones that can still be resumed/restored. It deliberately
+// carries no message content — the browse list must stay cheap, so the first
+// message is fetched lazily only when a session's detail view is opened.
+type RecentSession struct {
+	ID          string
+	Title       string
+	Backend     string
+	ProjectPath string
+	Archived    bool
+	CreatedAt   time.Time
+}
+
+// GetRecentSessions returns chat sessions for a project in the given time
+// order, including archived ones. When projectPath is empty it returns sessions
+// across all projects (CLI global browse). limit <= 0 returns all sessions.
+// archiveFilter narrows to active/archived (or all); fromTime/toTime (both
+// optional, "2006-01-02 15:04:05" local text) bound the session creation time;
+// sortOrder selects newest/oldest time ordering (relevance falls back to newest
+// here, since browse mode has no search score).
+//
+// Cursor pagination: pass the last row's created_at (formatted "2006-01-02
+// 15:04:05") and id to fetch the next page. The returned bool reports whether
+// more rows remain after this page.
+func GetRecentSessions(projectPath string, limit int, archiveFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
+	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at
 		FROM chat_sessions s
-		LEFT JOIN chat_history h ON h.session_id = s.id
 		WHERE s.session_type = 'chat'`
 	args := []interface{}{}
 	if projectPath != "" {
 		query += " AND s.project_path = ?"
 		args = append(args, projectPath)
 	}
-	query += " GROUP BY s.id ORDER BY s.created_at DESC, s.id DESC"
+	switch NormalizeSessionArchiveFilter(archiveFilter) {
+	case SessionArchiveFilterActive:
+		query += " AND s.archived = 0"
+	case SessionArchiveFilterArchived:
+		query += " AND s.archived = 1"
+	}
+	if fromTime != "" {
+		query += " AND s.created_at >= ?"
+		args = append(args, fromTime)
+	}
+	if toTime != "" {
+		query += " AND s.created_at <= ?"
+		args = append(args, toTime)
+	}
+	oldestFirst := NormalizeSessionSortOrder(sortOrder) == SessionSortOldest
+	if cursor != "" && cursorID != "" {
+		// Tie-break on id so rows sharing a timestamp are neither skipped nor
+		// duplicated across pages.
+		if oldestFirst {
+			query += " AND (s.created_at > ? OR (s.created_at = ? AND s.id > ?))"
+		} else {
+			query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
+		}
+		args = append(args, cursor, cursor, cursorID)
+	}
+	if oldestFirst {
+		query += " ORDER BY s.created_at ASC, s.id ASC"
+	} else {
+		query += " ORDER BY s.created_at DESC, s.id DESC"
+	}
 	if limit > 0 {
+		// Fetch one extra row to detect whether a further page exists.
 		query += " LIMIT ?"
-		args = append(args, limit)
+		args = append(args, limit+1)
 	}
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -1554,29 +1753,53 @@ func GetRecentSessions(projectPath string, limit int) ([]RecentSession, error) {
 	for rows.Next() {
 		var s RecentSession
 		var archived int
-		var firstContent, firstRole sql.NullString
-		var firstMessageID sql.NullInt64
-		var firstCreatedAt sql.NullTime
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt, &s.MessageCount,
-			&firstContent, &firstRole, &firstMessageID, &firstCreatedAt); err != nil {
-			return nil, err
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.ProjectPath, &archived, &s.CreatedAt); err != nil {
+			return nil, false, err
 		}
 		s.Archived = archived != 0
-		if firstContent.Valid {
-			s.FirstContent = firstContent.String
-		}
-		if firstRole.Valid {
-			s.FirstRole = firstRole.String
-		}
-		if firstMessageID.Valid {
-			s.FirstMessageID = firstMessageID.Int64
-		}
-		if firstCreatedAt.Valid {
-			s.FirstCreatedAt = firstCreatedAt.Time
-		}
 		sessions = append(sessions, s)
 	}
-	return sessions, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := false
+	if limit > 0 && len(sessions) > limit {
+		hasMore = true
+		sessions = sessions[:limit]
+	}
+	return sessions, hasMore, nil
+}
+
+// FirstMessage is the earliest message of a session, used to lazily populate
+// the browse-mode detail preview without loading the whole session.
+type FirstMessage struct {
+	MessageID int64
+	Role      string
+	Content   string
+	CreatedAt time.Time
+}
+
+// GetSessionFirstMessage returns the earliest message of a session (by
+// created_at then id), including archived sessions. Content is returned as
+// plain text. Returns a zero FirstMessage (nil error) when the session has no
+// messages.
+func GetSessionFirstMessage(sessionID string) (*FirstMessage, error) {
+	var msg FirstMessage
+	var content string
+	err := dbRead.QueryRow(
+		`SELECT id, role, content, created_at FROM chat_history
+		 WHERE session_id = ? ORDER BY created_at ASC, id ASC LIMIT 1`,
+		sessionID,
+	).Scan(&msg.MessageID, &msg.Role, &content, &msg.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	msg.Content = ExtractPlainText(content)
+	return &msg, nil
 }
 
 // GetSessionTitle returns the title of an active (non-archived) session.
@@ -1587,6 +1810,17 @@ func GetSessionTitle(sessionID string) (string, error) {
 		return "", err
 	}
 	return title, nil
+}
+
+// GetSessionTitleRenamed reports whether the session title was set manually by
+// the user (title_renamed=1), which suppresses first-message auto-titling.
+func GetSessionTitleRenamed(sessionID string) (bool, error) {
+	var renamed int
+	err := dbRead.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed)
+	if err != nil {
+		return false, err
+	}
+	return renamed == 1, nil
 }
 
 // GetSessionTitlesBatch fetches titles for multiple sessions in a single query.
@@ -2275,6 +2509,10 @@ func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 // Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
 // Returns counts of purged sessions and messages.
+//
+// chat_metadata (the usage ledger) is deliberately left untouched — see
+// HardDeleteSession. Its rows have no foreign key to chat_history, so the
+// usage history for purged sessions remains queryable.
 func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
 	if len(sessionIDs) == 0 {
 		return 0, 0, nil
@@ -2340,6 +2578,11 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 // user-initiated permanent deletion.
 // Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
+//
+// chat_metadata (the usage ledger) is deliberately NOT deleted: it records
+// tokens/cost that were really consumed, and must survive so usage statistics
+// do not under-count. It has no foreign key to chat_history, so removing the
+// history rows leaves it intact.
 func HardDeleteSession(sessionID string) error {
 	tx, err := WriteBegin()
 	if err != nil {
@@ -2377,6 +2620,11 @@ type ReplayMessage struct {
 // the new messages, all in one transaction — on any error the transaction rolls
 // back so the original history is preserved. Returns the number of messages
 // inserted.
+//
+// chat_metadata (the usage ledger) is intentionally NOT deleted. Replayed
+// messages carry no usage data (only {"transport":"acp"}), so replacing the
+// history cannot double-count; keeping the ledger preserves the real token/cost
+// consumed by the messages being replaced.
 func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []ReplayMessage) (int, error) {
 	tx, err := WriteBegin()
 	if err != nil {

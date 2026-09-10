@@ -13,12 +13,22 @@ export const ATTACH_DRAG_MIME = 'application/x-clawbench-attach'
 export interface AttachDragData {
   path: string
   isDir: boolean
+  /** Optional inclusive source line range. When present, dropping attaches the
+   *  file as a RANGE reference (e.g. a mermaid diagram's md code fence), not a
+   *  whole-file reference. */
+  startLine?: number
+  endLine?: number
 }
 
 /** Write the internal attach payload into a drag event's dataTransfer. */
-export function setAttachDragData(dt: DataTransfer, path: string, isDir: boolean) {
+export function setAttachDragData(dt: DataTransfer, path: string, isDir: boolean, startLine?: number, endLine?: number) {
   try {
-    dt.setData(ATTACH_DRAG_MIME, JSON.stringify({ path, isDir } satisfies AttachDragData))
+    const payload: AttachDragData = { path, isDir }
+    if (typeof startLine === 'number' && typeof endLine === 'number') {
+      payload.startLine = startLine
+      payload.endLine = endLine
+    }
+    dt.setData(ATTACH_DRAG_MIME, JSON.stringify(payload))
     dt.setData('text/plain', path)
   } catch {
     // dataTransfer may be unavailable in some synthetic events — ignore
@@ -34,7 +44,12 @@ export function readAttachDragData(dt: DataTransfer | null | undefined): AttachD
     const parsed: unknown = JSON.parse(raw)
     if (parsed && typeof parsed === 'object' && typeof (parsed as AttachDragData).path === 'string') {
       const data = parsed as AttachDragData
-      return { path: data.path, isDir: data.isDir === true }
+      const result: AttachDragData = { path: data.path, isDir: data.isDir === true }
+      if (typeof data.startLine === 'number' && typeof data.endLine === 'number') {
+        result.startLine = data.startLine
+        result.endLine = data.endLine
+      }
+      return result
     }
   } catch {
     // malformed payload — treat as non-internal

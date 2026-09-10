@@ -21,6 +21,20 @@ package ai
 // These appear on both session/update notifications (on the per-variant
 // update._meta) and the PromptResponse._meta.
 
+// costFieldCarriesCredit reports whether a backend's ACP-standard
+// usage_update.cost field actually carries a credit value rather than a
+// monetary cost.
+//
+// CodeBuddy repurposes the standard `cost` field: it ships the turn's credit
+// consumption as cost.amount with an empty currency (the genuine credit is
+// separately available as _meta.usage.credit). Persisting it as
+// chat_metadata.cost_usd would inflate the cost stats with a unit-less credit
+// number, so the ACP cost/currency is discarded at ingestion for this backend.
+// Every other agent reports a real monetary cost (e.g. Claude's USD).
+func costFieldCarriesCredit(backend string) bool {
+	return backend == "codebuddy"
+}
+
 const (
 	metaKeyCodeBuddyUsage        = "usage"
 	metaKeyCodeBuddyByCategory   = "codebuddy.ai/usageByCategory"

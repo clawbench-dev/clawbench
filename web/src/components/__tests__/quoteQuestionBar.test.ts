@@ -369,6 +369,50 @@ describe('QuoteQuestionBar component', () => {
     expect(wrapper.emitted('close')).toBeFalsy()
   })
 
+  it('expands the collapsed bar when Enter is pressed while focus is on body', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    expect(vm.expanded).toBe(false)
+    // Enter dispatched on document.body — target is non-editable (file browsing
+    // keeps focus on the page, not in an input).
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    }))
+    await nextTick()
+    expect(vm.expanded).toBe(true)
+  })
+
+  it('does not expand on Enter when focus is in an editable field', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    expect(vm.expanded).toBe(false)
+    const ta = document.createElement('textarea')
+    document.body.appendChild(ta)
+    // Dispatch ON the textarea so e.target is the editable field (the document
+    // listener bubbles up from it).
+    ta.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    }))
+    await nextTick()
+    expect(vm.expanded).toBe(false)
+    ta.remove()
+  })
+
+  it('does not re-expand on Enter when the bar is already expanded', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    await vm.expand()
+    expect(vm.expanded).toBe(true)
+    // Dispatch Enter on body (non-editable target). Since already expanded, the
+    // document handler returns early — expanded stays true and no send occurs
+    // (the textarea's own @keydown.enter owns sending when it has focus).
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    }))
+    await nextTick()
+    expect(vm.expanded).toBe(true)
+  })
+
   it('renders a plus (add) button in collapsed mode', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.quote-bar-add').exists()).toBe(true)

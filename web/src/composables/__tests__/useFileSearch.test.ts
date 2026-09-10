@@ -52,8 +52,8 @@ describe('useFileSearch', () => {
   it('initializes with default state', () => {
     const { state } = useFileSearch()
     expect(state.query).toBe('')
-    expect(state.recursive).toBe(true)
-    expect(state.scope).toBe('global')
+    expect(state.recursive).toBe(false)
+    expect(state.scope).toBe('current')
     expect(state.results).toEqual([])
     expect(state.searching).toBe(false)
     expect(state.total).toBe(0)
@@ -74,6 +74,7 @@ describe('useFileSearch', () => {
     const { state, startSearch } = useFileSearch()
     state.query = 'main'
     state.scope = 'current'
+    state.recursive = true
     startSearch('src')
     expect(state.searchBasePath).toBe('src')
     expect(state.searching).toBe(true)
@@ -177,13 +178,13 @@ describe('useFileSearch', () => {
     expect(MockEventSource.instances[0].url).toContain('recursive=false')
   })
 
-  it('sends recursive=true in URL by default', () => {
+  it('sends recursive=false in URL by default', () => {
     const { state, startSearch } = useFileSearch()
     state.query = 'test'
     startSearch('')
     vi.advanceTimersByTime(300)
 
-    expect(MockEventSource.instances[0].url).toContain('recursive=true')
+    expect(MockEventSource.instances[0].url).toContain('recursive=false')
   })
 
   it('sends exact=false in URL by default and exact=true when enabled', () => {
@@ -261,5 +262,50 @@ describe('useFileSearch', () => {
     state.scope = 'current'
     startSearch('internal/handler')
     expect(effectiveDir.value).toBe('internal/handler')
+  })
+
+  it('effectiveRecursive is true in global scope even when recursive is off', () => {
+    const { state, effectiveRecursive } = useFileSearch()
+    state.scope = 'global'
+    state.recursive = false
+    expect(effectiveRecursive.value).toBe(true)
+  })
+
+  it('effectiveRecursive follows recursive outside global scope', () => {
+    const { state, effectiveRecursive } = useFileSearch()
+    state.scope = 'current'
+    state.recursive = false
+    expect(effectiveRecursive.value).toBe(false)
+
+    state.recursive = true
+    expect(effectiveRecursive.value).toBe(true)
+  })
+
+  it('global scope sends recursive=true even when the recursive toggle is off', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    state.scope = 'global'
+    state.recursive = false
+    startSearch('')
+    vi.advanceTimersByTime(300)
+
+    expect(MockEventSource.instances[0].url).toContain('recursive=true')
+  })
+
+  it('preserves the user recursive preference when leaving global scope', () => {
+    const { state, startSearch, effectiveRecursive } = useFileSearch()
+    state.query = 'test'
+    state.recursive = false
+    state.scope = 'global'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+    expect(MockEventSource.instances[0].url).toContain('recursive=true')
+
+    // Back to current scope: the explicit preference (false) applies again.
+    state.scope = 'current'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+    expect(effectiveRecursive.value).toBe(false)
+    expect(MockEventSource.instances[1].url).toContain('recursive=false')
   })
 })

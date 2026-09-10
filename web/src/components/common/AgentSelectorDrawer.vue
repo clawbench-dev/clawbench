@@ -31,14 +31,17 @@
         <button v-else class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
         </button>
+        <button class="agent-config-btn" @click.stop="handleOpenAgentConfig(agent.id)" :title="configTitle">
+          <Settings :size="14" />
+        </button>
       </div>
     </div>
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { Bot, Star } from 'lucide-vue-next'
+import { ref, watch, inject } from 'vue'
+import { Bot, Star, Settings } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -46,6 +49,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useAgents } from '@/composables/useAgents'
+import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 
 const { t } = useI18n()
 
@@ -55,11 +59,13 @@ const props = withDefaults(defineProps<{
   title?: string
   defaultBadge?: string
   setDefaultTitle?: string
+  configTitle?: string
 }>(), {
   modelValue: '',
   title: 'Select Agent',
   defaultBadge: 'Default',
   setDefaultTitle: 'Set as default',
+  configTitle: 'Agent settings',
 })
 
 const emit = defineEmits<{
@@ -89,6 +95,19 @@ function handleSelect(agentId: string) {
 
 async function handleSetDefaultAgent(agentId: string) {
   await setDefaultAgent(agentId)
+}
+
+// Deep-link into the settings tab at this agent's detail page. Mirrors the
+// AppHeader "more appearance options" pattern: a module-level pending settings
+// category is set first, then the settings tab is switched to; SettingsPage
+// consumes the request whether it was already mounted or is mounted lazily.
+// The agent selector is closed so it does not linger over the settings page.
+const switchTab = inject<(tab: string) => void>('switchTab', () => {})
+function handleOpenAgentConfig(agentId: string) {
+  if (!agentId) return
+  handleClose()
+  setPendingSettingsCategory(`agents:${agentId}`)
+  switchTab('settings')
 }
 
 function defaultModelName(agentId: string): string {
@@ -238,6 +257,29 @@ watch(() => props.open, async (val) => {
   padding: 1px 5px;
   border-radius: 3px;
   white-space: nowrap;
+}
+
+.agent-config-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+@media (hover: hover) {
+  .agent-config-btn:hover {
+    opacity: 1;
+    background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+  }
 }
 
 @media (hover: hover) {

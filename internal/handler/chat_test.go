@@ -631,6 +631,119 @@ func TestServeSessions_Post_CreateSession(t *testing.T) {
 	assert.Equal(t, "codebuddy", result["backend"])
 }
 
+// TestServeSessions_Post_ExplicitTitleIsLocked verifies that a caller-supplied
+// title is treated as deliberately chosen: the first user message must not
+// replace it. Without the lock, a POST with an explicit title followed by a
+// first message would auto-retitle the session.
+func TestServeSessions_Post_ExplicitTitleIsLocked(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"title": "Chosen By Caller"})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.True(t, renamed, "explicit POST title must be locked")
+
+	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "first message text", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Chosen By Caller", title)
+}
+
+// TestServeSessions_Post_GeneratedTitleNotLocked is the counterpart: when no
+// title is supplied, the generated placeholder must remain auto-titlable.
+func TestServeSessions_Post_GeneratedTitleNotLocked(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	renamed, err := service.GetSessionTitleRenamed(sessionID)
+	require.NoError(t, err)
+	assert.False(t, renamed, "generated placeholder title must stay auto-titlable")
+
+	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "auto generated title", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "auto generated title", title)
+}
+
+// TestServeSessions_Post_InitializesAutoApproveFromAgentDefault verifies the
+// reported bug fix: when the chosen agent is configured with auto-approve in
+// the agent settings panel, a newly created session is persisted with
+// auto_approve=1 so the state survives a frontend reload.
+func TestServeSessions_Post_InitializesAutoApproveFromAgentDefault(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Name: "Auto", Backend: "codebuddy", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"agentId": "auto-agent"})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	assert.True(t, service.GetSessionAutoApprove(sessionID),
+		"POST /api/ai/sessions must persist the agent's auto-approve default into chat_sessions")
+	assert.Equal(t, true, result["autoApprove"],
+		"POST response must expose the persisted autoApprove so the frontend stays server-authoritative")
+}
+
+// TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault guards against
+// the flag being enabled unconditionally.
+func TestServeSessions_Post_AutoApproveStaysOffWithoutAgentDefault(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"agentId": "claude"})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	sessionID, _ := result["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+
+	assert.False(t, service.GetSessionAutoApprove(sessionID),
+		"session with a non-auto-approve agent must stay auto_approve=0")
+	assert.Equal(t, false, result["autoApprove"])
+}
+
 func TestServeSessions_Post_CustomTitleAndBackend(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

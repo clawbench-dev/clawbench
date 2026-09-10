@@ -47,13 +47,15 @@
           </button>
         </div>
       </template>
-      <!-- Tool cards from summaryCards.tools -->
+      <!-- Tool cards from summaryCards.tools (AskUserQuestion only —
+           PermissionApproval is filtered out upstream in summaryTools) -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
-        <!-- AskUserQuestion: unified question card. PermissionApproval keeps pill + detail body. -->
-        <div v-if="shouldAutoExpandTool(tool.name || '') && isAskQuestion(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <!-- Answerable interactive tool: unified card
+             (header strip + body in one box). -->
+        <div v-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
+            <span class="tool-name">{{ unifiedCardTitle(tool.name, tool.input, tool.display_name) }}</span>
             <span v-if="toolCallSummary(tool)" class="tool-summary">{{ toolCallSummary(tool) }}</span>
             <!-- Pending spinner: only meaningful when the tool is actually answerable. -->
             <LoadingIndicator v-if="showAskPending(tool)" class="tool-spinner" size="sm" inline />
@@ -65,14 +67,12 @@
           </div>
         </div>
         <template v-else>
+          <!-- All auto-expand tools render as unified cards above, so this
+               branch only sees click-to-open pills (opens the detail drawer). -->
           <div class="chat-tool-call done" :data-category="getToolIcon(tool.name).category" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ toolDisplayName(tool.name, tool.input, tool.display_name) }}</span>
             <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
-          </div>
-          <!-- Inline detail body for auto-expand tools that are NOT unified cards -->
-          <div v-if="shouldAutoExpandTool(tool.name || '')" class="tool-detail" :data-tool-name="tool.name" @click="handleToolDetailClick" @input="handleToolDetailInput">
-            <div v-html="formatToolInput(tool.input || {}, tool.name, { done: tool.done, status: tool.status, output: tool.output })"></div>
           </div>
         </template>
       </template>
@@ -157,12 +157,12 @@
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
-        <!-- AskUserQuestion: unified question card (status strip + body in one box).
-             PermissionApproval keeps the pill bar + detached detail body. -->
-        <div v-if="shouldAutoExpand(block) && isAskQuestion(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <!-- AskUserQuestion / PermissionApproval: unified interactive card
+             (status strip + body in one box). -->
+        <div v-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), bi)">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-            <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
+            <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
             <!-- Pending spinner: only meaningful when the tool is actually answerable.
                  Malformed AskUserQuestion input (no valid questions) can never be answered,
@@ -189,11 +189,8 @@
             <!-- Done (success or unknown): green check -->
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
           </div>
-          <!-- Inline detail body for auto-expand tools that are NOT unified cards
-               (PermissionApproval) — rendered under the pill bar. -->
-          <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
-            <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
-          </div>
+          <!-- All auto-expand tools render as unified cards above, so this
+               branch only sees click-to-open pills (opens the detail drawer). -->
         </template>
       </template>
       <!-- Error block -->
@@ -312,6 +309,9 @@ import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { updateThinkingUserLeftBottom } from '@/utils/thinkingScroll'
+// Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
+// language, so the styles must be present wherever the chat surfaces render.
+import '@/assets/modal-footer-btn.css'
 import {
   isSevereWarning,
   getWarningText as getWarningTextUtil,
@@ -392,10 +392,29 @@ function shouldAutoExpand(block: any) {
   return shouldAutoExpandTool(block.name || '')
 }
 
-/** True when the tool is AskUserQuestion (case-insensitive) — the only auto-expand
- *  tool rendered as a unified inline card. */
+/** True when the tool is AskUserQuestion (case-insensitive). */
 function isAskQuestion(name: string) {
   return (name || '').toLowerCase() === 'askuserquestion'
+}
+
+/** True when the tool is PermissionApproval (case-insensitive). */
+function isPermissionApproval(name: string) {
+  return (name || '').toLowerCase() === 'permissionapproval'
+}
+
+/** Auto-expand interactive tools rendered as ONE unified inline card:
+ *  header strip + body inside a single bordered box. AskUserQuestion and
+ *  PermissionApproval share this visual language. */
+function isUnifiedCardTool(name: string) {
+  return isAskQuestion(name) || isPermissionApproval(name)
+}
+
+/** Card strip label. AskUserQuestion shows its own tool label; the permission
+ *  card strip announces the request ("Permission Request") while the body
+ *  details the requesting tool + target command/file. */
+function unifiedCardTitle(name: string, input: any, displayName?: string) {
+  if (isPermissionApproval(name)) return t('tool.permission.title')
+  return toolDisplayName(name, input, displayName)
 }
 
 /**
@@ -536,7 +555,11 @@ function scheduledTaskKeys(bi: number) {
 }
 
 // ── Summary-mode structured cards (rendered from summaryCards, no block traversal) ──
-const summaryTools = computed(() => props.summaryCards?.tools || [])
+// PermissionApproval is filtered out: it is an actionable-only card (its buttons
+// need the live session ID + tool call ID, which the read-only summary view does
+// not carry), so in summary mode it would only render dead buttons. Older
+// persisted summaries may still contain it, hence the defensive filter.
+const summaryTools = computed(() => (props.summaryCards?.tools || []).filter((t: any) => !isPermissionApproval(t?.name || '')))
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
@@ -2068,6 +2091,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail.chat-inline-card[data-category="ask"] { --tool-accent: #f97316; }
 :root[data-theme-base="dark"] .content-blocks .tool-detail.chat-inline-card[data-category="ask"] { --tool-accent: #fb923c; }
+.content-blocks .tool-detail.chat-inline-card[data-category="permission"] { --tool-accent: #eab308; }
+:root[data-theme-base="dark"] .content-blocks .tool-detail.chat-inline-card[data-category="permission"] { --tool-accent: #fbbf24; }
 
 /* ── AskUserQuestion card ── */
 :root[data-theme-base="dark"] .content-blocks .chat-tool-call[data-category="ask"] { --tool-accent: #fb923c; }
@@ -2665,150 +2690,118 @@ onUnmounted(() => {
   line-height: 1.5;
 }
 
-/* ── PermissionApproval card ── */
+/* ── PermissionApproval card (body inside the unified inline card) ── */
 .content-blocks .tool-detail .permission-approval-view {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.content-blocks .tool-detail .permission-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #d97706;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-header {
-  color: #fbbf24;
-}
-
-.content-blocks .tool-detail .permission-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.content-blocks .tool-detail .permission-title {
-  color: #d97706;
-  font-weight: 600;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-title {
-  color: #fbbf24;
-}
-
 .content-blocks .tool-detail .permission-tool-name {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
 }
 
 .content-blocks .tool-detail .permission-tool-detail {
-  font-size: 11px;
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
+/* The label lives on its own line ABOVE the content, so a long / multi-line
+   command no longer forces the label (and the row baseline) to span the full
+   content height. */
 .content-blocks .tool-detail .permission-detail-label {
+  align-self: flex-start;
   font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(234, 179, 8, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
   color: #b45309;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   white-space: nowrap;
-  flex-shrink: 0;
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-detail-label {
-  background: rgba(251, 191, 36, 0.15);
+  background: color-mix(in srgb, #fbbf24 16%, var(--bg-secondary));
   color: #fbbf24;
 }
 
 .content-blocks .tool-detail .permission-tool-detail code {
+  display: block;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
   font-size: 11px;
+  line-height: 1.5;
   color: var(--text-primary);
-  word-break: break-all;
+  background: var(--bg-tertiary);
+  border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
+  /* Sharp, hard corners — terminal-like command block. */
+  border-radius: 0;
+  padding: 5px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .content-blocks .tool-detail .permission-options {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.content-blocks .tool-detail .permission-btn {
-  padding: 5px 14px;
-  border: none;
+/* Permission buttons reuse the shared footer pill colour language (.fbtn /
+   .fbtn-success / .fbtn-danger from modal-footer-btn.css) but drop the pill
+   shape for a plain rounded-rect (radius matches the ask-question option
+   blocks in the same card). Only the interaction-state keep-alive stays here. */
+.content-blocks .tool-detail .permission-options .permission-btn {
+  padding: 0 14px;
   border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
 }
 
-.content-blocks .tool-detail .permission-btn-allow {
-  background: #22c55e;
-  color: white;
-}
-
-@media (hover: hover) {
-  .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
-    background: #16a34a;
-  }
-}
-
-.content-blocks .tool-detail .permission-btn-reject {
-  background: #ef4444;
-  color: white;
-}
-
-@media (hover: hover) {
-  .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
-    background: #dc2626;
-  }
-}
-
-.content-blocks .tool-detail .permission-btn:disabled {
+/* Buttons keep their normal shape; disabled buttons get the shared .fbtn
+   opacity treatment only (the JS no longer forces an extra inline opacity). */
+.content-blocks .tool-detail .permission-options .fbtn:disabled {
   opacity: 0.5;
-  cursor: not-allowed;
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-allow {
-  background: #4ade80;
-  color: #1a1a1a;
-}
-
-@media (hover: hover) {
-  :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
-    background: #22c55e;
-  }
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-reject {
-  background: #f87171;
-  color: #1a1a1a;
-}
-
-@media (hover: hover) {
-  :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
-    background: #ef4444;
-  }
-}
-
+/* After a user responds (before the SSE result re-renders the badge), the
+   picked button stays in the SAME soft-tint family as the idle interactive
+   button (baseline for alignment) — it only saturates its border, deepens its
+   tint and swaps to the Approved/Denied label. No solid fill / white text /
+   shape flip, so the picked state reads as the same button, not a different
+   one. opacity: 1 keeps it from being dimmed by the shared .fbtn:disabled
+   rule that fades the unselected siblings. */
 .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
-  background: #22c55e;
+  background: color-mix(in srgb, #16a34a 28%, var(--bg-tertiary));
+  border-color: #16a34a;
+  color: #15803d;
   opacity: 1;
 }
 
 .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
-  background: #ef4444;
+  background: color-mix(in srgb, #ef4444 24%, var(--bg-tertiary));
+  border-color: #ef4444;
+  color: #b91c1c;
   opacity: 1;
+}
+
+:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #22c55e 30%, var(--bg-tertiary));
+  border-color: #22c55e;
+  color: #86efac;
+}
+
+:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
+  background: color-mix(in srgb, #f87171 26%, var(--bg-tertiary));
+  border-color: #f87171;
+  color: #fca5a5;
 }
 
 .content-blocks .tool-detail .permission-result {
@@ -2838,10 +2831,6 @@ onUnmounted(() => {
 :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-result-denied {
   background: #991b1b;
   color: #fee2e2;
-}
-
-.content-blocks .tool-detail .permission-auto-approved .permission-header {
-  opacity: 0.85;
 }
 
 .content-blocks .tool-detail .permission-result-auto-approved {

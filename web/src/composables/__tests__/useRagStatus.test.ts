@@ -15,7 +15,7 @@ describe('useRagStatus', () => {
     vi.mocked(apiGet).mockResolvedValue({
       available: false, mode: 'none', has_fts_data: false, has_vec_data: false,
       embedder_healthy: false, total_messages: 0, indexed_messages: 0,
-      embedded_messages: 0,
+      embedded_messages: 0, fts_size_bytes: 0, vec_size_bytes: 0,
     })
   })
 
@@ -34,6 +34,8 @@ describe('useRagStatus', () => {
       total_messages: 100,
       indexed_messages: 80,
       embedded_messages: 60,
+      fts_size_bytes: 2048,
+      vec_size_bytes: 1048576,
     }
     vi.mocked(apiGet).mockResolvedValue(mockStatus)
 
@@ -44,6 +46,8 @@ describe('useRagStatus', () => {
     expect(status.value.total_messages).toBe(100)
     expect(status.value.indexed_messages).toBe(80)
     expect(status.value.embedded_messages).toBe(60)
+    expect(status.value.fts_size_bytes).toBe(2048)
+    expect(status.value.vec_size_bytes).toBe(1048576)
     expect(status.value.embedder_healthy).toBe(true)
     expect(status.value.mode).toBe('hybrid')
   })

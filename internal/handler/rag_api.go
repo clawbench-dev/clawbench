@@ -5,13 +5,94 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 )
+
+// normalizeCursorTime converts a frontend cursor timestamp to the format SQLite
+// stores in chat_sessions.created_at ("2006-01-02 15:04:05"). The frontend
+// sends RFC3339 (e.g. "2026-05-16T15:25:50Z"); the T separator and zone suffix
+// would otherwise make the lexicographic comparison miss.
+func normalizeCursorTime(cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	cursor = strings.ReplaceAll(cursor, "T", " ")
+	cursor = strings.TrimSuffix(cursor, "Z")
+	cursor = strings.TrimSuffix(cursor, "+00:00")
+	return cursor
+}
+
+// normalizeTimeBound converts a frontend time-range bound into the UTC
+// "2006-01-02 15:04:05" text SQLite compares created_at against.
+//
+// Note the two search paths apply the window to different columns: search mode
+// filters rag_chunks.created_at (when the matching message was written), while
+// browse mode filters chat_sessions.created_at (when the session was created).
+// A session created months ago whose only match is today therefore appears in
+// search mode but not in browse mode. This mirrors the two modes' semantics —
+// browse lists sessions, search lists matches — and is called out in the spec.
+//
+// The stored timestamps are UTC, not local:
+//   - chat_sessions.created_at is filled by DEFAULT CURRENT_TIMESTAMP, which
+//     SQLite evaluates in UTC ("2026-09-10 12:12:54").
+//   - rag_chunks.created_at is bound from a time.Time, which the modernc driver
+//     renders as UTC with a suffix ("2026-09-10 12:16:35 +0000 UTC").
+//
+// The user picks days in their own calendar, so a date-only bound is read as a
+// local day and converted to the matching UTC instant. Parsing it with
+// time.Parse would silently use UTC and shift the window by the zone offset —
+// in UTC+8 the "today" preset would span local 08:00 → next-day 07:59 and drop
+// every session created in the local small hours.
+//
+// Two input shapes are accepted:
+//   - date-only "2024-03-01" (from <input type="date">): `endOfDay` expands it
+//     to the last second of that local day so the whole day is included;
+//     otherwise it becomes the start of the local day.
+//   - RFC3339 "2024-03-01T10:00:00Z": an absolute instant, converted to UTC.
+//
+// Unparseable input is returned trimmed so callers never bind garbage that
+// would silently match nothing.
+func normalizeTimeBound(value string, endOfDay bool) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	const layout = "2006-01-02 15:04:05"
+	// An upper bound gets a literal fractional suffix so it sorts after a row
+	// whose text continues past the second — rag_chunks stores
+	// "…15:59:59 +0000 UTC", which is lexicographically greater than a bare
+	// "…15:59:59" and would otherwise drop the final second of the range.
+	// A literal, not a ".999999" format verb: Go omits trailing zeros, so the
+	// verb would emit the bare second and defeat the purpose.
+	const endSuffix = ".999999"
+	render := func(t time.Time) string {
+		if endOfDay {
+			return t.UTC().Format(layout) + endSuffix
+		}
+		return t.UTC().Format(layout)
+	}
+
+	if t, err := time.ParseInLocation("2006-01-02", value, time.Local); err == nil {
+		if endOfDay {
+			// Expand to the last second of the selected local day. AddDate (not
+			// Add 24h) so a DST transition day still lands on the next local
+			// midnight before stepping back.
+			t = t.AddDate(0, 0, 1).Add(-time.Second)
+		}
+		return render(t)
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return render(t)
+	}
+	return value
+}
 
 // ragResetting prevents concurrent reset requests.
 var ragResetting atomic.Bool
@@ -309,6 +390,10 @@ func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The store's dimension changed out of band; let the indexer re-sync on its
+	// next health check instead of trusting its stale latch.
+	rag.ResetIndexerDimensionSync()
+
 	// Reset all messages' indexed flag so indexer will re-process them
 	affected, err := service.ResetAllIndexed()
 	if err != nil {
@@ -322,6 +407,45 @@ func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":         "ok",
 		"messages_reset": affected,
+	})
+}
+
+// ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — full-text index rebuild
+// that is independent of the vector layer: it regenerates rag_chunks_fts from the
+// existing chunk text without re-chunking, re-embedding, or resetting message
+// indexed flags. Vector embeddings and chunk rows are left untouched.
+//
+// No project-scoping: the RAG store is shared across all projects, so the FTS
+// index is rebuilt globally (same rationale as ServeRAGReset).
+func ServeRAGRebuildFTS(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	if rag.GlobalStore == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
+		return
+	}
+
+	// Prevent concurrent resets/rebuilds
+	if ragResetting.Swap(true) {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
+		return
+	}
+	defer ragResetting.Store(false)
+
+	chunksRebuilt, err := rag.GlobalStore.RebuildFTS()
+	if err != nil {
+		slog.Error("rag: fts rebuild failed", slog.String("err", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
+		return
+	}
+
+	slog.Info("rag: fts rebuild triggered", slog.Int64("chunks_rebuilt", chunksRebuilt))
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":         "ok",
+		"chunks_rebuilt": chunksRebuilt,
 	})
 }
 
@@ -358,6 +482,10 @@ func ServeRAGResetVector(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
 		return
 	}
+
+	// The store's dimension changed out of band; let the indexer re-sync on its
+	// next health check instead of trusting its stale latch.
+	rag.ResetIndexerDimensionSync()
 
 	slog.Info("rag: vector rebuild triggered", slog.Int64("chunks_reset", chunksReset))
 
@@ -404,6 +532,16 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	hasVecData := embeddedMessages > 0 && vectorEnabled
 
+	// Per-index disk footprint. Best-effort: dbstat may be unavailable, in
+	// which case sizes stay at 0 and the UI simply hides them.
+	var ftsBytes, vecBytes int64
+	if rag.GlobalStore != nil {
+		ftsBytes, vecBytes, err = rag.GlobalStore.IndexDiskUsage()
+		if err != nil {
+			slog.Warn("rag: failed to compute index disk usage", slog.String("err", err.Error()))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"available":         hasFTSData || hasVecData,
 		"mode":              mode,
@@ -413,7 +551,63 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 		"total_messages":    totalMessages,
 		"indexed_messages":  indexedMessages,
 		"embedded_messages": embeddedMessages,
+		"fts_size_bytes":    ftsBytes,
+		"vec_size_bytes":    vecBytes,
 	})
+}
+
+// ServeRAGSessionFirstMessage handles GET /api/rag/session-first-message?session_id=<id>
+// — lazily returns the earliest message of a session for the session-search
+// browse detail view. The browse list intentionally omits message content for
+// performance, so the detail preview is fetched on demand. Archived sessions
+// are supported. Project isolation: remote requires the project cookie.
+func ServeRAGSessionFirstMessage(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projectPath := middleware.GetProjectFromCookie(r)
+	if projectPath == "" && !middleware.IsLocalhost(r) {
+		writeLocalizedError(w, r, model.Forbidden(model.ErrProjectNotSet, "NoProjectSelected"))
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	// Verify the session belongs to the authenticated project (skip for
+	// localhost global access). Archived sessions are allowed.
+	if projectPath != "" {
+		sessionProject := service.GetSessionProjectPathIncludeArchived(sessionID)
+		if sessionProject == "" || sessionProject != projectPath {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+	}
+
+	msg, err := service.GetSessionFirstMessage(sessionID)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "MessageNotFound")
+		return
+	}
+
+	resp := struct {
+		MessageID int64      `json:"message_id"`
+		Role      string     `json:"role"`
+		Content   string     `json:"content"`
+		CreatedAt *time.Time `json:"created_at"`
+	}{}
+	if msg != nil {
+		resp.MessageID = msg.MessageID
+		resp.Role = msg.Role
+		resp.Content = msg.Content
+		resp.CreatedAt = &msg.CreatedAt
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ServeRAGSessionSearch handles POST /api/rag/session-search — session-aggregated RAG search.
@@ -437,20 +631,33 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		FromTime         string `json:"from"`
 		ToTime           string `json:"to"`
 		PreferMode       string `json:"prefer_mode"`
+		Archived         string `json:"archived"`
+		SortOrder        string `json:"sort"`
+		Cursor           string `json:"cursor"`
+		CursorID         string `json:"cursor_id"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+
+	// Normalize the time-range bounds once: date-only inputs expand to the
+	// start/end of the selected day in local time, RFC3339 inputs convert to
+	// local, so both line up with the "2006-01-02 15:04:05" text SQLite stores.
+	fromTime := normalizeTimeBound(req.FromTime, false)
+	toTime := normalizeTimeBound(req.ToTime, true)
 
 	searchLimit := model.ConfigInstance.RAG.SearchLimit
 	if searchLimit <= 0 {
 		searchLimit = 100
 	}
 
-	// Empty query → "browse all" mode: list the project's sessions newest-first
-	// instead of rejecting the request.
+	// Empty query → "browse all" mode: list the project's sessions instead of
+	// rejecting the request. Archive filter, time range, time sort and cursor
+	// pagination apply here too. The frontend requests pages of searchLimit rows
+	// and scrolls to load more, so there is no hard cap on the number shown.
 	if req.Query == "" {
-		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit)
+		cursor := normalizeCursorTime(req.Cursor)
+		result, err := rag.RecentSessions(r.Context(), projectPath, searchLimit, req.Archived, req.SortOrder, fromTime, toTime, cursor, req.CursorID)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGSearchFailed")
 			return
@@ -471,9 +678,11 @@ func ServeRAGSessionSearch(w http.ResponseWriter, r *http.Request) {
 		Role:             req.Role,
 		SessionID:        req.SessionID,
 		ExcludeSessionID: req.ExcludeSessionID,
-		FromTime:         req.FromTime,
-		ToTime:           req.ToTime,
+		FromTime:         fromTime,
+		ToTime:           toTime,
 		PreferMode:       req.PreferMode,
+		Archived:         req.Archived,
+		SortOrder:        req.SortOrder,
 	}
 
 	result, err := rag.RAGSessionSearch(r.Context(), rag.GlobalStore, rag.GlobalEmbedder, params, searchLimit, searchPoolSize)

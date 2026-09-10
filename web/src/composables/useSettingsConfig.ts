@@ -6,6 +6,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { resolveThemeId, applyThemeAttributes } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
+import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
 
@@ -332,7 +333,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
   wallpaperBlur: 0,
-  wallpaperEdgeFade: false,
+  // Edge fade is ON by default: users who never touched the toggle (or never
+  // migrated a legacy value) get the soft blended border out of the box.
+  // Previously persisted `false` values are left untouched (no forced override).
+  wallpaperEdgeFade: true,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -477,6 +481,7 @@ export async function patchAgentField(agentId: string, field: string, value: str
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     sort_order: 'sortOrder',
+    auto_approve: 'autoApprove',
     // name, specialty map to themselves
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
@@ -500,6 +505,31 @@ function getAgentThinkingPref(agentId: string): string | null {
   const { getAgent } = useAgents()
   const agent = getAgent(agentId)
   return agent?.preferredThinkingEffort || null
+}
+
+/**
+ * Extract the flat, hot-reloadable limits from the nested /api/config response
+ * and mirror them into the global store.
+ *
+ * /api/config returns `{ session: { max_count }, chat: { page_size, ... },
+ * upload: { max_size_mb, max_files }, recent_projects: { max_count } }`, while
+ * the store fields (and /api/roots) use flat names. This bridges the two so a
+ * settings PATCH applies without a page reload.
+ */
+export function syncServerLimits(data: Record<string, unknown>): void {
+  const pick = (section: unknown, field: string): number | undefined => {
+    if (section == null || typeof section !== 'object') return undefined
+    const v = (section as Record<string, unknown>)[field]
+    return typeof v === 'number' ? v : undefined
+  }
+  applyServerLimits({
+    sessionMaxCount: pick(data.session, 'max_count'),
+    recentProjectsMaxCount: pick(data.recent_projects, 'max_count'),
+    chatInitialMessages: pick(data.chat, 'initial_messages'),
+    chatPageSize: pick(data.chat, 'page_size'),
+    uploadMaxSizeMB: pick(data.upload, 'max_size_mb'),
+    uploadMaxFiles: pick(data.upload, 'max_files'),
+  })
 }
 
 export function useSettingsConfig() {
@@ -529,6 +559,11 @@ export function useSettingsConfig() {
     try {
       const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
+      // Mirror hot-reloadable limits into the global store so client-side
+      // pre-checks (session-limit guard, upload size/count) and the session
+      // header reflect a settings change immediately instead of only after a
+      // page reload (which re-runs loadProject → /api/roots).
+      syncServerLimits(data)
     } catch {
       // Server may be unreachable — keep existing cached values
     }

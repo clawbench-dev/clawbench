@@ -118,6 +118,31 @@ export function useChatStream(options: UseChatStreamOptions) {
     isSubscribed = true
   }
 
+  /**
+   * Re-establish the WS subscription for a session even when the frontend
+   * already believes it is subscribed. subscribe() dedupes (same session →
+   * no-op), so it cannot repair a subscription the SERVER side dropped — e.g.
+   * the backend cleared the StreamHub subscriber when the App-mode WS was
+   * disconnected on background, or a connection-replace race wiped it. A fresh
+   * `subscribe` message makes the server's OnSubscribe re-emit the running
+   * stream's state (stream_start + ACP state), exactly like switching away and
+   * back does.
+   *
+   * If the WS is not OPEN yet (send drops the message silently), the
+   * subscribedSessionId/isSubscribed flags are already set, so the existing
+   * watch(connected) false→true handler re-sends one subscribe — no pending
+   * flag needed.
+   */
+  function resubscribe(sessionId: string | null) {
+    if (!sessionId) return
+    if (isSubscribed && subscribedSessionId && subscribedSessionId !== sessionId) {
+      sendWsMessage({ type: 'unsubscribe', session_id: subscribedSessionId })
+    }
+    sendWsMessage({ type: 'subscribe', session_id: sessionId })
+    subscribedSessionId = sessionId
+    isSubscribed = true
+  }
+
   /** Unsubscribe from the current session (idempotent). */
   function unsubscribe() {
     if (isSubscribed && subscribedSessionId) {
@@ -704,6 +729,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     connectStream,
     disconnectStream,
     subscribe,
+    resubscribe,
     unsubscribe,
     ensureStreamingPlaceholder,
     cancelStream,

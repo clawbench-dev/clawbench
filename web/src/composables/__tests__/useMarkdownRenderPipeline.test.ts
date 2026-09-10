@@ -5,6 +5,7 @@ import {
   buildMarkdownPreviewDom,
   createFixLocalImagePaths,
 } from '@/composables/useMarkdownRenderPipeline'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { setShareToken } from '@/share/shareMode'
 
 configureMarkedRenderer()
@@ -14,8 +15,17 @@ describe('createFixLocalImagePaths', () => {
     const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isPC: true })
     const html = '<p><img src="assets/a.png" alt="a"></p>'
     const out = fix(html)
-    expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&w=1200"')
+    expect(out).toContain('src="/api/file/thumb?path=docs/assets/a.png&amp;w=1200"')
     expect(out).toContain('data-full-src="/api/local-file/docs/assets/a.png?t=42"')
+    // data-attach-src carries the resolved project-relative path for re-drag
+    expect(out).toContain('data-attach-src="docs/assets/a.png"')
+    // Local image is lifted into an image block with a header bar (view /
+    // attach / open buttons) — uniform across mobile and PC.
+    expect(out).toContain('image-block-wrapper')
+    expect(out).toContain('image-block-header')
+    expect(out).toContain('image-block-view-btn')
+    expect(out).toContain('image-block-attach-btn')
+    expect(out).toContain('image-block-open-btn')
   })
 
   it('keeps external URLs untouched', () => {
@@ -24,6 +34,11 @@ describe('createFixLocalImagePaths', () => {
       const out = fix(`<img src="${src}">`)
       expect(out).toContain(`src="${src}"`)
       expect(out).not.toContain('/api/')
+      // External / data: images have no local file to re-drag — no attach data
+      expect(out).not.toContain('data-attach-src')
+      // Still lifted into a block wrapper, but only the view button applies.
+      expect(out).toContain('image-block-wrapper')
+      expect(out).not.toContain('image-block-attach-btn')
     }
   })
 
@@ -32,6 +47,7 @@ describe('createFixLocalImagePaths', () => {
     const out = fix('<img src="anim.gif">')
     expect(out).toContain('src="/api/local-file/docs/anim.gif?t=7"')
     expect(out).not.toContain('/api/file/thumb')
+    expect(out).toContain('data-attach-src="docs/anim.gif"')
     // Mobile width 640 for non-PC
     const pc = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: true })
     expect(pc('<img src="p.png">')).toContain('w=1200')
@@ -43,14 +59,39 @@ describe('createFixLocalImagePaths', () => {
     // ../ popped → a/c; CJK/space percent-encoded by segment.
     expect(out).toContain('path=a/c/%E5%9B%BE%20d.png')
     expect(out).not.toContain('../')
-    expect(out).not.toContain('图')
+    // data-attach-src is the DECODED project-relative path (FileEntry.path form)
+    expect(out).toContain('data-attach-src="a/c/图 d.png"')
   })
 
-  it('wraps every image in a lightbox span', () => {
+  it('wraps every image in an image-block figure', () => {
     const fix = createFixLocalImagePaths({ baseDir: '', imageTimestamp: 1, isPC: true })
     const out = fix('<img src="x.png"><img src="https://y.com/z.png">')
-    expect(out).toContain('lightbox-img-wrap')
+    expect(out).toContain('image-block-wrapper')
+    expect(out.match(/image-block-wrapper/g)).toHaveLength(2)
+    // Each image keeps its lightbox-img class for lightbox/drag activation.
     expect(out.match(/lightbox-img-wrap/g)).toHaveLength(2)
+  })
+
+  it('injects attach/open buttons only for local images (data-attach-src)', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<img src="a.png"><img src="https://x.com/b.png"><img src="data:image/png;base64,abc">')
+    // Local raster → thumbnail; only its figure has attach + open buttons.
+    expect(out.match(/image-block-attach-btn/g)).toHaveLength(1)
+    expect(out.match(/image-block-open-btn/g)).toHaveLength(1)
+    // External / data: images get only the view button.
+    expect(out.match(/image-block-view-btn/g)).toHaveLength(3)
+  })
+
+  it('HTML-escapes data-attach-src so decoded filenames cannot break the attribute', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    // A percent-encoded quote+onerror decodes into the path attribute. It must
+    // stay escaped inside data-attach-src — never break out into new attributes.
+    const out = fix('<img src="we%22onerror%3D%22alert(1).png">')
+    expect(out).toContain('data-attach-src="docs/we&quot;onerror=&quot;alert(1).png"')
+    // The src stays segment-encoded (quotes not present), so no literal
+    // attribute breakout can occur anywhere in the rewritten tag.
+    expect(out).toContain('src="/api/local-file/docs/we%22onerror%3D%22alert(1).png')
+    expect(out).not.toContain('onerror="')
   })
 
   it('emits token-scoped full-size URLs and skips thumbnails in share mode', () => {
@@ -62,6 +103,13 @@ describe('createFixLocalImagePaths', () => {
       expect(out).toContain('src="/api/share/tokabc/local/docs/assets/a.png?t=42"')
       expect(out).not.toContain('/api/file/thumb')
       expect(out).not.toContain('/api/local-file/')
+      // Share has no chat / local file actions — the block header carries only
+      // the lightbox view button (no attach / open).
+      expect(out).toContain('image-block-wrapper')
+      expect(out).toContain('image-block-header')
+      expect(out).toContain('image-block-view-btn')
+      expect(out).not.toContain('image-block-attach-btn')
+      expect(out).not.toContain('image-block-open-btn')
     } finally {
       setShareToken(null)
     }
@@ -74,7 +122,7 @@ describe('createFixLocalImagePaths', () => {
       // /home/user/proj/test/markdown/images-demo.md referencing ../images/…
       const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 7, isPC: true })
       const out = fix('<img src="../images/pic.jpg" alt="p">')
-      expect(out).toContain('src="/api/share/tokabs/local?path=%2Fhome%2Fuser%2Fproj%2Ftest%2Fmarkdown%2F..%2Fimages%2Fpic.jpg&t=7"')
+      expect(out).toContain('src="/api/share/tokabs/local?path=%2Fhome%2Fuser%2Fproj%2Ftest%2Fmarkdown%2F..%2Fimages%2Fpic.jpg&amp;t=7"')
       expect(out).not.toContain('/local-file')
       expect(out).not.toContain('/file/thumb')
     } finally {
@@ -92,6 +140,35 @@ describe('createFixLocalImagePaths', () => {
       setShareToken(null)
     }
   })
+
+  it('promotes a solo-paragraph image out of its <p> into a block figure', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<p><img src="a.png" alt="a"></p>')
+    // <p> removed entirely; the figure is a sibling block.
+    expect(out).not.toContain('<p>')
+    expect(out).toMatch(/^<div class="image-block-wrapper">/)
+    expect(out).toContain('</div>')
+  })
+
+  it('splits a paragraph that has text on both sides of an image', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<p>before <img src="a.png"> after</p>')
+    // Leading text stays in the first <p>, trailing text becomes its own <p>.
+    expect(out).toContain('<p>before </p>')
+    expect(out).toContain('<p> after</p>')
+    const figureStart = out.indexOf('image-block-wrapper')
+    const leadEnd = out.indexOf('</p>')
+    const trailStart = out.lastIndexOf('<p>')
+    expect(figureStart).toBeGreaterThan(leadEnd)
+    expect(trailStart).toBeGreaterThan(figureStart)
+  })
+
+  it('blockifies an image nested inside a table cell', () => {
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const out = fix('<table><tr><td><img src="a.png"></td></tr></table>')
+    expect(out).toContain('<td><div class="image-block-wrapper">')
+    expect(out).toContain('image-block-header')
+  })
 })
 
 describe('buildMarkdownPreviewDom', () => {
@@ -101,9 +178,10 @@ describe('buildMarkdownPreviewDom', () => {
   it('renders headings with deduplicated ids (like markedConfig)', () => {
     const md = '# Intro\n\n# Intro\n\n## Setup'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
-    expect(html).toContain('<h1 id="intro">')
-    expect(html).toContain('<h1 id="intro-2">')
-    expect(html).toContain('<h2 id="setup">')
+    // ids are preserved; opening tags may carry a data-source-line attribute
+    expect(html).toContain('id="intro"')
+    expect(html).toContain('id="intro-2"')
+    expect(html).toContain('id="setup"')
   })
 
   it('wraps tables and injects row attributes', () => {
@@ -126,7 +204,8 @@ describe('buildMarkdownPreviewDom', () => {
   it('renders mermaid fenced blocks as pre.mermaid', () => {
     const md = '```mermaid\ngraph TD; A-->B\n```'
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
-    expect(html).toContain('<pre class="mermaid">')
+    // opening tag may carry a data-source-line / data-source-end attribute
+    expect(html).toMatch(/<pre class="mermaid"( data-source-line="\d+")?( data-source-end="\d+")?>/)
   })
 
   it('resolves relative image paths through fixImagePaths + lightbox wrap', () => {
@@ -134,6 +213,7 @@ describe('buildMarkdownPreviewDom', () => {
     const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
     expect(html).toContain('lightbox-img-wrap')
     expect(html).toContain('/api/file/thumb?path=img/x.png&amp;w=1200')
+    expect(html).toContain('data-attach-src="img/x.png"')
   })
 
   it('reports detected file paths for later verification', () => {
@@ -172,5 +252,95 @@ describe('buildMarkdownPreviewDom', () => {
     } finally {
       setShareToken(null)
     }
+  })
+})
+
+describe('data-source-line through the full markdown preview pipeline', () => {
+  it('annotates block elements with their 1-based source lines', () => {
+    const md = [
+      '# 标题', '',
+      '第一段。', '',
+      '- 甲', '- 乙', '',
+      '| a | b |', '|---|---|', '| 1 | 2 |', '',
+      '```js', 'const x = 1', '```', '',
+      '尾部',
+    ].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'x.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('<p data-source-line="3">')
+    expect(html).toContain('<ul data-source-line="5">')
+    expect(html).toContain('table data-source-line="8"')
+    expect(html).toContain('<pre data-source-line="12" data-source-end="14">')
+    // table stays wrapped in .table-wrap despite carrying the attribute
+    expect(html).toMatch(/table-wrap"><table data-source-line="8"/)
+  })
+
+  it('preserves line anchors for content that protectMarkdown rewrites (math, code)', () => {
+    // fenced code and math are protected then restored with the same row count.
+    const md = ['第一行', '', '```', '$x_i$', '```', '', '公式 $a_{i}$ 结尾'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    // paragraph 1 at line 1, code block starts line 3 (ends line 5), math paragraph at line 7
+    expect(html).toContain('<p data-source-line="1">')
+    expect(html).toContain('<pre data-source-line="3" data-source-end="5">')
+    expect(html).toContain('data-source-line="7"')
+    expect(html).not.toContain('\x00')
+    expect(html).not.toContain('MATH')
+  })
+
+  it('keeps line numbers correct after MULTI-LINE display math (row-count preservation)', () => {
+    // 8 source lines; the $$..$$ block spans lines 3-6.
+    const md = ['标题', '', '$$', 'a=b', 'c=d', '$$', '', '结尾段落'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<p data-source-line="1">')
+    // The block after the formula must be line 8 (not shifted by the 3 rows
+    // the placeholder would otherwise have collapsed).
+    expect(html).toContain('data-source-line="8"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('keeps line numbers correct after multi-line \\[...\\] display math', () => {
+    const md = ['a', '', '\\[', 'x=y', '\\]', '', 'b'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('data-source-line="1"')
+    expect(html).toContain('data-source-line="7"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('keeps line numbers aligned with the file when the source starts with blank lines', () => {
+    // 2 leading blank lines: a real file line 3 is the first heading.
+    const md = ['', '', '# 标题', '', '第二行内容'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'lead.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<h1 id="标题" data-source-line="3">')
+    expect(html).toContain('<p data-source-line="5">')
+  })
+
+  it('keeps correct lines for fenced code that contains math (math inside code is not folded)', () => {
+    // The $$ inside a fenced code block is code text — protectMarkdown leaves it
+    // in the restored multi-line code, so following lines must not shift.
+    const md = ['a', '', '```', '$$x=y$$', 'b', '```', '', 'c'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'c.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<p data-source-line="1">')
+    expect(html).toContain('<pre data-source-line="3" data-source-end="6">')
+    // c is on file line 8 (paragraph 1, blank 2, code 3-6, blank, c)
+    expect(html).toContain('data-source-line="8"')
+  })
+
+  it('keeps correct lines for display math directly after a heading', () => {
+    const md = ['## H', '', '$$', 'x', 'y', '$$', '', 'z'].join('\n')
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'd.md' }, { isPC: true, imageTimestamp: 1 })
+    expect(html).toContain('<h2 id="h" data-source-line="1">')
+    // z is on file line 8.
+    expect(html).toContain('data-source-line="8"')
+    expect(html).not.toContain('\x00')
+  })
+
+  it('skipKatex streaming keeps line anchors and leaks no NULs on multi-line display math', () => {
+    const md = ['a', '', '$$', 'x', 'y', '$$', '', 'b'].join('\n')
+    const html = renderMarkdownHtml(md, { skipKatex: true })
+    // Multi-line formula is restored to escaped source with row padding intact.
+    expect(html).not.toContain('\x00')
+    expect(html).not.toContain('MATH')
+    // The block after the formula is on file line 8 ($$..$$ spans lines 3-6).
+    expect(html).toContain('data-source-line="8"')
   })
 })

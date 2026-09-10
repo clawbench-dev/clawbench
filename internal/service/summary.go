@@ -31,7 +31,8 @@ func summarizeMessageOnce(targetID int64, blocks []model.ContentBlock, projectPa
 
 // summarizeMessage extracts the last answer text and saves it as a reading
 // summary for a chat message, without any AI call or length threshold.
-// Cards (AskUserQuestion, permission approval tools) are extracted unchanged.
+// Cards (AskUserQuestion only — PermissionApproval is deliberately excluded, see
+// isSummaryCardTool) are extracted unchanged.
 // Both interactive chat (triggerChatSummarization, backfillMissingSummaries)
 // and scheduled tasks (executeTask) route through this function.
 // Returns an error when the summary could not be saved; async callers discard

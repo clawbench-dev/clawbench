@@ -101,6 +101,12 @@ describe('useUpgrade', () => {
     // Reset localStorage and sessionStorage
     localStorage.clear()
     sessionStorage.clear()
+
+    // Reset module-level singleton state that is not covered by clearAllMocks.
+    const upgrade = useUpgrade()
+    upgrade.state.error_code = ''
+    upgrade.installWritable.value = true
+    upgrade.installDir.value = ''
   })
 
   // ── checkUpgrade ──
@@ -160,6 +166,35 @@ describe('useUpgrade', () => {
       expect(upgrade.hasUpgrade.value).toBe(false)
       expect(upgrade.checking.value).toBe(false)
     })
+
+    it('records install_writable and install_dir from the response', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        install_writable: false,
+        install_dir: '/usr/local/bin',
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.installWritable.value).toBe(false)
+      expect(upgrade.installDir.value).toBe('/usr/local/bin')
+    })
+
+    it('defaults to writable when the fields are absent (older server)', async () => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+      })
+
+      const upgrade = useUpgrade()
+      await upgrade.checkUpgrade()
+
+      expect(upgrade.installWritable.value).toBe(true)
+    })
   })
 
   // ── startUpgrade ──
@@ -192,6 +227,18 @@ describe('useUpgrade', () => {
       await upgrade.startUpgrade()
 
       expect(sessionStorage.getItem('clawbench-upgrade-reloaded')).toBeNull()
+    })
+
+    it('clears a previous failure so a stale error_code cannot mislabel the retry', async () => {
+      const upgrade = useUpgrade()
+      upgrade.state.error_code = 'install_dir_not_writable'
+      upgrade.state.error = 'old failure'
+      mockApiPost.mockResolvedValue({})
+
+      await upgrade.startUpgrade()
+
+      expect(upgrade.state.error_code).toBe('')
+      expect(upgrade.state.error).toBe('')
     })
   })
 

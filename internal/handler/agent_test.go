@@ -308,6 +308,56 @@ func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
 	assert.Equal(t, "high", preferredThinking)
 }
 
+func TestAgentPatch_AutoApprove(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Enable auto-approve default
+	body := map[string]any{
+		"id":           "codebuddy",
+		"auto_approve": true,
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// In-memory agent updated
+	assert.True(t, model.Agents["codebuddy"].AutoApprove)
+
+	// DB updated
+	var autoApprove int
+	err := service.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
+	require.NoError(t, err)
+	assert.Equal(t, 1, autoApprove)
+
+	// Disable again
+	body["auto_approve"] = false
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, model.Agents["codebuddy"].AutoApprove)
+	err = service.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
+	require.NoError(t, err)
+	assert.Equal(t, 0, autoApprove)
+}
+
+func TestAgentPatch_AutoApprove_InvalidType(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Non-boolean auto_approve must be rejected
+	body := map[string]any{
+		"id":           "codebuddy",
+		"auto_approve": "yes",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

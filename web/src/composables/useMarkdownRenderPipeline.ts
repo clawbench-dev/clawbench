@@ -19,7 +19,9 @@
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '@/utils/path.ts'
+import { escapeHtml } from '@/utils/html.ts'
 import { isThumbExtension, buildThumbUrl, getThumbWidth } from '@/utils/chatRenderUtils.ts'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
 
@@ -67,8 +69,8 @@ export interface FixLocalImagePathsOptions {
  * - raster formats the thumb endpoint can decode (png/jpg/jpeg) get a lightweight
  *   JPEG thumbnail inline src (`/api/file/thumb?path=…&w=…`) plus the original
  *   URL kept in `data-full-src` for the lightbox;
- * - every <img> is wrapped in a `.lightbox-img-wrap` span so the exported HTML
- *   gets the same hover-to-expand affordance as the preview.
+ * - every <img> is lifted into a block-level `.image-block-wrapper` figure with a
+ *   header bar (view / attach / open buttons) — uniform across mobile and PC.
  */
 export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html: string) => string {
     const { baseDir, imageTimestamp, isPC } = opts
@@ -115,16 +117,28 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // it when the source file changes) and keep the full image for the lightbox.
             // Other formats (svg/webp/gif/… ) keep serving the original full-size file.
             const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, getThumbWidth(isPC)) : null
+            // data-attach-src carries the DECODED project-relative file path (resolved
+            // against the markdown file's dir) so the rendered view can re-drag the
+            // image out onto the chat column as a reference attachment. The decoded
+            // form matches the FileEntry.path convention used by the file manager /
+            // file header drags — the src URLs above keep the segment-encoded form.
+            // The decoded value is HTML-escaped before interpolation: decodeURIComponent
+            // can surface quote/angle characters (e.g. a literal %22 filename) that
+            // would otherwise break out of the attribute on the rendered page.
+            let attachPath = rel
+            try { attachPath = decodeURIComponent(rel) } catch { /* rel is always encodeURIComponent output, keep as-is */ }
+            const attachAttr = ` data-attach-src="${escapeHtml(attachPath)}"`
             const replacement = thumbSrc
-                ? `src="${thumbSrc}" data-full-src="${fullSrc}"`
-                : `src="${fullSrc}"`
+                ? `src="${thumbSrc}" data-full-src="${fullSrc}"${attachAttr}`
+                : `src="${fullSrc}"${attachAttr}`
             return match.replace(`src="${src}"`, replacement)
         })
-        // Add lightbox-img class to all <img> tags for lightbox activation
-        result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {
-            const clean = attrs.replace(/\s*class="[^"]*"/i, '')
-            return `<span class="lightbox-img-wrap"><img${clean} class="lightbox-img"><span class="lightbox-expand-icon"></span></span>`
-        })
+        // Lift every <img> (and bare inline svg) into a block-level figure with a
+        // header bar. Images are inline-flow in the marked output (inside <p>);
+        // blockifying them requires DOM surgery (paragraph promotion / split), so
+        // this runs on a parsed tree — shared with the chat pipeline via the
+        // media-block factory (annotateMediaBlocks).
+        result = annotateMediaBlocks(result)
         return result
     }
 }

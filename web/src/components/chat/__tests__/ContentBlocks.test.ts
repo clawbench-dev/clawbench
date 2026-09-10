@@ -114,7 +114,10 @@ const i18n = createI18n({
         resetSession: 'Reset session',
       },
     },
-    tool: { askUser: { name: 'Ask' } },
+    tool: {
+      askUser: { name: 'Ask' },
+      permission: { title: 'Permission Request' },
+    },
   } },
 })
 
@@ -263,6 +266,43 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
       expect(wrapper.find('.chat-card-strip').exists()).toBe(true)
       expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
+    })
+
+    it('renders PermissionApproval as a unified inline card (header strip + body in one box)', () => {
+      const wrapper = mountBlocks({
+        blocks: [{
+          type: 'tool_use',
+          name: 'PermissionApproval',
+          done: false,
+          status: '',
+          id: 'perm-1',
+          input: { toolName: 'Bash', options: [{ name: 'Allow', kind: 'allow_once', optionId: 'a1' }] },
+        }],
+      })
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-card-strip').exists()).toBe(true)
+      // The card strip announces the request (unified title), not a detached pill
+      expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
+    })
+
+    it('shows pending spinner on an unanswered PermissionApproval card and a green check when done', async () => {
+      const pending = mountBlocks({
+        blocks: [{
+          type: 'tool_use', name: 'PermissionApproval', done: false, status: '', id: 'perm-p',
+          input: { toolName: 'Bash', options: [{ name: 'Allow', kind: 'allow_once', optionId: 'a1' }] },
+        }],
+      })
+      expect(pending.find('.tool-spinner').exists()).toBe(true)
+      expect(pending.find('.tool-check').exists()).toBe(false)
+
+      const done = mountBlocks({
+        blocks: [{
+          type: 'tool_use', name: 'PermissionApproval', done: true, status: 'success', id: 'perm-d',
+          input: { toolName: 'Bash', options: [{ name: 'Allow', kind: 'allow_once', optionId: 'a1' }] },
+        }],
+      })
+      expect(done.find('.tool-spinner').exists()).toBe(false)
+      expect(done.find('.tool-check').exists()).toBe(true)
     })
 
     it('sets data-category on tool call', () => {
@@ -754,6 +794,74 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('AskUserQuestion')
       // Auto-expand tool from summary cards renders as a unified inline card
       expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(true)
+    })
+
+    it('hides PermissionApproval cards in summary view (actionable-only, no dead buttons)', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [
+            { name: 'PermissionApproval', id: 'perm-s', done: true, status: 'error', output: 'Cancelled', input: { toolName: 'Bash' } },
+            { name: 'AskUserQuestion', id: 'ask-s', input: { question: 'go?' } },
+          ],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      // Only the AskUserQuestion card survives; the permission card is dropped.
+      expect(wrapper.html()).not.toContain('Permission Request')
+      expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+      expect(wrapper.html()).toContain('AskUserQuestion')
+    })
+
+    it('filters PermissionApproval case-insensitively regardless of list order', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [
+            { name: 'permissionapproval', id: 'perm-lc', input: { toolName: 'Bash' } },
+            { name: 'AskUserQuestion', id: 'ask-a', input: { question: 'first?' } },
+            { name: 'PERMISSIONAPPROVAL', id: 'perm-uc', input: { toolName: 'Read' } },
+            { name: 'AskUserQuestion', id: 'ask-b', input: { question: 'second?' } },
+          ],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      // Both casings of the permission card are dropped; both ask cards remain.
+      expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(2)
+      expect(wrapper.html()).not.toContain('Permission Request')
+    })
+
+    it('renders no permission card when summaryCards.tools only holds PermissionApproval', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: {
+          tools: [{ name: 'PermissionApproval', id: 'perm-only', done: true, status: 'success', output: 'ok', input: { toolName: 'Bash' } }],
+          taskIDs: [],
+          askQuestions: [],
+        },
+      })
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(false)
+      expect(wrapper.find('.chat-tool-call').exists()).toBe(false)
+      expect(wrapper.html()).not.toContain('Permission Request')
+    })
+
+    it('handles summaryCards.tools being null/absent without crashing', () => {
+      const wrapper = mountBlocks({
+        blocks: [],
+        summary: 'sum text',
+        showingSummary: true,
+        summaryCards: { taskIDs: [], askQuestions: [] },
+      })
+      expect(wrapper.find('.tool-detail.chat-inline-card').exists()).toBe(false)
+      expect(wrapper.html()).toContain('sum text')
     })
 
     it('renders an ask-question card from summaryCards.askQuestions via formatToolInput', () => {

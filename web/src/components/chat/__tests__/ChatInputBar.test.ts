@@ -868,11 +868,18 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('add-attached')![0]).toEqual(['/path/to/file.ts', undefined])
   })
 
-  it('handleRemoveAttached emits remove-attached-by-path', async () => {
+  it('handleRemoveAttached emits remove-attached-by-path with the entry', async () => {
     const wrapper = mountBar()
     wrapper.vm.handleRemoveAttached('/path/to/file.ts')
     expect(wrapper.emitted('remove-attached-by-path')).toBeTruthy()
-    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual(['/path/to/file.ts'])
+    // A bare path is normalized to an entry; ranged entries pass through whole.
+    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual([{ path: '/path/to/file.ts' }])
+  })
+
+  it('handleRemoveAttached passes a ranged entry through unchanged', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.handleRemoveAttached({ path: 'md/guide.md', startLine: 5, endLine: 7 })
+    expect(wrapper.emitted('remove-attached-by-path')![0]).toEqual([{ path: 'md/guide.md', startLine: 5, endLine: 7 }])
   })
 
   it('handleSwitchModel emits switch-model', async () => {
@@ -1054,6 +1061,28 @@ describe('ChatInputBar', () => {
 
     expect(wrapper.text()).toContain('Cost')
     expect(wrapper.text()).toContain('$0.05')
+
+    // Reset for other tests.
+    mockContextCost.value = 0
+    mockContextCurrency.value = 'USD'
+  })
+
+  it('cost row rounds sub-cent amounts to two decimals', async () => {
+    mockContextSize.value = 200000
+    mockContextUsed.value = 5000
+    // pi/opencode report genuinely tiny USD costs (e.g. $0.000036 per turn).
+    // The row always uses two decimals now, so those render as $0.00 rather
+    // than a higher-precision string.
+    mockContextCost.value = 0.000036
+    mockContextCurrency.value = 'USD'
+
+    const wrapper = mountBar()
+    await wrapper.find('.session-info-usage').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Cost')
+    expect(wrapper.text()).toContain('$0.00')
+    expect(wrapper.text()).not.toContain('0.0000')
 
     // Reset for other tests.
     mockContextCost.value = 0
@@ -1265,6 +1294,31 @@ describe('ChatInputBar', () => {
     expect(qs).toHaveBeenCalledWith('[data-slash-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('slash menu dedupes commands that differ only by slash prefix', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    // Same skill reported slashless by CodeBuddy ACP and slash-prefixed by the
+    // pre-scan ("mmx-cli" vs "/mmx-cli"). Only one menu entry may render, with
+    // exactly one leading slash — otherwise the user sees a "//mmx-cli".
+    mockAvailableCommands.value = [
+      { name: 'mmx-cli', description: 'MMX CLI', inputHint: '' },
+      { name: '/mmx-cli', description: 'MMX CLI (pre-scan)', inputHint: '' },
+      { name: '/buddy-sings', description: 'Buddy sings', inputHint: '' },
+    ]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.at-menu-item')
+    expect(items).toHaveLength(2)
+    const labels = items.map(i => i.text())
+    expect(labels.some(l => l.startsWith('//'))).toBe(false)
+    expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
+    expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)

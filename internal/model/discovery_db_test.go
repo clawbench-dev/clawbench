@@ -40,6 +40,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 			acp_available_commands TEXT NOT NULL DEFAULT '[]',
 			acp_config_options TEXT NOT NULL DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

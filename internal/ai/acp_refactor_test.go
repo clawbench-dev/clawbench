@@ -510,7 +510,8 @@ func TestRefactor_ExtractToolName(t *testing.T) {
 		assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink, ""))
 		assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch, ""))
 		assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode, ""))
-		assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther, ""))
+		// ToolKindOther no longer collapses to "Skill" (see acpKindToCanonical).
+		assert.Equal(t, "other", extractToolName("", acp.ToolKindOther, ""))
 	})
 
 	t.Run("empty_everything", func(t *testing.T) {

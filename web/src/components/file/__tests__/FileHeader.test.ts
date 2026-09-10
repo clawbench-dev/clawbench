@@ -54,6 +54,7 @@ const i18n = createI18n({
         },
         overlay: { back: 'Back', forward: 'Forward' },
       },
+      imageBlock: { view: 'View image' },
     },
   },
 })
@@ -137,6 +138,8 @@ vi.mock('@/utils/fileType.ts', () => ({
 }))
 
 describe('FileHeader', () => {
+  const mockOpenLightbox = vi.fn()
+
   function mountHeader(props = {}) {
     return mount(FileHeader, {
       props: {
@@ -152,6 +155,9 @@ describe('FileHeader', () => {
       },
       global: {
         plugins: [i18n],
+        provide: {
+          openLightbox: mockOpenLightbox,
+        },
       },
     })
   }
@@ -159,6 +165,10 @@ describe('FileHeader', () => {
   function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
     return (wrapper.vm as any).$.setupState.menuOpen
   }
+
+  beforeEach(() => {
+    mockOpenLightbox.mockClear()
+  })
 
   it('toggles menu open on dropdown button click', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
@@ -516,6 +526,39 @@ describe('FileHeader', () => {
       const ids = vm.$.setupState.toolbarInlineIds
       expect(ids).toContain('wordWrap')
       expect(ids).toContain('lineNumbers')
+    })
+
+    it('includes the lightbox view button for image files only', () => {
+      const imgWrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      const imgVm = imgWrapper.vm as any
+      expect(imgVm.$.setupState.isImageFile).toBe(true)
+      expect(imgVm.$.setupState.toolbarInlineIds).toContain('viewImage')
+      expect(imgWrapper.find('.file-header-btn[title="View image"]').exists()).toBe(true)
+
+      const tsWrapper = mountHeader()
+      const tsVm = tsWrapper.vm as any
+      expect(tsVm.$.setupState.isImageFile).toBe(false)
+      expect(tsVm.$.setupState.toolbarInlineIds).not.toContain('viewImage')
+      expect(tsWrapper.find('.file-header-btn[title="View image"]').exists()).toBe(false)
+    })
+
+    it('opens the lightbox with the image URL on view click', async () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: null } })
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleViewImage()
+      await nextTick()
+      expect(mockOpenLightbox).toHaveBeenCalledTimes(1)
+      const url = mockOpenLightbox.mock.calls[0][0]
+      // Absolute path → served via ?path= query form.
+      expect(url).toContain('path=%2Ftmp%2Fphoto.png')
+    })
+
+    it('does nothing on view click when the file has no path', async () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '', content: null } })
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleViewImage()
+      await nextTick()
+      expect(mockOpenLightbox).not.toHaveBeenCalled()
     })
   })
 

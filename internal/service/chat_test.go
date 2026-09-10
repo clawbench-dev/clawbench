@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	transport TEXT DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
+	title_renamed INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -158,6 +159,10 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 	finish_reason TEXT DEFAULT '',
 	outcome TEXT DEFAULT '',
 	agent_phase TEXT DEFAULT '',
+	project_path TEXT DEFAULT '',
+	backend TEXT DEFAULT '',
+	agent_id TEXT DEFAULT '',
+	clawbench_session_id TEXT DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_tool_calls (
@@ -294,6 +299,124 @@ func TestAddChatMessage_AutoTitle(t *testing.T) {
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
 	assert.Equal(t, "This is my question about Go testing", title)
+}
+
+// TestAddChatMessage_AutoTitleSkippedWhenUserRenamed verifies that a manual
+// rename performed before the first message survives the auto-title step.
+func TestAddChatMessage_AutoTitleSkippedWhenUserRenamed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	// User renames the session before sending anything.
+	require.NoError(t, service.SetSessionTitleLocked(sid, "My Custom Name"))
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.True(t, renamed)
+
+	// First user message must NOT overwrite the custom title.
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "This should not become the title", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "My Custom Name", title)
+}
+
+// TestCreateSessionWithLockedTitle_SurvivesFirstMessage verifies that a title
+// supplied at creation time is not replaced by the first user message.
+func TestCreateSessionWithLockedTitle_SurvivesFirstMessage(t *testing.T) {
+	setupDB(t)
+
+	sid, err := service.CreateSessionWithLockedTitle("/project", "claude", "Chosen At Creation", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.True(t, renamed, "locked-title creation must set title_renamed")
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "some first message", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "Chosen At Creation", title)
+}
+
+// TestCreateSession_DoesNotLockGeneratedTitle verifies the plain CreateSession
+// path still allows first-message auto-titling.
+func TestCreateSession_DoesNotLockGeneratedTitle(t *testing.T) {
+	setupDB(t)
+
+	sid, err := service.CreateSession("/project", "claude", "NewSession 1", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.False(t, renamed)
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "auto title wins", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "auto title wins", title)
+}
+
+// TestAddChatMessage_AutoTitleSkippedForScheduledSession verifies that a
+// scheduled task session keeps its created title (⏰ <task name>) instead of
+// being overwritten by the task prompt on the first message.
+func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
+	setupDB(t)
+
+	sid, err := service.CreateSessionWithLockedTitle("/project", "claude", "⏰ Daily Code Review", "", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "review the code please", nil, false, "Daily Code Review")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "⏰ Daily Code Review", title)
+}
+
+// TestAddChatMessage_AutoTitleStillAppliesForChatSession is a guard against the
+// locked-title logic accidentally suppressing normal auto-titling.
+func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "normal chat title", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "normal chat title", title)
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	assert.NoError(t, err)
+	assert.False(t, renamed, "auto-titled sessions must not be marked as renamed")
+}
+
+// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the placeholder title path
+// leaves the lock untouched, so first-message auto-titling still applies.
+func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+	require.NoError(t, service.UpdateSessionTitle(sid, "Placeholder Title"))
+
+	renamed, err := service.GetSessionTitleRenamed(sid)
+	require.NoError(t, err)
+	assert.False(t, renamed)
+
+	// Because it was not locked, the first message may still auto-title it.
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites placeholder", nil, false, "NewSession")
+	assert.NoError(t, err)
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "overwrites placeholder", title)
 }
 
 func TestAddChatMessage_AutoTitleTruncated(t *testing.T) {
@@ -1981,7 +2104,7 @@ func TestGetRecentSessions_NewestFirstIncludesArchived(t *testing.T) {
 	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "arch", "Archived", "2024-02-01 10:00:00", true)
 
-	sessions, err := service.GetRecentSessions("/project", 0)
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 3)
 	// Reverse chronological order (newest first).
@@ -2001,12 +2124,12 @@ func TestGetRecentSessions_ProjectScopedAndLimited(t *testing.T) {
 	insertSessionWithTime(t, "/other", "c", "C", "2024-01-03 10:00:00", false)
 
 	// Other project must be excluded.
-	sessions, err := service.GetRecentSessions("/project", 0)
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 
 	// Limit truncates the newest-first list.
-	sessions, err = service.GetRecentSessions("/project", 1)
+	sessions, _, err = service.GetRecentSessions("/project", 1, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2019,7 +2142,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 	insertSessionWithTime(t, "/other", "b", "B", "2024-01-02 10:00:00", false)
 
 	// Empty project path → across all projects (CLI global browse).
-	sessions, err := service.GetRecentSessions("", 0)
+	sessions, _, err := service.GetRecentSessions("", 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2028,9 +2151,188 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 func TestGetRecentSessions_NoSessions(t *testing.T) {
 	setupDB(t)
 
-	sessions, err := service.GetRecentSessions("/project", 0)
+	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 0)
+}
+
+func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "active-1", "A1", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "arch-1", "R1", "2024-02-01 10:00:00", true)
+	insertSessionWithTime(t, "/project", "active-2", "A2", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "arch-2", "R2", "2024-04-01 10:00:00", true)
+
+	// Active only.
+	active, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, active, 2)
+	for _, s := range active {
+		assert.False(t, s.Archived)
+	}
+	assert.Equal(t, "active-2", active[0].ID)
+
+	// Archived only.
+	archived, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, archived, 2)
+	for _, s := range archived {
+		assert.True(t, s.Archived)
+	}
+	assert.Equal(t, "arch-2", archived[0].ID)
+
+	// All (default) includes both.
+	all, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "", "", "", "", "")
+	assert.NoError(t, err)
+	assert.Len(t, all, 4)
+}
+
+func TestGetRecentSessions_SortOrderOldest(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "old", "Old", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "mid", "Mid", "2024-02-01 10:00:00", false)
+
+	oldest, _, err := service.GetRecentSessions("/project", 0, "", service.SessionSortOldest, "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, oldest, 3)
+	assert.Equal(t, "old", oldest[0].ID)
+	assert.Equal(t, "mid", oldest[1].ID)
+	assert.Equal(t, "new", oldest[2].ID)
+}
+
+func TestNormalizeSessionArchiveFilterAndSortOrder(t *testing.T) {
+	assert.Equal(t, "all", service.NormalizeSessionArchiveFilter(""))
+	assert.Equal(t, "all", service.NormalizeSessionArchiveFilter("bogus"))
+	assert.Equal(t, "active", service.NormalizeSessionArchiveFilter(" Active "))
+	assert.Equal(t, "archived", service.NormalizeSessionArchiveFilter("ARCHIVED"))
+
+	assert.Equal(t, "relevance", service.NormalizeSessionSortOrder(""))
+	assert.Equal(t, "relevance", service.NormalizeSessionSortOrder("bogus"))
+	assert.Equal(t, "newest", service.NormalizeSessionSortOrder("Newest"))
+	assert.Equal(t, "oldest", service.NormalizeSessionSortOrder(" OLDEST "))
+}
+
+func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s4", "S4", "2024-04-01 10:00:00", false)
+
+	// Page 1: newest first, 2 rows + hasMore.
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 2)
+	assert.True(t, hasMore)
+	assert.Equal(t, "s4", page1[0].ID)
+	assert.Equal(t, "s3", page1[1].ID)
+
+	// Page 2: cursor from the last row of page 1.
+	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", "", "", cursor, page1[1].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 2)
+	assert.False(t, hasMore2)
+	assert.Equal(t, "s2", page2[0].ID)
+	assert.Equal(t, "s1", page2[1].ID)
+
+	// No overlap between pages.
+	seen := map[string]bool{}
+	for _, s := range append(page1, page2...) {
+		require.False(t, seen[s.ID], "session %s appeared twice", s.ID)
+		seen[s.ID] = true
+	}
+	assert.Len(t, seen, 4)
+}
+
+func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "s1", "S1", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
+
+	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, "", "", "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 2)
+	assert.True(t, hasMore)
+	assert.Equal(t, "s1", page1[0].ID)
+	assert.Equal(t, "s2", page1[1].ID)
+
+	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", service.SessionSortOldest, "", "", cursor, page1[1].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.False(t, hasMore2)
+	assert.Equal(t, "s3", page2[0].ID)
+}
+
+func TestGetRecentSessions_CursorWithSameTimestamp(t *testing.T) {
+	setupDB(t)
+
+	// Rows sharing a created_at must still paginate without skip/duplicate:
+	// the id tie-break carries the cursor forward.
+	insertSessionWithTime(t, "/project", "a", "A", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "b", "B", "2024-01-01 10:00:00", false)
+	insertSessionWithTime(t, "/project", "c", "C", "2024-01-01 10:00:00", false)
+
+	seen := map[string]bool{}
+	cursor, cursorID := "", ""
+	for range 5 {
+		page, hasMore, err := service.GetRecentSessions("/project", 1, "", "", "", "", cursor, cursorID)
+		assert.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		require.False(t, seen[page[0].ID], "duplicate %s", page[0].ID)
+		seen[page[0].ID] = true
+		cursor = page[0].CreatedAt.Format("2006-01-02 15:04:05")
+		cursorID = page[0].ID
+		if !hasMore {
+			break
+		}
+	}
+	assert.Len(t, seen, 3)
+}
+
+func TestGetRecentSessions_TimeRangeFilter(t *testing.T) {
+	setupDB(t)
+
+	insertSessionWithTime(t, "/project", "jan", "Jan", "2024-01-15 10:00:00", false)
+	insertSessionWithTime(t, "/project", "feb", "Feb", "2024-02-15 10:00:00", false)
+	insertSessionWithTime(t, "/project", "mar", "Mar", "2024-03-15 10:00:00", false)
+
+	// Inclusive window covering February only.
+	feb, _, err := service.GetRecentSessions("/project", 0, "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	assert.NoError(t, err)
+	require.Len(t, feb, 1)
+	assert.Equal(t, "feb", feb[0].ID)
+
+	// Lower bound only.
+	fromFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "2024-02-01 00:00:00", "", "", "")
+	assert.NoError(t, err)
+	assert.Len(t, fromFeb, 2)
+
+	// Upper bound only.
+	toFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-29 23:59:59", "", "")
+	assert.NoError(t, err)
+	assert.Len(t, toFeb, 2)
+
+	// Window outside the data set → no rows.
+	none, _, err := service.GetRecentSessions("/project", 0, "", "", "2025-01-01 00:00:00", "2025-12-31 23:59:59", "", "")
+	assert.NoError(t, err)
+	assert.Len(t, none, 0)
+
+	// Time range combines with the archive filter rather than replacing it.
+	insertSessionWithTime(t, "/project", "feb-arch", "FebArch", "2024-02-20 10:00:00", true)
+	febActive, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	assert.NoError(t, err)
+	require.Len(t, febActive, 1)
+	assert.Equal(t, "feb", febActive[0].ID)
 }
 
 func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
@@ -2265,6 +2567,62 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	for _, s := range sessions2 {
 		assert.False(t, page1IDs[s.ID], "session %s should not appear in both pages", s.ID)
 	}
+}
+
+// TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt pins the pagination
+// contract: the paged query orders and filters by created_at, so the cursor
+// must be created_at. Using updated_at (which is >= created_at and bumped on
+// every message) as the cursor makes the `created_at < cursor` filter match
+// rows already returned on the previous page, duplicating the list — the
+// regression that produced duplicate sessions in the UI.
+func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
+	setupDB(t)
+
+	// Three sessions ordered by created_at: oldest → newest.
+	sidOld := helperCreateSession(t, "/project", "claude", "Old")
+	sidMid := helperCreateSession(t, "/project", "claude", "Mid")
+	sidNew := helperCreateSession(t, "/project", "claude", "New")
+	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
+		_, err := service.UnsafeDBForTest().Exec(
+			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?",
+			fmt.Sprintf("%d", offset), id)
+		assert.NoError(t, err)
+	}
+
+	// Push the OLDEST session's updated_at far into the future. If the cursor
+	// were updated_at, page 2 would re-return it (and its neighbors) because
+	// their created_at is < that future timestamp.
+	_, err := service.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld)
+	assert.NoError(t, err)
+
+	// Page 1 (limit=1) → newest session.
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "")
+	assert.NoError(t, err)
+	require.Len(t, page1, 1)
+	assert.Equal(t, sidNew, page1[0].ID)
+	assert.True(t, hasMore)
+
+	// Page 2 uses the created_at cursor — must be the middle session, NOT a
+	// repeat of page 1.
+	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID)
+	assert.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Equal(t, sidMid, page2[0].ID)
+
+	// Sanity: feeding an updated_at value as the cursor re-returns page 1's row.
+	// sidOld.updated_at is +1 day, so `created_at < <that>` matches sidNew —
+	// the exact duplicate-producing behavior this contract guards against.
+	var oldUpdatedAt string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)
+	require.NoError(t, err)
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID)
+	assert.NoError(t, err)
+	require.Len(t, badCursor, 1)
+	assert.Equal(t, sidNew, badCursor[0].ID,
+		"an updated_at cursor must re-return page 1 (demonstrating the duplicate bug)")
 }
 
 // ---------- GetSessionTitlesBatch ----------
@@ -3276,6 +3634,105 @@ func TestUpdateSessionAutoApprove_Disable(t *testing.T) {
 	service.UpdateSessionAutoApprove(sid, true)
 	service.UpdateSessionAutoApprove(sid, false)
 	assert.False(t, service.GetSessionAutoApprove(sid))
+}
+
+// ---------- CreateSession initializes auto_approve from the agent default ----------
+
+// TestCreateSession_AutoApproveFromAgentDefault verifies that creating a session
+// with an agent configured AutoApprove=true persists auto_approve=1 in the DB at
+// creation time (not just as in-memory frontend display state).
+func TestCreateSession_AutoApproveFromAgentDefault(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Auto Default", "auto-agent", "", "user", "chat")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(sid),
+		"session created with an auto-approve agent must be persisted with auto_approve=1")
+}
+
+// TestCreateSession_AutoApproveOffWhenAgentDefaultOff verifies the flag stays
+// off for an agent that has not opted in.
+func TestCreateSession_AutoApproveOffWhenAgentDefaultOff(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"plain-agent": {ID: "plain-agent", Backend: "claude", AutoApprove: false},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Plain Default", "plain-agent", "", "user", "chat")
+	require.NoError(t, err)
+
+	assert.False(t, service.GetSessionAutoApprove(sid),
+		"session with a non-auto-approve agent must default to auto_approve=0")
+}
+
+// TestCreateSession_AutoApproveUnknownAgent verifies an unknown/empty agent ID
+// does not panic and leaves the flag off.
+func TestCreateSession_AutoApproveUnknownAgent(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "Unknown Agent", "ghost-agent", "", "default", "chat")
+	require.NoError(t, err)
+
+	assert.False(t, service.GetSessionAutoApprove(sid))
+}
+
+// TestCreateSession_AutoApproveAppliesToScheduledSessions documents that the
+// agent default also applies to scheduled-task sessions created via
+// CreateSession. Harmless for both transports: ACP forces auto-approve anyway,
+// CLI ignores the flag.
+func TestCreateSession_AutoApproveAppliesToScheduledSessions(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sid, err := service.CreateSession("/project", "claude", "⏰ Scheduled", "auto-agent", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(sid))
+}
+
+// TestForkSession_InheritsAgentAutoApproveDefault verifies a forked session
+// picks up the agent's auto-approve default, matching a freshly created session
+// for the same agent.
+func TestForkSession_InheritsAgentAutoApproveDefault(t *testing.T) {
+	setupDB(t)
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"auto-agent": {ID: "auto-agent", Backend: "claude", AutoApprove: true},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	src, err := service.CreateSession("/project", "claude", "Source", "auto-agent", "", "user", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", src, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", src, "assistant", "Hi", nil, false, "")
+	require.NoError(t, err)
+
+	forked, err := service.ForkSession(src, "/project", "[Fork] Source", 0, "")
+	require.NoError(t, err)
+
+	assert.True(t, service.GetSessionAutoApprove(forked),
+		"forked session must inherit the agent's auto-approve default")
 }
 
 // ---------- GetStreamingMessageID ----------

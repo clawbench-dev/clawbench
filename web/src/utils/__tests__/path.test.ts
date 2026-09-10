@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath, normalizeSlashes, isAbsolutePath, toProjectRelative } from '@/utils/path.ts'
+import { splitPath, baseName, dirName, toRelativePath, joinPath, isWindowsAbsolutePath, normalizeSlashes, isAbsolutePath, toProjectRelative, normalizeForCompare, sameFilePath } from '@/utils/path.ts'
 
 describe('splitPath', () => {
   it('splits on forward slashes', () => {
@@ -222,5 +222,75 @@ describe('joinPath', () => {
 
   it('strips leading and trailing slashes together', () => {
     expect(joinPath('/src/', 'file.ts')).toBe('src/file.ts')
+  })
+})
+
+describe('normalizeForCompare', () => {
+  it('strips leading ./ segment', () => {
+    expect(normalizeForCompare('./web/src/x.ts')).toBe('web/src/x.ts')
+  })
+
+  it('collapses duplicate slashes and strips trailing slash', () => {
+    expect(normalizeForCompare('web//src/x.ts/')).toBe('web/src/x.ts')
+  })
+
+  it('normalizes backslashes', () => {
+    expect(normalizeForCompare('.\\web\\src\\x.ts')).toBe('web/src/x.ts')
+  })
+})
+
+describe('sameFilePath', () => {
+  const root = '/home/user/project'
+
+  it('matches identical relative paths', () => {
+    expect(sameFilePath('web/src/x.ts', 'web/src/x.ts', root)).toBe(true)
+  })
+
+  it('matches when tool path has a ./ prefix', () => {
+    expect(sameFilePath('./web/src/x.ts', 'web/src/x.ts', root)).toBe(true)
+  })
+
+  it('matches an absolute project path against a relative current file', () => {
+    expect(sameFilePath('/home/user/project/web/src/x.ts', 'web/src/x.ts', root)).toBe(true)
+  })
+
+  it('matches a relative tool path against an absolute current file (external file)', () => {
+    expect(sameFilePath('web/src/x.ts', '/home/user/project/web/src/x.ts', root)).toBe(true)
+  })
+
+  it('matches backslash-separated tool path on Windows-style root', () => {
+    const winRoot = 'E:/git/app'
+    expect(sameFilePath('E:\\git\\app\\web\\src\\x.ts', 'web/src/x.ts', winRoot)).toBe(true)
+  })
+
+  it('matches via boundary suffix when tool path is relative to a subdirectory', () => {
+    expect(sameFilePath('src/x.ts', 'web/src/x.ts', root)).toBe(true)
+  })
+
+  it('does NOT match a bare basename against a deeper same-named file', () => {
+    // A bare basename (no directory) only matches by full equality — it must
+    // not collide with a deeper same-named file via suffix matching.
+    expect(sameFilePath('x.ts', 'web/src/x.ts', root)).toBe(false)
+    expect(sameFilePath('a.ts', 'web/a.ts', root)).toBe(false)
+  })
+
+  it('does not match an unrelated suffix fragment', () => {
+    expect(sameFilePath('src/other.ts', 'web/src/x.ts', root)).toBe(false)
+    expect(sameFilePath('ther.ts', 'web/src/x.ts', root)).toBe(false)
+  })
+
+  it('does not match different files', () => {
+    expect(sameFilePath('web/src/y.ts', 'web/src/x.ts', root)).toBe(false)
+  })
+
+  it('returns false when either path is empty', () => {
+    expect(sameFilePath('', 'web/src/x.ts', root)).toBe(false)
+    expect(sameFilePath('web/src/x.ts', '', root)).toBe(false)
+  })
+
+  it('matches external absolute paths outside the project root', () => {
+    // Both outside the root: remain absolute and compare equal.
+    expect(sameFilePath('/etc/hosts', '/etc/hosts', root)).toBe(true)
+    expect(sameFilePath('/etc/hosts', '/var/hosts', root)).toBe(false)
   })
 })

@@ -739,6 +739,42 @@ func TestServeGitVerifyCommits_AbbreviatedSHA(t *testing.T) {
 	assert.Equal(t, sha, info["sha"])
 }
 
+func TestServeGitVerifyCommits_AllNumericFullSHA(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+	sha := getHeadSHA(t, env.ProjectDir)
+
+	// Build a full-length (40-char) all-digit string that is NOT a valid commit.
+	// This is the natural nonce value for the new pure-decimal full-SHA frontend
+	// support — no commit in the test repo has an all-numeric SHA, so git treats
+	// it as a missing object and git log --ignore-missing simply skips it.
+	pureDigitSHA := "1234567890123456789012345678901234567890"
+	if sha[0] >= '0' && sha[0] <= '9' {
+		// Ensure the first digit differs from the head SHA's first char so the
+		// nonce shares no prefix with any real commit (avoids ambiguity errors).
+		first := byte('1')
+		if sha[0] == '1' {
+			first = '2'
+		}
+		pureDigitSHA = string(first) + pureDigitSHA[1:]
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/git/verify-commits", map[string]interface{}{
+		"shas": []string{pureDigitSHA},
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitVerifyCommits, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	results, _ := resp["results"].(map[string]interface{})
+	assert.Nil(t, results[pureDigitSHA], "all-numeric non-commit SHA should resolve to nil")
+}
+
 // --- validateFilePath ---
 
 func TestValidateFilePath_ValidRelative(t *testing.T) {

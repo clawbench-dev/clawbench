@@ -31,30 +31,6 @@
       </button>
     </div>
 
-    <!-- Reveal card: shows the FULL text of a badge segment that just changed
-         (the capsule only has room for a truncated name on phones). Teleported
-         to body + position:fixed so it isn't clipped by the capsule/header.
-         Appears under the changed segment and auto-dismisses. -->
-    <Teleport to="body">
-      <Transition name="reveal">
-        <div
-          v-if="reveal"
-          class="badge-reveal"
-          :style="{ left: reveal.left + 'px', top: reveal.top + 'px' }"
-        >
-          <span class="badge-reveal-title">
-            <span class="badge-reveal-icon">
-              <Projector v-if="reveal.source === 'project'" :size="13" />
-              <GitBranch v-else-if="reveal.source === 'branch'" :size="13" />
-              <FileText v-else :size="13" />
-            </span>
-            <span class="badge-reveal-name">{{ reveal.title }}</span>
-          </span>
-          <span v-if="reveal.subtitle" class="badge-reveal-subtitle">{{ reveal.subtitle }}</span>
-        </div>
-      </Transition>
-    </Teleport>
-
     <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
     <ShortcutTipTicker
       v-if="isWideScreen && !isAppMode && localConfig.headerShortcutTips"
@@ -249,7 +225,7 @@ import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { useSystemPressure } from '@/composables/useSystemPressure'
-import { useBadgeHighlight, type BadgeSegment } from '@/composables/useBadgeHighlight'
+import { useBadgeHighlight } from '@/composables/useBadgeHighlight'
 import { deferPosition, estimatePanelWidth as estimatePanelWidthFn, positionDropdown as positionDropdownPure } from '@/utils/dropdownPosition'
 import { recentProjectDisplayPath } from '@/utils/recentProjects'
 import { appLog } from '@/utils/appLog'
@@ -543,11 +519,9 @@ const projectName = computed(() => {
 const gitBranch = computed(() => store.state.gitBranch)
 
 // Badge capsule feedback — when a segment's content changes (project name,
-// current file, branch) it flashes the accent highlight AND shows a floating
-// "reveal card" under that segment with the complete text (the capsule itself
-// is width-constrained on phones, so it can only show a truncated name).
-// The highlight timing lives in useBadgeHighlight; the reveal card state is
-// assembled here and consumed by the template (see BadgeReveal in template).
+// current file, branch) it flashes the accent highlight via useBadgeHighlight
+// (the capsule itself is width-constrained on phones, so it can only show a
+// truncated name).
 const prefersReducedMotion = ref(
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true,
 )
@@ -563,71 +537,9 @@ const {
     dispose: disposeBadgeHighlight,
 } = useBadgeHighlight({ prefersReducedMotion })
 
-// ── Reveal card state ──
-// A small fixed card shown under the changed badge segment with the full text.
-// `source` distinguishes the segment type (drives the icon/colors/labels);
-// `title`/`subtitle` carry the complete display text; `left`/`top` position
-// the card under the segment rect. Auto-dismiss after REVEAL_MS; a newer
-// pulse replaces the card and restarts the timer.
-const reveal = ref<{
-    source: BadgeSegment
-    title: string
-    subtitle?: string
-    left: number
-    top: number
-} | null>(null)
-let revealTimer: ReturnType<typeof setTimeout> | null = null
-const REVEAL_MS = 1500
-const REVEAL_OFFSET_Y = 6
-
-/** DOM node of the currently-highlighted badge segment (for card anchoring). */
-function badgeSegmentEl(source: BadgeSegment): HTMLElement | null {
-    return document.querySelector(
-        source === 'project' ? '.project-switch-btn'
-            : source === 'branch' ? '.branch-badge' : '.current-file-badge',
-    )
-}
-
-/** Show the reveal card under `source`'s badge with the given text. */
-function showReveal(source: BadgeSegment, title: string, subtitle?: string) {
-    if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
-    const place = () => {
-        const el = badgeSegmentEl(source)
-        if (!el) return
-        const r = el.getBoundingClientRect()
-        // Anchor under the segment's left edge; the card is width-capped in
-        // CSS, so clamp against the right viewport edge to avoid overflow.
-        const maxLeft = Math.max(4, window.innerWidth - 20)
-        reveal.value = {
-            source,
-            title,
-            subtitle,
-            left: Math.max(4, Math.min(r.left, maxLeft)),
-            top: r.bottom + REVEAL_OFFSET_Y,
-        }
-    }
-    // The changed segment is usually already in the DOM (file/project/branch
-    // existed before the content swap) — place it synchronously. When the
-    // change itself v-if's the segment into existence (e.g. the branch badge
-    // appears only once a branch is set), it is NOT queryable during the watch
-    // callback (flush: 'pre', before the render) → defer one tick.
-    if (!badgeSegmentEl(source)) {
-        void nextTick(place)
-    } else {
-        place()
-    }
-    // Dismiss after the card has been readable; matches the visual rhythm of
-    // the accent highlight flash.
-    revealTimer = setTimeout(() => {
-        reveal.value = null
-        revealTimer = null
-    }, REVEAL_MS)
-}
-
 watch(gitBranch, (newVal, oldVal) => {
     if (newVal !== oldVal) {
         pulseBadge('branch')
-        if (newVal) showReveal('branch', newVal)
     }
 })
 
@@ -637,26 +549,19 @@ watch(() => props.currentFileName, (newVal, oldVal) => {
     // fires on the initial value.
     if (newVal !== oldVal) {
         pulseBadge('file')
-        if (newVal) showReveal('file', newVal, props.currentFilePath ? dirName(props.currentFilePath) : undefined)
     }
 })
 
 watch(projectName, (newVal, oldVal) => {
     if (newVal !== oldVal) {
         pulseBadge('project')
-        if (props.projectRoot) showReveal('project', newVal, props.projectRoot)
     }
 })
-
-function dismissReveal() {
-    if (revealTimer) { clearTimeout(revealTimer); revealTimer = null }
-    reveal.value = null
-}
 
 // Expose the reactive highlight state for programmatic access (used by tests
 // and debugging); the template reads `segmentClass` for the per-segment
 // highlight classes.
-defineExpose({ highlightBadge, reveal })
+defineExpose({ highlightBadge })
 
 function openHistory() {
     branchDropdownOpen.value = false
@@ -874,7 +779,6 @@ onUnmounted(() => {
     stopBackgroundPolling()
     motionQuery?.removeEventListener?.('change', onMotionPreferenceChange)
     motionQuery = null
-    dismissReveal()
     disposeBadgeHighlight()
 })
 
@@ -897,8 +801,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
    overflow:hidden clips the segments (and their highlight/hover accent
    backgrounds) to the pill's rounded ends — without it, a highlighted
    end segment (border-radius:0) would show a square corner sticking out of
-   the semicircular right/left edge. Dropdown/menu/reveal surfaces are all
-   teleported to <body>, so nothing inside needs to overflow this box. */
+   the semicircular right/left edge. Dropdown/menu surfaces are all teleported
+   to <body>, so nothing inside needs to overflow this box. */
 .badge-capsule {
     display: flex;
     align-items: center;
@@ -1063,8 +967,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 /* Highlight — the changed segment briefly flashes the accent background with
    white foreground (text + icon), then fades back. Pure background/color
    animation: no layout churn (the old fill/collapse collapsed sibling
-   segments via max-width and re-ran flex layout every frame). The complete
-   text is shown in the floating reveal card (see .badge-reveal). */
+   segments via max-width and re-ran flex layout every frame). */
 .badge-capsule .badge-highlight {
     /* !important: must beat the segment's own hover background rule
        (e.g. .project-switch-btn:hover) which would otherwise win. */
@@ -1395,85 +1298,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .dropdown-leave-to {
     opacity: 0;
     transform: translateY(-4px);
-}
-
-/* Reveal card — a small fixed popover shown under a badge segment that just
-   changed (project / branch / file), carrying the segment's FULL text since
-   the capsule itself truncates long names. Compositor-friendly animation:
-   only opacity + transform (no layout properties). pointer-events: none so it
-   never blocks taps on whatever sits beneath. */
-.badge-reveal {
-    position: fixed;
-    z-index: 10000;
-    pointer-events: none;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-    max-width: min(78vw, 320px);
-    padding: 8px 12px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
-    transform-origin: top center;
-}
-
-.badge-reveal-title {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.35;
-    color: var(--text-primary);
-    word-break: break-word;
-    overflow-wrap: anywhere;
-}
-
-.badge-reveal-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 16px;
-    height: 16px;
-    margin-top: 1px;
-    color: var(--accent-color);
-}
-
-.badge-reveal-subtitle {
-    padding-left: 22px;
-    font-size: 11px;
-    line-height: 1.3;
-    color: var(--text-muted);
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    direction: rtl; /* keep the visible tail of long paths, like .item-path */
-    text-align: left;
-}
-
-/* Pop in / fade out (only transform + opacity). */
-.reveal-enter-active,
-.reveal-leave-active {
-    transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.15);
-}
-
-.reveal-enter-from,
-.reveal-leave-to {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.96);
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .reveal-enter-active,
-    .reveal-leave-active {
-        transition: opacity 0.1s ease;
-    }
-    .reveal-enter-from,
-    .reveal-leave-to {
-        transform: none;
-    }
 }
 
 /* ─── Dirty worktree checkout modal ──────────────────────────────── */

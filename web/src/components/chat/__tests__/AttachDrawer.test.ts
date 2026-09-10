@@ -234,7 +234,7 @@ describe('AttachDrawer', () => {
     })
     await wrapper.find('.ad-current-item').trigger('click')
     expect(wrapper.emitted('remove-attached')).toBeTruthy()
-    expect(wrapper.emitted('remove-attached')![0]).toEqual(['src'])
+    expect(wrapper.emitted('remove-attached')![0]).toEqual([{ path: 'src', isDir: true }])
   })
 
   it('emits file-open when clicking external link on current dir row', async () => {

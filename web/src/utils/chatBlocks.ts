@@ -97,6 +97,38 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
     if (header) return header
     return question
   }
+  // PermissionApproval input wraps the underlying tool request:
+  // { toolName: 'Bash', toolInput: '{"command":"..."}', options: [...] }.
+  // Summarize to the requested command / file / tool so the card strip shows
+  // WHAT the agent wants to run instead of a junk fallback (permissionId etc).
+  if (name === 'permissionapproval') {
+    const raw = block.input.toolInput
+    if (typeof raw === 'string' && raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed.command === 'string' && parsed.command) return parsed.command
+        if (parsed && (typeof parsed.file_path === 'string' && parsed.file_path)) return parsed.file_path
+      } catch { /* non-JSON — fall through */ }
+    }
+    if (typeof block.input.toolName === 'string' && block.input.toolName) return block.input.toolName
+    return ''
+  }
+  // Mirror the Go ExtractSummary TaskUpdate special case (internal/ai/tool_meta.go):
+  // TaskUpdate input is {status, taskId} with no subject/description, so derive a
+  // deterministic "#<taskId> · <status>" label. Optional subject/description
+  // overrides still win.
+  if (name === 'taskupdate') {
+    const subject = block.input.subject
+    const description = block.input.description
+    if (typeof subject === 'string' && subject) return subject
+    if (typeof description === 'string' && description) return description
+    const taskId = block.input.taskId
+    const status = block.input.status
+    if (typeof taskId === 'string' && taskId) {
+      if (typeof status === 'string' && status) return `#${taskId} · ${status}`
+      return `#${taskId}`
+    }
+  }
   if (block.input.description) return block.input.description as string
   const obj = block.input
   if (obj.file_path) return baseName(obj.file_path as string)
@@ -108,8 +140,14 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
   if (obj.prompt && name === 'agent') return obj.prompt as string
   if (obj.path) return baseName(obj.path as string)
   if (obj.src_path && obj.dst_path) return `${baseName(obj.src_path as string)} → ${baseName(obj.dst_path as string)}`
-  const firstVal = Object.values(obj)[0]
-  if (typeof firstVal === 'string') return firstVal
+  // Deterministic fallback: pick the first string value by lexicographic key order
+  // (Object.keys is already lexicographic for string keys), mirroring the sorted
+  // fallback in Go ExtractSummary.
+  const keys = Object.keys(obj).sort()
+  for (const k of keys) {
+    const v = obj[k]
+    if (typeof v === 'string') return v
+  }
   return ''
 }
 

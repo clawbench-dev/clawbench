@@ -535,8 +535,8 @@ describe('FileViewer', () => {
 
     const mockCaptureCurrentScrollState = vi.fn(() => ({
       scrollTop: 777,
-      anchor: null,
-      blockAnchor: null,
+      sourceLine: 12,
+      sourceOffset: 0,
       ratio: null,
     }))
 
@@ -588,7 +588,7 @@ describe('FileViewer', () => {
       const entry = (wrapper.vm as any).captureScroll()
 
       expect(mockCaptureCurrentScrollState).toHaveBeenCalledTimes(1)
-      expect(entry).toEqual({ scrollTop: 777, anchor: null, blockAnchor: null, ratio: null })
+      expect(entry).toEqual({ scrollTop: 777, sourceLine: 12, sourceOffset: 0, ratio: null })
       // MarkdownPreview emits on its own; FileViewer must not emit again or the
       // capture would be banked twice.
       expect(wrapper.emitted('captureScroll')).toBeUndefined()

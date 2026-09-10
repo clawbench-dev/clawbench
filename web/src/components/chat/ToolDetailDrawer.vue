@@ -359,6 +359,102 @@ function handleBodyInput(event) {
   margin: 6px 0;
 }
 
+/* Agent call view — shared (Agent/Task) and codex sub-agent lifecycle frames.
+   Mirrors .content-blocks .agent-call-* so the bottom-sheet detail shows the
+   same layout for claude-style delegations and codex control frames. */
+.tool-detail-body .agent-call-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .agent-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tool-detail-body .agent-type-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(236, 72, 153, 0.12);
+  color: #db2777;
+  font-weight: 600;
+  white-space: nowrap;
+}
+:root[data-theme-base="dark"] .tool-detail-body .agent-type-badge {
+  background: rgba(244, 114, 182, 0.15);
+  color: #f472b6;
+}
+.tool-detail-body .agent-call-desc {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Codex sub-agent lifecycle activity frame */
+.tool-detail-body .codex-activity-badge {
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
+}
+:root[data-theme-base="dark"] .tool-detail-body .codex-activity-badge {
+  background: rgba(96, 165, 250, 0.15);
+  color: #60a5fa;
+}
+.tool-detail-body .codex-agent-path,
+.tool-detail-body .codex-agent-thread,
+.tool-detail-body .wait-call-sender {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.tool-detail-body .codex-agent-path code,
+.tool-detail-body .codex-agent-thread code,
+.tool-detail-body .wait-call-sender code {
+  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+.tool-detail-body .codex-agent-path-label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* Codex collaboration wait */
+.tool-detail-body .wait-call-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .wait-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .wait-call-label {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.tool-detail-body .wait-call-status {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.tool-detail-body .wait-call-agents {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body {
   overflow-x: auto;
 }
@@ -1660,104 +1756,95 @@ function handleBodyInput(event) {
 .tool-detail-body .permission-approval-view {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   line-height: 1.5;
-}
-.tool-detail-body .permission-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.tool-detail-body .permission-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-}
-.tool-detail-body .permission-title {
-  font-weight: 600;
-  color: #dc2626;
-}
-:root[data-theme-base="dark"] .tool-detail-body .permission-title {
-  color: #fca5a5;
 }
 .tool-detail-body .permission-tool-name {
   font-weight: 600;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
-  color: var(--text-primary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
 }
 .tool-detail-body .permission-tool-detail {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 .tool-detail-body .permission-detail-label {
+  align-self: flex-start;
   font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(239, 68, 68, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
   color: #dc2626;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   white-space: nowrap;
-  flex-shrink: 0;
   line-height: 1.5;
 }
 :root[data-theme-base="dark"] .tool-detail-body .permission-detail-label {
-  background: rgba(248, 113, 113, 0.12);
+  background: color-mix(in srgb, #f87171 14%, var(--bg-secondary));
   color: #fca5a5;
 }
 .tool-detail-body .permission-tool-detail code {
+  display: block;
   font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
   font-size: 12px;
+  line-height: 1.5;
   color: var(--text-primary);
-  word-break: break-all;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  /* Sharp, hard corners — terminal-like command block. */
+  border-radius: 0;
+  padding: 5px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .tool-detail-body .permission-options {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
 }
-.tool-detail-body .permission-btn {
-  padding: 6px 14px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+/* Buttons reuse the .fbtn colour language from modal-footer-btn.css but drop
+   the pill shape for a plain rounded-rect (same 6px as the card's ask-question
+   blocks). Only the interaction-state keep-alive stays here. */
+.tool-detail-body .permission-options .permission-btn {
+  padding: 0 14px;
+  border-radius: 6px;
 }
-@media (hover: hover) {
-  .tool-detail-body .permission-btn:hover {
-    opacity: 0.85;
-  }
+.tool-detail-body .permission-options .fbtn:disabled {
+  opacity: 0.5;
 }
-.tool-detail-body .permission-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
+/* Picked button stays in the same soft-tint family as the idle interactive
+   button (baseline for alignment) — border saturates, tint deepens, label
+   swaps to Approved/Denied. opacity: 1 keeps it from being dimmed by the
+   shared .fbtn:disabled rule that fades the unselected siblings. */
+.tool-detail-body .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #16a34a 28%, var(--bg-tertiary));
+  border-color: #16a34a;
+  color: #15803d;
+  opacity: 1;
 }
-.tool-detail-body .permission-btn-allow {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.3);
-  color: #16a34a;
+.tool-detail-body .permission-approval-view.permission-responded .permission-btn-reject {
+  background: color-mix(in srgb, #ef4444 24%, var(--bg-tertiary));
+  border-color: #ef4444;
+  color: #b91c1c;
+  opacity: 1;
 }
-:root[data-theme-base="dark"] .tool-detail-body .permission-btn-allow {
-  background: rgba(74, 222, 128, 0.12);
-  border-color: rgba(74, 222, 128, 0.25);
-  color: #4ade80;
+:root[data-theme-base="dark"] .tool-detail-body .permission-approval-view.permission-responded .permission-btn-allow {
+  background: color-mix(in srgb, #22c55e 30%, var(--bg-tertiary));
+  border-color: #22c55e;
+  color: #86efac;
 }
-.tool-detail-body .permission-btn-reject {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.2);
-  color: #dc2626;
-}
-:root[data-theme-base="dark"] .tool-detail-body .permission-btn-reject {
-  background: rgba(248, 113, 113, 0.1);
-  border-color: rgba(248, 113, 113, 0.2);
+:root[data-theme-base="dark"] .tool-detail-body .permission-approval-view.permission-responded .permission-btn-reject {
+  background: color-mix(in srgb, #f87171 26%, var(--bg-tertiary));
+  border-color: #f87171;
   color: #fca5a5;
 }
 
@@ -1792,10 +1879,6 @@ function handleBodyInput(event) {
 :root[data-theme-base="dark"] .tool-detail-body .permission-result-denied {
   background: #991b1b;
   color: #fee2e2;
-}
-
-.tool-detail-body .permission-auto-approved .permission-header {
-  opacity: 0.85;
 }
 
 .tool-detail-body .permission-result-auto-approved {

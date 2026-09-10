@@ -26,6 +26,8 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 		return parseOpenCodeACPToolCall(tc)
 	case "kimi":
 		return parseKimiACPToolCall(tc)
+	case "codex":
+		return parseCodexACPToolCall(tc)
 	default:
 		return parseGenericACPToolCall(tc, backend)
 	}
@@ -44,6 +46,8 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 		return parseOpenCodeACPToolCallUpdate(tcu)
 	case "kimi":
 		return parseKimiACPToolCallUpdate(tcu)
+	case "codex":
+		return parseCodexACPToolCallUpdate(tcu)
 	default:
 		return parseGenericACPToolCallUpdate(tcu, backend)
 	}

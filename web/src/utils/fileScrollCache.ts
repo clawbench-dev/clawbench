@@ -11,23 +11,20 @@
  * scrollTop reset to 0 by display:none, so callers must not overwrite a good
  * value with a 0 read from a hidden container (see FileViewer).
  */
-export interface ScrollAnchorState {
-    id: string
-    line: number
-    relTop: number
-}
-
-export interface BlockAnchorState {
-    selector?: string
-    index?: number
-    tag?: string
-    relTop: number
-}
-
 export interface FileScrollEntry {
     scrollTop: number
-    anchor?: ScrollAnchorState | null
-    blockAnchor?: BlockAnchorState | null
+    /**
+     * 1-based source line at the viewport top — the single content coordinate
+     * shared by the rendered pane (each block carries `data-source-line`) and
+     * the raw pane (CodeMirror line numbers).
+     */
+    sourceLine?: number
+    /**
+     * Pixels the viewport top sits BELOW the owning block's top. Lets a
+     * rendered→rendered restore land inside a tall block instead of snapping to
+     * its top.
+     */
+    sourceOffset?: number
     ratio?: { ratio: number } | null
 }
 

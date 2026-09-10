@@ -79,8 +79,6 @@ vi.mock('@/utils/clipboard', () => ({
 vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
-
-
 const mockIsPC = { value: false }
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({ isPC: mockIsPC }),
@@ -182,6 +180,7 @@ vi.mock('@/utils/fileManager', () => ({
   isAudio: (e: any) => /\.(mp3|wav|ogg)$/i.test(e.name || ''),
   isVideo: (e: any) => /\.(mp4|mov)$/i.test(e.name || ''),
   isThumbable: () => false,
+  isThumbableExt: () => false,
   formatSize: (s: number) => {
     if (s >= 1024) return `${(s / 1024).toFixed(1)} KB`
     return `${s} B`
@@ -209,15 +208,6 @@ vi.mock('@/utils/fileManager', () => ({
   resolveClickAction: vi.fn(),
 }))
 
-vi.mock('@/components/file/FileSearchDrawer.vue', () => ({
-  default: defineComponent({
-    props: ['open', 'currentDir'],
-    emits: ['close', 'navigateDir', 'selectFile'],
-    methods: { focusSearchInput: () => {} },
-    template: '<div class="file-search-drawer-stub" v-if="open" @click="$emit(\'close\')" />',
-  }),
-}))
-
 vi.mock('@/components/file/DirBreadcrumb.vue', () => ({
   default: { template: '<div class="dir-breadcrumb-stub" />' },
 }))
@@ -227,6 +217,43 @@ vi.mock('@/components/file/JumpDirDialog.vue', () => ({
     props: ['open'],
     emits: ['close', 'confirm'],
     template: '<div v-if="open" class="jump-dialog-stub" />',
+  }),
+}))
+
+// Mock useFileSearch so the inline search mode can be driven from tests
+// without opening a real SSE connection.
+const searchState = reactive({
+  query: '',
+  recursive: false,
+  scope: 'current' as 'current' | 'global',
+  exact: false,
+  results: [] as Array<{ name: string; path: string; type: string; matchedIndices: number[] }>,
+  searching: false,
+  total: 0,
+  truncated: false,
+  searchBasePath: '',
+})
+const mockSearchStart = vi.hoisted(() => vi.fn())
+const mockSearchCancel = vi.hoisted(() => vi.fn())
+const mockSearchReset = vi.hoisted(() => vi.fn())
+vi.mock('@/composables/useFileSearch', () => ({
+  useFileSearch: () => ({
+    state: searchState,
+    effectiveDir: { value: '' },
+    // Mirror the real composable: global scope always recurses.
+    effectiveRecursive: computed(() => searchState.scope === 'global' || searchState.recursive),
+    startSearch: mockSearchStart,
+    cancelSearch: mockSearchCancel,
+    // Mirror the real reset(): clears the query so the results layer collapses.
+    reset: () => {
+      mockSearchReset()
+      searchState.query = ''
+      searchState.results = []
+      searchState.total = 0
+      searchState.truncated = false
+      searchState.searchBasePath = ''
+    },
+    getDisplayLimit: () => 100,
   }),
 }))
 
@@ -256,7 +283,7 @@ const i18n = createI18n({
         multiSelect: { allCopied: '已复制', allCut: '已剪切', confirmDelete: '确认删除', enter: '多选', exit: '退出', tapToSelect: '点击选择', selectedCount: '已选 {n} 项', selectAll: '全选', deselectAll: '取消全选', archive: '归档', share: '分享' },
         prompt: { fileName: '文件名', folderName: '文件夹名', newName: '新名称' },
         toast: { fileCreated: '已创建', folderCreated: '已创建', cutDone: '已剪切', moved: '已移动', createFailed: '创建失败', createFailedDetail: '创建失败', archiving: '归档中', archiveDone: '归档完成', archiveFailed: '归档失败', archiveFailedDetail: '归档失败', switchProjectFailed: '切换失败', switchProjectFailedShort: '切换失败', operationFailedDetail: '操作失败: {error}' },
-        search: { title: '搜索文件' },
+        search: { placeholder: '搜索文件名...', recursive: '递归搜索', exact: '精确匹配', scopeGlobal: '全局搜索', scopeCurrent: '当前目录', wordExact: '精确', wordRecursive: '递归', wordCurrent: '在当前目录', wordGlobal: '在当前项目下', wordVerb: '搜索', reset: '重置', noResults: '未找到文件', searching: '搜索中...', resultCount: '找到 {count} 个文件', resultCountPlus: '找到 {limit}+ 个文件', truncated: '如需找到更多文件，请输入更精确的关键词', searchFrom: '搜索范围: {path}' },
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
@@ -313,6 +340,18 @@ beforeEach(() => {
   mockHasAttachedFile.mockReset()
   mockHasAttachedFile.mockReturnValue(false)
   mockToastShow.mockReset()
+  mockSearchStart.mockReset()
+  mockSearchCancel.mockReset()
+  mockSearchReset.mockReset()
+  searchState.query = ''
+  searchState.recursive = false
+  searchState.scope = 'current'
+  searchState.exact = false
+  searchState.results = []
+  searchState.searching = false
+  searchState.total = 0
+  searchState.truncated = false
+  searchState.searchBasePath = ''
   mockHandleFileSelectToDir.mockReset()
   mockHandleFileDropToDir.mockReset()
   mockHandleFileDropToDir.mockResolvedValue(undefined)
@@ -551,6 +590,154 @@ describe('FileManagerContent — handleItemClick', () => {
     expect(wrapper.vm.multiSelectState.selected.has('src')).toBe(false)
   })
 
+  it('PC: Shift+click selects the contiguous range from the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    // Plain click sets the anchor on the first entry.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
+
+    // Shift+click the third entry — all three are selected, nothing opens.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.size).toBe(3)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+
+  it('PC: repeated Shift+click re-extends from the same anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // Extend to readme.md, then shrink back to test.ts — the range is rebuilt
+    // from the anchor, so readme.md is no longer selected.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.size).toBe(2)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(false)
+  })
+
+  it('PC: Shift+click keeps selections made before the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    // Ctrl+click builds an independent selection on readme.md.
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
+    await nextTick()
+    // Plain click re-anchors on src.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    // Shift+click test.ts selects src+test.ts, preserving the readme.md pick.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+  })
+
+  it('PC: Shift+click does not move the anchor', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    // The highlighted path follows the Shift+click...
+    expect(wrapper.vm.selectedPath).toBe('readme.md')
+    // ...but the anchor stays on src: a later Shift+click re-extends from src.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.size).toBe(2)
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(false)
+  })
+
+  it('PC: Shift+click re-anchors after a directory change', async () => {
+    mockIsPC.value = true
+    const dirA = [
+      { name: 'a1', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'a2', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+    ]
+    const dirB = [
+      { name: 'b1', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'b2', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+      { name: 'b3', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
+    ]
+    const wrapper = mountContent({ entries: dirA, currentDir: 'dirA' })
+    // Plain click anchors on an entry of dirA.
+    await wrapper.find('.file-item[data-path="dirA/a1"]').trigger('click')
+    await nextTick()
+
+    // Change directory — the anchor no longer exists in the listing.
+    await wrapper.setProps({ entries: dirB, currentDir: 'dirB' })
+    await nextTick()
+
+    // Shift+click must re-anchor on the clicked entry instead of selecting nothing.
+    await wrapper.find('.file-item[data-path="dirB/b3"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.has('dirB/b3')).toBe(true)
+  })
+
+  it('PC: Shift+click re-anchors after the query replaces the listing', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // Switch to a search-results listing whose entries are unrelated.
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'cmd/main2.go', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+
+    await wrapper.find('.file-item[data-path="cmd/main2.go"]').trigger('click', { shiftKey: true })
+    await nextTick()
+
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(sel.has('cmd/main2.go')).toBe(true)
+  })
+
+  it('PC: Shift+click after select-all keeps the whole selection', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    // Enter multi-select and select everything via the toolbar button.
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    await wrapper.find('.ms-select-all-btn').trigger('click')
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(3)
+
+    // Shift+clicking the first entry must not silently drop the rest.
+    await wrapper.find('.file-item[data-path="src"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.size).toBe(3)
+  })
+
   it('does not emit when dirLoading is true', async () => {
     const wrapper = mountContent({ dirLoading: true })
     const dirItem = wrapper.find('.dir-item')
@@ -648,52 +835,396 @@ describe('FileManagerContent — sort', () => {
   })
 })
 
-// ── Search drawer ──
+// ── Resident search view (fused into the file manager) ──
 
-describe('FileManagerContent — search drawer', () => {
-  it('opens search drawer when search button is clicked', async () => {
-    const searchDrawerOpen = ref(false)
-    const searchDrawer = {
-      effectiveOpen: computed(() => searchDrawerOpen.value),
-      isOpen: readonly(searchDrawerOpen),
-      open: () => { searchDrawerOpen.value = true },
-      close: () => { searchDrawerOpen.value = false },
-      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
-    }
-    const wrapper = mountContent({ searchDrawer })
-    expect(searchDrawerOpen.value).toBe(false)
-    // Find and click the search button by its title
-    const allBtns = wrapper.findAll('.toolbar-btn')
-    const btn = allBtns.find(b => b.attributes('title')?.includes('Search'))
-    if (btn) {
-      await btn.trigger('click')
-      expect(searchDrawerOpen.value).toBe(true)
-    }
+describe('FileManagerContent — resident search', () => {
+  it('renders the search bar permanently with no toggle button', () => {
+    const wrapper = mountContent()
+    // The search bar is always present — there is no mode to enter.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    // No toolbar search toggle and no in-bar close button.
+    const titles = wrapper.findAll('.toolbar-btn').map(b => b.attributes('title') ?? '')
+    expect(titles.some(t => t.includes('搜索文件'))).toBe(false)
+    expect(wrapper.find('.fs-close-btn').exists()).toBe(false)
   })
 
-  it('closes search drawer on directory change', async () => {
-    const searchDrawerOpen = ref(false)
-    const closeFn = vi.fn(() => { searchDrawerOpen.value = false })
-    const searchDrawer = {
-      effectiveOpen: computed(() => searchDrawerOpen.value),
-      isOpen: readonly(searchDrawerOpen),
-      open: () => { searchDrawerOpen.value = true },
-      close: closeFn,
-      toggle: () => { searchDrawerOpen.value = !searchDrawerOpen.value },
-    }
-    searchDrawerOpen.value = true
-    const wrapper = mountContent({ searchDrawer })
+  it('keeps the search bar while multi-select is active and selecting results', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'cmd/main2.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
     await nextTick()
-    // Change directory — the watcher on currentDir should call searchDrawer.close()
+    // Enter multi-select from the search-results layer.
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    // The search bar stays, and the toolbar swaps to the multi-select variant.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
+
+    // Selecting a search result works while the query stays in the box.
+    await wrapper.find('.file-item').trigger('click')
+    expect(wrapper.vm.multiSelectState.selected.has('cmd/main.go')).toBe(true)
+    expect(searchState.query).toBe('main')
+    expect(wrapper.vm.searchActive).toBe(true)
+  })
+
+  it('clears the query without exiting multi-select', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('cmd/main.go')
+    await nextTick()
+
+    wrapper.vm.closeSearch()
+    await nextTick()
+    // Results layer gone, but the multi-selection and its toolbar survive.
+    expect(wrapper.vm.searchActive).toBe(false)
+    expect(wrapper.vm.multiSelectState.active).toBe(true)
+    expect(wrapper.vm.multiSelectState.selected.has('cmd/main.go')).toBe(true)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
+  })
+
+  it('swaps the browse toolbar for the multi-select toolbar in place', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    // Browse toolbar: the sort dropdown is present, the multi-select bar is not.
+    expect(wrapper.find('.toolbar-dropdown-wrap').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(false)
+
+    wrapper.vm.multiSelectState.active = true
+    wrapper.vm.multiSelectState.selected.add('test.ts')
+    await nextTick()
+
+    // Same toolbar row, now showing the multi-select variant.
+    const toolbar = wrapper.find('.dir-toolbar')
+    expect(toolbar.find('.ms-toolbar-btns').exists()).toBe(true)
+    expect(wrapper.find('.toolbar-dropdown-wrap').exists()).toBe(false)
+    // The breadcrumb is untouched — the merged bar never covers it.
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
+  })
+
+  it('shows the directory listing while the query is empty and results once typed', async () => {
+    const wrapper = mountContent()
+    // Empty query → current directory listing.
+    expect(wrapper.findAll('.file-item').length).toBe(sampleEntries.length)
+    expect(wrapper.vm.searchActive).toBe(false)
+
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+    ]
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(1)
+    expect(items[0].attributes('data-path')).toBe('cmd/main.go')
+  })
+
+  it('clears the query on directory change and returns to the listing', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
     await wrapper.setProps({ currentDir: 'src' })
     await nextTick()
-    // setProps may not reliably trigger Vue watchers in all test environments
-    // (same pattern as ChatInputBar.test.ts). If the watcher fired, closeFn
-    // was already called. If not, simulate the watcher's effect.
-    if (!closeFn.mock.calls.length) {
-      searchDrawer.close()
-    }
-    expect(searchDrawerOpen.value).toBe(false)
+    // Search bar stays resident; the results layer is dismissed.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+    expect(wrapper.vm.searchActive).toBe(false)
+  })
+
+  it('renders search results as file items with result paths', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [0, 1, 2, 3] },
+      { name: 'lib', path: 'pkg/lib', type: 'dir', matchedIndices: [0, 1, 2] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(2)
+    expect(items[0].attributes('data-path')).toBe('cmd/main.go')
+    expect(items[1].attributes('data-path')).toBe('pkg/lib')
+    expect(items[0].find('.file-name').text()).toContain('main.go')
+  })
+
+  it('shows each hit parent directory in global scope results', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+      { name: 'main2.go', path: 'internal/ai/main2.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    expect(items[0].find('.file-parent-dir').text()).toBe('cmd')
+    expect(items[1].find('.file-parent-dir').text()).toBe('internal/ai')
+  })
+
+  it('shows each hit parent directory in recursive search results', async () => {
+    searchState.query = 'main'
+    searchState.recursive = true
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.find('.file-parent-dir').text()).toBe('cmd')
+  })
+
+  it('omits the parent directory for a plain current-directory search', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    // Every hit is already known to be in the browsed directory — no path row.
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+    expect(wrapper.find('.file-meta').exists()).toBe(true)
+  })
+
+  it('omits the parent directory for root-level hits even when recursive', async () => {
+    searchState.query = 'main'
+    searchState.recursive = true
+    searchState.results = [
+      { name: 'main.go', path: 'main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('shows the parent directory in grid view for scoped results', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    wrapper.vm._setViewMode('grid')
+    await nextTick()
+    expect(wrapper.find('.grid-parent-dir').text()).toBe('cmd')
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('never shows a parent directory row while browsing a directory', async () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+    expect(wrapper.find('.file-meta').exists()).toBe(true)
+  })
+
+  it('double-clicking a file result emits selectFile and keeps the query', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item').trigger('dblclick')
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('cmd/main.go')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.vm.searchActive).toBe(true)
+  })
+
+  it('double-clicking a dir result emits navigateDir and clears the query', async () => {
+    searchState.query = 'cmd'
+    searchState.results = [
+      { name: 'cmd', path: 'cmd', type: 'dir', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.dir-item').trigger('dblclick')
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+    expect(wrapper.emitted('navigateDir')![0][0]).toBe('cmd')
+    expect(wrapper.vm.searchActive).toBe(false)
+  })
+
+  it('right-clicking a search result exposes its result path in the context menu', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    await wrapper.find('.file-item').trigger('contextmenu')
+    expect(wrapper.find('.context-menu').exists()).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry.path).toBe('cmd/main.go')
+  })
+
+  it('Escape clears the query and returns to the listing', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.vm.searchActive).toBe(false)
+    // The bar itself stays visible.
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+  })
+
+  it('Enter in the search box opens the first result without a prior highlight', async () => {
+    searchState.query = 'go'
+    searchState.results = [
+      { name: 'a.go', path: 'root/a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    // No arrow key pressed yet — Enter should open the first result.
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    expect(wrapper.emitted('selectFile')![0][0]).toBe('root/a.go')
+  })
+
+  it('replaces the stale highlight when the result set changes', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'a.go', path: 'root/a.go', type: 'file', matchedIndices: [] },
+      { name: 'b.go', path: 'cmd/b.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    // Highlight the second result via ArrowDown twice
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'ArrowDown' })
+    await wrapper.find('.search-pill input').trigger('keydown', { key: 'ArrowDown' })
+    expect(wrapper.vm._getSelectedPath()).toBe('cmd/b.go')
+    // Replace results with a fresh set (as a new search round would)
+    searchState.results = [
+      { name: 'c.go', path: 'pkg/c.go', type: 'file', matchedIndices: [] },
+    ]
+    await nextTick()
+    expect(wrapper.vm._getSelectedPath()).toBe('')
+  })
+
+  it('keeps the toolbar and breadcrumb visible alongside the resident search bar', () => {
+    const wrapper = mountContent({ currentDir: 'src' })
+    expect(wrapper.find('.dir-toolbar').exists()).toBe(true)
+    expect(wrapper.find('.dir-breadcrumb-stub').exists()).toBe(true)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
+  })
+
+  it('reflects the active search options in the search box placeholder', async () => {
+    searchState.scope = 'current'
+    searchState.recursive = false
+    searchState.exact = false
+    const wrapper = mountContent()
+    await nextTick()
+    // No separate hint line anymore — the mode description lives in the placeholder
+    expect(wrapper.find('.fs-mode-hint').exists()).toBe(false)
+    // zh wording concatenates scope + modifiers + verb without spaces
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前目录搜索')
+
+    searchState.recursive = true
+    searchState.exact = true
+    await nextTick()
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前目录精确递归搜索')
+
+    searchState.scope = 'global'
+    searchState.recursive = false
+    searchState.exact = false
+    await nextTick()
+    // Global scope always recurses, so the placeholder reflects recursion even
+    // when the (now disabled) recursive toggle is off.
+    expect(wrapper.find('.search-pill input').attributes('placeholder')).toBe('在当前项目下递归搜索')
+  })
+
+  it('forces recursive search in global scope and disables the recursive toggle', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'global'
+    searchState.recursive = false
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    // The recursive toggle is disabled while global, and shown active.
+    const recursiveBtn = wrapper.findAll('.fs-toggle-btn').find(b => b.attributes('title') === '递归搜索')!
+    expect(recursiveBtn.attributes('disabled')).toBeDefined()
+    expect(recursiveBtn.classes()).toContain('active')
+
+    // Global results show their containing directory (search ranges beyond the
+    // browsed directory).
+    expect(wrapper.find('.file-parent-dir').text()).toBe('cmd')
+  })
+
+  it('keeps the recursive toggle operable and off outside global scope', async () => {
+    searchState.query = 'main'
+    searchState.scope = 'current'
+    searchState.recursive = false
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    const recursiveBtn = wrapper.findAll('.fs-toggle-btn').find(b => b.attributes('title') === '递归搜索')!
+    expect(recursiveBtn.attributes('disabled')).toBeUndefined()
+    expect(recursiveBtn.classes()).not.toContain('active')
+    // Non-recursive current-dir search: no containing-directory row.
+    expect(wrapper.find('.file-parent-dir').exists()).toBe(false)
+  })
+
+  it('places the recursive toggle directly to the left of the global toggle', () => {
+    const wrapper = mountContent()
+    const titles = wrapper.findAll('.fs-toggle-btn').map(b => b.attributes('title'))
+    const recursiveIdx = titles.indexOf('递归搜索')
+    const globalIdx = titles.indexOf('全局搜索')
+    expect(recursiveIdx).toBeGreaterThanOrEqual(0)
+    expect(globalIdx).toBe(recursiveIdx + 1)
+  })
+
+  it('renders a reveal-in-directory button on each search result', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    const locateBtn = wrapper.find('.file-item .fs-result-dir-btn')
+    expect(locateBtn.exists()).toBe(true)
+  })
+
+  it('lists the current directory files while the search box is empty', async () => {
+    searchState.query = ''
+    searchState.results = []
+    const wrapper = mountContent() // default entries = sampleEntries (src dir, test.ts, readme.md)
+    await nextTick()
+    // The whole current dir listing is shown even with no query typed
+    const items = wrapper.findAll('.file-item')
+    expect(items.length).toBe(sampleEntries.length)
+    expect(items[0].text()).toContain('src')
+    // No reveal/locate buttons nor highlight while not actually filtering
+    expect(wrapper.find('.file-item .fs-result-dir-btn').exists()).toBe(false)
+    expect(wrapper.find('.file-name mark').exists()).toBe(false)
+  })
+
+  it('applies the toolbar sort to search results', async () => {
+    searchState.query = 'go'
+    searchState.results = [
+      { name: 'big.go', path: 'big.go', type: 'file', size: 5000, modified: '2025-01-01T00:00:00Z', matchedIndices: [] },
+      { name: 'a.go', path: 'a.go', type: 'file', size: 10, modified: '2025-01-01T00:00:00Z', matchedIndices: [] },
+    ]
+    const wrapper = mountContent({ sortField: 'size', sortDir: 'asc' })
+    await nextTick()
+    const items = wrapper.findAll('.file-item')
+    // Sorted ascending by size → a.go (10) before big.go (5000)
+    expect(items[0].attributes('data-path')).toBe('a.go')
+    expect(items[1].attributes('data-path')).toBe('big.go')
   })
 })
 
@@ -1244,6 +1775,43 @@ describe('FileManagerContent — keyboard shortcuts', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
     await nextTick()
     expect(wrapper.vm.multiSelectState.selected.size).toBe(0)
+  })
+
+  it('PC: Space toggle is preserved by a following Shift+click', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent() // order: src, test.ts, readme.md
+    await nextTick()
+
+    // Anchor on src, then Space-toggle readme.md on (highlight it first).
+    await wrapper.find('.file-item[data-path="src"]').trigger('click')
+    await nextTick()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+    wrapper.vm._setSelectedPath('readme.md')
+    await nextTick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.selected.has('readme.md')).toBe(true)
+
+    // Shift+click test.ts — readme.md (added via Space) must survive.
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { shiftKey: true })
+    await nextTick()
+    const sel = wrapper.vm.multiSelectState.selected
+    expect(sel.has('src')).toBe(true)
+    expect(sel.has('test.ts')).toBe(true)
+    expect(sel.has('readme.md')).toBe(true)
+  })
+
+  it('Escape in the empty resident search box exits multi-select', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.multiSelectState.active = true
+    await nextTick()
+
+    // Query is empty, so Escape must fall through to exiting multi-select
+    // instead of being swallowed by the dock's esc handler.
+    await wrapper.find('.fs-nav-bottom').trigger('keydown', { key: 'Escape' })
+    await nextTick()
+    expect(wrapper.vm.multiSelectState.active).toBe(false)
   })
 
   it('ArrowDown moves the highlighted selection to the next entry', async () => {
@@ -2330,13 +2898,13 @@ describe('FileManagerContent — multi-select action bar', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders the multi-select action bar when items are selected', async () => {
+  it('renders the multi-select toolbar when items are selected', async () => {
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     wrapper.vm.multiSelectState.selected.add('test.ts')
     await nextTick()
 
-    expect(wrapper.find('.ms-action-bar').exists()).toBe(true)
+    expect(wrapper.find('.ms-toolbar-btns').exists()).toBe(true)
   })
 
   it('doBatchCopy copies all selected entries', async () => {
@@ -2451,13 +3019,16 @@ describe('FileManagerContent — multi-select action bar', () => {
     expect(wrapper.vm.isAllSelected).toBe(false)
   })
 
-  it('renders the multi-select info bar with select-all button when active', async () => {
+  it('renders the multi-select toolbar with select-all button when active', async () => {
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
     await nextTick()
 
-    expect(wrapper.find('.ms-info-bar').exists()).toBe(true)
-    const exitBtn = wrapper.find('.ms-info-btn')
+    const toolbar = wrapper.find('.ms-toolbar-btns')
+    expect(toolbar.exists()).toBe(true)
+    expect(toolbar.find('.ms-select-all-btn').exists()).toBe(true)
+    // Exit button is the first icon button in the multi-select toolbar.
+    const exitBtn = toolbar.find('.toolbar-btn')
     await exitBtn.trigger('click')
     await nextTick()
     expect(wrapper.vm.multiSelectState.active).toBe(false)
@@ -2737,9 +3308,19 @@ describe('FileManagerContent — dropdowns', () => {
 // ── Thumbnails ──
 
 describe('FileManagerContent — thumbnails', () => {
-  it('thumbUrl builds a thumbnail URL from currentDir and name', () => {
+  it('thumbUrlFor builds a thumbnail URL from currentDir and name in browse mode', () => {
     const wrapper = mountContent({ currentDir: 'src' })
-    expect(wrapper.vm.thumbUrl({ name: 'a.png' })).toContain('/api/file/thumb')
+    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'src/a.png' })).toContain('/api/file/thumb')
+  })
+
+  it('thumbUrlFor builds a thumbnail URL from the result path in search mode', async () => {
+    searchState.query = 'a'
+    searchState.results = [
+      { name: 'a.png', path: 'nested/deep/a.png', type: 'image', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+    expect(wrapper.vm.thumbUrlFor({ name: 'a.png', path: 'nested/deep/a.png', type: 'file' })).toContain(encodeURIComponent('nested/deep/a.png'))
   })
 
   it('onThumbError marks the entry so isThumbLoaded returns false', () => {
@@ -2810,26 +3391,53 @@ describe('FileManagerContent — truncation', () => {
   })
 })
 
-// ── Search drawer navigation events ──
+// ── Search API (App Ctrl+F / back-navigation) ──
 
-describe('FileManagerContent — search drawer navigation', () => {
-  it('onSearchNavigateDir emits navigateDir', async () => {
+describe('FileManagerContent — search API', () => {
+  it('openSearch focuses the resident search input', async () => {
     const wrapper = mountContent()
-    await wrapper.vm.onSearchNavigateDir('src')
-    expect(wrapper.emitted('navigateDir')).toBeTruthy()
-    expect(wrapper.emitted('navigateDir')![0][0]).toBe('src')
+    await wrapper.vm.openSearch()
+    await nextTick()
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('onSearchSelectFile emits selectFile', async () => {
+  it('closeSearch clears the query but keeps the bar resident', async () => {
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
     const wrapper = mountContent()
-    await wrapper.vm.onSearchSelectFile('src/test.ts')
-    expect(wrapper.emitted('selectFile')).toBeTruthy()
-    expect(wrapper.emitted('selectFile')![0][0]).toBe('src/test.ts')
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(true)
+    await wrapper.vm.closeSearch()
+    await nextTick()
+    expect(wrapper.vm.searchActive).toBe(false)
+    expect(wrapper.find('.fs-input-row').exists()).toBe(true)
   })
 
-  it('focusSearchInput does not throw when no search drawer is mounted', async () => {
+  it('focusSearchInput does not throw', async () => {
     const wrapper = mountContent()
     expect(() => wrapper.vm.focusSearchInput()).not.toThrow()
+  })
+
+  it('exposes searchActive as an already-unwrapped boolean', async () => {
+    // App.vue reads this off the template ref to decide whether back-navigation
+    // should dismiss the results layer. defineExpose unwraps refs/computeds, so
+    // the value is a plain boolean — App.vue must NOT read `.value` off it.
+    searchState.query = 'main'
+    searchState.results = [
+      { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
+    ]
+    const wrapper = mountContent()
+    await nextTick()
+
+    const exposed = wrapper.vm.searchActive
+    expect(typeof exposed).toBe('boolean')
+    expect(exposed).toBe(true)
+    // The App.vue predicate must evaluate truthy for this exact expression.
+    expect(!!exposed).toBe(true)
+    // Guard against the regression where App.vue appended `.value`.
+    expect(!!(exposed as unknown as { value?: unknown })?.value).toBe(false)
   })
 })
 
@@ -2895,38 +3503,5 @@ describe('FileManagerContent — jump to dir', () => {
     await jumpItem!.trigger('click')
     await nextTick()
     expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
-  })
-
-  describe('origin banner', () => {
-    it('does not render origin banner when hasOrigin is false', () => {
-      const wrapper = mountContent({ hasOrigin: false, originLabel: 'Back to Chat' })
-      expect(wrapper.find('.origin-banner').exists()).toBe(false)
-    })
-
-    it('does not render origin banner when originLabel is empty', () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: '' })
-      expect(wrapper.find('.origin-banner').exists()).toBe(false)
-    })
-
-    it('renders origin banner with originLabel when hasOrigin is true and label provided', () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      expect(banner.exists()).toBe(true)
-      expect(banner.find('.origin-banner-text').text()).toBe('Back to Chat')
-    })
-
-    it('emits returnOrigin when origin banner is clicked', async () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      await banner.trigger('click')
-      expect(wrapper.emitted('returnOrigin')).toBeTruthy()
-    })
-
-    it('emits returnOrigin on Enter keydown', async () => {
-      const wrapper = mountContent({ hasOrigin: true, originLabel: 'Back to Chat' })
-      const banner = wrapper.find('.origin-banner')
-      await banner.trigger('keydown.enter')
-      expect(wrapper.emitted('returnOrigin')).toBeTruthy()
-    })
   })
 })

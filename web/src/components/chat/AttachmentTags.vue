@@ -18,17 +18,22 @@
     </template>
 
     <!-- Attached file reference cards -->
-    <span v-for="fileEntry in files" :key="'att-' + fileEntry.path"
+    <span v-for="fileEntry in files" :key="'att-' + entryKey(fileEntry)"
       class="chat-file-attachment attachment-ref"
-      :class="{ 'attachment-image-only': isImageFile(fileEntry.path) && (isThumbableExt(fileEntry.path) || thumbErrors.has(fileEntry.path)) }"
-      @click="$emit('file-click', fileEntry.path)"
+      :class="{ 'attachment-image-only': showsThumb(fileEntry) }"
+      @click="$emit('file-click', fileEntry)"
       :title="t('chat.attach.openFile')">
-      <img v-if="isImageFile(fileEntry.path) && isThumbableExt(fileEntry.path) && !thumbErrors.has(fileEntry.path)"
+      <img v-if="showsThumb(fileEntry)"
         class="attachment-thumb-img"
         :src="thumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
-      <FileIcon v-if="!isImageFile(fileEntry.path)" :path="fileEntry.path" :is-dir="fileEntry.isDir" :size="22" class="attachment-file-icon" />
-      <span v-if="!isImageFile(fileEntry.path)" class="attachment-filename">{{ getFileName(fileEntry.path) }}</span>
-      <button class="attachment-close-btn" @click.stop="$emit('remove', fileEntry.path)" :title="t('common.remove')">×</button>
+      <!-- Icon + filename fallback: non-images AND images the backend cannot
+           thumbnail (SVG/WebP/BMP/… or a failed thumb request) render as a
+           file card, never a blank pill. -->
+      <FileIcon v-if="!showsThumb(fileEntry)" :path="fileEntry.path" :is-dir="fileEntry.isDir" :size="22" class="attachment-file-icon" />
+      <span v-if="!showsThumb(fileEntry)" class="attachment-filename">
+        {{ getFileName(fileEntry.path) }}<template v-if="fileEntry.startLine !== undefined"><span class="attachment-range">{{ lineRangeLabel(fileEntry) }}</span></template>
+      </span>
+      <button class="attachment-close-btn" @click.stop="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
     </span>
   </div>
 </template>
@@ -53,13 +58,25 @@ const props = withDefaults(defineProps<{
 })
 
 defineEmits<{
-  'file-click': [path: string]
-  'remove': [path: string]
+  'file-click': [entry: FileEntry]
+  'remove': [entry: FileEntry]
   'remove-pending': [index: number]
 }>()
 
 const { t } = useI18n()
 const thumbUrl = buildPathThumbUrl
+
+/** Composite key so distinct line-range references of one file stay separate. */
+function entryKey(entry: FileEntry): string {
+  return `${entry.path}|${entry.startLine ?? 0}|${entry.endLine ?? 0}`
+}
+
+/** "N" for a single line or "N-M" for a range. */
+function lineRangeLabel(entry: FileEntry): string {
+  if (entry.startLine === undefined) return ''
+  if (entry.endLine === undefined || entry.endLine === entry.startLine) return `:${entry.startLine}`
+  return `:${entry.startLine}-${entry.endLine}`
+}
 
 const thumbErrors = ref(new Set<string>())
 function onThumbError(path: string) {
@@ -70,6 +87,16 @@ function onThumbError(path: string) {
 
 function getFileName(path: string) {
   return path ? baseName(path) : ''
+}
+
+/**
+ * A card shows the square thumbnail only when the backend can serve one and it
+ * has not failed to load. Everything else (non-images, image formats without a
+ * backend thumbnail like SVG/WebP/BMP, and failed thumb loads) falls back to the
+ * icon + filename file card.
+ */
+function showsThumb(entry: FileEntry): boolean {
+  return isImageFile(entry.path) && isThumbableExt(entry.path) && !thumbErrors.value.has(entry.path)
 }
 
 // Clear thumb errors when files list empties

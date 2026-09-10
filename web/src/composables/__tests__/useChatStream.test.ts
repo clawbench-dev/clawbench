@@ -489,6 +489,65 @@ describe('useChatStream', () => {
       expect(subscribeCalls[0][0]).toEqual({ type: 'subscribe', session_id: 'test-session-1' })
     })
 
+    it('resubscribe 绕过去重：已订阅同会话仍强制重发 subscribe（修复服务端订阅丢失）', () => {
+      const options = createOptions()
+      const { subscribe, resubscribe } = useChatStream(options)
+
+      subscribe('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      // subscribe() dedupes (no new message), resubscribe() MUST send again —
+      // this is what repairs a server-side-dropped StreamHub subscription.
+      subscribe('test-session-1')
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
+
+      resubscribe('test-session-1')
+      expect(mockSendWsMessage).toHaveBeenCalledTimes(1)
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'test-session-1' })
+    })
+
+    it('resubscribe 空 sessionId：不发送任何消息', () => {
+      const options = createOptions()
+      const { resubscribe } = useChatStream(options)
+
+      mockSendWsMessage.mockClear()
+      resubscribe('')
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
+    })
+
+    it('resubscribe 切换目标会话：先退订旧会话再订阅新会话', () => {
+      const options = createOptions()
+      const { subscribe, resubscribe } = useChatStream(options)
+
+      subscribe('s1')
+      mockSendWsMessage.mockClear()
+      resubscribe('s2')
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 's1' })
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 's2' })
+    })
+
+    it('resubscribe 在 WS 断开时调用：isSubscribed 置位，重连后恰好补发一次', async () => {
+      const options = createOptions()
+      const { resubscribe } = useChatStream(options)
+
+      mockConnected.value = false
+      await new Promise(r => setTimeout(r, 0))
+      // While the WS is not OPEN, sendWsMessage silently drops the message —
+      // but isSubscribed/subscribedSessionId are already set, so the existing
+      // watch(connected) false→true handler must re-send exactly one subscribe.
+      resubscribe('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      mockConnected.value = true
+      await new Promise(r => setTimeout(r, 0))
+
+      const subscribeCalls = mockSendWsMessage.mock.calls.filter(
+        (c: any[]) => c[0]?.type === 'subscribe' && c[0]?.session_id === 'test-session-1'
+      )
+      expect(subscribeCalls).toHaveLength(1)
+    })
+
     it('打开会话即订阅：currentSessionId 变化时自动 subscribe', async () => {
       const options = createOptions({ currentSessionId: ref('') })
       useChatStream(options)

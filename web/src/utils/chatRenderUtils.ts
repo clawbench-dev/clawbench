@@ -60,6 +60,10 @@ function resolveLocalMediaSrc(src: string, projectRoot?: string): string {
  * lightweight JPEG thumbnail (/api/file/thumb?path=...) and the original full-size
  * URL is stored in data-full-src (used by the lightbox to show the full image).
  * Skips absolute/external URLs. Applies thumbnail styling.
+ *
+ * Every <img> also gets the `lightbox-img` marker class (+ `chat-img` in chat)
+ * so the media-block factory (annotateMediaBlocks) lifts it into the unified
+ * bordered figure afterwards. No wrapper span is produced here anymore.
  */
 export function rewriteImageUrls(html: string, projectRoot: string, thumbWidth: number = THUMB_DEFAULT_WIDTH): string {
   return html.replace(/<img([^>]*)>/g, (_match, attrs) => {
@@ -67,11 +71,10 @@ export function rewriteImageUrls(html: string, projectRoot: string, thumbWidth: 
     const srcMatch = cleanAttrs.match(/\bsrc="([^"]*)"/)
     if (srcMatch) {
       const src = srcMatch[1]
-      // Skip absolute/external URLs
+      // Try to resolve as a project-local path (skip absolute/external URLs)
       if (/^(https?:|\/\/|^\/)/i.test(src)) {
-        return `<span class="lightbox-img-wrap"><img${cleanAttrs} class="chat-img lightbox-img"><span class="lightbox-expand-icon"></span></span>`
+        return `<img${cleanAttrs} class="chat-img lightbox-img">`
       }
-      // Try to resolve as a project-local path
       if (projectRoot) {
         const rewritten = resolveLocalMediaSrc(src, projectRoot)
         if (rewritten !== src) {
@@ -88,7 +91,7 @@ export function rewriteImageUrls(html: string, projectRoot: string, thumbWidth: 
         }
       }
     }
-    return `<span class="lightbox-img-wrap"><img${cleanAttrs} class="chat-img lightbox-img"><span class="lightbox-expand-icon"></span></span>`
+    return `<img${cleanAttrs} class="chat-img lightbox-img">`
   })
 }
 
@@ -99,24 +102,23 @@ export function isThumbExtension(path: string): boolean {
 }
 
 /**
- * Wrap bare inline <svg> elements (returned directly by the AI, not rendered
- * from markdown image syntax) in a lightbox wrapper so they get the same
- * "view" affordance as raster images: a top-right expand icon on hover.
+ * Mark bare inline <svg> elements (returned directly by the AI, not rendered
+ * from markdown image syntax) with the `lightbox-svg` marker class so the
+ * media-block factory (annotateMediaBlocks) lifts them into the unified
+ * bordered figure. No wrapper span is produced here anymore.
  *
  * Runs on the rendered HTML string BEFORE mermaid diagrams are produced —
- * at this stage mermaid is still a <pre> code block (no svg), and mermaid.ts
- * later adds its own expand icon at the DOM level. The wrapper marks the svg
- * with a .lightbox-svg class so repeated application is idempotent.
+ * at this stage mermaid is still a <pre> code block (no svg). Marking (instead
+ * of wrapping) keeps every later <a href>-anchored regex step working: no new
+ * wrapper <span> is introduced that could break structural matches.
  *
- * Callers MUST invoke this AFTER all <a href>-anchored regex steps (audio/video
- * link conversion, path/commit/localhost annotations): the wrapper <span>
- * breaks those regexes' structural matches across the svg content.
+ * The marker class also makes repeated application idempotent.
  *
  * SVGs already inside an interactive UI element injected by the pipeline
  * (e.g. the lucide icon inside a .chat-file-open-btn button) are skipped —
  * they are not content images and must not get a lightbox affordance.
  */
-export function wrapInlineSvgs(html: string): string {
+export function markInlineSvgs(html: string): string {
   const result: string[] = []
   const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/g
   let lastIndex = 0
@@ -140,12 +142,11 @@ export function wrapInlineSvgs(html: string): string {
       // Skip content inside interactive UI elements injected by the pipeline.
       const inInteractive = tagStack.some(t => t === 'button' || t === 'a')
 
-      // Idempotency: skip SVGs we already wrapped — the wrapper adds the
-      // .lightbox-svg marker class to the svg's own opening tag.
-      const alreadyWrapped = /\bclass\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
+      // Idempotency: skip SVGs already carrying the lightbox-svg marker class.
+      const alreadyMarked = /\bclass\s*=\s*("|')[^"']*\blightbox-svg\b[^"']*\1/i.test(openTag)
 
-      if (alreadyWrapped || inInteractive) {
-        // Treat this svg as a balanced unit: skip its full span without wrapping.
+      if (alreadyMarked || inInteractive) {
+        // Treat this svg as a balanced unit: skip its full span untouched.
         const depth = countSvgDepth(html, openIndex + openTag.length)
         if (depth >= 0) {
           result.push(html.slice(lastIndex, openIndex))
@@ -170,7 +171,7 @@ export function wrapInlineSvgs(html: string): string {
           : openTag.replace(/\/?>$/, ' class="lightbox-svg">')
 
         result.push(html.slice(lastIndex, openIndex))
-        result.push(`<span class="lightbox-svg-wrap">${tagged}${innerHtml}</svg><span class="lightbox-expand-icon"></span></span>`)
+        result.push(`${tagged}${innerHtml}</svg>`)
         lastIndex = closeEnd
         tagRe.lastIndex = closeEnd
         continue
@@ -192,6 +193,9 @@ export function wrapInlineSvgs(html: string): string {
   result.push(html.slice(lastIndex))
   return result.join('')
 }
+
+/** @deprecated Renamed to markInlineSvgs — kept as an alias for callers/tests. */
+export const wrapInlineSvgs = markInlineSvgs
 
 /**
  * Find the end offset (just past the closing </svg>) of the svg element whose

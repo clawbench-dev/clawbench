@@ -7,7 +7,7 @@
     max-width: min(900px, 100%);
     margin: 0 auto;
     padding: 10px;
-    font-size: 15px;
+    font-size: 13px;
     border-radius: 0;
     background: transparent;
     flex: 1;
@@ -17,6 +17,23 @@
     box-sizing: border-box;
     width: 100%;
     position: relative;
+}
+
+/* Markdown file preview (MarkdownPreview.vue, used by the file viewer and the
+   share SPA): the scrollbar element stays FULL-WIDTH so the scrollbar hugs the
+   right edge even on wide screens. The reading-column cap (900px) is produced
+   with symmetric horizontal padding on the same element (box-sizing: border-box)
+   instead of `max-width` + `margin: 0 auto` — shrinking the element would drag
+   its own scrollbar away from the edge.
+
+   The horizontal padding is `10px + half the slack above 900px`: the 10px keeps
+   the side margin text always had, and the slack centers the column only when
+   the container is wider than the cap (it degrades to 0 when narrower, so small
+   screens keep edge-to-edge text exactly as before). */
+.markdown-preview .markdown-body {
+    max-width: none;
+    margin: 0;
+    padding: 10px calc(10px + max(0px, (100% - 900px) / 2));
 }
 
 .markdown-body h1,

@@ -371,6 +371,97 @@ describe('toolCallSummary', () => {
     expect(toolCallSummary({ input: { custom: 'hello' } })).toBe('hello')
   })
 
+  it('uses lexicographically first key for deterministic fallback', () => {
+    expect(toolCallSummary({ input: { zeta: 'last', alpha: 'first' } })).toBe('first')
+  })
+
+  it('shows #taskId · status for TaskUpdate default input', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'in_progress', taskId: '3' } })).toBe('#3 · in_progress')
+  })
+
+  it('PermissionApproval summarizes to the requested command', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: {
+        toolName: 'Bash',
+        toolInput: JSON.stringify({ command: 'rm -rf /tmp/cache' }),
+        options: [],
+      },
+    })).toBe('rm -rf /tmp/cache')
+  })
+
+  it('PermissionApproval summarizes to the requested file', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: {
+        toolName: 'Edit',
+        toolInput: JSON.stringify({ file_path: '/home/user/project/main.go' }),
+        options: [],
+      },
+    })).toBe('/home/user/project/main.go')
+  })
+
+  it('PermissionApproval falls back to the requesting tool name', () => {
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: { toolName: 'Bash', toolInput: 'not-json', options: [] },
+    })).toBe('Bash')
+    expect(toolCallSummary({
+      name: 'PermissionApproval',
+      input: { toolName: 'Bash', options: [] },
+    })).toBe('Bash')
+  })
+
+  it('PermissionApproval returns empty when nothing to summarize', () => {
+    expect(toolCallSummary({ name: 'PermissionApproval', input: {} })).toBe('')
+  })
+
+  it('shows TaskUpdate completed deterministically', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { status: 'completed', taskId: '14' } })).toBe('#14 · completed')
+  })
+
+  it('shows #taskId only when TaskUpdate status missing', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { taskId: '7' } })).toBe('#7')
+  })
+
+  it('TaskUpdate is case-insensitive', () => {
+    expect(toolCallSummary({ name: 'taskupdate', input: { status: 'in_progress', taskId: '3' } })).toBe('#3 · in_progress')
+  })
+
+  it('TaskUpdate subject override wins over derived form', () => {
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      input: { subject: 'Fix auth bug', status: 'in_progress', taskId: '3' },
+    })).toBe('Fix auth bug')
+  })
+
+  it('TaskUpdate description override wins over derived form', () => {
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      input: { description: 'Roll back config', status: 'completed', taskId: '9' },
+    })).toBe('Roll back config')
+  })
+
+  it('TaskUpdate with no taskId falls through to generic fallback', () => {
+    expect(toolCallSummary({ name: 'TaskUpdate', input: { foo: 'bar' } })).toBe('bar')
+  })
+
+  it('TaskUpdate with pre-extracted summary keeps the stored value (new-calls-only scope)', () => {
+    // DB rows written before the fix carry a random stored summary; block.summary
+    // must win so old messages are not re-derived. Same contract as Go's
+    // DB upsert (only fresh calls run ExtractSummary).
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      summary: 'in_progress',
+      input: { status: 'in_progress', taskId: '3' },
+    })).toBe('in_progress')
+    expect(toolCallSummary({
+      name: 'TaskUpdate',
+      summary: '3',
+      input: { status: 'in_progress', taskId: '3' },
+    })).toBe('3')
+  })
+
   it('shows first value regardless of length', () => {
     expect(toolCallSummary({ input: { data: 'X'.repeat(80) } })).toBe('X'.repeat(80))
   })

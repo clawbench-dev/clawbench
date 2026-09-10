@@ -336,6 +336,14 @@ function normalizeUrl(url) {
         .replace(/\?&/g, '?')
 }
 
+/** Append a cache-buster `t=` param, honoring an existing query string —
+ *  blindly joining with `?` corrupts URLs that already carry params
+ *  (e.g. the share token endpoint `/api/share/{token}/local?path=…`). */
+function withCacheBuster(url) {
+    const sep = url.includes('?') ? '&' : '?'
+    return url + sep + 't=' + Date.now()
+}
+
 function navigateMdImage(newIdx, direction) {
     const img = mdImages.value[newIdx]
     if (!img) return
@@ -361,13 +369,13 @@ function navigateMdImage(newIdx, direction) {
         currentUrl.value = ''
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
         currentSvg.value = ''
     }
 }
 
 function open(url, svg = '') {
-    currentUrl.value = svg ? '' : normalizeUrl(url) + '?t=' + Date.now()
+    currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
     currentSvg.value = svg
     lightboxVisible.value = true
     imageLoading.value = !svg
@@ -414,7 +422,7 @@ function openMdImages(imgs, startIndex) {
         imageLoading.value = false
     } else {
         // collectMdImages pre-resolves data-full-src into src
-        currentUrl.value = normalizeUrl(img.src) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(img.src))
         currentSvg.value = ''
         imageLoading.value = true
     }
@@ -475,7 +483,7 @@ function resetAndRefresh() {
     lastTx.value = 0
     lastTy.value = 0
     if (currentUrl.value) {
-        currentUrl.value = normalizeUrl(currentUrl.value) + '?t=' + Date.now()
+        currentUrl.value = withCacheBuster(normalizeUrl(currentUrl.value))
     }
 }
 
@@ -731,16 +739,21 @@ watch(lightboxVisible, (visible) => {
 
 function handleLightboxClick(e) {
     // Touch mode: direct click on .lightbox-img, .mermaid or .lightbox-svg opens lightbox
-    // PC mode: only click on .lightbox-expand-icon opens lightbox
-    const isExpandIcon = !!e.target.closest('.lightbox-expand-icon')
-    // PC mode: only expand icon opens lightbox (not the image/mermaid/svg itself)
-    if (!isExpandIcon && e.pointerType !== 'touch') return
+    // PC mode: only click on the figure header view button opens lightbox
+    const isViewBtn = !!e.target.closest('.image-block-view-btn')
+    // PC mode: only the view button opens lightbox (not the image/mermaid/svg itself)
+    if (!isViewBtn && e.pointerType !== 'touch') return
 
-    // When clicking the expand icon, find the image from the wrapper
-    // (the icon is a sibling of the img, not a child)
+    // When clicking a view button, find the media from its shared figure wrapper
+    // (`.image-block-wrapper`); the content may be an image, a rendered mermaid
+    // diagram or a bare inline <svg> — resolve in that order.
+    const wrap = isViewBtn
+        ? e.target.closest('.image-block-wrapper, .lightbox-img-wrap')
+        : e.target.closest('.image-block-wrapper, .lightbox-img-wrap, .lightbox-svg-wrap')
+
+    // 1. Raster image
     let img
-    if (isExpandIcon) {
-        const wrap = e.target.closest('.lightbox-img-wrap')
+    if (isViewBtn) {
         img = wrap ? wrap.querySelector('.lightbox-img') : null
     } else {
         img = e.target.closest('.lightbox-img')
@@ -759,7 +772,10 @@ function handleLightboxClick(e) {
         open(fullImgSrc(img))
         return
     }
+
+    // 2. Rendered mermaid diagram (content cell of the figure, or standalone)
     const mermaidDiv = e.target.closest('.markdown-body .mermaid, .chat-message .mermaid')
+      || (wrap?.querySelector('.mermaid') ?? null)
     if (mermaidDiv) {
         e.preventDefault()
         const svg = mermaidDiv.querySelector('svg')
@@ -776,22 +792,20 @@ function handleLightboxClick(e) {
         }
         return
     }
-    // Inline SVG (non-mermaid) returned directly by the AI
-    const svgWrap = e.target.closest('.lightbox-svg-wrap')
-    if (svgWrap) {
+
+    // 3. Bare inline SVG (non-mermaid) returned directly by the AI
+    const svgEl = wrap?.querySelector('svg.lightbox-svg') || e.target.closest('.lightbox-svg')
+    if (svgEl) {
         e.preventDefault()
-        const svg = svgWrap.querySelector('svg.lightbox-svg') || svgWrap.querySelector('svg')
-        if (svg) {
-            const mdContainer = svgWrap.closest('.markdown-body, .chat-message')
-            if (mdContainer) {
-                const { list, startIdx } = collectMdImages(mdContainer, null, null, svg)
-                if (list.length > 1) {
-                    openMdImages(list, startIdx)
-                    return
-                }
+        const mdContainer = svgEl.closest('.markdown-body, .chat-message')
+        if (mdContainer) {
+            const { list, startIdx } = collectMdImages(mdContainer, null, null, svgEl)
+            if (list.length > 1) {
+                openMdImages(list, startIdx)
+                return
             }
-            openSvg(svg.outerHTML)
         }
+        openSvg(svgEl.outerHTML)
     }
 }
 

@@ -340,6 +340,31 @@ func TestClawBenchACPClient_MergeCommandsFromScan_EmptyInput(t *testing.T) {
 	assert.Nil(t, c.GetCommands())
 }
 
+func TestClawBenchACPClient_MergeCommandsFromScan_SlashInconsistencyDedupes(t *testing.T) {
+	c := NewClawBenchACPClient()
+
+	// ACP cache: slashless "mmx-cli" (CodeBuddy strips the slash on skills) and
+	// a slash-prefixed "/compact" (some agents report built-ins with the slash).
+	c.SetCommands([]acp.AvailableCommand{
+		{Name: "mmx-cli", Description: "ACP mmx-cli"},
+		{Name: "/compact", Description: "ACP compact"},
+	})
+
+	// Pre-scanned plugin/skill names may carry a leading slash that only differs
+	// cosmetically from the ACP entry — they must be treated as the same command.
+	pluginCmds := []AvailableCommandInfo{
+		{Name: "/mmx-cli", Description: "Pre-scanned mmx-cli"},
+		{Name: "buddy-sings", Description: "Pre-scanned buddy-sings"},
+	}
+	c.MergeCommandsFromScan(pluginCmds)
+
+	cmds := c.GetCommands()
+	require.Len(t, cmds, 3)
+	assert.Equal(t, "mmx-cli", cmds[0].Name)
+	assert.Equal(t, "/compact", cmds[1].Name)    // preserved as reported
+	assert.Equal(t, "buddy-sings", cmds[2].Name) // new command added, original Name kept
+}
+
 func TestClawBenchACPClient_SessionUpdate_MergesWithPreScanned(t *testing.T) {
 	c := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 10)

@@ -53,6 +53,15 @@ describe('FileAttachmentList', () => {
     expect(wrapper.find('.attachment-filename').exists()).toBe(false)
   })
 
+  it('falls back to icon + filename for SVG (image the backend cannot thumbnail)', () => {
+    const wrapper = mountComponent(['img/logo.svg'])
+    // Image-but-not-thumbable must never render a blank card
+    expect(wrapper.find('.attachment-image-only').exists()).toBe(false)
+    expect(wrapper.find('.attachment-thumb-img').exists()).toBe(false)
+    expect(wrapper.find('.attachment-filename').exists()).toBe(true)
+    expect(wrapper.text()).toContain('logo.svg')
+  })
+
   it('applies attachment-image-only class for image files', () => {
     const wrapper = mountComponent(['img/photo.png'])
     const card = wrapper.find('.chat-file-attachment')

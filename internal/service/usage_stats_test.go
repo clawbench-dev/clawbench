@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,11 +81,15 @@ func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
 		t.Fatalf("insert history: %v", err)
 	}
 	msgID, _ := res.LastInsertId()
+	// The ledger carries denormalized attribution (project_path/backend/
+	// agent_id/clawbench_session_id) so stats work after the session is deleted.
 	if _, err := db.Exec(
 		`INSERT INTO chat_metadata (message_id, model, input_tokens, output_tokens, total_tokens,
-			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at,
+			project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msgID, s.model, s.input, s.output, s.total, s.cacheHit, s.cacheMiss, s.credit, s.costUSD, s.createdAt,
+		s.project, s.backend, s.agentID, s.sessionID,
 	); err != nil {
 		t.Fatalf("insert metadata: %v", err)
 	}
@@ -388,4 +393,229 @@ func TestUsageStatsSortByCostAsc(t *testing.T) {
 	assert.Equal(t, int64(200), res.Rows[0].Input)
 	assert.InDelta(t, 2.0, res.Rows[0].Credit, 0.0001)
 	assert.Equal(t, "claude", res.Rows[1].Key["backend"])
+}
+
+// TestUsageStatsSurvivesSessionHardDelete is the core regression for the
+// standalone usage ledger: hard-deleting a session (and therefore all of its
+// chat_history rows) must NOT remove the token/cost records for work that was
+// actually performed.
+func TestUsageStatsSurvivesSessionHardDelete(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s-del", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		input: 100, output: 50, total: 150, cacheHit: 40, cacheMiss: 10, credit: 1.5, costUSD: 0.02,
+	})
+
+	before, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	require.Equal(t, int64(150), before.Totals.Total)
+
+	// Delete the session outright — chat_history rows cascade away.
+	require.NoError(t, service.HardDeleteSession("s-del"))
+
+	var historyCount, ledgerCount int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "s-del").Scan(&historyCount))
+	assert.Equal(t, 0, historyCount, "messages must be gone")
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE clawbench_session_id = ?", "s-del").Scan(&ledgerCount))
+	assert.Equal(t, 1, ledgerCount, "usage ledger must survive session deletion")
+
+	// Statistics must still report the consumed usage after deletion.
+	after, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	require.NotNil(t, after.Totals)
+	assert.Equal(t, int64(150), after.Totals.Total, "usage must not be lost after session delete")
+	assert.Equal(t, int64(1), after.Totals.MessageCnt)
+	require.Len(t, after.Rows, 1)
+	assert.Equal(t, "glm", after.Rows[0].Key["model"])
+}
+
+// TestUsageStatsSurvivesPurgeArchivedData covers the retention auto-purge path:
+// archived sessions hard-deleted by the cleanup worker must also leave the
+// usage ledger intact.
+func TestUsageStatsSurvivesPurgeArchivedData(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	insertUsageSeed(t, db, usageSeed{
+		project: "/p", sessionID: "s-arch", agentID: "codebuddy", agentName: "CodeBuddy",
+		backend: "codebuddy", model: "glm", createdAt: "2026-01-10 10:00:00",
+		input: 100, output: 50, total: 150,
+	})
+	require.NoError(t, service.ArchiveSession("/p", "codebuddy", "s-arch"))
+
+	sessionsPurged, _, err := service.PurgeArchivedData([]string{"s-arch"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sessionsPurged)
+
+	res, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(150), res.Totals.Total, "purge must not remove usage ledger rows")
+}
+
+// TestUsageStatsResendAfterRewindNotDoubleCounted verifies the no-overlap claim:
+// a rewind drops the removed turns but keeps their ledger rows, and a later
+// re-send creates a fresh AUTOINCREMENT message id → a distinct ledger row. The
+// preserved old row must not be merged or duplicated.
+func TestUsageStatsResendAfterRewindNotDoubleCounted(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	sessID := "s-rewind"
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/p', 'claude', 't', 'a')",
+		sessID,
+	)
+	require.NoError(t, err)
+
+	// Turn 1: assistant reply consumed 100 tokens.
+	res, err := db.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:00:00')",
+		sessID,
+	)
+	require.NoError(t, err)
+	asst1ID, _ := res.LastInsertId()
+	_, err = db.Exec(
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:00:00', '/p', 'claude', 'a', ?)`,
+		asst1ID, sessID,
+	)
+	require.NoError(t, err)
+
+	// Turn 2: another assistant reply, then rewind back to turn 1.
+	res, err = db.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:05:00')",
+		sessID,
+	)
+	require.NoError(t, err)
+	asst2ID, _ := res.LastInsertId()
+	_, err = db.Exec(
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 50, 50, '2026-01-10 10:05:00', '/p', 'claude', 'a', ?)`,
+		asst2ID, sessID,
+	)
+	require.NoError(t, err)
+
+	_, err = service.TruncateSessionAfterMessage(sessID, asst1ID)
+	require.NoError(t, err)
+
+	// The rewound turn's ledger row survives; its message row does not.
+	var n int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?", asst2ID).Scan(&n))
+	assert.Equal(t, 1, n, "rewound usage must be retained")
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE id = ?", asst2ID).Scan(&n))
+	assert.Equal(t, 0, n)
+
+	// Re-send: a new AUTOINCREMENT id, so a new distinct ledger row.
+	res, err = db.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:10:00')",
+		sessID,
+	)
+	require.NoError(t, err)
+	asst3ID, _ := res.LastInsertId()
+	require.NotEqual(t, asst2ID, asst3ID, "AUTOINCREMENT must not reuse ids")
+	_, err = db.Exec(
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:10:00', '/p', 'claude', 'a', ?)`,
+		asst3ID, sessID,
+	)
+	require.NoError(t, err)
+
+	// Total = retained rewound turn (50) + original turn 1 (100) + re-send (100).
+	// No double-count: the rewound row and the re-sent row are separate records.
+	got, err := service.UsageStats(context.Background(), usageParams(service.UsageParams{
+		ProjectPath: "/p",
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, int64(250), got.Totals.Total)
+	assert.Equal(t, int64(3), got.Totals.MessageCnt)
+}
+
+// TestUsageStatsForkDoesNotDoubleCountOnBackfill guards the fork invariant
+// against the startup metadata backfill. ForkSession copies assistant content
+// verbatim (including embedded metadata) but deliberately does not copy the
+// ledger. Without excluding copy-origin sessions from MigrateMetadataFromContent,
+// the next startup would re-create ledger rows for the forked messages and
+// double-count usage the source session already contributed.
+func TestUsageStatsForkDoesNotDoubleCountOnBackfill(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	sid := "fork-src"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/p', 'claude', 'T', 'a')", sid)
+	require.NoError(t, err)
+	content := `{"blocks":[{"type":"text","text":"hi"}],"metadata":{"model":"opus","inputTokens":100,"totalTokens":100}}`
+	res, err := db.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/p','claude',?,'assistant',?,0)",
+		sid, content,
+	)
+	require.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+	_, err = db.Exec(
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, project_path, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, '/p', 'claude', 'a', ?)`, msgID, sid,
+	)
+	require.NoError(t, err)
+
+	_, err = service.ForkSession(sid, "/p", "Fork", 0, "")
+	require.NoError(t, err)
+
+	// Startup backfill must not resurrect usage for the forked copy.
+	service.MigrateMetadataFromContent()
+
+	got, err := service.UsageStats(context.Background(), service.UsageParams{
+		ProjectPath: "/p",
+		Start:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:         time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+		Dims:        []service.UsageDim{service.DimModel},
+		Metrics:     []service.UsageMetric{service.MetricTotal},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(100), got.Totals.Total, "fork must not double-count usage on backfill")
+	assert.Equal(t, int64(1), got.Totals.MessageCnt)
+}
+
+// TestSaveMetadataAttributionPopulated verifies SaveMetadata denormalizes the
+// attribution columns from chat_history/chat_sessions at write time, so the
+// ledger is self-contained.
+func TestSaveMetadataAttributionPopulated(t *testing.T) {
+	db := setupDB(t)
+	ensureAgentsTable(t, db)
+
+	sid := "attr-sess"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/proj', 'codebuddy', 'T', 'codebuddy')", sid)
+	require.NoError(t, err)
+	res, err := db.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/proj','codebuddy',?,'assistant','{}',0)",
+		sid,
+	)
+	require.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+
+	require.NoError(t, service.SaveMetadata(msgID, &ai.Metadata{Model: "glm", TotalTokens: 5}))
+
+	var project, backend, agentID, clawSID string
+	require.NoError(t, db.QueryRow(
+		"SELECT project_path, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
+	).Scan(&project, &backend, &agentID, &clawSID))
+	assert.Equal(t, "/proj", project)
+	assert.Equal(t, "codebuddy", backend)
+	assert.Equal(t, "codebuddy", agentID)
+	assert.Equal(t, sid, clawSID)
 }

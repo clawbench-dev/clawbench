@@ -108,12 +108,14 @@ func dimExpr(d UsageDim) (string, bool) {
 	case DimModel:
 		return "COALESCE(NULLIF(m.model,''),'" + emptyGroupLabel + "')", true
 	case DimBackend:
-		return "COALESCE(NULLIF(h.backend,''),'" + emptyGroupLabel + "')", true
+		return "COALESCE(NULLIF(m.backend,''),'" + emptyGroupLabel + "')", true
 	case DimAgent:
 		// Agent display name from agents.name, falling back to the stored
 		// agent_id (the agents row may have been deleted), then to a stable
-		// "(empty)" bucket so NULLs never merge into one unknown group.
-		return "COALESCE(NULLIF(a.name,''), NULLIF(s.agent_id,''), '" + emptyGroupLabel + "')", true
+		// "(empty)" bucket so NULLs never merge into one unknown group. The
+		// name is resolved live via LEFT JOIN agents; the ledger itself stores
+		// only agent_id so it survives session deletion.
+		return "COALESCE(NULLIF(a.name,''), NULLIF(m.agent_id,''), '" + emptyGroupLabel + "')", true
 	}
 	return "", false
 }
@@ -190,9 +192,11 @@ func validateUsageParams(p *UsageParams) error {
 	return nil
 }
 
-// UsageStats aggregates token/cost/credit usage from chat_metadata joined to
-// chat_history (project scope) and chat_sessions/agents (agent identity).
-// The query never touches real user strings: dims/metrics map onto fixed
+// UsageStats aggregates token/cost/credit usage from the chat_metadata ledger.
+// The ledger is standalone (no FK to chat_history) and carries denormalized
+// project_path/backend/agent_id, so this query works even after the session and
+// its messages have been deleted. agents is LEFT JOINed only for the display
+// name. The query never touches real user strings: dims/metrics map onto fixed
 // whitelisted column expressions.
 func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	if err := validateUsageParams(&p); err != nil {
@@ -208,10 +212,12 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	sums := "COALESCE(SUM(m.input_tokens),0), COALESCE(SUM(m.output_tokens),0), COALESCE(SUM(m.total_tokens),0), " +
 		"COALESCE(SUM(m.cache_hit_tokens),0), COALESCE(SUM(m.cache_miss_tokens),0), " +
 		"COALESCE(SUM(m.credit),0), COALESCE(SUM(m.cost_usd),0), COUNT(*)"
+	// chat_metadata is a standalone ledger with denormalized project_path/
+	// backend/agent_id, so no join back to chat_history/chat_sessions is needed
+	// (those rows may have been deleted). agents is joined only to resolve the
+	// agent display name.
 	from := "FROM chat_metadata m " +
-		"JOIN chat_history h ON h.id = m.message_id " +
-		"LEFT JOIN chat_sessions s ON s.id = h.session_id " +
-		"LEFT JOIN agents a ON a.id = s.agent_id"
+		"LEFT JOIN agents a ON a.id = m.agent_id"
 
 	limit := p.Limit
 	if limit <= 0 {
@@ -227,11 +233,12 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	}
 	sortBy, _ := sortExpr(p.SortBy)
 
-	// Where clause. project_path filters the session-scoped project; created_at
-	// bounds the usage window. UTC-formatted params match SQLite stored text.
+	// Where clause. project_path filters the ledger's denormalized project;
+	// created_at bounds the usage window. UTC-formatted params match SQLite
+	// stored text.
 	startStr := p.Start.UTC().Format("2006-01-02 15:04:05")
 	endStr := p.End.UTC().Format("2006-01-02 15:04:05")
-	where := "WHERE h.project_path = ? AND m.created_at >= ? AND m.created_at < ?"
+	where := "WHERE m.project_path = ? AND m.created_at >= ? AND m.created_at < ?"
 	args := []any{p.ProjectPath, startStr, endStr}
 
 	res := &UsageStatsResult{}

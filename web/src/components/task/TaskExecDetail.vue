@@ -593,8 +593,8 @@ watch(() => props.execDetail, (newVal, oldVal) => {
     // The execution content may have been re-rendered while a code link
     // preview was open; if its anchor element was detached, close it so the
     // floating card does not linger over stale content. Only auto-close the
-    // transient card — pinned / sheet previews are dismissed by the user
-    // (mirrors checkAndClose's mode exemption).
+    // unpinned (transient) card — pinned / sheet previews are dismissed by
+    // the user.
     const anchor = codeLinkPreview.target?.value?.anchorEl
     if (anchor && !anchor.isConnected && codeLinkPreview.mode?.value === 'transient') codeLinkPreview.close()
   })

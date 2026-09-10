@@ -85,6 +85,7 @@ import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 import { rewriteImageUrls, getThumbWidth } from '@/utils/chatRenderUtils'
+import { annotateMediaBlocks } from '@/utils/mediaBlockFactory'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
 import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
@@ -138,10 +139,10 @@ const inputPlaceholder = computed(() => active.value?.kind === 'task'
     : gt('chat.popover.replySession'))
 
 // 摘要 Markdown：折叠与展开共用同一份完整渲染。折叠态靠 CSS 裁剪 + 隐藏
-// img（不滚动），展开态展示全部并可滚动。相对路径图片按会话归属项目解析：
+// 图片块（不滚动），展开态展示全部并可滚动。相对路径图片按会话归属项目解析：
 // 本项目会话用当前项目根，跨项目用其 projectPath，避免误按当前项目解析导致裂图。
 // 轻量渲染（skipEnhancements）跳过路径/commit 注解与 KaTeX，保留富文本与代码块
-// 表头；随后仅对图片做改写（缩略图 + lightbox 包装）。
+// 表头；随后仅对图片做改写（缩略图 + marker class）与统一 figure 提升。
 const summaryHtml = computed(() => {
     const item = active.value
     const summary = item?.summary || ''
@@ -149,7 +150,7 @@ const summaryHtml = computed(() => {
     const base = renderMarkdownHtml(summary, { skipEnhancements: true, skipKatex: true })
     const projectRoot = item?.projectPath || store.state.projectRoot
     if (!projectRoot) return base
-    return rewriteImageUrls(base, projectRoot, getThumbWidth(isPC.value))
+    return annotateMediaBlocks(rewriteImageUrls(base, projectRoot, getThumbWidth(isPC.value)))
 })
 
 // 摘要 HTML 每次更新（会话切换 / 首次渲染）后补测一次溢出。image 折叠态
@@ -283,7 +284,7 @@ function openSession(): void {
 function isInteractiveTarget(target: EventTarget | null): boolean {
     const el = (target as HTMLElement | null)?.closest?.(
         '.code-block-copy-btn, .code-block-wrap-btn, .table-block-copy-btn, .table-block-wrap-btn, ' +
-        '.table-block-header-actions, .lightbox-img-wrap, .lightbox-expand-icon, .chat-audio-player, ' +
+        '.table-block-header-actions, .image-block-wrapper, .image-block-view-btn, .chat-audio-player, ' +
         '.chat-video-player, a, button'
     )
     return !!el
@@ -593,7 +594,10 @@ function handleSummaryClick(event: MouseEvent): void {
     mask-position: top center;
 }
 
-.completion-popover-summary.is-collapsed img {
+/* 折叠态隐藏媒体 figure（含 header 与 img）——卡片高度由文字决定，
+   figure 的 border/header 不占折叠空间 */
+.completion-popover-summary.is-collapsed img,
+.completion-popover-summary.is-collapsed .image-block-wrapper {
     display: none;
 }
 
@@ -609,43 +613,6 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover.is-expanded .completion-popover-input,
 .completion-popover.is-expanded .completion-popover-footer {
     flex: 0 0 auto;
-}
-
-/* 展开态下图片以实际渲染展示，容器需要有定位与 lightbox 悬停图标样式；
-   镜像 MarkdownPreview 的 lightbox-img-wrap 规则（img 由 v-html 注入，
-   非 scoped 才可命中） */
-.completion-popover-summary .lightbox-img-wrap {
-    position: relative;
-    display: inline-block;
-}
-
-.completion-popover-summary .lightbox-img-wrap .lightbox-expand-icon {
-    display: none;
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.5);
-    color: #fff;
-    cursor: pointer;
-    z-index: 2;
-    pointer-events: auto;
-}
-
-@media (hover: hover) {
-    .completion-popover-summary .lightbox-img-wrap:hover .lightbox-expand-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-}
-
-.completion-popover-summary .lightbox-img-wrap .lightbox-expand-icon::after {
-    content: '⤢';
-    font-size: 14px;
-    line-height: 1;
 }
 
 /* 有元信息行时，正文用分隔线+更大间距分层；

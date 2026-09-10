@@ -181,6 +181,11 @@ describe('formatFileSize', () => {
     expect(formatFileSize(50 * 1024 * 1024)).toBe('50.0 MB')
   })
 
+  it('formats multi-GB sizes instead of thousands of MB', () => {
+    // RAG indexes on a large store can exceed 1 GB; must not render as "2861.0 MB".
+    expect(formatFileSize(2861 * 1024 * 1024)).toBe('2.8 GB')
+  })
+
   it('formats fractional KB', () => {
     expect(formatFileSize(1536)).toBe('1.5 KB')
   })
@@ -197,7 +202,11 @@ describe('formatFileSize', () => {
     expect(formatFileSize(1024 * 1024 - 1)).toBe('1024.0 KB')
   })
 
-  it('formats large MB', () => {
-    expect(formatFileSize(1024 * 1024 * 1024)).toBe('1024.0 MB')
+  it('rolls over to GB at 1 GiB instead of showing 1024.0 MB', () => {
+    expect(formatFileSize(1024 * 1024 * 1024)).toBe('1.0 GB')
+  })
+
+  it('formats boundary between MB and GB', () => {
+    expect(formatFileSize(1024 * 1024 * 1024 - 1)).toBe('1024.0 MB')
   })
 })

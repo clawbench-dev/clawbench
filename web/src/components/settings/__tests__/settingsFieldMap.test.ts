@@ -96,6 +96,20 @@ describe('settingsFieldMap', () => {
     expect(map['rag.search_pool_size']).toBeTruthy()
   })
 
+  it('exposes rag.batch_size as a server number field', () => {
+    const map = getServerFieldToLabelKey()
+    expect(map['rag.batch_size']).toBeTruthy()
+
+    const panel = categoryItems['rag'].find(
+      e => e.type === 'panel' && e.config.panelId === 'rag',
+    )
+    const field = panel?.type === 'panel'
+      ? panel.config.commonFields.find(f => f.key === 'rag.batch_size')
+      : undefined
+    expect(field?.type).toBe('number')
+    expect(field?.source).toBe('server')
+  })
+
   it('includes tls.cert_dir as a server text field with restart', () => {
     const map = getServerFieldToLabelKey()
     expect(map['tls.cert_dir']).toBeTruthy()
@@ -333,7 +347,7 @@ describe('settingsFieldMap', () => {
     const panels = getCategoryPanels('rag')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.commonFields.length).toBe(13)
+    expect(cfg.commonFields.length).toBe(16)
     expect(cfg.commonFields[0].key).toBe('rag.status.mode')
     expect(cfg.requiredFields).toEqual(['rag.base_url'])
   })

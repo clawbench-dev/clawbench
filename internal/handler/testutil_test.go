@@ -103,6 +103,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			source_session_id TEXT DEFAULT NULL,
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
+			title_renamed INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -249,11 +250,15 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			finish_reason TEXT DEFAULT '',
 			outcome TEXT DEFAULT '',
 			agent_phase TEXT DEFAULT '',
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (message_id) REFERENCES chat_history(id) ON DELETE CASCADE
+			project_path TEXT DEFAULT '',
+			backend TEXT DEFAULT '',
+			agent_id TEXT DEFAULT '',
+			clawbench_session_id TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at);
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,

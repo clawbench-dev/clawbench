@@ -56,6 +56,10 @@ vi.mock('@/utils/chatStreamUtils', () => ({
 
 vi.mock('@/utils/format', () => ({
   formatDuration: (ms: number) => `${ms}ms`,
+  // Mirror the real formatRelativeTime contract: '' for missing dates and for
+  // Go zero-value timestamps (year 0001), otherwise a relative label.
+  formatRelativeTime: (date: string) =>
+    !date || date.startsWith('0001-01-01') ? '' : '3 min ago',
 }))
 
 vi.mock('@/utils/clipboard', () => ({
@@ -250,16 +254,18 @@ describe('ChatMessageItem', () => {
     const wrapper = createWrapper({
       msg: { id: 's2', role: 'assistant', content: '', blocks: [], summary: 'Short summary', streaming: false },
     })
-    const speakBtn = wrapper.find('.chat-action-btn--wide')
+    const speakBtn = wrapper.find('.chat-speak-btn')
     expect(speakBtn.exists()).toBe(true)
-    expect(speakBtn.text()).toContain('朗读')
+    // Idle state is icon-only (no Chinese label); the accessible name carries the hint.
+    expect(speakBtn.text()).toBe('')
+    expect(speakBtn.attributes('title')).toBe('朗读')
   })
 
   it('speaks summary text when clicking read-aloud in summary view with empty blocks', async () => {
     const wrapper = createWrapper({
       msg: { id: 's3', role: 'assistant', content: '', blocks: [], summary: 'Speak me', streaming: false },
     })
-    const speakBtn = wrapper.find('.chat-action-btn--wide')
+    const speakBtn = wrapper.find('.chat-speak-btn')
     await speakBtn.trigger('click')
     const autoSpeech = (wrapper.vm as any).$.provides.autoSpeech
     // speakText falls back to the summary because blocks are empty
@@ -271,6 +277,61 @@ describe('ChatMessageItem', () => {
       msg: { id: '7', role: 'assistant', content: 'response', blocks: [], metadata: { wallMs: 100 } },
     })
     expect(wrapper.find('.chat-message').classes()).toContain('has-metadata')
+  })
+
+  it('renders a relative time next to the duration in the meta bar', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: '9', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+        metadata: { wallMs: 100 },
+        createdAt: '2026-01-01T00:00:00Z',
+      },
+    })
+    const duration = wrapper.find('.chat-meta-duration')
+    const time = wrapper.find('.chat-meta-time')
+    expect(duration.exists()).toBe(true)
+    expect(time.exists()).toBe(true)
+    expect(time.text()).toBe('3 min ago')
+    // Separator middot only when both duration and time are present.
+    expect(time.classes()).toContain('chat-meta-sep')
+  })
+
+  it('omits the separator when no duration is present', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: '10', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+        createdAt: '2026-01-01T00:00:00Z',
+      },
+    })
+    expect(wrapper.find('.chat-meta-duration').exists()).toBe(false)
+    expect(wrapper.find('.chat-meta-time').classes()).not.toContain('chat-meta-sep')
+  })
+
+  it('hides the relative time entirely for a Go zero-value timestamp', () => {
+    // Backend zero-value times serialize as year 0001. formatRelativeTime returns
+    // '' for these, so neither the label nor its separator should render.
+    const wrapper = createWrapper({
+      msg: {
+        id: '11', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+        metadata: { wallMs: 100 },
+        createdAt: '0001-01-01T00:00:00Z',
+      },
+    })
+    expect(wrapper.find('.chat-meta-duration').exists()).toBe(true)
+    expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
+  })
+
+  it('hides the relative time when createdAt is missing', () => {
+    const wrapper = createWrapper({
+      msg: {
+        id: '12', role: 'assistant', content: 'response',
+        blocks: [{ type: 'text', text: 'response' }],
+      },
+    })
+    expect(wrapper.find('.chat-meta-time').exists()).toBe(false)
   })
 
   it('emits remove-pending when pending remove button is clicked', async () => {
@@ -477,7 +538,7 @@ describe('ChatMessageItem', () => {
           },
         },
       )
-      await wrapper.find('.chat-action-btn--wide').trigger('click')
+      await wrapper.find('.chat-speak-btn').trigger('click')
       expect(stopAudio).toHaveBeenCalled()
     })
 
@@ -497,8 +558,12 @@ describe('ChatMessageItem', () => {
           },
         },
       )
-      const btn = wrapper.find('.chat-action-btn--wide')
+      const btn = wrapper.find('.chat-speak-btn')
       expect(btn.text()).toContain('正在朗读')
+      // The button is a stop control while playing — it must not advertise
+      // "read aloud" as its accessible name/tooltip.
+      expect(btn.attributes('aria-label')).toBe('正在朗读')
+      expect(btn.attributes('title')).toBe('正在朗读')
     })
 
     it('shows the generating/loading state when speech is being generated', () => {
@@ -517,7 +582,7 @@ describe('ChatMessageItem', () => {
           },
         },
       )
-      const btn = wrapper.find('.chat-action-btn--wide')
+      const btn = wrapper.find('.chat-speak-btn')
       expect(btn.classes()).toContain('loading')
       expect(btn.text()).toContain('总结中')
     })

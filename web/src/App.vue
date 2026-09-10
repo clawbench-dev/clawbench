@@ -92,13 +92,9 @@
                       :sort-field="sortField"
                       :sort-dir="sortDir"
                       :dir-loading="store.state.dirLoading"
-                      :search-drawer="fileSearchDrawer"
                       :keyboard-active="fileManagerShortcutActive"
-                      :has-origin="navigation.hasOrigin.value"
-                      :origin-label="navigation.originLabel.value"
                       @navigate-dir="handleNavigateDir"
                       @navigate-back="handleNavigateBack"
-                      @return-origin="navigateBack('origin-bar')"
                       @select-file="handleBrowseSelectFile"
                       @toggle-sort="handleToggleSort"
                       @toggle-hidden="toggleHidden"
@@ -222,7 +218,7 @@
 
                 <!-- Usage Statistics Tab -->
                 <TabPanel tabId="stats" :activeTab="leftPanelActive" :noHeader="true">
-                  <UsageStatsPanel :active="panelIsActive('stats')" />
+                  <StatsTabHost :active="panelIsActive('stats')" />
                 </TabPanel>
 
                 <!-- Settings Tab -->
@@ -495,15 +491,13 @@ import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
-const UsageStatsPanel = defineAsyncComponent({
-  loader: () => import('./components/stats/UsageStatsPanel.vue'),
-  loadingComponent: AsyncComponentLoader,
-})
+import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
 import { resetUsageStats } from '@/composables/useUsageStats'
+import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
@@ -625,6 +619,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
   resetAgents()
   resetChatSessionState()
   resetUsageStats()
+  resetGitStats()
   clearPlanState()
   resetTaskTabState()
   resetTabDrawerState()
@@ -887,7 +882,6 @@ const detailsDrawer = useTabDrawer('view')
 const tocDrawer = useTabDrawer('view')
 const searchDrawer = useTabDrawer('view')
 const fileHistoryDrawer = useTabDrawer('view')
-const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
 
 // Search-bar highlight state for the file header button. Separate from
 // searchDrawer (the SearchDrawer bottom sheet): the rendered markdown preview
@@ -1216,6 +1210,15 @@ watch(sessionSidebarRef, (ref) => {
 // registerSessionDrawerRef above, which is independent.
 
 function handleSessionSelect(sessionId, _backend) {
+  // Selecting the ALREADY-ACTIVE session must be a no-op for the message list.
+  // Without this guard, an Enter keypress anywhere outside the chat input
+  // (document-level list navigation in SessionSidebar falls back to item 0,
+  // which is usually the current session) re-runs the full switchSession →
+  // clear messages → reloadHistory cycle, flashing/reloading the whole list.
+  if (sessionId && sessionId === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.sessionDrawer.close()
+    return
+  }
   sessionIdentity.switchSession(sessionId)
   sessionIdentity.sessionDrawer.close()
 }
@@ -1230,6 +1233,10 @@ async function handleSessionCreate(agentId) {
     backend: sessionIdentity.currentBackend.value || '',
     agentId: sessionIdentity.currentAgentId.value || '',
     model: sessionIdentity.currentModelName.value || '',
+    // createdAt drives pagination cursors (backend orders by created_at), so it
+    // must be present — otherwise the locally-added row becomes the last item
+    // and loadMore would send `cursor=undefined`.
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     unreadCount: 0,
   }
@@ -1679,6 +1686,11 @@ navCoordinator = useNavigationCoordinator({
     closeOverlayAndSync,
     handleOpenFileManager,
     isFileManagerMultiSelectActive: () => !!fileManagerRef.value?.multiSelectState?.active,
+    // defineExpose unwraps refs/computeds, so `searchActive` is already a plain
+    // boolean here — reading `.value` off it would always be falsy.
+    isFileManagerSearchActive: () => !!fileManagerRef.value?.searchActive,
+    closeFileManagerSearch: () => fileManagerRef.value?.closeSearch(),
+    exitFileManagerMultiSelect: () => fileManagerRef.value?.exitMultiSelect(),
     // FileOverlay forwards to FileViewer, which emits 'captureScroll' — so this
     // also refreshes the module-level scroll cache for the file being left.
     requestScrollCapture: () => fileOverlayRef.value?.captureScroll?.(),
@@ -1708,6 +1720,8 @@ const {
   handleOverlayOpenFile,
   handleAppHeaderRecentFileSelect,
   handleOpenFileOverlay,
+  beginExternalJump,
+  surfaceLabel,
 } = navCoordinator
 
 /** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
@@ -1737,6 +1751,10 @@ async function handleFileHistoryForward() {
 
 
 function onTaskCardClick(taskId) {
+    // Task cards appear inside chat messages (scheduled-task-card), so this is
+    // a chat→tasks jump. Record the chat origin so Back returns the user
+    // straight to the conversation.
+    beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
     navigateToTaskSettings(taskId)
     switchTab('tasks')
 }
@@ -1985,7 +2003,9 @@ function onChatColDrop(e) {
     const data = readAttachDragData(e.dataTransfer)
     if (!data) return
     e.preventDefault()
-    addAttachedFile(data.path, data.isDir)
+    // A ranged drag (e.g. a mermaid diagram's md code fence) attaches the file
+    // as a line-range reference; plain file drags stay whole-file.
+    addAttachedFile(data.path, data.isDir, data.startLine, data.endLine)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     return
   }
@@ -2322,9 +2342,27 @@ function handleOpenFileManager() {
 
 function handleNavigateToCommit(e) {
     const sha = e?.detail?.sha
-    if (sha) {
-        setPendingCommitNavigation(sha)
+    if (!sha) return
+    // Record the surface this commit jump came from so Back (header / edge
+    // swipe / Android) returns the user straight there. Chat/task/history jumps
+    // track their origin; a jump from the file view is already covered by the
+    // file stack.
+    const surface = (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
+      ? 'chat'
+      : panelIsActive('tasks')
+      ? 'task'
+      : panelIsActive('history')
+      ? 'history'
+      : panelIsActive('browse')
+      ? 'browse'
+      : 'file'
+    if (surface === 'chat' || surface === 'task' || surface === 'history') {
+      beginExternalJump(surface, surfaceLabel(surface), surface === 'chat' ? { tab: 'chat' } : {})
+    } else {
+      fileNav.closeOverlay()
+      browseFileSession.value = false
     }
+    setPendingCommitNavigation(sha)
     switchTab('history')
 }
 
@@ -2527,11 +2565,7 @@ function openChatSearchDrawer() {
   }
 }
 function openBrowseSearchDrawer() {
-  if (fileSearchDrawer.isOpen.value) {
-    fileManagerRef.value?.focusSearchInput()
-  } else {
-    fileSearchDrawer.open()
-  }
+  fileManagerRef.value?.openSearch()
 }
 function openFileViewSearchDrawer() {
   if (searchDrawer.isOpen.value) {

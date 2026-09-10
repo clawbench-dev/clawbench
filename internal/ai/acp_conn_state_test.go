@@ -1822,6 +1822,49 @@ func TestEmitPromptResponseUsage_CachedCostZero(t *testing.T) {
 	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "zero cached cost must not set CostUSD")
 }
 
+// TestEmitPromptResponseUsage_CodeBuddyCostDiscarded verifies the turn-final
+// half of the CodeBuddy credit-as-cost guard: even when the cached usage state
+// carries a cost, CodeBuddy must not persist it as message CostUSD, because
+// that value is a credit number, not money. The genuine credit from
+// _meta.usage.credit still reaches the metadata record.
+func TestEmitPromptResponseUsage_CodeBuddyCostDiscarded(t *testing.T) {
+	agent := &model.Agent{ID: "test-usage-cbcost", Backend: "codebuddy", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-usage-cbcost")
+	// A cost of 1.48 here is CodeBuddy's credit (the notification path now
+	// discards it, so this simulates a stale/legacy cache entry).
+	conn.SetCachedUsageState(&UsageState{Used: 29495, Size: 200000, Cost: 1.48})
+
+	streamCh := make(chan StreamEvent, 8)
+	usage := &acp.Usage{InputTokens: 29495, OutputTokens: 3, TotalTokens: 29498}
+	respMeta := map[string]any{
+		"usage": map[string]any{"credit": 1.48},
+	}
+	conn.emitPromptResponseUsage(usage, respMeta, "", streamCh)
+	close(streamCh)
+
+	var metadataEvt, usageEvt *StreamEvent
+	for ev := range streamCh {
+		if ev.Type == "metadata" {
+			metadataEvt = &ev
+		}
+		if ev.Type == "usage_update" {
+			usageEvt = &ev
+		}
+	}
+	require.NotNil(t, metadataEvt)
+	assert.Equal(t, 0.0, metadataEvt.Meta.CostUSD, "CodeBuddy credit must not be persisted as USD cost")
+	assert.Equal(t, 1.48, metadataEvt.Meta.Credit, "the real credit is persisted on its own field")
+
+	// The forwarded usage_update payload is persisted into
+	// chat_sessions.context_state.usage.cost, so it must be guarded too — not
+	// only the metadata event.
+	require.NotNil(t, usageEvt)
+	require.NotNil(t, usageEvt.Usage)
+	assert.Equal(t, 0.0, usageEvt.Usage.Cost, "the forwarded usage payload must not leak credit as cost")
+	assert.Equal(t, "", usageEvt.Usage.Currency, "no fabricated currency for the discarded cost")
+	assert.Equal(t, 1.48, usageEvt.Usage.Credit, "real credit still flows to the frontend")
+}
+
 // TestEmitPromptResponseUsage_NilUsage verifies that a nil PromptResponse.Usage
 // with non-empty _meta (CodeBuddy pattern: no PromptResponse.Usage, but quota /
 // trace present) does not panic and still persists the meta detail. Regression

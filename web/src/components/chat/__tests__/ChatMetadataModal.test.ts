@@ -32,6 +32,7 @@ const messages = {
         cacheMissTokens: 'Cache miss:',
         cacheHitRate: 'Cache hit rate:',
         credit: 'Credit:',
+        cost: 'Cost:',
         thoughtTokens: 'Thought tokens:',
         requestModelName: 'Request model name:',
         messageRequestId: 'Message request ID:',
@@ -116,6 +117,19 @@ describe('ChatMetadataModal', () => {
       data: { inputTokens: 100 },
     })
     expect(wrapper.text()).not.toContain('Cache hit rate:')
+  })
+
+  it('renders cost with two decimals', () => {
+    const wrapper = mountModal({ data: { costUsd: 0.05126895 } })
+    const text = wrapper.text()
+    expect(text).toContain('Cost:')
+    expect(text).toContain('$0.05')
+    expect(text).not.toContain('0.051269')
+  })
+
+  it('renders sub-cent cost as $0.00', () => {
+    const wrapper = mountModal({ data: { costUsd: 0.000036 } })
+    expect(wrapper.text()).toContain('$0.00')
   })
 
   it('renders trace/identity extension fields when present', () => {

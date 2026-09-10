@@ -531,6 +531,15 @@ function handleScroll() {
   lastScrollTop = el.scrollTop
 
   if (userTouching || wheelActive || mouseDownActive) {
+    // A deliberate user scroll always owns the viewport — cancel any in-flight
+    // programmatic ownership FIRST. During a stream followToBottom re-arms
+    // programmaticScrolling=true on every frame, and the programmatic branch
+    // below returns early — so scrolledUp/scrolledDown never flip and the
+    // scroll-jump FAB cannot appear no matter how far the user scrolls while
+    // the session is running ("跳转按钮要滚动很大范围才显示" bug). Releasing the
+    // flag lets THIS event evaluate the FAB logic normally; streamed pins are
+    // already rejected by the userLeftBottom latch below.
+    if (programmaticScrolling) setProgrammatic(false)
     scrollOwner.value = 'user'
     lastScrollAt = Date.now()
     // Track whether the user deliberately left the bottom. The latch is

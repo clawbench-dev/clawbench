@@ -48,6 +48,49 @@ func TestUpgradeStateTransitions(t *testing.T) {
 	}
 }
 
+func TestSetUpgradeErrorCode(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	SetUpgradeErrorCode(UpgradeErrInstallDirNotWritable, "not writable")
+	s := GetUpgradeState()
+	if s.Phase != UpgradePhaseFailed {
+		t.Errorf("phase = %q, want %q", s.Phase, UpgradePhaseFailed)
+	}
+	if s.ErrorCode != UpgradeErrInstallDirNotWritable {
+		t.Errorf("error code = %q, want %q", s.ErrorCode, UpgradeErrInstallDirNotWritable)
+	}
+	if s.Error != "not writable" {
+		t.Errorf("error = %q, want %q", s.Error, "not writable")
+	}
+}
+
+func TestSetUpgradeError_ClearsCode(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	SetUpgradeErrorCode(UpgradeErrInstallDirNotWritable, "first")
+	// A subsequent generic error must not keep the stale code.
+	SetUpgradeError("second")
+	s := GetUpgradeState()
+	if s.ErrorCode != "" {
+		t.Errorf("error code = %q, want empty after SetUpgradeError", s.ErrorCode)
+	}
+	if s.Error != "second" {
+		t.Errorf("error = %q, want %q", s.Error, "second")
+	}
+}
+
+func TestResetUpgradeState_ClearsErrorCode(t *testing.T) {
+	SetUpgradeErrorCode(UpgradeErrInstallDirNotWritable, "not writable")
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	if s := GetUpgradeState(); s.ErrorCode != "" {
+		t.Errorf("error code = %q, want empty after reset", s.ErrorCode)
+	}
+}
+
 func TestUpgradeBackupPath(t *testing.T) {
 	ResetUpgradeState()
 

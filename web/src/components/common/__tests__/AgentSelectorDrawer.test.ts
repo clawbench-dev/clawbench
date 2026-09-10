@@ -45,9 +45,17 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   },
 }))
 
+const { mockSetPendingSettingsCategory } = vi.hoisted(() => ({
+  mockSetPendingSettingsCategory: vi.fn(),
+}))
+vi.mock('@/composables/useSettingsNavigation', () => ({
+  setPendingSettingsCategory: mockSetPendingSettingsCategory,
+}))
+const mockSwitchTab = vi.fn()
+
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 
-function mountDrawer(props = {}) {
+function mountDrawer(props = {}, opts: Record<string, any> = {}) {
   return mount(AgentSelectorDrawer, {
     props: {
       open: true,
@@ -56,6 +64,12 @@ function mountDrawer(props = {}) {
       defaultBadge: 'Default',
       setDefaultTitle: 'Set as default',
       ...props,
+    },
+    global: {
+      provide: {
+        switchTab: mockSwitchTab,
+      },
+      ...opts.global,
     },
   })
 }
@@ -68,6 +82,8 @@ describe('AgentSelectorDrawer', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    mockSetPendingSettingsCategory.mockClear()
+    mockSwitchTab.mockClear()
   })
 
   describe('rendering', () => {
@@ -175,6 +191,40 @@ describe('AgentSelectorDrawer', () => {
       const wrapper = mountDrawer()
 
       expect(wrapper.find('.agent-default-badge-pill').exists()).toBe(true)
+    })
+  })
+
+  describe('agent config', () => {
+    it('renders a config gear button for every agent row', () => {
+      const wrapper = mountDrawer()
+      expect(wrapper.findAll('.agent-config-btn').length).toBe(2)
+    })
+
+    it('deep-links to the agent settings page and closes the drawer on gear click without selecting', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-config-btn')[0].trigger('click')
+      await flushPromises()
+
+      expect(mockSetPendingSettingsCategory).toHaveBeenCalledWith('agents:agent-1')
+      expect(mockSwitchTab).toHaveBeenCalledWith('settings')
+      // The gear click must close the drawer but not select/change the agent
+      expect(wrapper.emitted('update:open')![0]).toEqual([false])
+      expect(wrapper.emitted('select')).toBeFalsy()
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+    })
+
+    it('does not fire when no agent id', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+      // Simulate an empty agent id by calling the internal handler directly
+      const vm = wrapper.vm as any
+      vm.handleOpenAgentConfig('')
+      expect(mockSetPendingSettingsCategory).not.toHaveBeenCalled()
     })
   })
 

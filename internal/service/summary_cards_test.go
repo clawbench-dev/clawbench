@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -15,15 +16,19 @@ func TestExtractSummaryCards(t *testing.T) {
 		{Type: "text", Text: "Answer <scheduled-task id=\"42\">x</scheduled-task> <ask-question><item><header>Q</header><question>continue?</question><option><label>Yes</label></option></item></ask-question>"},
 	}
 	cards := extractSummaryCards(blocks)
-	if len(cards.Tools) != 2 {
-		t.Fatalf("expected 2 auto-expand tools, got %d: %+v", len(cards.Tools), cards.Tools)
+	// PermissionApproval is intentionally excluded: it is actionable-only and
+	// cannot be answered from the read-only summary view.
+	if len(cards.Tools) != 1 {
+		t.Fatalf("expected 1 summary-card tool (AskUserQuestion only), got %d: %+v", len(cards.Tools), cards.Tools)
 	}
 	if cards.Tools[0].Name != "AskUserQuestion" || cards.Tools[0].ID != "t2" {
 		t.Fatalf("expected AskUserQuestion t2 tool, got: %+v", cards.Tools[0])
 	}
-	perm := cards.Tools[1]
-	if perm.Name != "PermissionApproval" || !perm.Done || perm.Status != "error" || perm.Output != "Cancelled" {
-		t.Fatalf("PermissionApproval result state not captured: %+v", perm)
+	// Explicit absence check: the PermissionApproval block (t3) must not leak in.
+	for _, tool := range cards.Tools {
+		if strings.EqualFold(tool.Name, "PermissionApproval") {
+			t.Fatalf("PermissionApproval must not be persisted into summary cards: %+v", tool)
+		}
 	}
 	if len(cards.TaskIDs) != 1 || cards.TaskIDs[0] != 42 {
 		t.Fatalf("taskIDs mismatch: %+v", cards.TaskIDs)

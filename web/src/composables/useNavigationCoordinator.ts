@@ -57,6 +57,10 @@ export interface NavigationCoordinatorOptions {
     closeOverlayAndSync?: () => void
     handleOpenFileManager?: () => void
     isFileManagerMultiSelectActive?: () => boolean
+    /** Browse search overlay active — transient layer inside the browse panel. */
+    isFileManagerSearchActive?: () => boolean
+    closeFileManagerSearch?: () => void
+    exitFileManagerMultiSelect?: () => void
     /**
      * Ask the mounted file viewer for a fresh { scrollTop, anchor } snapshot of
      * the file being left, synchronously.
@@ -109,6 +113,9 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
   const closeOverlayAndSync = options.viewActions?.closeOverlayAndSync ?? (() => {})
   const handleOpenFileManager = options.viewActions?.handleOpenFileManager ?? (() => {})
   const isFileManagerMultiSelectActive = options.viewActions?.isFileManagerMultiSelectActive ?? (() => false)
+  const isFileManagerSearchActive = options.viewActions?.isFileManagerSearchActive ?? (() => false)
+  const closeFileManagerSearch = options.viewActions?.closeFileManagerSearch ?? (() => {})
+  const exitFileManagerMultiSelect = options.viewActions?.exitFileManagerMultiSelect ?? (() => {})
   const requestScrollCapture = options.viewActions?.requestScrollCapture ?? (() => {})
 
   const hasTopmostOverlay = options.backHooks?.hasTopmostOverlay ?? (() => false)
@@ -356,11 +363,21 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     closeTopmostOverlay,
     isEditing,
     exitEdit,
+    // Browse search results / multi-select are transient layers inside the
+    // browse panel. Back dismisses them (no navigation) before any
+    // file/origin/dir step. The search bar is resident, but its results layer is
+    // only "active" while a query is typed. The two layers can coexist (you can
+    // multi-select search results), so they are NOT mutually exclusive: back
+    // peels the search results layer first, then multi-select on the next press.
+    canExitSearch: () => panelIsActive('browse') && isFileManagerSearchActive(),
+    exitSearch: closeFileManagerSearch,
+    canExitMultiSelect: () => panelIsActive('browse') && isFileManagerMultiSelectActive(),
+    exitMultiSelect: exitFileManagerMultiSelect,
     canGoBackFile: () => panelIsActive('view') && fileNav.overlayOpen.value && fileBackTarget.value === 'file',
     goBackFile,
     hasOrigin: () => !(panelIsActive('view') && fileBackTarget.value === 'browse') && navigation.hasOrigin.value,
     returnToOrigin,
-    canGoBackDir: () => panelIsActive('browse') && store.state.currentDir !== '',
+    canGoBackDir: () => panelIsActive('browse') && !isFileManagerMultiSelectActive() && store.state.currentDir !== '',
     goBackDir: async () => {
       await store.navigateToParentDir()
       return true
@@ -616,6 +633,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
       ++directoryRequestId
     },
     settleOriginForTab,
+    beginExternalJump,
+    surfaceLabel,
     handleCaptureFileScroll,
     openFileInViewer,
     goBackFile,

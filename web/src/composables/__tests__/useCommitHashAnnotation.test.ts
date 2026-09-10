@@ -92,6 +92,18 @@ describe('looksLikeCommitHash', () => {
         expect(looksLikeCommitHash('a1b2c3d4e5f6789012345678901234567890abcd')).toBe(true)
     })
 
+    it('accepts 8-12 char abbreviated SHAs (git grows past 7 when needed)', () => {
+        expect(looksLikeCommitHash('45131649')).toBe(true)
+        expect(looksLikeCommitHash('abc1234de')).toBe(true)
+        expect(looksLikeCommitHash('abcdef12345')).toBe(true)
+        expect(looksLikeCommitHash('abcdef123456')).toBe(true)
+    })
+
+    it('rejects 13-39 char strings (not a form git prints)', () => {
+        expect(looksLikeCommitHash('abcdef1234567')).toBe(false)
+        expect(looksLikeCommitHash('a1b2c3d4e5f67890123456789012345')).toBe(false)
+    })
+
     it('accepts mixed case hex with letter', () => {
         expect(looksLikeCommitHash('AbC1234')).toBe(true)
     })
@@ -104,8 +116,18 @@ describe('looksLikeCommitHash', () => {
         expect(looksLikeCommitHash('a1b2c3d4e5f6789012345678901234567890abcde1')).toBe(false)
     })
 
-    it('rejects pure-decimal 7-digit numbers', () => {
-        expect(looksLikeCommitHash('1234567')).toBe(false)
+    it('accepts pure-decimal abbreviated hashes (git abbreviates numeric-leading SHAs to digits only)', () => {
+        expect(looksLikeCommitHash('1234567')).toBe(true)
+        expect(looksLikeCommitHash('12345678')).toBe(true)
+    })
+
+    it('rejects mid-length pure-decimal strings (timestamps, byte counts)', () => {
+        expect(looksLikeCommitHash('12345678901234567')).toBe(false)
+        expect(looksLikeCommitHash('1234567890123456789012345')).toBe(false)
+    })
+
+    it('accepts a full-length 40-digit SHA (git SHA-1 can be all digits)', () => {
+        expect(looksLikeCommitHash('1234567890123456789012345678901234567890')).toBe(true)
     })
 
     it('rejects strings with non-hex characters', () => {
@@ -190,9 +212,28 @@ describe('annotateCommitHashes', () => {
         expect(result.detectedSHAs).toEqual([])
     })
 
-    it('does NOT annotate pure-decimal strings', () => {
+    it('annotates pure-decimal strings as pending candidates (verify decides validity)', () => {
         const result = annotateCommitHashes('<code>1234567</code>')
+        expect(result.detectedSHAs).toEqual(['1234567'])
+        expect(result.html).toContain('chat-commit-hash-pending')
+    })
+
+    it('annotates a pure-decimal abbreviated SHA candidate (8 chars)', () => {
+        const result = annotateCommitHashes('<code>45131649</code>')
+        expect(result.detectedSHAs).toEqual(['45131649'])
+        expect(result.html).toContain('chat-commit-hash-pending')
+    })
+
+    it('does NOT annotate mid-length (13-39 char) hex strings', () => {
+        const result = annotateCommitHashes('<code>1234567890123456789012345</code>')
         expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('annotates a full-length 40-digit SHA candidate', () => {
+        const sha40 = '1234567890123456789012345678901234567890'
+        const result = annotateCommitHashes(`<code>${sha40}</code>`)
+        expect(result.detectedSHAs).toEqual([sha40])
+        expect(result.html).toContain('chat-commit-hash-pending')
     })
 
     it('annotates commit hash in plain text with pending class (no button)', () => {

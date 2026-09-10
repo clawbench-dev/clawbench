@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, ref } from 'vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 
 // ── Mocks ──
@@ -269,4 +268,5 @@ describe('ImagePreview', () => {
     addSpy.mockRestore()
     removeSpy.mockRestore()
   })
+
 })

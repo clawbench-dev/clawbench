@@ -260,7 +260,7 @@ describe('useCodeLinkPreview', () => {
     expect(second.visible.value).toBe(true)
   })
 
-  it('keeps transient preview open when pointer re-enters the target path', async () => {
+  it('keeps a click-opened preview open after the pointer leaves the path', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: 'test content',
       name: 'test.ts',
@@ -279,22 +279,18 @@ describe('useCodeLinkPreview', () => {
     await vi.runAllTicks()
     expect(preview.visible.value).toBe(true)
 
-    // Mouse leaves the anchor: a 200ms close is scheduled
-    preview.handleMouseOut({ target: anchor, relatedTarget: null } as unknown as MouseEvent)
-    vi.advanceTimersByTime(100)
-
-    // Pointer re-enters the anchor before the timer fires -> close cancelled
-    preview.handleMouseOver({ target: anchor, relatedTarget: document.body } as unknown as MouseEvent)
-    vi.advanceTimersByTime(300)
+    // Moving the pointer off the path (and never returning) must NOT dismiss
+    // the card — click-opened previews persist until explicitly closed.
+    anchor.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }))
+    vi.advanceTimersByTime(2000)
     expect(preview.visible.value).toBe(true)
 
-    // Leaving both target and card still closes after the grace period
-    preview.handleMouseOut({ target: anchor, relatedTarget: null } as unknown as MouseEvent)
-    vi.advanceTimersByTime(300)
+    // Explicit dismiss still works.
+    preview.close()
     expect(preview.visible.value).toBe(false)
   })
 
-  it('keeps preview open when moving pointer to card, closes 200ms after leaving both', async () => {
+  it('keeps a click-opened preview open after the pointer leaves the card', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: 'test content',
       name: 'test.ts',
@@ -313,22 +309,13 @@ describe('useCodeLinkPreview', () => {
     await vi.runAllTicks()
     expect(preview.visible.value).toBe(true)
 
-    // Mouse leaves anchor
-    preview.handleMouseOut({ target: anchor, relatedTarget: null } as unknown as MouseEvent)
-    // But within 100ms enters card
-    vi.advanceTimersByTime(100)
+    // Pointer enters and later leaves the card — neither schedules a close.
     preview.onCardPointerEnter()
-
-    // 200ms pass while in card -> should still be visible
-    vi.advanceTimersByTime(300)
-    expect(preview.visible.value).toBe(true)
-
-    // Mouse leaves card
     preview.onCardPointerLeave()
-    vi.advanceTimersByTime(190)
+    vi.advanceTimersByTime(2000)
     expect(preview.visible.value).toBe(true)
 
-    vi.advanceTimersByTime(20)
+    preview.close()
     expect(preview.visible.value).toBe(false)
   })
 
@@ -610,7 +597,7 @@ describe('useCodeLinkPreview', () => {
     expect(preview.slicedCode.value?.endLine).toBe(200)
   })
 
-  it('handles card hover and focus events', async () => {
+  it('keeps preview open across card hover / focus events (no auto-close)', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: 'hello world',
       name: 'test.ts',
@@ -624,20 +611,16 @@ describe('useCodeLinkPreview', () => {
     await vi.runAllTicks()
     await Promise.resolve()
 
+    // Pointer / focus enter-leave cycles used to drive a transient close
+    // timer; click-opened cards now persist until an explicit dismiss.
     preview.onCardPointerEnter()
     preview.onCardPointerLeave()
-    vi.advanceTimersByTime(100)
-    expect(preview.visible.value).toBe(true)
-    vi.advanceTimersByTime(150)
-    expect(preview.visible.value).toBe(false)
-
-    // Focus handling
-    preview.showPreview({ filePath: 'test.ts' })
-    await vi.runAllTicks()
-    await Promise.resolve()
     preview.onCardFocusIn()
     preview.onCardFocusOut(new FocusEvent('focusout'))
-    vi.advanceTimersByTime(250)
+    vi.advanceTimersByTime(2000)
+    expect(preview.visible.value).toBe(true)
+
+    preview.close()
     expect(preview.visible.value).toBe(false)
   })
 
@@ -723,7 +706,7 @@ describe('useCodeLinkPreview', () => {
       _resetPlatformForTest()
     })
 
-    it('does not trigger focusin preview on touch devices', () => {
+    it('never opens a preview from focusin alone (keyboard/touch focus)', () => {
       _setIsPCForTest(false)
       const preview = useCodeLinkPreview()
       const anchor = document.createElement('span')
@@ -731,11 +714,15 @@ describe('useCodeLinkPreview', () => {
       anchor.setAttribute('data-file-path', 'src/hello.ts')
       anchor.setAttribute('data-path-type', 'file')
 
-      preview.handleFocusIn({ target: anchor } as unknown as FocusEvent)
+      anchor.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
       expect(preview.visible.value).toBe(false)
+
+      // A preview only opens via an explicit click/tap.
+      preview.handleClick({ target: anchor, ctrlKey: false, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+      expect(preview.visible.value).toBe(true)
     })
 
-    it('ignores synthetic mouseover/focusin within 1s after touchstart', () => {
+    it('does not open a preview on desktop keyboard focus alone', () => {
       _setIsPCForTest(true)
       const preview = useCodeLinkPreview()
       const anchor = document.createElement('span')
@@ -743,8 +730,7 @@ describe('useCodeLinkPreview', () => {
       anchor.setAttribute('data-file-path', 'src/hello.ts')
       anchor.setAttribute('data-path-type', 'file')
 
-      preview.handleTouchStart()
-      preview.handleFocusIn({ target: anchor } as unknown as FocusEvent)
+      anchor.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
       expect(preview.visible.value).toBe(false)
     })
 

@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -56,16 +57,45 @@ func ExtractToolCallMetaFromInput(name, toolID string, input map[string]any) Too
 // mirroring the frontend toolCallSummary() priority chain:
 // description > file_path > command > pattern > query > url > skill >
 // prompt (agent only) > path > src_path+dst_path > first string value
+// (deterministic: lexicographically-first key).
 func ExtractSummary(name string, input map[string]any) string {
 	if input == nil {
 		return ""
 	}
 
-	nameLower := strings.ToLower(name)
-
-	// AskUserQuestion special case
-	if nameLower == "askuserquestion" {
+	// Tool-specific formatters take priority over the generic chain. Each
+	// returns "" when the input does not match its shape, deferring to the
+	// next formatter or the generic priority chain below.
+	switch strings.ToLower(name) {
+	case "askuserquestion":
 		return extractAskUserQuestionSummary(input)
+	case "permissionapproval":
+		// PermissionApproval input wraps the underlying tool request:
+		// { toolName: "Bash", toolInput: `{"command":"..."}`, options: [...] }.
+		// Summarize to the requested command / file / tool so the card strip
+		// shows what the agent wants to run instead of a junk fallback
+		// (e.g. permissionId).
+		return extractPermissionApprovalSummary(input)
+	case "taskupdate":
+		// CodeBuddy's TaskUpdate input is {status, taskId} — it has no
+		// subject/description, so the generic chain would fall through to the
+		// (deterministic, but opaque) sorted-string fallback. Format it
+		// explicitly as "#<taskId> · <status>" so the pill shows e.g.
+		// "#3 · in_progress". TaskUpdate also accepts optional subject/
+		// description overrides, which keep priority over the derived form.
+		if s := extractTaskUpdateSummary(input); s != "" {
+			return s
+		}
+		// No recognizable TaskUpdate fields — defer to the generic chain.
+	case "agent":
+		if s := extractAgentSummary(input); s != "" {
+			return s
+		}
+		// No agent-shaped fields — defer to the generic chain.
+	case "wait":
+		if _, hasStates := input["agentsStates"]; hasStates {
+			return extractWaitSummary(input)
+		}
 	}
 
 	// Priority chain — check fields in order
@@ -75,13 +105,13 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
-	// Agent-only: prompt field
-	if nameLower == "agent" {
-		if v, _ := input["prompt"].(string); v != "" {
-			return truncateStr(v)
-		}
-	}
+	return genericFallbackSummary(input)
+}
 
+// genericFallbackSummary derives a summary from input shapes the priority chain
+// does not cover: a src_path→dst_path rename pair, then the first non-empty
+// string value under deterministic (lexicographic) key order.
+func genericFallbackSummary(input map[string]any) string {
 	// src_path + dst_path pair
 	if src, srcOk := input["src_path"].(string); srcOk {
 		if dst, dstOk := input["dst_path"].(string); dstOk {
@@ -89,13 +119,83 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
-	// Fallback: first string value
-	for _, v := range input {
-		if s, ok := v.(string); ok {
+	// Fallback: first string value. Go map iteration order is random, so sort
+	// the keys first to make the result deterministic (and to mirror the
+	// frontend's Object.keys ordering, which is always lexicographic for
+	// string keys). Previously the same input could summarize to different
+	// strings on consecutive runs (e.g. TaskUpdate's {status, taskId}).
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if s, ok := input[k].(string); ok {
 			return truncateStr(s)
 		}
 	}
 
+	return ""
+}
+
+// extractTaskUpdateSummary summarizes a CodeBuddy TaskUpdate call. The usual
+// input {status, taskId} has no descriptive field, so derive a deterministic
+// "#<taskId> · <status>" label. If the model passed an explicit subject or
+// description override it wins; bare taskId is only shown as a fallback when
+// status is missing. Returns "" when neither subject/description nor taskId is
+// present (defer to the generic chain / empty).
+func extractTaskUpdateSummary(input map[string]any) string {
+	if v, _ := input["subject"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if v, _ := input["description"].(string); v != "" {
+		return truncateStr(v)
+	}
+	id, _ := input["taskId"].(string)
+	if id == "" {
+		return ""
+	}
+	status, _ := input["status"].(string)
+	if status == "" {
+		return "#" + truncateStr(id)
+	}
+	// Truncate the composed label as a whole: id and status can each be long
+	// (status is usually an enum, but nothing prevents a long value), so a
+	// per-field truncateStr alone could still exceed maxSummaryLen.
+	return truncateStr("#" + truncateStr(id) + " · " + status)
+}
+
+// extractAgentSummary summarizes an Agent/Agent-like tool call. Priority order
+// preserves the pre-existing UX:
+//   - description (claude Task / Agent delegation shows the short description)
+//   - prompt (sub-agent delegation instructions when no description)
+//   - Codex sub-agent lifecycle frames (Start/Complete/Interact/Interrupt
+//     subagent) carry {activityKind, agentPath, agentThreadId} — summarize
+//     deterministically as "<activity> <agent basename>" (e.g.
+//     "started codebase_research") instead of the random map-iteration fallback.
+func extractAgentSummary(input map[string]any) string {
+	if v, _ := input["description"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if v, _ := input["prompt"].(string); v != "" {
+		return truncateStr(v)
+	}
+	if activity, _ := input["activityKind"].(string); activity != "" {
+		name := ""
+		if p, _ := input["agentPath"].(string); p != "" {
+			name = baseName(p)
+		}
+		return truncateStr(activity + " " + name)
+	}
+	return ""
+}
+
+// extractWaitSummary summarizes a Codex collaboration wait (title "wait"):
+// leave empty (deterministic) unless agentsStates carries child statuses.
+func extractWaitSummary(input map[string]any) string {
+	if states, ok := input["agentsStates"].(map[string]any); ok && len(states) > 0 {
+		return "waiting for subagent"
+	}
 	return ""
 }
 
@@ -140,8 +240,33 @@ func extractAskUserQuestionSummary(input map[string]any) string {
 	return ""
 }
 
+// extractPermissionApprovalSummary summarizes a PermissionApproval request.
+// The wrapper input carries toolName (requesting tool, e.g. "Bash") and a JSON
+// toolInput string describing the intended action. Prefer the concrete
+// command / file path, falling back to the requesting tool name so the card
+// strip never shows a meaningless id.
+func extractPermissionApprovalSummary(input map[string]any) string {
+	if raw, _ := input["toolInput"].(string); raw != "" {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil && parsed != nil {
+			if v, _ := parsed["command"].(string); v != "" {
+				return truncateStr(v)
+			}
+			if v, _ := parsed["file_path"].(string); v != "" {
+				return truncateStr(baseName(v))
+			}
+		}
+	}
+	if v, _ := input["toolName"].(string); v != "" {
+		return truncateStr(v)
+	}
+	return ""
+}
+
 // ExtractDisplayName extracts the display name for a tool call.
 // For Agent and DeepThink tools, returns the subagent_type (e.g., "Explore").
+// For Codex sub-agent lifecycle frames (activityKind present), returns the agent
+// basename (e.g. "codebase_research") so the Agent pill shows the child name.
 func ExtractDisplayName(name string, input map[string]any) string {
 	if input == nil {
 		return ""
@@ -152,20 +277,130 @@ func ExtractDisplayName(name string, input map[string]any) string {
 			return v
 		}
 	}
+	if nameLower == "agent" {
+		if v, _ := input["activityKind"].(string); v != "" {
+			if p, _ := input["agentPath"].(string); p != "" {
+				return baseName(p)
+			}
+			return v
+		}
+	}
 	return ""
 }
 
+// fileTools is the set of canonical tool names whose primary target is a
+// single file path. Only these tools have a detected FilePath promoted to
+// ToolCallMeta/block metadata; other tools may carry coincidental path-like
+// input fields (e.g. a Bash command string containing "filename=…", or a
+// Glob/LS "path" that is a directory or pattern) that must not be treated as
+// the file identity of the call. Consumers of FilePath (file-modification
+// detection, preview refresh) only act on Write/Edit; Read is kept so file
+// reads still surface the path they operated on.
+var fileTools = map[string]bool{
+	"Write": true,
+	"Edit":  true,
+	"Read":  true,
+}
+
+// isFileTool reports whether the canonical tool name operates on a file path.
+func isFileTool(name string) bool {
+	return fileTools[name]
+}
+
 // ExtractFilePath extracts the file path from a tool call input.
-// Checks file_path first, then path as fallback.
+// Only file tools (Write/Edit/Read) are considered; other tools return "" so
+// coincidental path-like input fields are not promoted to a file identity.
+// Priority order for a direct string path field:
+//
+//	file_path > new_file_path > old_file_path > path > filename > file_name
+//
+// followed by camelCase variants of the same (filePath, newFilePath, …) for
+// inputs that bypassed normalizeToolInput. When no direct string field exists,
+// it digs into container fields that some backends use instead of a flat
+// path key:
+//
+//   - file_paths / filePaths (array) — first element (used for batch tools)
+//   - locations (array of {path|file_path}) — first element's path (ACP read/edit)
+//   - location (single {path|file_path}) — nested object path
+//
+// Container/array forms only yield a path when the element itself looks like a
+// file reference, so a command string never accidentally becomes a "path".
 func ExtractFilePath(name string, input map[string]any) string {
-	if input == nil {
+	if input == nil || !isFileTool(name) {
 		return ""
 	}
-	if v, _ := input["file_path"].(string); v != "" {
-		return v
+
+	// 1. Flat string path fields — priority order, snake_case first then camelCase.
+	for _, key := range []string{
+		"file_path", "new_file_path", "old_file_path", "path", "filename", "file_name",
+		"filePath", "newFilePath", "oldFilePath", "fileName",
+	} {
+		if v, _ := input[key].(string); v != "" {
+			return v
+		}
 	}
-	if v, _ := input["path"].(string); v != "" {
-		return v
+
+	// 2. Array container fields — take the first element that carries a path.
+	for _, key := range []string{"file_paths", "filePaths"} {
+		if arr, ok := input[key].([]any); ok {
+			if p := firstPathFromArray(arr); p != "" {
+				return p
+			}
+		}
+	}
+
+	// 3. ACP-style location containers (read/edit tools report the target file).
+	if locs, ok := input["locations"].([]any); ok {
+		if p := firstPathFromLocations(locs); p != "" {
+			return p
+		}
+	}
+	if loc, ok := input["location"].(map[string]any); ok {
+		if p := pathFromLocationMap(loc); p != "" {
+			return p
+		}
+	}
+
+	return ""
+}
+
+// firstPathFromArray returns the first non-empty path string in a []any that
+// contains either plain path strings or {"path"/"file_path": …} objects.
+func firstPathFromArray(arr []any) string {
+	for _, item := range arr {
+		switch v := item.(type) {
+		case string:
+			if v != "" {
+				return v
+			}
+		case map[string]any:
+			if p := pathFromLocationMap(v); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// firstPathFromLocations returns the first non-empty path from an ACP-style
+// locations array (elements may be {"path": …} or {"file_path": …}).
+func firstPathFromLocations(locs []any) string {
+	for _, item := range locs {
+		if m, ok := item.(map[string]any); ok {
+			if p := pathFromLocationMap(m); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// pathFromLocationMap pulls the path key out of a single location-style map.
+func pathFromLocationMap(m map[string]any) string {
+	for _, key := range []string{"file_path", "path"} {
+		if v, _ := m[key].(string); v != "" {
+			return v
+		}
 	}
 	return ""
 }

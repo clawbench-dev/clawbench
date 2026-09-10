@@ -797,6 +797,9 @@ func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 		return nil, fmt.Errorf("no tarball URL in registry response")
 	}
 
+	// Mirror the production pipeline in fetchUpgradeInfoFromBase: normalize the
+	// package-name segment first, then repoint the host at the query base.
+	tarballURL = normalizeTarballURL(tarballURL)
 	tarballURL = rewriteTarballURL(tarballURL, baseURL)
 
 	return &UpgradeInfo{
@@ -1444,6 +1447,173 @@ func TestPerformUpgrade_UnreachableRegistry(t *testing.T) {
 	assert.Contains(t, s.Error, "Failed to check version")
 }
 
+// --- CheckInstallDirWritable ---
+
+func TestCheckInstallDirWritable_Writable(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	gotDir, err := CheckInstallDirWritable()
+	require.NoError(t, err)
+	assert.Equal(t, dir, gotDir)
+
+	// The probe file must be cleaned up, leaving the directory empty.
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "probe temp file should have been removed")
+}
+
+func TestCheckInstallDirWritable_NotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer func() { _ = os.Chmod(dir, 0o755) }() // allow TempDir cleanup
+
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	gotDir, err := CheckInstallDirWritable()
+	require.Error(t, err)
+	assert.Equal(t, dir, gotDir, "install dir should still be reported for the message")
+}
+
+func TestCheckInstallDirWritable_ExecutableError(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	upgradeExecutable = func() (string, error) {
+		return "", fmt.Errorf("boom")
+	}
+
+	_, err := CheckInstallDirWritable()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve executable path")
+}
+
+// TestCheckInstallDirWritable_PreservesExistingBackup verifies the probe does
+// not delete a pre-existing ".bak" (it must only remove files it created).
+func TestCheckInstallDirWritable_PreservesExistingBackup(t *testing.T) {
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "clawbench")
+	backup := exe + ".bak"
+	require.NoError(t, os.WriteFile(backup, []byte("existing backup"), 0o600))
+
+	upgradeExecutable = func() (string, error) { return exe, nil }
+
+	gotDir, err := CheckInstallDirWritable()
+	require.NoError(t, err)
+	assert.Equal(t, dir, gotDir)
+
+	data, err := os.ReadFile(backup)
+	require.NoError(t, err, "pre-existing backup must survive the probe")
+	assert.Equal(t, "existing backup", string(data))
+}
+
+// TestCheckInstallDirWritable_BackupNotWritable verifies the probe catches a
+// non-writable existing ".bak" even when the directory itself is writable.
+// This is the case a directory-only probe would miss.
+func TestCheckInstallDirWritable_BackupNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "clawbench")
+	backup := exe + ".bak"
+	require.NoError(t, os.WriteFile(backup, []byte("root backup"), 0o400))
+	defer func() { _ = os.Chmod(backup, 0o600) }() // allow TempDir cleanup
+
+	upgradeExecutable = func() (string, error) { return exe, nil }
+
+	gotDir, err := CheckInstallDirWritable()
+	require.Error(t, err, "a non-writable existing .bak must fail the probe")
+	assert.Equal(t, dir, gotDir)
+}
+
+// TestPerformUpgrade_InstallDirNotWritable verifies the preflight fails fast
+// (before downloading) with the actionable install_dir_not_writable code.
+func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission semantics differ on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+	origExe := upgradeExecutable
+	defer func() { upgradeExecutable = origExe }()
+
+	// Registry reports an upgrade is available.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	defer platform.ChinaMirrorChecked.Store(origChina)
+	platform.ChinaMirrorChecked.Store(2) // non-China → default base is npmjs
+
+	// Binary lives in a read-only directory.
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer func() { _ = os.Chmod(dir, 0o755) }()
+	upgradeExecutable = func() (string, error) {
+		return filepath.Join(dir, "clawbench"), nil
+	}
+
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		performUpgrade(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("performUpgrade timed out")
+	}
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrInstallDirNotWritable, s.ErrorCode)
+	assert.Contains(t, s.Error, dir)
+}
+
 func TestRewriteTarballURL(t *testing.T) {
 	// Tarball not from npmjs → returned unchanged (fall-through branch).
 	assert.Equal(t,
@@ -1457,4 +1627,92 @@ func TestRewriteTarballURL(t *testing.T) {
 	assert.Equal(t,
 		"https://registry.npmmirror.com/x.tgz",
 		rewriteTarballURL("https://registry.npmjs.org/x.tgz", "https://registry.npmmirror.com"))
+}
+
+// TestNormalizeTarballURL covers both the malformed mirror URLs that triggered
+// the 404 and the standard URLs that must pass through untouched.
+func TestNormalizeTarballURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			// Root cause of the 404: Nexus mirror leaves the dist-tag in the
+			// package-name segment.
+			name: "strips @latest from scoped package segment",
+			in:   "http://rd-registry.uniview.com/repository/npm-public/@xulongzhe/clawbench-linux-x64@latest/-/clawbench-linux-x64-0.91.0.tgz",
+			want: "http://rd-registry.uniview.com/repository/npm-public/@xulongzhe/clawbench-linux-x64/-/clawbench-linux-x64-0.91.0.tgz",
+		},
+		{
+			// Any dist-tag is stripped, not just "@latest" — the mirror may be
+			// queried with an arbitrary tag in the future.
+			name: "strips arbitrary dist-tag",
+			in:   "https://mirror.example.com/@scope/pkg@next/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/@scope/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "strips tag from unscoped package",
+			in:   "https://mirror.example.com/pkg@latest/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "standard scoped URL unchanged",
+			in:   "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz",
+			want: "https://registry.npmjs.org/@scope/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			name: "standard unscoped URL unchanged",
+			in:   "https://registry.npmmirror.com/pkg/-/pkg-1.2.3.tgz",
+			want: "https://registry.npmmirror.com/pkg/-/pkg-1.2.3.tgz",
+		},
+		{
+			// The leading "@" is the scope marker, not a tag separator. The
+			// "at > 0" guard must not mistake it for one.
+			name: "scope marker alone is preserved",
+			in:   "https://mirror.example.com/@scope/-/pkg-1.2.3.tgz",
+			want: "https://mirror.example.com/@scope/-/pkg-1.2.3.tgz",
+		},
+		{
+			// Without "/-/" the URL is not recognized as an npm tarball path,
+			// so the function must be a no-op rather than mangling it.
+			name: "no /-/ separator unchanged",
+			in:   "https://mirror.example.com/@scope/pkg@latest",
+			want: "https://mirror.example.com/@scope/pkg@latest",
+		},
+		{
+			name: "empty string unchanged",
+			in:   "",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeTarballURL(tt.in))
+		})
+	}
+}
+
+func TestFetchUpgradeInfo_NormalizesMalformedMirrorTarball(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// Regression test for the 404: the registry response carries a dist-tag in
+	// the package-name segment, which must be cleaned before download.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "0.91.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/@scope/pkg@latest/-/pkg-0.91.0.tgz"
+		resp.Dist.Integrity = "sha512-abcdef"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	info, err := fetchUpgradeInfoWithBase(ts.URL)
+	require.NoError(t, err)
+	assert.NotContains(t, info.TarballURL, "@latest")
+	assert.Contains(t, info.TarballURL, "/@scope/pkg/-/pkg-0.91.0.tgz")
 }

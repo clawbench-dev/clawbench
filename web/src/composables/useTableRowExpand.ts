@@ -42,11 +42,11 @@ export function useTableRowExpand() {
     if (isPC.value) return false
     // Only activate on touch — skip mouse clicks for PC mode
     if ('pointerType' in event && event.pointerType !== 'touch') return false
-    // Skip if click target is an interactive element inside the cell, the
-    // lightbox expand icon (so that click bubbles to the Lightbox handler), or
-    // a path/commit/worktree annotation (so touch taps on those reach the
+    // Skip if click target is an interactive element inside the cell (the
+    // figure header view button, so the Lightbox handler opens it), or a
+    // path/commit/worktree annotation (so touch taps on those reach the
     // preview / commit / worktree handlers instead of opening the row modal).
-    if (target.closest('a, button, [contenteditable], input, select, textarea, .lightbox-expand-icon, .chat-file-path, .chat-file-open-btn, .chat-commit-hash, .chat-commit-open-btn, .chat-worktree-btn')) return false
+    if (target.closest('a, button, [contenteditable], input, select, textarea, .image-block-view-btn, .chat-file-path, .chat-file-open-btn, .chat-commit-hash, .chat-commit-open-btn, .chat-worktree-btn')) return false
     const tr = target.closest('tbody tr[data-row-idx]')
     if (!tr || isTableDragClick(event)) return false
     event.preventDefault()

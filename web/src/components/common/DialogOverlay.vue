@@ -141,7 +141,7 @@ onBeforeUnmount(() => {
   padding: 18px 16px 14px;
   max-width: 320px;
   width: 100%;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16), 0 14px 44px rgba(0, 0, 0, 0.3);
   animation: dlg-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -267,7 +267,7 @@ onBeforeUnmount(() => {
 }
 
 [data-theme-base="dark"] .dlg-box {
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.65);
 }
 
 [data-theme-base="dark"] .dlg-cancel {

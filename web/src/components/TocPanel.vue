@@ -289,15 +289,12 @@ function scrollTo(item) {
 
 /** Resolve a heading anchor scoped to the file this TOC belongs to. */
 function findHeadingEl(id) {
-    const filePath = props.file?.path
     if (!id) return null
     // 1. Markdown rendered preview: the container exposes its source path.
-    if (filePath) {
-        const containers = document.querySelectorAll(`[data-file-path="${escAttr(filePath)}"]`)
-        for (const c of containers) {
-            const el = c.querySelector(`#${escId(id)}`)
-            if (el) return el
-        }
+    const container = fileContainer()
+    if (container) {
+        const el = container.querySelector(`#${escId(id)}`)
+        if (el) return el
     }
     // 2. Fallback: plain document lookup (CodeMirror views have no anchor DOM,
     //    but headings in raw/other views may still match).
@@ -318,6 +315,23 @@ function escId(id) {
 }
 function escAttr(value) {
     return String(value).replace(/["\\]/g, '')
+}
+
+/**
+ * Resolve the DOM container that scopes this file's rendered content, if the
+ * current file exposes a `[data-file-path]` container (MarkdownPreview does;
+ * raw source/PDF/other hosts may not). Used to scope lookups so stacked
+ * multi-file panels cannot match another file's elements by bare line number
+ * or id.
+ */
+function fileContainer() {
+    const filePath = props.file?.path
+    if (!filePath) return null
+    const containers = document.querySelectorAll(`[data-file-path="${escAttr(filePath)}"]`)
+    for (const c of containers) {
+        if (c instanceof HTMLElement) return c
+    }
+    return null
 }
 
 let observer = null
@@ -378,8 +392,16 @@ function setupObserver() {
                     }
                 }
             }, { rootMargin: '-60px 0px -70% 0px' })
+            // Scoped to THIS file's [data-file-path] container first: a bare
+            // [data-line] number in another stacked file (markdown code
+            // previews, drawer stacks) could otherwise be observed by mistake.
+            // Fall back to the global query when no container is exposed
+            // (hosts that do not annotate their content root).
+            const container = fileContainer()
             toc.value.forEach(item => {
-                const el = document.querySelector(`[data-line="${item.line}"]`)
+                const el = container
+                    ? container.querySelector(`[data-line="${item.line}"]`)
+                    : document.querySelector(`[data-line="${item.line}"]`)
                 if (el) observer.observe(el)
             })
         } else {
@@ -408,8 +430,9 @@ watch(toc, () => {
 // ── Code-view scroll-follow ──
 // CodeMirror virtualizes its DOM (only visible lines exist as elements), so an
 // IntersectionObserver cannot reliably track the active line there. The editor
-// reports its top visible line via `cm-editor-viewport-line`; we highlight the
-// deepest TOC symbol at or above that line.
+// reports the line at the vertical middle of the viewport via
+// `cm-editor-viewport-line`; we highlight the deepest TOC symbol at or above
+// that line.
 function onEditorViewportLine(e) {
     if (!props.codeView) return
     if (scrollFollowHeld()) return
@@ -419,7 +442,7 @@ function onEditorViewportLine(e) {
     for (const item of toc.value) {
         if (typeof item.line !== 'number') continue
         if (item.line <= viewportLine) {
-            // Keep the deepest (largest line) symbol at-or-above the viewport top.
+            // Keep the deepest (largest line) symbol at-or-above the reported line.
             match = item
         } else {
             break

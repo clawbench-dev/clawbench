@@ -12,12 +12,13 @@ const upgradeStatusStarted = "started"
 
 // Package-level function variables for testability.
 var (
-	upgradeCheckForUpgrade = service.CheckForUpgrade
-	upgradeIsInProgress    = service.IsUpgradeInProgress
-	upgradePerformUpgrade  = service.PerformUpgrade
-	upgradeGetUpgradeState = service.GetUpgradeState
-	upgradeCompareVersions = version.CompareVersions
-	upgradeIsDevBuild      = version.IsDevBuild
+	upgradeCheckForUpgrade     = service.CheckForUpgrade
+	upgradeIsInProgress        = service.IsUpgradeInProgress
+	upgradePerformUpgrade      = service.PerformUpgrade
+	upgradeGetUpgradeState     = service.GetUpgradeState
+	upgradeCompareVersions     = version.CompareVersions
+	upgradeIsDevBuild          = version.IsDevBuild
+	upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 )
 
 // ServeUpgradeCheck handles GET /api/upgrade/check
@@ -35,10 +36,23 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 
 	hasUpgrade := upgradeCompareVersions(currentVer, latestVer) < 0 || upgradeIsDevBuild(currentVer)
 
+	// Report install-directory writability so the UI can warn before the user
+	// starts an upgrade that cannot succeed.
+	//
+	// An empty install_dir means the executable path could not be resolved, so
+	// the probe is inconclusive rather than a permission verdict — reporting
+	// "not writable" there would show a misleading warning with no directory.
+	// Leave install_writable true (no warning); the upgrade itself will surface
+	// the real error if it is attempted.
+	installDir, installErr := upgradeCheckInstallDirWrit()
+	installWritable := installErr == nil || installDir == ""
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"current_version": currentVer,
-		"latest_version":  latestVer,
-		"has_upgrade":     hasUpgrade,
+		"current_version":  currentVer,
+		"latest_version":   latestVer,
+		"has_upgrade":      hasUpgrade,
+		"install_writable": installWritable,
+		"install_dir":      installDir,
 	})
 }
 

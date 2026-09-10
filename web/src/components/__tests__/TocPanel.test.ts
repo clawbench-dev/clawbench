@@ -603,3 +603,49 @@ describe('TocPanel — scroll-follow keeps active item visible', () => {
     }
   })
 })
+
+describe('TocPanel — code-row observation is scoped to the file container', () => {
+  it('observes [data-line] rows inside this file container only, not another file', async () => {
+    const { fetchCodeSymbols } = await import('@/composables/useCodeSymbols')
+    vi.mocked(fetchCodeSymbols).mockResolvedValueOnce({
+      lang: 'go',
+      symbols: [
+        { name: 'main', kind: 'function', line: 10, endLine: 20, level: 1 },
+        { name: 'Handler', kind: 'struct', line: 25, endLine: 40, level: 1 },
+      ],
+    })
+
+    // Two stacked file containers share the same data-line="25". The observer
+    // must track the row INSIDE this file's container, never the other file's.
+    const other = document.createElement('div')
+    other.setAttribute('data-file-path', '/other.go')
+    other.innerHTML = '<div class="code-line" data-line="25"></div>'
+    const mine = document.createElement('div')
+    mine.setAttribute('data-file-path', '/main.go')
+    mine.innerHTML = '<div class="code-line" data-line="10"></div><div class="code-line" data-line="25"></div>'
+    document.body.appendChild(other)
+    document.body.appendChild(mine)
+
+    const wrapper = mountPanel({
+      file: { name: 'main.go', content: 'package main', path: '/main.go' },
+      codeView: false, // non-CodeMirror rendered rows are tracked via observer
+    })
+    await nextTick()
+    await new Promise(r => setTimeout(r, 50))
+    await nextTick()
+    await nextTick()
+
+    const observed = MockIntersectionObserver.observed
+    const observedLines = observed.map(el => el.getAttribute('data-line'))
+    expect(observedLines).toContain('10')
+    expect(observedLines).toContain('25')
+    // Every observed row must belong to THIS file's container.
+    for (const el of observed) {
+      expect(el.closest('[data-file-path]')?.getAttribute('data-file-path')).toBe('/main.go')
+    }
+
+    wrapper.unmount()
+    other.remove()
+    mine.remove()
+  })
+})

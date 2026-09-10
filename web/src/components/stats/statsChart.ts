@@ -56,7 +56,8 @@ export function buildBarOption(categories: string[], values: number[], metric: U
       type: 'value',
       // Bar values are already printed on the right of each bar, so the value
       // axis ticks are redundant on narrow screens — keep them on desktop.
-      axisLabel: narrow ? { show: false } : { color: p.textSecondary },
+      // Token metrics get the same K/M formatting as the bars/labels.
+      axisLabel: narrow ? { show: false } : { color: p.textSecondary, formatter: (v: number) => formatMetricValue(metric, v) },
       splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
     },
     yAxis: {
@@ -70,7 +71,15 @@ export function buildBarOption(categories: string[], values: number[], metric: U
       data: values,
       itemStyle: { color: p.accent, borderRadius: [0, 3, 3, 0] },
       barMaxWidth: 22,
-      label: { show: true, position: 'right', color: p.textSecondary, fontSize: 10 },
+      label: {
+        show: true,
+        position: 'right',
+        color: p.textSecondary,
+        fontSize: 10,
+        // Raw token counts (input/output/…) rendered in the same K/M tiers as
+        // the table so the chart never disagrees with the detail numbers.
+        formatter: (pp: unknown) => formatMetricValue(metric, (pp as { value: number }).value),
+      },
     }],
   }
   if (many) {
@@ -135,7 +144,12 @@ export function buildTrendOption(
     },
     // The value axis has no printed per-point labels; its tick text is noise on
     // narrow screens (hover tooltip gives exact values) — hidden on mobile.
-    yAxis: { type: 'value', axisLabel: narrow ? { show: false } : { color: p.textSecondary }, splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } } },
+    // Token metrics share the K/M formatting with the tooltip.
+    yAxis: {
+      type: 'value',
+      axisLabel: narrow ? { show: false } : { color: p.textSecondary, formatter: (v: number) => formatMetricValue(metric, v) },
+      splitLine: { lineStyle: { color: p.axisLine, opacity: 0.5 } },
+    },
     color: SERIES_COLORS,
     series: seriesList.map(s => ({
       type: 'line' as const,
@@ -150,8 +164,28 @@ export function buildTrendOption(
 
 // ── Overview donut (input vs output) + cache-drilldown donut ──
 
+/**
+ * Compact token counts: raw below 1K, K up to 1M, M up to 1B, B above — each
+ * scaled tier keeps one decimal. Used for token metrics
+ * (input/output/total/cacheHit…) in cards, tables, chart tooltips and donut
+ * labels so all views share one format. Rounding to the nearest integer first
+ * keeps boundary values honest: 999,950 → 1.0M, 999.7 → 1.0K (never "1000.0K"
+ * or "1,000").
+ */
+function formatTokenCount(v: number): string {
+  const n = Math.round(v)
+  // Pick the tier from the ROUNDED scaled value so near-boundary numbers can't
+  // render as "1000.0K" or "1,000": 999,950 → 1.0M, 999.7 → 1.0K,
+  // 999,500,000 → 1.0B. (999,500..999,949 keeps K, 999.5M..999.949M keeps M —
+  // both print the accurate 3-decimal value.)
+  if (n >= 999_500_000) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 999_950) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 999.5) return `${(n / 1e3).toFixed(1)}K`
+  return n.toLocaleString()
+}
+
 const labelFormatter = (name: string, value: number): string =>
-  `${name}\n${value.toLocaleString('en-US')}`
+  `${name}\n${formatTokenCount(value)}`
 
 /**
  * Build the totals-overview donut: input vs output slices. Clicking a slice
@@ -228,13 +262,15 @@ export function formatMetricValue(metric: UsageMetricId, v: number): string {
   if (v == null || Number.isNaN(v)) return '—'
   switch (metric) {
     case 'credit': return `${v.toLocaleString('en-US', { maximumFractionDigits: 4 })}`
-    case 'cost': {
-      const abs = Math.abs(v)
-      if (abs > 0 && abs < 0.0001) return '$0.0001'
-      return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`
-    }
+    case 'cost':
+      // Cost is always shown with exactly two decimals (thousands separator
+      // kept for large totals). Sub-cent amounts round to $0.00 — the raw
+      // precision is still available in the per-message metadata modal.
+      return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     default:
-      return Math.round(v).toLocaleString()
+      // input / output / total / cacheHit — raw token counts compacted to
+      // K/M tiers (unit shown on the labels, e.g. "输入 Tokens").
+      return formatTokenCount(v)
   }
 }
 

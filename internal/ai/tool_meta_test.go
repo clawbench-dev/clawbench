@@ -40,6 +40,41 @@ func TestExtractSummary(t *testing.T) {
 			want:     "",
 		},
 
+		// PermissionApproval special case
+		{
+			name:     "PermissionApproval command",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Bash",
+				"toolInput": `{"command":"rm -rf /tmp/cache"}`,
+			},
+			want: "rm -rf /tmp/cache",
+		},
+		{
+			name:     "PermissionApproval file_path basename",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Edit",
+				"toolInput": `{"file_path":"/home/user/project/main.go"}`,
+			},
+			want: "main.go",
+		},
+		{
+			name:     "PermissionApproval falls back to toolName",
+			toolName: "PermissionApproval",
+			input: map[string]any{
+				"toolName":  "Bash",
+				"toolInput": "not-json",
+			},
+			want: "Bash",
+		},
+		{
+			name:     "PermissionApproval no toolName",
+			toolName: "PermissionApproval",
+			input:    map[string]any{},
+			want:     "",
+		},
+
 		// Priority chain: description > file_path > command > ...
 		{
 			name:     "description takes priority",
@@ -99,6 +134,52 @@ func TestExtractSummary(t *testing.T) {
 			want:     "Research the codebase",
 		},
 		{
+			name:     "agent description wins over prompt",
+			toolName: "Agent",
+			input: map[string]any{
+				"description": "Minimal reply task",
+				"prompt":      "Reply with exactly the single word DONE and nothing else.",
+			},
+			want: "Minimal reply task",
+		},
+		{
+			name:     "codex subagent lifecycle activity summary",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "started",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "started codebase_research",
+		},
+		{
+			name:     "codex subagent complete activity summary",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "completed",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "completed codebase_research",
+		},
+		{
+			name:     "codex subagent lifecycle without agentPath",
+			toolName: "Agent",
+			input:    map[string]any{"activityKind": "interrupted", "agentThreadId": "thr-01"},
+			want:     "interrupted ",
+		},
+		{
+			name:     "wait collab empty summary",
+			toolName: "wait",
+			input: map[string]any{
+				"agentsStates":      map[string]any{},
+				"senderThreadId":    "root-1",
+				"receiverThreadIds": []any{},
+				"status":            "inProgress",
+			},
+			want: "",
+		},
+		{
 			name:     "prompt ignored for non-agent tool",
 			toolName: "Bash",
 			input:    map[string]any{"prompt": "should be skipped", "command": "ls"},
@@ -142,6 +223,74 @@ func TestExtractSummary(t *testing.T) {
 			toolName: "Unknown",
 			input:    map[string]any{"count": float64(42)},
 			want:     "",
+		},
+		{
+			name:     "taskupdate default input shows id and status",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "in_progress", "taskId": "3"},
+			want:     "#3 · in_progress",
+		},
+		{
+			name:     "taskupdate completed",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "completed", "taskId": "14"},
+			want:     "#14 · completed",
+		},
+		{
+			name:     "taskupdate deleted",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": "deleted", "taskId": "4"},
+			want:     "#4 · deleted",
+		},
+		{
+			name:     "taskupdate taskId only when status missing",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"taskId": "7"},
+			want:     "#7",
+		},
+		{
+			name:     "taskupdate no taskId defers to chain",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"foo": "bar"},
+			want:     "bar",
+		},
+		{
+			name:     "taskupdate subject override wins",
+			toolName: "TaskUpdate",
+			input: map[string]any{
+				"subject": "Fix auth bug",
+				"status":  "in_progress",
+				"taskId":  "3",
+			},
+			want: "Fix auth bug",
+		},
+		{
+			name:     "taskupdate description override wins",
+			toolName: "TaskUpdate",
+			input: map[string]any{
+				"description": "Roll back config",
+				"status":      "completed",
+				"taskId":      "9",
+			},
+			want: "Roll back config",
+		},
+		{
+			name:     "taskupdate case-insensitive special case",
+			toolName: "taskupdate",
+			input:    map[string]any{"status": "in_progress", "taskId": "3"},
+			want:     "#3 · in_progress",
+		},
+		{
+			name:     "taskupdate composed label truncates to 200 runes",
+			toolName: "TaskUpdate",
+			input:    map[string]any{"status": repeatStr("s", 250), "taskId": "3"},
+			want:     "#3 · " + repeatStr("s", 250)[:195], // 5 ("#3 · ") + 195 = 200
+		},
+		{
+			name:     "deterministic fallback picks lexicographically first key",
+			toolName: "Unknown",
+			input:    map[string]any{"zeta": "last", "alpha": "first"},
+			want:     "first",
 		},
 		{
 			name:     "description over command",
@@ -205,6 +354,25 @@ func TestExtractDisplayName(t *testing.T) {
 			want:     "",
 		},
 		{
+			name:     "codex Agent lifecycle frame display name from agentPath basename",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "started",
+				"agentPath":     "/root/codebase_research",
+				"agentThreadId": "thr-01",
+			},
+			want: "codebase_research",
+		},
+		{
+			name:     "codex Agent lifecycle frame display name falls back to activity",
+			toolName: "Agent",
+			input: map[string]any{
+				"activityKind":  "interrupted",
+				"agentThreadId": "thr-01",
+			},
+			want: "interrupted",
+		},
+		{
 			name:     "non-Agent tool ignored",
 			toolName: "Read",
 			input:    map[string]any{"subagent_type": "Explore"},
@@ -255,9 +423,27 @@ func TestExtractFilePath(t *testing.T) {
 		},
 		{
 			name:     "no file_path, path present",
+			toolName: "Read",
+			input:    map[string]any{"path": "/src/main.go"},
+			want:     "/src/main.go",
+		},
+		{
+			name:     "LS directory path is not a file identity",
 			toolName: "LS",
 			input:    map[string]any{"path": "/src"},
-			want:     "/src",
+			want:     "",
+		},
+		{
+			name:     "Glob pattern path is not a file identity",
+			toolName: "Glob",
+			input:    map[string]any{"path": "src/**/*.ts"},
+			want:     "",
+		},
+		{
+			name:     "Bash filename field is not promoted",
+			toolName: "Bash",
+			input:    map[string]any{"command": "curl -o /tmp/a.go", "filename": "/tmp/a.go"},
+			want:     "",
 		},
 		{
 			name:     "file_path takes priority over path",
@@ -275,6 +461,66 @@ func TestExtractFilePath(t *testing.T) {
 			name:     "nil input",
 			toolName: "Read",
 			input:    nil,
+			want:     "",
+		},
+		{
+			name:     "new_file_path preferred over old_file_path",
+			toolName: "Edit",
+			input:    map[string]any{"old_file_path": "/src/old.go", "new_file_path": "/src/new.go"},
+			want:     "/src/new.go",
+		},
+		{
+			name:     "file_path still beats old_file_path",
+			toolName: "Edit",
+			input:    map[string]any{"file_path": "/src/a.go", "old_file_path": "/src/b.go"},
+			want:     "/src/a.go",
+		},
+		{
+			name:     "filename fallback",
+			toolName: "Write",
+			input:    map[string]any{"filename": "out.txt"},
+			want:     "out.txt",
+		},
+		{
+			name:     "camelCase filePath fallback",
+			toolName: "Edit",
+			input:    map[string]any{"filePath": "/src/camel.go"},
+			want:     "/src/camel.go",
+		},
+		{
+			name:     "file_paths array takes first string",
+			toolName: "Edit",
+			input:    map[string]any{"file_paths": []any{"/src/a.go", "/src/b.go"}},
+			want:     "/src/a.go",
+		},
+		{
+			name:     "locations array takes first object path",
+			toolName: "Edit",
+			input:    map[string]any{"locations": []any{map[string]any{"path": "/src/loc.go"}}},
+			want:     "/src/loc.go",
+		},
+		{
+			name:     "single location object with file_path",
+			toolName: "Edit",
+			input:    map[string]any{"location": map[string]any{"file_path": "/src/nest.go"}},
+			want:     "/src/nest.go",
+		},
+		{
+			name:     "empty array yields empty",
+			toolName: "Edit",
+			input:    map[string]any{"file_paths": []any{}},
+			want:     "",
+		},
+		{
+			name:     "non-path command string is not captured",
+			toolName: "Bash",
+			input:    map[string]any{"command": "node script.js x.ts"},
+			want:     "",
+		},
+		{
+			name:     "location without path yields empty",
+			toolName: "Edit",
+			input:    map[string]any{"location": map[string]any{"range": "1-5"}},
 			want:     "",
 		},
 	}

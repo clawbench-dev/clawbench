@@ -69,10 +69,10 @@ type ChatMessage struct {
 }
 
 // SummaryTool is a compact record of a tool_use block present in a reading
-// summary view. input is included for interactive tools (AskUserQuestion,
-// PermissionApproval) that need it for card rendering. done/status/output are
-// captured so interactive cards (e.g. PermissionApproval) can render their
-// final approved/denied state in summary view instead of pending buttons.
+// summary view. Only answerable interactive tools (AskUserQuestion) are
+// captured: input is needed for card rendering, and done/status/output carry
+// the final state. Actionable-only tools whose buttons need live session
+// context (PermissionApproval) are intentionally excluded from summary view.
 type SummaryTool struct {
 	Name   string         `json:"name"`
 	ID     string         `json:"id,omitempty"`

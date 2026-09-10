@@ -49,6 +49,7 @@ interface AgentRecord {
   customSystemPrompt?: string
   canRefreshModels?: boolean
   supportsCLI?: boolean
+  autoApprove?: boolean
 }
 
 const agents = ref<AgentRecord[]>([])

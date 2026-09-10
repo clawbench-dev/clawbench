@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -104,7 +105,9 @@ func TestSQLiteStore_InsertChunks_WithoutEmbedding(t *testing.T) {
 }
 
 func TestSQLiteStore_InsertChunks_MixedEmbeddingAndNoEmbedding(t *testing.T) {
-	store := setupSQLiteStore(t)
+	// Use a store with a known dimension so rag_vec exists: has_embedding=1 now
+	// requires the chunk's vector row to actually be written.
+	store := setupSQLiteStoreWithDim(t)
 	chunkWithEmb := makeTestChunk(testSession1, 1, 0, "has embedding")
 	chunkWithoutEmb := Chunk{
 		SessionID:          testSession2,
@@ -282,6 +285,78 @@ func TestSQLiteStore_SearchFTS_FiltersByProject(t *testing.T) {
 	assert.Equal(t, "/project/a", hits[0].ProjectPath)
 }
 
+func TestSQLiteStore_SearchFTS_TimeRangeBoundaries(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	// Three rows matching the same term, one per month. SearchFTS compares
+	// created_at as text, so the bound format must sort correctly against what
+	// the driver stored (UTC with a "+0000 UTC" suffix).
+	insert := func(msgID int64, sessionID string, at time.Time) {
+		chunk := Chunk{
+			SessionID: sessionID, MessageID: msgID, ChunkText: "database tuning",
+			ChunkTextSegmented: "database tuning", ChunkIndex: 0,
+			TokenCount: 2, ProjectPath: testProjectPath, Backend: testBackendClaude,
+			Role: testRoleAssistant, CreatedAt: at,
+		}
+		require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+	}
+	insert(1, "s-jan", time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC))
+	insert(2, "s-feb", time.Date(2024, 2, 15, 10, 0, 0, 0, time.UTC))
+	insert(3, "s-mar", time.Date(2024, 3, 15, 10, 0, 0, 0, time.UTC))
+
+	// Window covering February only (inclusive bounds, as the handler builds).
+	hits, err := store.SearchFTS("database", 10, "", "", "", "", "",
+		"2024-02-01 00:00:00", "2024-02-29 23:59:59.999999")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "s-feb", hits[0].SessionID)
+
+	// Lower bound only.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "2024-02-01 00:00:00", "")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+
+	// Upper bound only.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-02-29 23:59:59.999999")
+	require.NoError(t, err)
+	assert.Len(t, hits, 2)
+
+	// A window with no rows returns nothing rather than an error.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "",
+		"2025-01-01 00:00:00", "2025-12-31 23:59:59.999999")
+	require.NoError(t, err)
+	assert.Empty(t, hits)
+}
+
+func TestSQLiteStore_SearchFTS_TimeBoundIncludesSuffixedRow(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	// A row in the final second of the range: its stored text is
+	// "2024-03-01 10:00:00 +0000 UTC", which sorts after a bare
+	// "2024-03-01 10:00:00". The upper bound carries a fractional suffix so it
+	// still includes this row.
+	chunk := Chunk{
+		SessionID: "s-edge", MessageID: 1, ChunkText: "database edge",
+		ChunkTextSegmented: "database edge", ChunkIndex: 0,
+		TokenCount: 2, ProjectPath: testProjectPath, Backend: testBackendClaude,
+		Role: testRoleAssistant, CreatedAt: time.Date(2024, 3, 1, 10, 0, 0, 0, time.UTC),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	// Bare-second upper bound misses the suffixed row.
+	hits, err := store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-03-01 10:00:00")
+	require.NoError(t, err)
+	assert.Empty(t, hits, "bare-second bound should sort before the suffixed stored text")
+
+	// Fractional bound includes it.
+	hits, err = store.SearchFTS("database", 10, "", "", "", "", "", "", "2024-03-01 10:00:00.999999")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "s-edge", hits[0].SessionID)
+}
+
 // ---------- SearchVector (vec0 KNN) ----------
 
 func TestStore_SearchVector_Basic(t *testing.T) {
@@ -348,6 +423,66 @@ func TestStore_SearchVector_ExcludeSessionID(t *testing.T) {
 	require.NoError(t, err)
 	for _, h := range hits {
 		require.NotEqual(t, "s1", h.SessionID)
+	}
+}
+
+// TestStore_SearchVector_TimeFilterIsAppliedInsideKNN is the regression test for
+// the time-window bug.
+//
+// The time predicate used to be expressed on the joined rag_chunks.created_at,
+// which sqlite-vec applies AFTER the KNN scan — so it only filtered the top-k
+// candidates. When the nearest candidates fell outside the window the search
+// returned nothing, even though in-window matches existed. The fix pushes the
+// window into the KNN scan via a rowid subquery, so ranking honors it.
+func TestStore_SearchVector_TimeFilterIsAppliedInsideKNN(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	defer store.Close()
+
+	// Make the out-of-window rows strictly closer to the query than the
+	// in-window ones, so a small k selects only out-of-window rows and a
+	// post-KNN filter would drop everything.
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Query is the unit vector on axis 0; "close" rows share that axis
+	// (distance 0), "far" rows are orthogonal (distance √2).
+	query := make([]float64, 1024)
+	query[0] = 1
+	closeEmb := make([]float64, 1024)
+	closeEmb[0] = 1
+	farEmb := make([]float64, 1024)
+	farEmb[1] = 1
+
+	chunks := []Chunk{
+		makeTestChunk("s-old-1", 1, 0, "old one"),
+		makeTestChunk("s-old-2", 2, 0, "old two"),
+		makeTestChunk("s-new-1", 3, 0, "new one"),
+		makeTestChunk("s-new-2", 4, 0, "new two"),
+	}
+	for i := range chunks {
+		chunks[i].CreatedAt = old
+		chunks[i].Embedding = closeEmb
+	}
+	// In-window rows are farther from the query than the out-of-window ones.
+	chunks[2].CreatedAt = recent
+	chunks[3].CreatedAt = recent
+	chunks[2].Embedding = farEmb
+	chunks[3].Embedding = farEmb
+	require.NoError(t, store.InsertChunks(chunks))
+
+	// limit=1 → the KNN k is 2 (limit*2), which covers only the two closest
+	// (out-of-window) rows. A post-KNN time filter would return 0 hits; the fix
+	// must push the window into the KNN scan and return an in-window row.
+	hits, err := store.SearchVector(
+		query, 1,
+		testProjectPath, "", "", "", "", "2024-01-01", "",
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, hits, "in-window matches exist and must be found")
+	cutoff := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, h := range hits {
+		assert.False(t, h.CreatedAt.Before(cutoff),
+			"every hit must satisfy the time window, got %v", h.CreatedAt)
 	}
 }
 
@@ -448,35 +583,61 @@ func TestSQLiteStore_SearchHybrid_CombinesSources(t *testing.T) {
 
 func TestSQLiteStore_CheckDimensionMismatch_Empty(t *testing.T) {
 	store := setupSQLiteStore(t)
-	dim, mismatch, err := store.CheckDimensionMismatch()
+	// No rag_vec table yet.
+	dim, mismatch, err := store.CheckDimensionMismatch(1024)
 	assert.NoError(t, err)
-	assert.Equal(t, 0, dim, "empty table should return 0 dim")
-	assert.False(t, mismatch)
+	assert.Equal(t, 0, dim, "no vec table should return 0 dim")
+	assert.False(t, mismatch, "no existing table means nothing to conflict with")
 }
 
 func TestSQLiteStore_CheckDimensionMismatch_Match(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 1)
+	store := setupSQLiteStoreWithDim(t) // embDim 1024
+	require.NoError(t, store.ensureVecTable())
 
-	// Reload dim from DB after insert
-	store.loadEmbeddingDimFromDB()
-
-	dim, mismatch, err := store.CheckDimensionMismatch()
+	dim, mismatch, err := store.CheckDimensionMismatch(1024)
 	assert.NoError(t, err)
 	assert.Equal(t, 1024, dim)
-	assert.False(t, mismatch)
+	assert.False(t, mismatch, "same dimension must not report a mismatch")
 }
 
 func TestSQLiteStore_CheckDimensionMismatch_Mismatch(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 1)
+	store := setupSQLiteStoreWithDim(t) // rag_vec created at 1024
+	require.NoError(t, store.ensureVecTable())
 
-	// Change store dimension to simulate mismatch
-	store.embDim = 768
-	dim, mismatch, err := store.CheckDimensionMismatch()
+	// Embedder now reports 768 — must be detected against the TABLE, not embDim.
+	dim, mismatch, err := store.CheckDimensionMismatch(768)
 	assert.NoError(t, err)
 	assert.Equal(t, 1024, dim)
 	assert.True(t, mismatch, "different dimension should report mismatch")
+}
+
+// TestSQLiteStore_CheckDimensionMismatch_DetectsAfterRestart reproduces the
+// original blocker: a changed embedding model after a restart.
+//
+// Previously the check compared the embedder dim against s.embDim, which is
+// loaded from rag_chunks.embedding_dim — the same data the vec table was built
+// from — so it always reported "match". The mismatch was never detected, the
+// old-width rag_vec survived, and every vector insert failed (and, combined with
+// the insert-failure marking bug, messages were lost permanently).
+func TestSQLiteStore_CheckDimensionMismatch_DetectsAfterRestart(t *testing.T) {
+	// First "run": create the vec table at 1024 and store a chunk.
+	store := setupSQLiteStoreWithDim(t)
+	require.NoError(t, store.ensureVecTable())
+	insertTestChunksSQLite(t, store, 1)
+	require.True(t, store.HasVecData())
+
+	// Simulate a restart: a fresh store over the same DB reloads embDim from
+	// rag_chunks, so s.embDim is 1024 again and cannot reveal the change.
+	store.embDim = 0
+	store.loadEmbeddingDimFromDB()
+	require.Equal(t, 1024, store.embDim, "restart reloads dim from existing data")
+
+	// Embedder now reports 768. The check must still detect the mismatch.
+	existing, mismatch, err := store.CheckDimensionMismatch(768)
+	require.NoError(t, err)
+	assert.Equal(t, 1024, existing)
+	assert.True(t, mismatch,
+		"a changed embedding model must be detected even though s.embDim matches the stored data")
 }
 
 func TestSQLiteStore_ResetForDimensionMismatch(t *testing.T) {
@@ -553,10 +714,123 @@ func TestSQLiteStore_ResetVectorOnly(t *testing.T) {
 	assert.True(t, store.HasFTSData())
 }
 
+// ---------- RebuildFTS ----------
+
+func TestSQLiteStore_RebuildFTS_KeepsChunksAndVectors(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	insertTestChunksSQLite(t, store, 4)
+
+	// Sanity: chunks, FTS, and vectors all present
+	count, err := store.ChunkCount()
+	require.NoError(t, err)
+	require.Equal(t, 4, count)
+	require.True(t, store.HasFTSData())
+	require.True(t, store.HasVecData())
+
+	rebuilt, err := store.RebuildFTS()
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), rebuilt, "should report all chunks re-indexed")
+
+	// Chunks untouched
+	count, err = store.ChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 4, count, "chunk rows must be preserved")
+
+	// Vectors untouched — independent FTS rebuild must not drop rag_vec
+	assert.True(t, store.HasVecData(), "vector index must survive an FTS rebuild")
+	embCount, err := store.EmbeddedChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 4, embCount, "embeddings must be preserved")
+
+	// FTS still queryable after rebuild
+	assert.True(t, store.HasFTSData())
+
+	var ftsCount int
+	require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM rag_chunks_fts").Scan(&ftsCount))
+	assert.Equal(t, 4, ftsCount)
+}
+
+func TestSQLiteStore_RebuildFTS_EmptyStore(t *testing.T) {
+	store := setupSQLiteStore(t)
+
+	rebuilt, err := store.RebuildFTS()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), rebuilt)
+	assert.False(t, store.HasFTSData())
+}
+
+// ---------- IndexDiskUsage ----------
+
+func TestStore_IndexDiskUsage(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+
+	// Empty store: dbstat reports no FTS/vec shadow tables yet (or zero pages)
+	ftsBytes, vecBytes, err := store.IndexDiskUsage()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, ftsBytes, int64(0))
+	assert.GreaterOrEqual(t, vecBytes, int64(0))
+
+	insertTestChunksSQLite(t, store, 5)
+
+	ftsBytes, vecBytes, err = store.IndexDiskUsage()
+	require.NoError(t, err)
+	assert.Greater(t, ftsBytes, int64(0), "FTS shadow tables should consume pages")
+	assert.Greater(t, vecBytes, int64(0), "vector shadow tables should consume pages")
+}
+
+// TestStore_IndexDiskUsage_UsesIndexedPlan guards the dbstat query shape.
+//
+// dbstat is a virtual table that materializes one row per database page. It
+// only uses its name index when the filter is a direct `name IN (SELECT ...)`
+// WHERE clause (plan: "SCAN dbstat VIRTUAL TABLE INDEX 2"). If the prefix match
+// is instead folded into a CASE/SUM expression, SQLite falls back to a full
+// scan of every page in the file (INDEX 0), which took ~57s on a real 14 GB
+// store and made the settings panel hang. This test asserts the indexed plan
+// so that regression cannot land silently (it is invisible on tiny test DBs).
+func TestStore_IndexDiskUsage_UsesIndexedPlan(t *testing.T) {
+	store := setupSQLiteStore(t)
+	insertTestChunksSQLite(t, store, 3)
+
+	for _, tc := range []struct {
+		name  string
+		query string
+	}{
+		{"fts", ftsDiskUsageQuery},
+		{"vector", vecDiskUsageQuery},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := store.db.Query("EXPLAIN QUERY PLAN " + tc.query)
+			require.NoError(t, err)
+			defer rows.Close()
+
+			var plan strings.Builder
+			for rows.Next() {
+				var id, parent, notused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
+				plan.WriteString(detail)
+				plan.WriteString("\n")
+			}
+			require.NoError(t, rows.Err())
+
+			got := plan.String()
+			// dbstat uses its name index when the plan reads "INDEX 2"; a full
+			// page scan reads "INDEX 0". The driver may print the index number
+			// in hex ("0x2" / "0x0"), so accept both spellings.
+			assert.Regexp(t, `dbstat VIRTUAL TABLE INDEX (2|0x2)\b`, got,
+				"dbstat query must use the name index, not a full scan; plan was:\n%s", got)
+			assert.NotRegexp(t, `dbstat VIRTUAL TABLE INDEX (0|0x0)\b`, got,
+				"dbstat query regressed to a full page scan; plan was:\n%s", got)
+		})
+	}
+}
+
 // ---------- UpdateEmbedding ----------
 
 func TestSQLiteStore_UpdateEmbedding(t *testing.T) {
-	store := setupSQLiteStore(t)
+	// A dimension must be known so rag_vec exists: has_embedding=1 now requires
+	// the chunk's vector row to actually be written.
+	store := setupSQLiteStoreWithDim(t)
 
 	chunk := Chunk{
 		SessionID: testSession1, MessageID: 1, ChunkText: testNeedsBackfill,
@@ -612,7 +886,7 @@ func TestSQLiteStore_UpdateEmbedding_RejectsNaNEmbedding(t *testing.T) {
 // ---------- PendingEmbeddingCount / GetPendingEmbeddings ----------
 
 func TestSQLiteStore_PendingEmbeddingCount(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t)
 
 	chunk1 := makeTestChunk(testSession1, 1, 0, "with embedding")
 	err := store.InsertChunks([]Chunk{chunk1})
@@ -705,11 +979,13 @@ func TestSQLiteStore_DeleteChunksBySessionAfterMessage(t *testing.T) {
 func TestSQLiteStore_DeleteChunksBySessionAfterMessage_ScopedToSession(t *testing.T) {
 	store := setupSQLiteStore(t)
 
+	// message_id is the globally-unique chat_history.id, so different sessions
+	// never share one (the store enforces UNIQUE(message_id, chunk_index)).
 	chunks := []Chunk{
 		makeTestChunk("sess-a", 1, 0, "content a1"),
 		makeTestChunk("sess-a", 2, 0, "content a2"),
-		makeTestChunk("sess-b", 1, 0, "content b1"),
-		makeTestChunk("sess-b", 2, 0, "content b2"),
+		makeTestChunk("sess-b", 3, 0, "content b1"),
+		makeTestChunk("sess-b", 4, 0, "content b2"),
 	}
 	err := store.InsertChunks(chunks)
 	require.NoError(t, err)
@@ -810,7 +1086,7 @@ func TestSQLiteStore_EmbeddedChunkCount_Empty(t *testing.T) {
 }
 
 func TestSQLiteStore_EmbeddedChunkCount_WithEmbeddings(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t)
 	chunks := make([]Chunk, 4)
 	now := time.Now()
 	for i := range chunks {
@@ -871,7 +1147,7 @@ func TestSQLiteStore_GetMessageIndexStatus_FTSOnly(t *testing.T) {
 }
 
 func TestSQLiteStore_GetMessageIndexStatus_FullyIndexed(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t)
 	chunks := []Chunk{
 		{
 			SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
@@ -888,7 +1164,7 @@ func TestSQLiteStore_GetMessageIndexStatus_FullyIndexed(t *testing.T) {
 }
 
 func TestSQLiteStore_GetMessageIndexStatus_PartiallyEmbedded(t *testing.T) {
-	store := setupSQLiteStore(t)
+	store := setupSQLiteStoreWithDim(t)
 	chunks := []Chunk{
 		{
 			SessionID: "s1", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
@@ -953,9 +1229,10 @@ func TestSQLiteStore_LoadEmbeddingDimFromDB_WithExistingData(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := dir + "/test_dim.db"
 
-	// First store: insert data
+	// First store: insert data (needs a dimension so the embedding is recorded)
 	store1, err := NewSQLiteStoreForTest(dbPath)
 	require.NoError(t, err)
+	store1.SetEmbeddingDim(1024)
 	chunk := makeTestChunk(testSession1, 1, 0, "dim test")
 	require.NoError(t, store1.InsertChunks([]Chunk{chunk}))
 	_ = store1.Close()
@@ -1437,6 +1714,7 @@ func TestSQLiteStore_SearchFTS_AnyTermORRanking(t *testing.T) {
 	// not just the full contiguous phrase. Chunks matching more terms rank higher.
 	store := setupSQLiteStore(t)
 
+	// Distinct message ids: message_id is the globally-unique chat_history.id.
 	chunkA := Chunk{
 		SessionID: testSession1, MessageID: 1, ChunkText: "database query optimization",
 		ChunkTextSegmented: "database query optimization", ChunkIndex: 0,
@@ -1445,7 +1723,7 @@ func TestSQLiteStore_SearchFTS_AnyTermORRanking(t *testing.T) {
 		CreatedAt: time.Now().Truncate(time.Millisecond),
 	}
 	chunkB := Chunk{
-		SessionID: testSession2, MessageID: 1, ChunkText: "database storage engine",
+		SessionID: testSession2, MessageID: 2, ChunkText: "database storage engine",
 		ChunkTextSegmented: "database storage engine", ChunkIndex: 0,
 		TokenCount: 3, Embedding: makeTestEmbedding(), HasEmbedding: true,
 		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,

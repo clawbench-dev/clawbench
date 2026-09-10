@@ -400,6 +400,20 @@ describe('ChatMessageList — stream-follow persistence', () => {
     expect(fnBody).toMatch(/if \(force\) userLeftBottom = false/)
     expect(fnBody).not.toMatch(/userLeftBottom = false[\s\S]*?if \(force\)/)
   })
+
+  it('a real user scroll during a stream releases programmatic ownership so the FAB can appear', async () => {
+    // Regression: during a running session followToBottom re-arms
+    // setProgrammatic(true) on every pin frame. handleScroll's programmatic
+    // branch returns early BEFORE the scrolledUp/scrolledDown logic, so a real
+    // upward/downward drag while the stream is active never flipped either flag
+    // — the scroll-jump FAB required a huge scroll (or waiting for the stream
+    // to go quiet + another scroll) before it appeared.
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // The user-input latch block must release programmatic ownership first so
+    // the FAB logic on this same event is not skipped by the early return.
+    expect(source).toMatch(/if \(userTouching \|\| wheelActive \|\| mouseDownActive\) \{[\s\S]*?if \(programmaticScrolling\) setProgrammatic\(false\)/)
+  })
 })
 
 /**

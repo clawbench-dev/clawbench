@@ -200,8 +200,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
   'add-attached': [path: string, isDir?: boolean]
-  'remove-attached': [path: string]
-  'file-open': [path: string]
+  'remove-attached': [entry: FileEntry]
+  'file-open': [entry: FileEntry | string]
 }>()
 
 const { t } = useI18n()
@@ -298,7 +298,7 @@ function isAttached(path: string) {
 
 function toggleAttached(path: string, isDir: boolean = false) {
   if (isAttached(path)) {
-    emit('remove-attached', path)
+    emit('remove-attached', { path, isDir })
   } else {
     emit('add-attached', path, isDir)
   }
@@ -312,7 +312,7 @@ async function handleDeleteShare(item: { path: string; name?: string }) {
     confirmText: t('common.delete'),
   })
   if (!confirmed) return
-  if (isAttached(item.path)) emit('remove-attached', item.path)
+  if (isAttached(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentShare(item.path)
 }
 
@@ -322,7 +322,7 @@ async function handleDeleteUpload(item: { path: string; name?: string }) {
     confirmText: t('common.delete'),
   })
   if (!confirmed) return
-  if (isAttached(item.path)) emit('remove-attached', item.path)
+  if (isAttached(item.path)) emit('remove-attached', { path: item.path })
   await deleteRecentUpload(item.path)
 }
 

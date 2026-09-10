@@ -65,6 +65,15 @@ describe('FileAttachmentList', () => {
     expect(wrapper.find('.attachment-image-only').exists()).toBe(true)
   })
 
+  it('falls back to icon + filename for SVG (image the backend cannot thumbnail)', () => {
+    const wrapper = mountList([{ path: 'img/logo.svg' }])
+    // Image-but-not-thumbable must never render a blank card
+    expect(wrapper.find('.attachment-image-only').exists()).toBe(false)
+    expect(wrapper.find('.attachment-thumb-img').exists()).toBe(false)
+    expect(wrapper.find('.attachment-filename').exists()).toBe(true)
+    expect(wrapper.text()).toContain('logo.svg')
+  })
+
   it('applies upload class for upload paths', () => {
     const wrapper = mountList([{ path: '/upload/file.txt' }])
     expect(wrapper.find('.attachment-upload').exists()).toBe(true)
@@ -75,11 +84,11 @@ describe('FileAttachmentList', () => {
     expect(wrapper.find('.attachment-ref').exists()).toBe(true)
   })
 
-  it('emits file-tag-click on click', async () => {
+  it('emits file-tag-click on click with the full entry', async () => {
     const wrapper = mountList([{ path: 'src/main.ts' }])
     await wrapper.find('.chat-file-attachment').trigger('click')
     expect(wrapper.emitted('file-tag-click')).toBeTruthy()
-    expect(wrapper.emitted('file-tag-click')![0]).toEqual(['src/main.ts'])
+    expect(wrapper.emitted('file-tag-click')![0]).toEqual([{ path: 'src/main.ts' }])
   })
 
   it('renders multiple files', () => {

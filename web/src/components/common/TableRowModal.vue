@@ -67,14 +67,14 @@ async function handleValueClick(event) {
   const target = event.target
 
   // 0. Lightbox (ModalDialog @click.stop prevents bubbling to Lightbox's global listener).
-  //    Both the expand icon AND the image body itself open the lightbox, so a click
-  //    on the image is enough (the icon can be hidden on non-hover/touch devices).
-  const expandIcon = target.closest('.lightbox-expand-icon')
+  //    Both the view button (figure header) AND the image body itself open the
+  //    lightbox, so a click on the image is enough.
+  const isViewBtn = !!target.closest('.image-block-view-btn')
   const isLightboxImgClick = !!target.closest('.lightbox-img')
-  if (expandIcon || isLightboxImgClick) {
+  if (isViewBtn || isLightboxImgClick) {
     if (!openLightbox) return
     event.preventDefault()
-    const wrap = expandIcon ? expandIcon.closest('.lightbox-img-wrap') : target.closest('.lightbox-img-wrap')
+    const wrap = target.closest('.image-block-wrapper, .lightbox-img-wrap')
     const lightboxImg = wrap ? wrap.querySelector('.lightbox-img') : null
     if (!lightboxImg) return
     // Full-size original (data-full-src) preferred; fall back to the inline thumb src.
@@ -181,40 +181,3 @@ async function handleValueClick(event) {
 
 </script>
 
-<style>
-/* Lightbox expand icon inside the row modal — mirrors .markdown-body rules but
-   the modal content lives in .table-row-value (not under .markdown-body). */
-.table-row-value .lightbox-img-wrap {
-  position: relative;
-  display: inline-block;
-}
-
-.table-row-value .lightbox-img-wrap .lightbox-expand-icon {
-  display: none;
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  cursor: pointer;
-  z-index: 2;
-}
-
-.table-row-value .lightbox-img-wrap .lightbox-expand-icon::after {
-  content: '⤢';
-  font-size: 14px;
-  line-height: 24px;
-  text-align: center;
-}
-
-@media (hover: hover) {
-  .table-row-value .lightbox-img-wrap:hover .lightbox-expand-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-}
-</style>

@@ -19,6 +19,8 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentPreferredModel': 'Preferred Model',
         'settings.items.agentPreferredThinkingEffort': 'Thinking Effort',
         'settings.items.agentTransport': 'Protocol',
+        'settings.items.agentAutoApprove': 'Auto-Approve by Default',
+        'settings.items.agentAutoApproveDesc': 'New sessions use this',
         'settings.items.agentSectionIdentity': 'Identity',
         'settings.items.agentName': 'Name',
         'settings.items.agentSpecialty': 'Specialty',
@@ -91,6 +93,7 @@ const baseAgent = {
   canRefreshModels: true,
   thinkingEffortLevels: [],
   preferredThinkingEffort: '',
+  autoApprove: false,
 }
 
 function mountDetail(agentOverrides: Record<string, any> = {}) {
@@ -277,6 +280,32 @@ describe('SettingsAgentDetail', () => {
       vm.$.setupState.activeKey = 'name'
       vm.$.setupState.handleEditToggle('name', false)
       expect(vm.$.setupState.activeKey).toBeNull()
+    })
+  })
+
+  // ─── Auto-approve default toggle ──────────────────────────
+  describe('auto-approve default toggle', () => {
+    it('renders an auto_approve switch item with the agent value', () => {
+      const wrapper = mountDetail({ autoApprove: true })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = items.find((it: any) => it.props('label') === 'Auto-Approve by Default')
+      expect(item).toBeTruthy()
+      expect(item?.props('type')).toBe('switch')
+      expect(item?.props('modelValue')).toBe(true)
+    })
+
+    it('handleUpdate patches auto_approve on the server', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'auto_approve', patchField: 'auto_approve' }, true)
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'auto_approve', true)
+    })
+
+    it('getItemValue reads autoApprove from the agent', async () => {
+      const wrapper = mountDetail({ autoApprove: true })
+      const vm = wrapper.vm as any
+      const value = vm.$.setupState.getItemValue({ key: 'auto_approve' })
+      expect(value).toBe(true)
     })
   })
 })
