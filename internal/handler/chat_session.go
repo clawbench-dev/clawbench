@@ -429,6 +429,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
 		Title          string `json:"title"`
+		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -497,6 +498,10 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// value cannot latch a blank title.
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.SetSessionTitleLocked(sessionID, title)
+	}
+	if req.Pinned != nil {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionPinned(sessionID, *req.Pinned)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

@@ -45,6 +45,7 @@ type SessionUpdateData struct {
 	ProjectPath          string `json:"project_path,omitempty"`
 	ToolName             string `json:"tool_name,omitempty"`  // tool name requesting approval (permission_pending only)
 	ToolInput            string `json:"tool_input,omitempty"` // tool input JSON for approval details (permission_pending only)
+	Pinned               bool   `json:"pinned,omitempty"`    // session pin-to-top state
 }
 
 // TaskUpdateData is the data payload for "task_update" events.
