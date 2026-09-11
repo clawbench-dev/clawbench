@@ -67,7 +67,7 @@ vi.mock('@/composables/useLocale', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-    store: { state: { chatInitialMessages: 50, chatPageSize: 50, projectRoot: '/test/project' } },
+    store: { state: { chatInitialMessages: 50, chatPageSize: 50, projectRoot: '/test/project', sessionListVersion: 0 } },
 }))
 
 vi.mock('@/utils/chatSessionUtils', () => ({
@@ -77,6 +77,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
 
 import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
 import { recordRecentSession } from '@/composables/useRecentSession'
+import { store } from '@/stores/app'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1610,6 +1611,40 @@ describe('useSessionIdentity', () => {
 
             expect(result).toBe(false)
             expect(identity.currentSessionTitle.value).toBe('Old Title')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('bumps sessionListVersion so a mounted session list refreshes its title', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(true)
+            expect(store.state.sessionListVersion).toBe(before + 1)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not bump sessionListVersion on server failure', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(false)
+            expect(store.state.sessionListVersion).toBe(before)
 
             vi.unstubAllGlobals()
         })
