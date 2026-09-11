@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { LongPressDirective } from '../longPress'
 
 // jsdom has no Touch/TouchEvent constructor, so build a plain Event and stub
@@ -10,6 +10,19 @@ function makeTouch(type: string, x: number, y: number): Event {
 }
 
 describe('LongPressDirective', () => {
+  // Fake only the timer APIs the directive actually uses. The default
+  // vi.useFakeTimers() also fakes queueMicrotask/Date/performance, which can
+  // stall Vue's scheduler and leave the fork worker unable to exit — this repo
+  // already fights fork-worker hangs (vitest-dev/vitest#8766). Always restore
+  // real timers, even if an assertion throws mid-test.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  })
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
   it('should store binding on element at mount time', () => {
     const el = document.createElement('div')
     const callback = vi.fn()
@@ -59,7 +72,6 @@ describe('LongPressDirective', () => {
   })
 
   it('should use latest binding value when long-press fires (not stale closure)', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
 
     // First callback — simulates stale v-for closure (wrong session)
@@ -72,13 +84,6 @@ describe('LongPressDirective', () => {
     const freshBinding = { value: freshCallback } as any
     LongPressDirective.updated!(el, freshBinding)
 
-    // Simulate touchstart by dispatching a real event
-    // We need to use the real event listener, so create a proper TouchEvent
-    // jsdom doesn't support Touch constructor, so we manually trigger the timeout
-    // by accessing the internal mechanism. Instead, let's verify the binding read path.
-    // The key insight: at fire-time, the directive reads `el._longPress_binding.value`
-    // We can verify this by directly calling what the timeout would call:
-
     // Trigger the long-press callback path directly
     ;(el as any)._longPress_binding.value('fake-event')
 
@@ -87,53 +92,42 @@ describe('LongPressDirective', () => {
     expect(staleCallback).not.toHaveBeenCalled()
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('passes the data-session-id captured at touchstart to the callback', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     el.setAttribute('data-session-id', 's42')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
 
-    // Dispatch a touchstart (jsdom lacks Touch — stub via Object.defineProperty)
-    const touches = [{ clientX: 10, clientY: 20 }]
-    const touchEvent = new Event('touchstart', { bubbles: true })
-    Object.defineProperty(touchEvent, 'touches', { value: touches })
-
-    el.dispatchEvent(touchEvent)
+    const ev = makeTouch('touchstart', 10, 20)
+    el.dispatchEvent(ev)
     vi.advanceTimersByTime(500)
 
     // The callback receives (event, capturedSessionId) — the id captured at
     // touchstart, which survives DOM reordering before the long-press fires.
     expect(callback).toHaveBeenCalledTimes(1)
-    expect(callback).toHaveBeenCalledWith(touchEvent, 's42')
+    expect(callback).toHaveBeenCalledWith(ev, 's42')
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('captures data-path (for non-session rows) as the identity hint', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     el.setAttribute('data-path', '/a/b.txt')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
 
-    const touchEvent = new Event('touchstart', { bubbles: true })
-    Object.defineProperty(touchEvent, 'touches', { value: [{ clientX: 1, clientY: 2 }] })
-    el.dispatchEvent(touchEvent)
+    const ev = makeTouch('touchstart', 1, 2)
+    el.dispatchEvent(ev)
     vi.advanceTimersByTime(500)
 
-    expect(callback).toHaveBeenCalledWith(touchEvent, '/a/b.txt')
+    expect(callback).toHaveBeenCalledWith(ev, '/a/b.txt')
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('passes empty string when neither data-session-id nor data-path is present', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -144,11 +138,9 @@ describe('LongPressDirective', () => {
     expect(callback).toHaveBeenCalledWith(expect.anything(), '')
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('adds the long-pressing class while active and removes it on touchend', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     LongPressDirective.mounted(el, { value: vi.fn() } as any)
 
@@ -162,11 +154,9 @@ describe('LongPressDirective', () => {
     expect(el.classList.contains('long-pressing')).toBe(false)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('cancels the pending long-press when the finger moves beyond the threshold', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -180,11 +170,9 @@ describe('LongPressDirective', () => {
     expect(el.classList.contains('long-pressing')).toBe(false)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('keeps the long-press alive when movement stays within the threshold', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -197,7 +185,6 @@ describe('LongPressDirective', () => {
     expect(callback).toHaveBeenCalledTimes(1)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('ignores touchmove when no long-press is pending', () => {
@@ -213,7 +200,6 @@ describe('LongPressDirective', () => {
   })
 
   it('treats a short tap as a normal click and does not preventDefault', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -232,11 +218,9 @@ describe('LongPressDirective', () => {
     expect(callback).not.toHaveBeenCalled()
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('prevents the synthetic click after a long-press fires', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -251,11 +235,9 @@ describe('LongPressDirective', () => {
     expect(end.defaultPrevented).toBe(true)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('cancels the pending long-press on touchcancel', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -269,11 +251,9 @@ describe('LongPressDirective', () => {
     expect(el.classList.contains('long-pressing')).toBe(false)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('blocks the iOS contextmenu callout once a long-press has fired', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     LongPressDirective.mounted(el, { value: vi.fn() } as any)
 
@@ -285,7 +265,6 @@ describe('LongPressDirective', () => {
     expect(menu.defaultPrevented).toBe(true)
 
     LongPressDirective.unmounted(el)
-    vi.useRealTimers()
   })
 
   it('allows the native contextmenu when no long-press has fired', () => {
@@ -302,7 +281,6 @@ describe('LongPressDirective', () => {
   })
 
   it('clears a pending timer on unmounted', () => {
-    vi.useFakeTimers()
     const el = document.createElement('div')
     const callback = vi.fn()
     LongPressDirective.mounted(el, { value: callback } as any)
@@ -313,7 +291,5 @@ describe('LongPressDirective', () => {
     vi.advanceTimersByTime(500)
 
     expect(callback).not.toHaveBeenCalled()
-
-    vi.useRealTimers()
   })
 })
