@@ -605,25 +605,100 @@ describe('ChatInputBar', () => {
   })
 
   it('draft is preserved across session switches via watcher', async () => {
-    // Test the saveDraft + watcher integration:
-    // The watcher saves draft for old session and restores for new session.
-    // Since setProps doesn't trigger watchers in the test environment,
-    // verify the draft mechanism through the exposed API.
+    // The real watcher on props.currentSessionId saves the old session's text
+    // and restores the new session's. `setProps` DOES trigger watchers here
+    // (the recommendation tests below rely on it), so drive the switch through
+    // the prop instead of simulating the watcher body by hand.
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
     wrapper.vm.inputText = 'hello from session 1'
     await wrapper.vm.$nextTick()
-    // Explicitly save draft
-    wrapper.vm.saveDraft()
-    // Verify draft is cached for sess-1
-    expect(wrapper.vm.getDraft('sess-1')).toBe('hello from session 1')
-    // Simulate what the watcher does: save current input for old session, then restore for new
-    // Step 1: Save draft (already done above)
-    // Step 2: Clear input (simulating session switch)
-    wrapper.vm.clearInputPreserveDraft()
+
+    // Switch away: the old session's draft is cached, the visible text clears.
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
-    // Step 3: Restore draft when switching back (what the watcher would do)
-    wrapper.vm.inputText = wrapper.vm.getDraft('sess-1') ?? ''
+    expect(wrapper.vm.getDraft('sess-1')).toBe('hello from session 1')
+
+    // Switch back: the draft is restored into the input box.
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('hello from session 1')
+  })
+
+  it('keeps an independent draft per session across repeated switches', async () => {
+    // Two sessions must not overwrite each other's draft: typing in B and
+    // switching back to A restores A's text, and B's draft survives too.
+    const wrapper = mountBar({ currentSessionId: 'sess-A' })
+    wrapper.vm.inputText = 'typed in A'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    wrapper.vm.inputText = 'typed in B'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ currentSessionId: 'sess-A' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in A')
+    expect(wrapper.vm.getDraft('sess-B')).toBe('typed in B')
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in B')
+  })
+
+  it('switching to a session with no draft clears the input', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'draft for one'
+    await wrapper.vm.$nextTick()
+
+    // sess-2 has never been typed into — the input must be empty, not carry
+    // sess-1's text over.
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+  })
+
+  it('restores the draft through the full manager switch sequence', async () => {
+    // Production flow (useSessionManager.switchSession): clearInputState calls
+    // saveDraft() then clearInputPreserveDraft(), the session id changes, and
+    // restoreInputState runs. The draft must survive this exact ordering.
+    const wrapper = mountBar({ currentSessionId: 'sess-A' })
+    wrapper.vm.inputText = 'typed in A'
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.saveDraft()
+    wrapper.vm.clearInputPreserveDraft()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.getDraft('sess-A')).toBe('typed in A')
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+
+    await wrapper.setProps({ currentSessionId: 'sess-A' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in A')
+  })
+
+  it('does not resurrect a sent message as a draft after switching away and back', async () => {
+    // clearInput() (called after a successful send) deletes the draft, so the
+    // delivered text must not come back when the user switches sessions.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'already sent'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    wrapper.vm.clearInput()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
   })
 
   it('injectToInput appends text on newline when existing content', async () => {
