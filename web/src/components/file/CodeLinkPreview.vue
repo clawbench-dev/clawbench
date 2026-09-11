@@ -52,7 +52,7 @@
           </button>
           <!-- Rendered / Source toggle (Markdown only, no line range) -->
           <button
-            v-if="showRenderToggle"
+            v-if="showTextTools && showRenderToggle"
             class="code-preview-btn icon-only"
             :class="{ 'is-active': isRenderedView }"
             :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
@@ -64,7 +64,7 @@
           </button>
           <!-- Word Wrap Toggle (code-slice view only) -->
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-active': isWordWrap }"
             :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
@@ -75,7 +75,7 @@
           </button>
           <!-- Line Numbers Toggle (code-slice view only) -->
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-active': showLineNumbers }"
             :title="t('file.header.lineNumbers')"
@@ -87,7 +87,7 @@
           </button>
           <!-- Copy Code (code-slice view only) -->
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn icon-only"
             :class="{ 'is-copied': copied }"
             :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
@@ -136,8 +136,16 @@
       </div>
 
       <!-- Content Area: rendered Markdown document OR source code slice -->
+      <MediaPreviewBody
+        v-if="isMediaView"
+        ref="bodyRef"
+        :path="targetFilePath"
+        :kind="mediaKind"
+        :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
+        @loaded="onMediaLoaded"
+      />
       <MarkdownPreviewBody
-        v-if="isRenderedView"
+        v-else-if="isRenderedView"
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -191,7 +199,7 @@
 
         <!-- Search in preview: icon-only, code-slice view only -->
         <button
-          v-if="!isRenderedView"
+          v-if="showTextTools && !isRenderedView"
           class="code-preview-footer-btn icon-btn fbtn"
           :class="{ 'is-active': isSearchOpen }"
           :title="t('file.codePreview.findInPreview')"
@@ -229,8 +237,9 @@
           <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
 
-        <!-- Quote to Chat -->
+        <!-- Quote to Chat (text files only — media has no quotable text) -->
         <button
+          v-if="showTextTools"
           class="code-preview-footer-btn action-btn fbtn quote-btn"
           :title="t('file.codePreview.quoteToChat')"
           @click="handleQuoteToChat"
@@ -242,12 +251,18 @@
     </template>
   </BottomSheet>
 
-  <!-- Desktop Floating: Teleport to body -->
-  <Teleport v-else-if="preview.visible.value && preview.mode.value !== 'sheet'" to="body">
+  <!-- Desktop Floating: Teleport to body. When docked, Teleport is disabled so
+       the very same card markup renders in place inside the caller's pane —
+       one template, no duplication. -->
+  <Teleport
+    v-else-if="preview.visible.value && preview.mode.value !== 'sheet'"
+    :disabled="docked"
+    to="body"
+  >
     <div
       ref="cardRef"
       class="code-link-preview-floating"
-      :class="{ 'is-dragging': isDraggingCard }"
+      :class="{ 'is-dragging': isDraggingCard, 'is-media': isMediaView, 'is-docked': docked }"
       role="dialog"
       :aria-label="t('file.codePreview.title')"
       :style="cardStyle"
@@ -290,8 +305,10 @@
         </div>
 
         <div class="code-preview-header-actions" @pointerdown.stop>
-          <!-- Window Controls: Pin + Close live in the header on wide screens -->
+          <!-- Window Controls: Pin + Close live in the header on wide screens.
+               Pin is meaningless when docked (nothing floats to pin). -->
           <button
+            v-if="!docked"
             class="code-preview-btn"
             :class="{ 'is-pinned': preview.isPinned.value }"
             :aria-pressed="preview.isPinned.value"
@@ -311,7 +328,7 @@
             :data-tooltip="t('file.codePreview.close')"
             @pointerenter="showTooltip($event, t('file.codePreview.close'))"
             @pointerleave="hideTooltip()"
-            @click="preview.close()"
+            @click="handleClose()"
           >
             <X :size="12" />
           </button>
@@ -342,7 +359,7 @@
           </button>
           <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             ref="firstActionBtnRef"
             class="code-preview-btn"
             :class="{ 'is-active': isSearchOpen }"
@@ -356,7 +373,7 @@
             <Search :size="12" />
           </button>
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-active': isWordWrap }"
             :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
@@ -370,7 +387,7 @@
             <TextWrap :size="12" />
           </button>
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-active': showLineNumbers }"
             :aria-pressed="showLineNumbers"
@@ -401,6 +418,7 @@
                tools — Copy Path / Open Directory (reveal) / Open File — with no
                dividers between them, in that left-to-right order. -->
           <button
+            v-if="showTextTools"
             class="code-preview-btn"
             :title="t('file.codePreview.quoteToChat')"
             :aria-label="t('file.codePreview.quoteToChat')"
@@ -412,7 +430,7 @@
             <MessageSquare :size="12" />
           </button>
           <button
-            v-if="!isRenderedView"
+            v-if="showTextTools && !isRenderedView"
             class="code-preview-btn"
             :class="{ 'is-copied': copied }"
             :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
@@ -541,9 +559,17 @@
         </div>
       </div>
 
-      <!-- Body / Scroll pane: rendered Markdown document OR source code slice -->
+      <!-- Body / Scroll pane: media / rendered Markdown document / source code slice -->
+      <MediaPreviewBody
+        v-if="isMediaView"
+        ref="bodyRef"
+        :path="targetFilePath"
+        :kind="mediaKind"
+        :refresh-nonce="preview.mediaRefreshNonce?.value ?? 0"
+        @loaded="onMediaLoaded"
+      />
       <MarkdownPreviewBody
-        v-if="isRenderedView"
+        v-else-if="isRenderedView"
         ref="bodyRef"
         :status="preview.status.value"
         :error-message-text="errorMessageText"
@@ -590,6 +616,7 @@ import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, L
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
+import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
@@ -603,14 +630,32 @@ import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import '@/assets/code-link-preview.css'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   preview: ReturnType<typeof useCodeLinkPreview>
-}>()
+  /** Render inline in the caller's pane (file manager bottom pane) instead of
+   *  as a body-teleported floating card. Suppresses drag + float placement. */
+  docked?: boolean
+}>(), {
+  docked: false,
+})
 
 const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
+
+const emit = defineEmits<{
+  /** Fired after the preview is dismissed. Docked callers use it to collapse
+   *  their pane; floating callers ignore it. */
+  (e: 'closed'): void
+}>()
+
+/** Close the preview. Docked callers get a `closed` event so they can collapse
+ *  the pane (the pane is otherwise always visible while preview mode is on). */
+function handleClose() {
+  props.preview.close()
+  emit('closed')
+}
 
 // Reuse the global "show line numbers" file-viewer setting so the code-link
 // preview follows the same preference as the main editor.
@@ -639,6 +684,23 @@ let renderedSliceKey = ''
 
 const isRenderedView = computed(() => props.preview.effectiveRenderMode?.value === 'rendered')
 const showRenderToggle = computed(() => Boolean(props.preview.canRenderMarkdown?.value))
+
+// ── Media body (image / SVG / video / audio / PDF) ─────────────────────────
+// When the target is a media file the card renders MediaPreviewBody instead of
+// the code/markdown bodies, and all text-viewer tools (search, wrap, line
+// numbers, copy code, rendered/source toggle) are hidden — they are meaningless
+// for media.
+const isMediaView = computed(() => Boolean(props.preview.isMediaTarget?.value))
+const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
+  const p = props.preview
+  if (p.isImageTarget?.value) return 'image'
+  if (p.isVideoTarget?.value) return 'video'
+  if (p.isAudioTarget?.value) return 'audio'
+  if (p.isPdfTarget?.value) return 'pdf'
+  return null
+})
+// Text-slice tools are only meaningful when a code/markdown body is showing.
+const showTextTools = computed(() => !isMediaView.value)
 
 function toggleRenderView() {
   props.preview.toggleRenderMode?.()
@@ -824,6 +886,12 @@ const contextMeta = computed(() => {
   }
   if (size !== undefined && size > 0) {
     parts.push(formatFileSize(size))
+  }
+  // Media targets have no fetched content (no line count / size), so surface
+  // the file type label instead of leaving the meta row blank.
+  if (parts.length === 0 && isMediaView.value) {
+    const label = getFileType(filePath).label
+    if (label) parts.push(label)
   }
   return parts.join(' · ')
 })
@@ -1210,11 +1278,26 @@ const scrollToTargetLine = () => {
   // watchers fire before CodePreviewBody has mounted). Defer one tick so the
   // exposed scroll helper exists when invoked.
   nextTick(() => {
-    bodyRef.value?.scrollToTargetLine()
+    // Guard with typeof: a media body has no target line, and a <script setup>
+    // component without defineExpose still resolves to a truthy empty proxy.
+    if (typeof bodyRef.value?.scrollToTargetLine === 'function') {
+      bodyRef.value.scrollToTargetLine()
+    }
   })
 }
 
+// Max-height for the card. Code slices are capped at 65vh/480px so the card
+// stays compact; media cards hold the file itself, so they are allowed to grow
+// to the full placement box (which already accounts for the viewport).
+const mediaMaxHeightCss = (clampPx: number) =>
+  isMediaView.value
+    ? `${clampPx}px`
+    : `min(65vh, 480px, ${clampPx}px)`
+
 const cardStyle = computed(() => {
+  // Docked: the pane owns position/size (flex + split ratio), so no inline
+  // float styles — CSS handles it entirely.
+  if (props.docked) return {}
   if (dragX.value !== null && dragY.value !== null) {
     const style: Record<string, string> = {
       left: `${toFixedCSS(dragX.value)}px`,
@@ -1232,7 +1315,7 @@ const cardStyle = computed(() => {
       const dynamicMaxHeight = plcMaxHeight
         ? Math.min(availableBelow, Math.max(plcMaxHeight, availableBelow))
         : availableBelow
-      style.maxHeight = `min(65vh, 480px, ${toFixedCSS(dynamicMaxHeight)}px)`
+      style.maxHeight = mediaMaxHeightCss(toFixedCSS(dynamicMaxHeight))
     }
     return style
   }
@@ -1243,7 +1326,7 @@ const cardStyle = computed(() => {
       top: plc.cssTop,
     }
     if (plc.maxHeight && plc.maxHeight > 0) {
-      style.maxHeight = `min(65vh, 480px, ${toFixedCSS(plc.maxHeight)}px)`
+      style.maxHeight = mediaMaxHeightCss(toFixedCSS(plc.maxHeight))
     }
     return style
   }
@@ -1292,6 +1375,13 @@ const handleViewDetails = () => {
   props.preview.openFull()
 }
 
+// Media bodies (image/video/audio/PDF) size themselves from the file's own
+// intrinsic dimensions. Once loaded, re-measure the card so the placement clamp
+// and drag bounds use the real height instead of the pre-load estimate.
+const onMediaLoaded = () => {
+  nextTick(() => clampCurrentPosition())
+}
+
 const handleEscape = () => {
   if (isSearchOpen.value) {
     closeSearch()
@@ -1311,6 +1401,12 @@ const handleEscape = () => {
 // dismissal). pointerdown is used so a drag that starts on the titlebar/meta
 // row never races this check (the down target is already inside the card).
 const onDocumentPointerDown = (e: PointerEvent) => {
+  // A docked pane is a layout pane, not a dismissible popover: it must not
+  // close on an outside click. Beyond being the wrong interaction, closing on
+  // pointerdown here would unmount the pane mid-gesture — e.g. grabbing the
+  // split divider would remove the divider from the DOM, and the browser would
+  // then start a native drag on the file row revealed underneath.
+  if (props.docked) return
   if (!props.preview.visible.value) return
   if (props.preview.mode.value === 'sheet') return
   if (props.preview.isPinned.value) return
@@ -1318,6 +1414,10 @@ const onDocumentPointerDown = (e: PointerEvent) => {
   if (!card) return
   const target = e.target as Node | null
   if (target && card.contains(target)) return
+  // Caller-declared elements (e.g. file-manager rows) retarget the card in
+  // place on click instead of dismissing it — leave them alone.
+  const ignore = props.preview.outsideClickIgnoreSelector
+  if (ignore && target instanceof Element && target.closest(ignore)) return
   props.preview.close()
 }
 
@@ -1368,6 +1468,8 @@ const updateDragPosition = () => {
 }
 
 const onDragPointerDown = (e: PointerEvent) => {
+  // A docked pane is not draggable — it is laid out by the caller's split.
+  if (props.docked) return
   if (e.button !== 0 && e.button !== undefined) return
   if (!cardRef.value) return
 
@@ -1469,6 +1571,8 @@ const onDragPointerCancel = (e: PointerEvent) => {
 }
 
 const syncPlacementWithCard = (force = false) => {
+  // Docked panes have no float placement to sync.
+  if (props.docked) return
   if (!cardRef.value || dragX.value !== null || dragY.value !== null) return
   const isPinned = props.preview.mode.value === 'pinned'
   const cardRect = cardRef.value.getBoundingClientRect()
@@ -1491,6 +1595,8 @@ const syncPlacementWithCard = (force = false) => {
 }
 
 const clampCurrentPosition = () => {
+  // Docked panes are sized by the split layout, never clamped to the viewport.
+  if (props.docked) return
   if (!cardRef.value) return
   const cardRect = cardRef.value.getBoundingClientRect()
   if (dragX.value !== null && dragY.value !== null) {

@@ -715,3 +715,150 @@ body.code-preview-dragging * {
     transform: rotate(360deg);
   }
 }
+
+/* ── Media preview body (image / SVG / video / audio / PDF) ─────────────────
+   The pane is a flex child of .code-preview-content, so it already has the
+   card's remaining height. Media is centered and contained so the card's
+   width AND height are both used, without ever overflowing. */
+.code-preview-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+/* Raster image + SVG: scale to fit whichever axis runs out first. */
+.code-preview-media-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* Video keeps its aspect ratio and stretches to the available box. */
+.code-preview-media-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+/* Audio has no intrinsic visual size — center a compact stacked player. */
+.code-preview-media-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 20px;
+  width: 100%;
+  min-height: 0;
+  color: var(--text-secondary, #666);
+}
+
+.code-preview-media-audio-icon {
+  color: var(--text-tertiary, #999);
+}
+
+.code-preview-media-audio-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary, #202124);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-preview-media-audio-player {
+  width: min(420px, 100%);
+}
+
+/* PDF: pdf.js fills the pane; the component's own height:100% needs a sized
+   flex parent, which .code-preview-media provides. */
+.code-preview-media.is-pdf {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.code-preview-media.is-pdf > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Load failure: message centered over the pane. */
+.code-preview-media-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary, #666);
+  background: var(--bg-primary, #fff);
+}
+
+.code-preview-media {
+  position: relative;
+}
+
+/* Media cards get more room: images/video/PDF are the content, so the card
+   grows toward the viewport instead of the code-tuned 65vh/480px cap. Width
+   also widens so landscape media is not letterboxed into a narrow column.
+   The inline maxHeight from cardStyle still clamps to the placement box. */
+.code-link-preview-floating.is-media {
+  width: min(960px, calc(100vw - 24px));
+  /* Lift the code-tuned min(65vh, 480px) cap: media IS the content, so let it
+     fill the viewport. cardStyle's inline maxHeight (when set) still clamps to
+     the placement box below this. */
+  max-height: min(88vh, calc(100vh - 24px));
+}
+
+/* The media pane sits directly under the header/meta rows; give it a floor so
+   a small image still reads as a preview rather than a sliver. */
+.code-link-preview-floating.is-media .code-preview-content {
+  min-height: 220px;
+}
+
+/* PDF body needs the code background replaced with the viewer's own. */
+.code-link-preview-floating.is-media .code-preview-content {
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+/* ── Docked pane (file manager bottom pane) ─────────────────────────────────
+   Same card markup as the floating preview, but laid out inline inside the
+   caller's split pane: no fixed positioning, no float shadow/rounding, and it
+   fills the pane both ways. All inline placement styles are suppressed in JS
+   (cardStyle returns {}), so these rules are authoritative. */
+.code-link-preview-floating.is-docked {
+  position: relative;
+  inset: auto;
+  left: auto;
+  top: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg-primary, #ffffff);
+}
+/* The docked pane sits under the file list, so the top edge needs no divider —
+   the SplitDivider already draws it. */
+.code-link-preview-floating.is-docked .code-preview-header {
+  cursor: default;
+}
+.code-link-preview-floating.is-docked .code-preview-meta {
+  cursor: default;
+}

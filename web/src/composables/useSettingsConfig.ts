@@ -21,6 +21,7 @@ function migrateLegacyKeys() {
     lineNumbers: { key: 'clawbench-line-numbers', format: 'raw' },
     stickyScroll: { key: 'clawbench-sticky-scroll', format: 'raw' },
     fileView: { key: 'clawbench-file-view', format: 'raw' },
+    filePreviewMode: { key: 'clawbench-file-preview-mode', format: 'raw' },
     terminalFontSize: { key: 'clawbench-terminal-font-size', format: 'raw' },
   }
   for (const [settingsKey, legacy] of Object.entries(migrations)) {
@@ -108,6 +109,10 @@ const legacyKeys: Record<string, {
   },
   fileView: {
     key: 'clawbench-file-view',
+    format: 'raw',
+  },
+  filePreviewMode: {
+    key: 'clawbench-file-preview-mode',
     format: 'raw',
   },
   terminalFontSize: {
@@ -332,6 +337,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
+  filePreviewMode: false,
   wallpaperBlur: 0,
   // Edge fade is ON by default: users who never touched the toggle (or never
   // migrated a legacy value) get the soft blended border out of the box.

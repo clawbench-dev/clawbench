@@ -497,4 +497,15 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.labelKey).toBe('settings.items.markdownCodeLinkPreview')
     expect(entry!.spec.descriptionKey).toBe('settings.items.markdownCodeLinkPreviewDesc')
   })
+
+  it('projectFiles category contains filePreviewMode local switch', () => {
+    const projectFilesEntries = categoryItems['projectFiles']
+    const entry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'filePreviewMode')
+    expect(entry).toBeDefined()
+    if (entry!.type !== 'item') throw new Error('expected item entry')
+    expect(entry!.spec.source).toBe('local')
+    expect(entry!.spec.type).toBe('switch')
+    expect(entry!.spec.labelKey).toBe('settings.items.filePreviewMode')
+    expect(entry!.spec.descriptionKey).toBe('settings.items.filePreviewModeDesc')
+  })
 })

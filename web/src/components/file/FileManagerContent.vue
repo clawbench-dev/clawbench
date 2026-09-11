@@ -84,6 +84,9 @@
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('previewMode')" class="toolbar-btn" :class="{ active: filePreviewMode }" @click="togglePreviewMode()" :title="filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn')">
+            <ScanEye :size="16" />
+          </button>
           <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
             <CheckSquare :size="16" />
           </button>
@@ -139,6 +142,12 @@
                   <LayoutGrid v-if="viewMode === 'list'" :size="14" />
                   <LayoutList v-else :size="14" />
                   <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('previewMode')">
+                <button class="toolbar-dropdown-item" :class="{ active: filePreviewMode }" @click="togglePreviewMode(); moreMenuOpen = false">
+                  <ScanEye :size="14" />
+                  <span>{{ filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn') }}</span>
                 </button>
               </template>
               <template v-if="toolbarCollapsedIds.includes('multiselect')">
@@ -197,6 +206,20 @@
       <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
+    <!-- File list + (optional) docked preview pane. When preview mode is on
+         and a file is open, this becomes a draggable top/bottom split; when
+         off, the wrappers are display:contents so the list fills as before. -->
+    <SplitView
+      class="fm-split"
+      orientation="vertical"
+      :enabled="previewPaneEnabled"
+      :ratio="previewSplitRatio"
+      :min-left="previewPaneMinTop"
+      :min-right="previewPaneMinBottom"
+      :title="t('file.previewPaneResize')"
+      @update:ratio="onPreviewRatioChange"
+    >
+      <template #top>
     <!-- File list / grid area wrapper — non-scrolling, so overlays (loading,
          paste) stay fixed over the visible viewport instead of scrolling away
          with the list content -->
@@ -352,6 +375,18 @@
       {{ t('file.search.truncated') }}
     </div>
     </div>
+      </template>
+
+      <template #bottom>
+        <div v-if="previewPaneVisible" class="fm-preview-pane">
+          <CodeLinkPreview
+            :docked="true"
+            :preview="codeLinkPreview"
+            @closed="collapsePreviewPane"
+          />
+        </div>
+      </template>
+    </SplitView>
 
     <!-- Bottom dock: resident search bar -->
     <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
@@ -483,7 +518,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2 } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -503,11 +538,14 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import SplitView from '@/components/common/SplitView.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
+import CodeLinkPreview from './CodeLinkPreview.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
@@ -780,11 +818,17 @@ watch(moreMenuOpen, (open) => {
   if (open) nextTick(() => updateMoreMenuStyle())
 })
 
-// Responsive toolbar overflow
+// Responsive toolbar overflow. The demotable list is the same on every
+// platform — preview mode is available on mobile too, so it takes a slot like
+// any other button and can collapse into the More dropdown.
 const dirToolbarRef = ref(null)
+const demotableToolbarIds = computed(() => [
+  'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
+  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
+])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden', 'jump', 'sharedFiles'],
+  () => demotableToolbarIds.value,
   // Fixed slots reserved outside the demotable list: the sort dropdown and the
   // "more" dropdown. (The toolbar search button was removed when the search bar
   // became resident, so this dropped from 3 to 2.)
@@ -797,6 +841,84 @@ const showMoreDropdown = computed(() => moreDropdownItemCount.value > 0)
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
 watch(viewMode, v => setLocalConfig('fileView', v))
+
+// ── Preview mode: single-click a file to open the quick preview card ──
+// Desktop-only (touch keeps its existing tap-to-open-the-full-viewer flow).
+// The card itself is the shared CodeLinkPreview surface, anchored at the row.
+const filePreviewMode = ref(localConfig.filePreviewMode === true)
+watch(filePreviewMode, v => setLocalConfig('filePreviewMode', v))
+// FileManagerContent is kept alive (v-show) across tab switches, so it never
+// remounts to pick up a change made from the Settings drawer. Mirror it.
+watch(() => localConfig.filePreviewMode, v => { filePreviewMode.value = v === true })
+function togglePreviewMode() {
+    filePreviewMode.value = !filePreviewMode.value
+}
+
+const codeLinkPreview = useCodeLinkPreview({
+    // Gate on the file manager's own preview-mode toggle rather than the global
+    // markdown-link-preview preference.
+    enabled: computed(() => filePreviewMode.value),
+    outsideClickIgnoreSelector: '.file-item, .grid-item',
+    source: 'browse',
+})
+
+// ── Docked preview pane (bottom of a top/bottom split) ──────────────────────
+// The pane is visible while preview mode is on AND a file is open; the close
+// button collapses it without turning preview mode off, so the list fills the
+// panel until the next single-click re-opens it.
+const PREVIEW_PANE_RATIO_KEY = 'clawbench-fm-preview-split-ratio'
+const DEFAULT_PREVIEW_PANE_RATIO = 0.6
+const previewSplitRatio = ref(readStoredPreviewRatio())
+/** Set false by the pane's close button; reset true on every new preview. */
+const previewPaneOpen = ref(false)
+
+function readStoredPreviewRatio() {
+    try {
+        const raw = Number(localStorage.getItem(PREVIEW_PANE_RATIO_KEY))
+        if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw
+    } catch { /* ignore */ }
+    return DEFAULT_PREVIEW_PANE_RATIO
+}
+
+function onPreviewRatioChange(ratio) {
+    previewSplitRatio.value = ratio
+    try {
+        localStorage.setItem(PREVIEW_PANE_RATIO_KEY, String(ratio))
+    } catch { /* ignore */ }
+}
+
+/** Split only when preview mode is on, a file is loaded, and the pane isn't collapsed. */
+const previewPaneEnabled = computed(() =>
+    filePreviewMode.value && previewPaneOpen.value && codeLinkPreview.visible.value,
+)
+
+/** The pane (and the card inside it) exists only while the split is active. */
+const previewPaneVisible = computed(() => previewPaneEnabled.value)
+
+// Minimum pane heights. Mobile viewports are short (a phone leaves ~500px for
+// the panel), so the desktop minimums would leave almost no room to drag; use
+// tighter floors there and keep the roomier desktop values on a PC.
+const previewPaneMinTop = computed(() => (isPC.value ? 160 : 120))
+const previewPaneMinBottom = computed(() => (isPC.value ? 200 : 140))
+
+function collapsePreviewPane() {
+    previewPaneOpen.value = false
+}
+
+/** Whether a single click should open the quick preview instead of only selecting. */
+function shouldPreviewOnClick(action, path) {
+    // Files only — directories still navigate on tap.
+    return filePreviewMode.value && action === 'file' && !!path
+}
+
+/** Close the preview when the directory it was anchored in changes. Turning
+ *  preview mode / desktop-ness off is handled by the composable's own
+ *  enabled-watch. */
+watch(() => props.currentDir, () => codeLinkPreview.close())
+
+// Turning preview mode off collapses the pane too (the composable closes its
+// own state via the enabled-watch; this drops the split back to a full list).
+watch(filePreviewMode, on => { if (!on) previewPaneOpen.value = false })
 
 // ── Unified selection for both files and directories ──
 const selectedPath = ref('')
@@ -1645,20 +1767,60 @@ function handleItemClick(e) {
         return
     }
 
+    // Touch + preview mode: a tap selects the entry (and previews a file);
+    // tapping the already-selected entry enters it (open viewer / navigate).
+    // Deliberately NOT a timed double-tap: touch browsers don't reliably
+    // synthesize `dblclick`, and a timing window silently fails slow tappers.
+    // "Tap the selected item again" has no timing constraint and matches the
+    // iOS Files / Google Drive convention.
+    if (!isPC.value && filePreviewMode.value) {
+        const alreadySelected = selectedPath.value === path
+        selectedPath.value = path
+        setRangeAnchor(path)
+        if (alreadySelected) {
+            codeLinkPreview.close()
+            openItem(action, path)
+            return
+        }
+        // First tap: files preview in the docked pane; directories just select
+        // (they have nothing to preview — the next tap enters them).
+        if (shouldPreviewOnClick(action, path)) {
+            previewPaneOpen.value = true
+            codeLinkPreview.showPreview({ filePath: path, anchorEl: item }, 'docked')
+        }
+        return
+    }
+
     selectedPath.value = path
     setRangeAnchor(path)
-    // PC: single click only selects — opening requires a double-click (or Enter).
+
+    // Single click/tap: preview in the docked pane when preview mode is on.
+    // Desktop keeps the native double-click to enter.
+    if (shouldPreviewOnClick(action, path)) {
+        previewPaneOpen.value = true
+        codeLinkPreview.showPreview({ filePath: path, anchorEl: item }, 'docked')
+        return
+    }
     if (isPC.value) return
+
+    // Touch without preview mode: the original one-tap-to-enter behavior.
     openItem(action, path)
 }
 
 function handleItemDblClick(e) {
     if (props.dirLoading) return
+    // Touch enters through the select-then-tap path in handleItemClick. Some
+    // touch browsers still emit a native dblclick, which would enter twice —
+    // ignore it here so exactly one open happens per gesture.
+    if (!isPC.value) return
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     if (multiSelect.active) return
     const action = item.dataset.action
     const path = item.dataset.path
+    // Double-click always opens the full viewer; drop any quick-preview card
+    // the preceding single click may have opened.
+    codeLinkPreview.close()
     selectedPath.value = path
     openItem(action, path)
 }
@@ -2172,6 +2334,35 @@ function scrollSelectedIntoView(path) {
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+/* Top/bottom split hosting the file list and the docked preview pane. It must
+   grow with the panel and be the flex child that carries the remaining height,
+   so the list's own flex:1 still resolves against a bounded parent.
+
+   `display: flex` is set here UNCONDITIONALLY, not left to SplitView's active
+   state: when the split is disabled (preview closed) SplitView's pane wrappers
+   become `display: contents`, so the slot content's layout parent is this root.
+   Without flex here the list's `flex: 1; min-height: 0` is inert, its height
+   grows to the content height, and it overflows the panel — painting over the
+   resident search bar below. */
+.fm-split {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The docked preview pane fills its half of the split. */
+.fm-preview-pane {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
 }
 
 /* ── File manager specific ── */

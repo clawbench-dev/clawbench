@@ -138,6 +138,24 @@ describe('useSettingsConfig', () => {
     expect(localConfig.markdownCodeLinkPreview).toBe(true)
   })
 
+  it('localConfig has filePreviewMode defaulting to false', () => {
+    const { localConfig } = useSettingsConfig()
+    localStorage.removeItem('clawbench-settings-filePreviewMode')
+    expect('filePreviewMode' in localConfig).toBe(true)
+    expect(localConfig.filePreviewMode).toBe(false)
+  })
+
+  it('setLocalConfig persists filePreviewMode to localStorage', () => {
+    const { localConfig, setLocalConfig } = useSettingsConfig()
+
+    setLocalConfig('filePreviewMode', true)
+    expect(localConfig.filePreviewMode).toBe(true)
+    expect(localStorage.getItem('clawbench-settings-filePreviewMode')).toBe('true')
+
+    localStorage.removeItem('clawbench-settings-filePreviewMode')
+  })
+
+
   it('localConfig has notificationSound defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-notificationSound')

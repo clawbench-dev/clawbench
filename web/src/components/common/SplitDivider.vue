@@ -2,8 +2,9 @@
   <div
     ref="dividerRef"
     class="split-view__divider"
+    :class="`split-view__divider--${orientation}`"
     role="separator"
-    aria-orientation="vertical"
+    :aria-orientation="ariaOrientation"
     :aria-valuenow="ariaValueNow"
     :aria-valuemin="ariaValueMin"
     :aria-valuemax="ariaValueMax"
@@ -15,20 +16,30 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
+  /** 'horizontal' = left/right panes (vertical divider line, drag on X).
+   *  'vertical'   = top/bottom panes (horizontal divider line, drag on Y). */
+  orientation?: 'horizontal' | 'vertical'
   title?: string
   ariaValueNow?: number
   ariaValueMin?: number
   ariaValueMax?: number
 }>(), {
+  orientation: 'horizontal',
   title: '拖动调整面板宽度',
 })
 
+const isVertical = computed(() => props.orientation === 'vertical')
+
+/** A vertical divider separates left/right panes; a horizontal one separates
+ *  top/bottom. ARIA describes the separator line itself. */
+const ariaOrientation = computed(() => (isVertical.value ? 'horizontal' : 'vertical'))
+
 const emit = defineEmits<{
   (e: 'dragstart'): void
-  (e: 'dragmove', clientX: number): void
+  (e: 'dragmove', clientPos: number): void
   (e: 'dragend'): void
 }>()
 
@@ -40,12 +51,14 @@ function onDividerPointerDown(e: PointerEvent) {
   dragActive = true
   dividerRef.value?.setPointerCapture?.(e.pointerId)
   document.body.classList.add('split-view-dragging')
+  document.body.classList.add(isVertical.value ? 'split-view-dragging--vertical' : 'split-view-dragging--horizontal')
   emit('dragstart')
 }
 
 function onPointerMove(e: PointerEvent) {
   if (!dragActive) return
-  emit('dragmove', e.clientX)
+  // Vertical split reads the pointer's Y; horizontal reads X.
+  emit('dragmove', isVertical.value ? e.clientY : e.clientX)
 }
 
 function onPointerUp(e: PointerEvent) {
@@ -53,6 +66,7 @@ function onPointerUp(e: PointerEvent) {
   dragActive = false
   dividerRef.value?.releasePointerCapture?.(e.pointerId)
   document.body.classList.remove('split-view-dragging')
+  document.body.classList.remove('split-view-dragging--vertical', 'split-view-dragging--horizontal')
   emit('dragend')
 }
 
@@ -67,6 +81,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointercancel', onPointerUp)
   document.body.classList.remove('split-view-dragging')
+  document.body.classList.remove('split-view-dragging--vertical', 'split-view-dragging--horizontal')
 })
 </script>
 
@@ -77,16 +92,20 @@ onBeforeUnmount(() => {
 .split-view__divider {
   position: relative;
   flex: 0 0 auto;
-  width: var(--split-gutter, 1px);
   margin: 0;
-  cursor: col-resize;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 2;
-  transition: width 0.15s ease, margin 0.15s ease, background 0.15s ease;
+  transition: width 0.15s ease, height 0.15s ease, margin 0.15s ease, background 0.15s ease;
+}
+
+/* ── Horizontal split (left | right): vertical 1px line, drag on X ── */
+.split-view__divider--horizontal {
+  width: var(--split-gutter, 1px);
+  cursor: col-resize;
 }
 /* invisible wider hit area so hover/touch can catch the 1px line */
-.split-view__divider::before {
+.split-view__divider--horizontal::before {
   content: '';
   position: absolute;
   top: 0;
@@ -94,27 +113,83 @@ onBeforeUnmount(() => {
   left: -6px;
   right: -6px;
 }
-.split-view__divider:active {
+.split-view__divider--horizontal:active {
   width: 12px;
   margin: 0 -5.5px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
 }
 @media (hover: hover) {
-  .split-view__divider:hover {
+  .split-view__divider--horizontal:hover {
     width: 12px;
     margin: 0 -5.5px;
     background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   }
 }
+
+/* ── Vertical split (top / bottom): horizontal 1px line, drag on Y ── */
+.split-view__divider--vertical {
+  height: var(--split-gutter, 1px);
+  cursor: row-resize;
+}
+.split-view__divider--vertical::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  bottom: -6px;
+}
+/* Touch: a 1px line is an unhittable target (and the negative-margin hover
+   growth is hover-only). Give touch pointers a fat invisible grab band via the
+   pseudo-element, without changing the visual 1px line. */
+@media (pointer: coarse) {
+  .split-view__divider--vertical::before {
+    top: -12px;
+    bottom: -12px;
+  }
+  .split-view__divider--horizontal::before {
+    left: -12px;
+    right: -12px;
+  }
+  /* A slightly thicker resting line reads as draggable on touch. */
+  .split-view__divider--vertical {
+    height: 3px;
+  }
+  .split-view__divider--horizontal {
+    width: 3px;
+  }
+}
+.split-view__divider--vertical:active {
+  height: 12px;
+  margin: -5.5px 0;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+@media (hover: hover) {
+  .split-view__divider--vertical:hover {
+    height: 12px;
+    margin: -5.5px 0;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  }
+}
+
 .split-view__gutter-line {
   position: absolute;
+  background: var(--border-color, rgba(0, 0, 0, 0.12));
+  transition: background 0.15s ease;
+}
+.split-view__divider--horizontal .split-view__gutter-line {
   left: 50%;
   top: 0;
   bottom: 0;
   width: 1px;
   transform: translateX(-50%);
-  background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background 0.15s ease;
+}
+.split-view__divider--vertical .split-view__gutter-line {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-50%);
 }
 .split-view__divider:active .split-view__gutter-line {
   background: var(--accent-color, #0066cc);
@@ -126,6 +201,11 @@ onBeforeUnmount(() => {
 }
 :global(body.split-view-dragging) {
   user-select: none;
+}
+:global(body.split-view-dragging--horizontal) {
   cursor: col-resize;
+}
+:global(body.split-view-dragging--vertical) {
+  cursor: row-resize;
 }
 </style>
