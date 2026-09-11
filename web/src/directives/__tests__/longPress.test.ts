@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { LongPressDirective } from '../longPress'
 
+// jsdom has no Touch/TouchEvent constructor, so build a plain Event and stub
+// `touches` on it — the directive only reads e.touches[0].{clientX,clientY}.
+function makeTouch(type: string, x: number, y: number): Event {
+  const ev = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(ev, 'touches', { value: [{ clientX: x, clientY: y }] })
+  return ev
+}
+
 describe('LongPressDirective', () => {
   it('should store binding on element at mount time', () => {
     const el = document.createElement('div')
@@ -121,6 +129,191 @@ describe('LongPressDirective', () => {
     expect(callback).toHaveBeenCalledWith(touchEvent, '/a/b.txt')
 
     LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('passes empty string when neither data-session-id nor data-path is present', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 5, 5))
+    vi.advanceTimersByTime(500)
+
+    expect(callback).toHaveBeenCalledWith(expect.anything(), '')
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('adds the long-pressing class while active and removes it on touchend', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    LongPressDirective.mounted(el, { value: vi.fn() } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    expect(el.classList.contains('long-pressing')).toBe(false)
+
+    vi.advanceTimersByTime(500)
+    expect(el.classList.contains('long-pressing')).toBe(true)
+
+    el.dispatchEvent(makeTouch('touchend', 0, 0))
+    expect(el.classList.contains('long-pressing')).toBe(false)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('cancels the pending long-press when the finger moves beyond the threshold', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 10, 20))
+    // Move 30px horizontally — beyond MOVE_THRESHOLD_PX (10)
+    el.dispatchEvent(makeTouch('touchmove', 40, 20))
+    vi.advanceTimersByTime(500)
+
+    expect(callback).not.toHaveBeenCalled()
+    expect(el.classList.contains('long-pressing')).toBe(false)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('keeps the long-press alive when movement stays within the threshold', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 10, 20))
+    // Move only 3px — within threshold, so the gesture continues
+    el.dispatchEvent(makeTouch('touchmove', 13, 22))
+    vi.advanceTimersByTime(500)
+
+    expect(callback).toHaveBeenCalledTimes(1)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('ignores touchmove when no long-press is pending', () => {
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    // No touchstart first — handler must early-return without throwing
+    expect(() => el.dispatchEvent(makeTouch('touchmove', 99, 99))).not.toThrow()
+    expect(callback).not.toHaveBeenCalled()
+
+    LongPressDirective.unmounted(el)
+  })
+
+  it('treats a short tap as a normal click and does not preventDefault', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    vi.advanceTimersByTime(200) // release before 450ms
+
+    const end = makeTouch('touchend', 0, 0)
+    el.dispatchEvent(end)
+
+    expect(callback).not.toHaveBeenCalled()
+    // Synthetic click must be allowed to fire on a short tap
+    expect(end.defaultPrevented).toBe(false)
+    // Advancing past the threshold must not fire a stale timer
+    vi.advanceTimersByTime(500)
+    expect(callback).not.toHaveBeenCalled()
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('prevents the synthetic click after a long-press fires', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    vi.advanceTimersByTime(500)
+    expect(callback).toHaveBeenCalledTimes(1)
+
+    const end = makeTouch('touchend', 0, 0)
+    el.dispatchEvent(end)
+
+    expect(end.defaultPrevented).toBe(true)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('cancels the pending long-press on touchcancel', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    vi.advanceTimersByTime(200)
+    el.dispatchEvent(makeTouch('touchcancel', 0, 0))
+    vi.advanceTimersByTime(500)
+
+    expect(callback).not.toHaveBeenCalled()
+    expect(el.classList.contains('long-pressing')).toBe(false)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('blocks the iOS contextmenu callout once a long-press has fired', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    LongPressDirective.mounted(el, { value: vi.fn() } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    vi.advanceTimersByTime(500)
+
+    const menu = new Event('contextmenu', { bubbles: true, cancelable: true })
+    el.dispatchEvent(menu)
+    expect(menu.defaultPrevented).toBe(true)
+
+    LongPressDirective.unmounted(el)
+    vi.useRealTimers()
+  })
+
+  it('allows the native contextmenu when no long-press has fired', () => {
+    const el = document.createElement('div')
+    LongPressDirective.mounted(el, { value: vi.fn() } as any)
+
+    const menu = new Event('contextmenu', { bubbles: true, cancelable: true })
+    el.dispatchEvent(menu)
+
+    // Long-press never fired, so the system callout must not be suppressed
+    expect(menu.defaultPrevented).toBe(false)
+
+    LongPressDirective.unmounted(el)
+  })
+
+  it('clears a pending timer on unmounted', () => {
+    vi.useFakeTimers()
+    const el = document.createElement('div')
+    const callback = vi.fn()
+    LongPressDirective.mounted(el, { value: callback } as any)
+
+    el.dispatchEvent(makeTouch('touchstart', 0, 0))
+    // Unmount mid-gesture, before the 450ms threshold
+    LongPressDirective.unmounted(el)
+    vi.advanceTimersByTime(500)
+
+    expect(callback).not.toHaveBeenCalled()
+
     vi.useRealTimers()
   })
 })
