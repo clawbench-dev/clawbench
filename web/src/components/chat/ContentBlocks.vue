@@ -50,9 +50,12 @@
       <!-- Tool cards from summaryCards.tools (AskUserQuestion only —
            PermissionApproval is filtered out upstream in summaryTools) -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
+        <!-- Ask tool absorbed into the merged summary ask card below (only when it
+             actually contributed questions; a malformed ask tool keeps its own card). -->
+        <template v-if="isAskQuestion(tool.name || '') && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
         <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
-        <div v-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(tool.name, tool.input, tool.display_name) }}</span>
@@ -101,8 +104,11 @@
           </div>
         </div>
       </template>
-      <!-- Ask-question cards from summaryCards.askQuestions (rendered via formatToolInput) -->
-      <template v-if="summaryAskQuestions.length">
+      <!-- Ask-question card. Sources: summaryCards.askQuestions (<ask-question> XML
+           cards, already aggregated into one array) and AskUserQuestion tool cards
+           whose input carries questions. When more than one source exists they are
+           merged into this single card so every question is answered with one submit. -->
+      <template v-if="summaryAskQuestions.length || shouldMergeSummaryAskCards">
         <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="$emit('toggle-tool', 'summary-ask')">
             <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
@@ -110,7 +116,7 @@
             <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
+            <div v-html="formatToolInput({ questions: mergedSummaryAskQuestions }, 'AskUserQuestion')"></div>
           </div>
         </div>
       </template>
@@ -162,9 +168,11 @@
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
+        <!-- Ask card absorbed into the merged card rendered at the anchor block -->
+        <template v-if="isSuppressedAskCard(bi)"></template>
         <!-- AskUserQuestion / PermissionApproval: unified interactive card
              (status strip + body in one box). -->
-        <div v-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
@@ -172,14 +180,18 @@
             <!-- Pending spinner: only meaningful when the tool is actually answerable.
                  Malformed AskUserQuestion input (no valid questions) can never be answered,
                  so it renders as a done card with an invalid-format notice instead. -->
-            <LoadingIndicator v-if="showAskPending(block)" class="tool-spinner" size="sm" inline />
+            <LoadingIndicator v-if="askCardPending(bi, block)" class="tool-spinner" size="sm" inline />
             <!-- Done with error: red X -->
             <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
             <!-- Done (success or unknown): green check -->
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+            <!-- Merged card: one body holding every question in the message. Only
+                 the anchor hosts it — a malformed/slim ask block keeps its own body
+                 (invalid-format notice / lazy input) instead of duplicating it. -->
+            <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
+            <div v-else v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
           </div>
         </div>
         <template v-else>
@@ -338,7 +350,7 @@
       <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <template v-if="blockAskQuestions[blockTaskKey(bi)]">
+        <template v-if="blockAskQuestions[blockTaskKey(bi)] && !isSuppressedAskCard(bi)">
           <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
             <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
               <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
@@ -347,7 +359,9 @@
               <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
             </div>
             <div class="chat-card-body">
-              <div v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+              <!-- Merged card: one body holding every question in the message. -->
+              <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
+              <div v-else v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
             </div>
           </div>
         </template>
@@ -399,6 +413,7 @@ import {
   statusLabelSimple as statusLabelSimpleUtil,
   formatTime as formatTimeUtil,
   askQuestionSummary as askQuestionSummaryUtil,
+  extractAskQuestions,
   blockKey,
   blockTaskKey as blockTaskKeyUtil,
   buildTaskKeyIndex,
@@ -645,6 +660,110 @@ function detectAskQuestionInText(block: any) {
   return block.text && block.text.includes('<ask-question')
 }
 
+// ── Multi ask-card merging ──
+// One assistant message can carry several question cards (e.g. two
+// AskUserQuestion tool calls, or a tool call plus a text <ask-question> tag).
+// Rendered separately, each card has its own Submit that fires a message
+// immediately — answering one leaves the others stranded with no way to reply.
+// When a message has MORE THAN ONE answerable ask card we render a single merged
+// card (at the first card's position) holding every question, so the user
+// selects all answers and submits once. A message with a single ask card is
+// untouched.
+
+/** Renderable questions contributed by one block (empty when it has no ask card). */
+function askQuestionsOfBlock(bi: number, block: any): Array<Record<string, unknown>> {
+  if (block?.type === 'tool_use' && isAskQuestion(block.name || '')) {
+    return extractAskQuestions(block.input)
+  }
+  if (block?.type === 'text') {
+    const parsed = props.blockAskQuestions[blockTaskKey(bi)]
+    if (parsed && Array.isArray(parsed.questions)) return extractAskQuestions(parsed)
+  }
+  return []
+}
+
+/** True when this block's ask card is actually rendered by the template branch
+ *  chain. A text block carrying BOTH a <scheduled-task> and an <ask-question>
+ *  tag hits the scheduled-task branch first, so its ask card never renders — it
+ *  must not host the merged card. AskUserQuestion tool blocks always render. */
+function rendersAskCard(bi: number, block: any): boolean {
+  if (block?.type === 'tool_use') return isAskQuestion(block.name || '')
+  if (block?.type === 'text') return !hasScheduledTasks(bi)
+  return false
+}
+
+/** Local indices of blocks contributing renderable questions in THIS flat
+ *  stream. Blocks rendered under a sibling sub-agent group are excluded: they
+ *  render nested in a recursive instance, which performs its own merge among its
+ *  own children — merging here would pull a sub-agent's question into the main
+ *  agent's card. Orphans (parent id absent from this array) render flat in this
+ *  stream, so they merge here like any other flat card. */
+const answerableAskIndices = computed(() => {
+  const out: number[] = []
+  const blocks = props.blocks || []
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi]
+    if (isChildBlock(block)) continue
+    if (askQuestionsOfBlock(bi, block).length > 0) out.push(bi)
+  }
+  return out
+})
+
+/** Answerable blocks that actually render an ask card — the only valid homes for
+ *  the merged card. */
+const renderableAskIndices = computed(() =>
+  answerableAskIndices.value.filter(bi => rendersAskCard(bi, props.blocks[bi])),
+)
+
+/** Merge when more than one ask card is answerable AND at least one of them
+ *  actually renders (otherwise there is nowhere to host the merged card, and
+ *  suppressing the rest would silently drop every question). */
+const shouldMergeAskCards = computed(() =>
+  answerableAskIndices.value.length > 1 && renderableAskIndices.value.length > 0,
+)
+
+/** Block index hosting the merged card (first renderable ask card); -1 when not merging. */
+const mergedAskAnchorIdx = computed(() =>
+  shouldMergeAskCards.value ? renderableAskIndices.value[0] : -1,
+)
+
+/** Every question across the message's ask cards, in order. */
+const mergedAskQuestions = computed(() => {
+  const out: Array<Record<string, unknown>> = []
+  for (const bi of answerableAskIndices.value) {
+    out.push(...askQuestionsOfBlock(bi, props.blocks[bi]))
+  }
+  return out
+})
+
+/** True when this block's ask card is absorbed into the merged card (render nothing). */
+function isSuppressedAskCard(bi: number): boolean {
+  return shouldMergeAskCards.value && bi !== mergedAskAnchorIdx.value && answerableAskIndices.value.includes(bi)
+}
+
+/** True when this block hosts the merged multi-question card. */
+function isMergedAskAnchor(bi: number): boolean {
+  return shouldMergeAskCards.value && bi === mergedAskAnchorIdx.value
+}
+
+/**
+ * Pending spinner for an ask card. The merged card stays pending while ANY
+ * contributing tool_use ask block is still awaiting an answer (text-mode
+ * <ask-question> cards are already resolved when they render, so they never keep
+ * it pending). Every other card mirrors its own showAskPending — a malformed or
+ * still-loading ask block keeps its own spinner/notice instead of inheriting the
+ * merged card's state.
+ */
+function askCardPending(bi: number, block: any): boolean {
+  if (isMergedAskAnchor(bi)) {
+    return answerableAskIndices.value.some(i => {
+      const b = props.blocks[i]
+      return b?.type === 'tool_use' && showAskPending(b)
+    })
+  }
+  return showAskPending(block)
+}
+
 // Pre-computed index: block index → sorted array of scheduled task keys.
 const taskKeyIndex = computed(() => buildTaskKeyIndex(props.msgId, props.blockTasks))
 
@@ -667,6 +786,32 @@ const summaryTools = computed(() => (props.summaryCards?.tools || []).filter((t:
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
+
+// Summary mode has no content blocks, so its ask cards come from two places:
+// summaryCards.askQuestions (<ask-question> XML cards) and summaryCards.tools
+// entries whose input carries a questions array (AskUserQuestion tool calls).
+// When a message has more than one such card, merge them into ONE card so the
+// user can answer every question with a single submit (mirrors block mode).
+const summaryAskSources = computed<Array<Record<string, unknown>>>(() => {
+  const sources: Array<Record<string, unknown>> = []
+  if (summaryAskQuestions.value.length > 0) {
+    sources.push({ questions: summaryAskQuestions.value })
+  }
+  for (const tool of summaryTools.value) {
+    if (!isAskQuestion(tool?.name || '')) continue
+    const questions = extractAskQuestions(tool.input)
+    if (questions.length > 0) sources.push({ questions })
+  }
+  return sources
+})
+const shouldMergeSummaryAskCards = computed(() => summaryAskSources.value.length > 1)
+const mergedSummaryAskQuestions = computed(() => {
+  const out: Array<Record<string, unknown>> = []
+  for (const src of summaryAskSources.value) {
+    out.push(...(src.questions as Array<Record<string, unknown>>))
+  }
+  return out
+})
 
 // ── Sub-agent grouping (recursive) ──
 // Blocks carrying a `parent_tool_call_id` were produced by a sub-agent spawned

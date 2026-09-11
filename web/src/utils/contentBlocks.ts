@@ -175,6 +175,31 @@ export function askQuestionSummary(input: Record<string, unknown>): string {
 }
 
 /**
+ * A single ask-question entry is renderable when it carries question text or
+ * at least one option. Mirrors the 'valid' branch of classifyAskQuestionsInput
+ * (renderToolDetail.ts) without importing it (keeps this module dependency-free).
+ */
+function isRenderableQuestion(q: unknown): boolean {
+  if (!q || typeof q !== 'object' || Array.isArray(q)) return false
+  const entry = q as Record<string, unknown>
+  const hasQuestion = typeof entry.question === 'string' && entry.question.trim() !== ''
+  const hasOptions = Array.isArray(entry.options) && entry.options.length > 0
+  return hasQuestion || hasOptions
+}
+
+/**
+ * Extract the renderable questions from an AskUserQuestion tool input.
+ * Returns [] for non-objects, a missing/wrongly-typed `questions` field, or an
+ * array with no renderable entry (an unanswerable/malformed call).
+ */
+export function extractAskQuestions(input: unknown): Array<Record<string, unknown>> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const questions = (input as Record<string, unknown>).questions
+  if (!Array.isArray(questions)) return []
+  return questions.filter(isRenderableQuestion) as Array<Record<string, unknown>>
+}
+
+/**
  * Build a block key for DOM rendering and tool expand state tracking.
  * Uses msgId if available, otherwise msgIndex.
  */

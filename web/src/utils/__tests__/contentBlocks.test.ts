@@ -9,6 +9,7 @@ import {
   statusLabelSimple,
   formatTime,
   askQuestionSummary,
+  extractAskQuestions,
   blockKey,
   blockTaskKey,
   buildTaskKeyIndex,
@@ -314,6 +315,48 @@ describe('askQuestionSummary', () => {
   })
   it('uses first question only', () => {
     expect(askQuestionSummary({ questions: [{ header: 'First' }, { header: 'Second' }] })).toBe('First')
+  })
+})
+
+// ── extractAskQuestions ──
+describe('extractAskQuestions', () => {
+  it('returns renderable questions from an AskUserQuestion input', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q', options: ['A'] }] })
+    expect(out).toHaveLength(1)
+    expect(out[0].question).toBe('Q')
+  })
+
+  it('keeps an entry with options but no question text', () => {
+    const out = extractAskQuestions({ questions: [{ options: ['A'] }] })
+    expect(out).toHaveLength(1)
+  })
+
+  it('keeps an entry with question text but no options', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q' }] })
+    expect(out).toHaveLength(1)
+  })
+
+  it('drops junk entries (no question text, no options)', () => {
+    expect(extractAskQuestions({ questions: [{}] })).toHaveLength(0)
+    expect(extractAskQuestions({ questions: [{ question: '   ' }] })).toHaveLength(0)
+    expect(extractAskQuestions({ questions: [{ options: [] }] })).toHaveLength(0)
+  })
+
+  it('returns only the renderable entries from a mixed array', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q1' }, {}, { options: ['A'] }] })
+    expect(out).toHaveLength(2)
+    expect(out[0].question).toBe('Q1')
+  })
+
+  it('returns empty array for non-objects, arrays, and missing/wrongly-typed questions', () => {
+    expect(extractAskQuestions(undefined)).toEqual([])
+    expect(extractAskQuestions(null)).toEqual([])
+    expect(extractAskQuestions('nope')).toEqual([])
+    expect(extractAskQuestions([{ question: 'Q' }])).toEqual([])
+    expect(extractAskQuestions({})).toEqual([])
+    expect(extractAskQuestions({ questions: 'nope' })).toEqual([])
+    expect(extractAskQuestions({ questions: [] })).toEqual([])
+    expect(extractAskQuestions({ ask: '<item>broken</tool>' })).toEqual([])
   })
 })
 
