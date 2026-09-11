@@ -3380,3 +3380,28 @@ func TestSaveGetSummaryWithCards(t *testing.T) {
 		t.Fatalf("cards mismatch: %+v", gotCards)
 	}
 }
+
+// TestSchema_ProjectForgesTableExists verifies the project_forges table and its
+// indexes are created by InitDB. This is the DDL contract for the GitHub/GitLab
+// integration's project↔repo binding.
+func TestSchema_ProjectForgesTableExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+	for _, col := range []string{"id", "project_path", "platform", "host", "owner", "repo", "source", "created_at", "updated_at"} {
+		assert.True(t, columns[col], "project_forges should have %s column", col)
+	}
+}

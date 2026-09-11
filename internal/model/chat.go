@@ -15,12 +15,24 @@ const ResponsePreviewMaxRunes = 512
 const PushPreviewMaxRunes = 200
 
 // FileEntry represents a file or directory attachment with metadata.
+//
+// Kind distinguishes a local file/directory ("file", the default and the only
+// kind that existed before) from an external URL ("url"). A URL entry carries
+// its address in URL and is never resolved against the filesystem, so the
+// backend must skip path validation for it.
 type FileEntry struct {
 	Path      string `json:"path"`
 	IsDir     bool   `json:"isDir"`
 	StartLine int    `json:"startLine,omitempty"`
 	EndLine   int    `json:"endLine,omitempty"`
+	// Kind is "file" (default, empty means file) or "url".
+	Kind string `json:"kind,omitempty"`
+	// URL is the external address for Kind == "url".
+	URL string `json:"url,omitempty"`
 }
+
+// IsURL reports whether the entry is an external URL rather than a local path.
+func (f FileEntry) IsURL() bool { return f.Kind == "url" && f.URL != "" }
 
 // FileEntriesFromPaths creates []FileEntry from plain paths with isDir=false.
 // Used for backward-compatible construction when isDir is unknown.

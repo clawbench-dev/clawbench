@@ -95,6 +95,36 @@ type Config struct {
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
+}
+
+// ForgeConfig holds the GitHub/GitLab integration settings.
+//
+// Credentials are scoped per (platform, host): a single global GitLab token
+// would be sent to every self-hosted instance a user binds, so each host gets
+// its own token. Notification toggles are global and default to enabled (set in
+// ApplyDefaults — Go's bool zero value would otherwise disable everything).
+type ForgeConfig struct {
+	// Credentials maps a host (e.g. "github.com", "git.acme.internal:8443") to
+	// its token. Hosts are stored lowercased.
+	Credentials map[string]string `yaml:"credentials"`
+	// InsecureTLS allows skipping TLS verification for self-hosted instances
+	// with self-signed certificates. Off by default; enabling it logs a warning.
+	InsecureTLS bool `yaml:"insecure_tls"`
+	// Notify controls which event kinds push a notification. All default true.
+	Notify ForgeNotifyConfig `yaml:"notify"`
+}
+
+// ForgeNotifyConfig selects which forge events push a notification. Each flag
+// is independent; the unread badge is NOT gated by these (it tracks changes,
+// not notifications).
+type ForgeNotifyConfig struct {
+	Opened    bool `yaml:"opened"`
+	Closed    bool `yaml:"closed"`
+	Merged    bool `yaml:"merged"`
+	Reopened  bool `yaml:"reopened"`
+	Commented bool `yaml:"commented"`
+	Pipeline  bool `yaml:"pipeline"`
 }
 
 // AppearanceConfig holds the custom-wallpaper settings. Two wallpaper sources
@@ -342,4 +372,36 @@ func LoadCookieToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// ForgeToken returns the token configured for a host, or "" when none is set.
+// The host is matched case-insensitively.
+func (c *Config) ForgeToken(host string) string {
+	if c.Forge.Credentials == nil {
+		return ""
+	}
+	return c.Forge.Credentials[strings.ToLower(strings.TrimSpace(host))]
+}
+
+// SetForgeToken stores (or clears, when token is empty) the token for a host.
+// The host is normalized to lowercase; an empty host is rejected as a no-op.
+func (c *Config) SetForgeToken(host, token string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	if c.Forge.Credentials == nil {
+		c.Forge.Credentials = make(map[string]string)
+	}
+	if token == "" {
+		delete(c.Forge.Credentials, host)
+		return
+	}
+	c.Forge.Credentials[host] = token
+}
+
+// ForgeHasToken reports whether a token is configured for a host, without
+// revealing the token itself. This is what GET /api/config exposes.
+func (c *Config) ForgeHasToken(host string) bool {
+	return c.ForgeToken(host) != ""
 }

@@ -598,6 +598,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	// Forge repo bindings (GitHub / GitLab). Defined in project_forges.go as a
+	// constant so tests share one source of truth for the schema.
+	if _, err := WriteExec(ProjectForgesDDL); err != nil {
+		return fmt.Errorf("failed to create project_forges table: %w", err)
+	}
+
 	// Create agent store tables.
 	// Defined in agent_store.go as AgentDDL constant.
 	if _, err := WriteExec(AgentDDL); err != nil {
