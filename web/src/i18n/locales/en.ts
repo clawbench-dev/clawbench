@@ -324,6 +324,17 @@ export default {
     slashCommand: {
       title: 'Commands',
     },
+    completion: {
+      source: {
+        recentOpen: 'Recent',
+        currentDir: 'Current dir',
+        recentRef: 'Referenced',
+        recentUpload: 'Uploaded',
+        recentShare: 'Shared',
+        clawbench: 'Built-in',
+        agent: 'Agent',
+      },
+    },
     acpSession: {
       title: 'ACP Sessions',
       resumeTitle: 'Resume {agent} Session',

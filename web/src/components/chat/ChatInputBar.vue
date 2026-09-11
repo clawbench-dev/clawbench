@@ -174,19 +174,26 @@
         @switch-transport="handleSwitchTransport"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
-      <!-- Unified slash command autocomplete menu.
-           Merges ClawBench built-in commands (/cb-*) with the current agent's
-           ACP commands into one "/" menu. Each row carries a left color bar +
-           icon so the two sources are visually distinguishable. -->
-      <PopupMenu v-if="commandMenuItems.length > 0" v-model:show="showCommandMenu" :target-element="textareaRef" anchor="left" :max-width="320" :max-height="280" :menu-items-count="commandMenuItems.length">
-        <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
-        <button v-for="(cmd, idx) in commandMenuItems" :key="cmd.source + ':' + cmd.key" class="at-menu-item" :class="['at-menu-item--' + cmd.source, { 'at-menu-selected': idx === commandMenuIndex }]" :data-slash-idx="idx" @mousedown.prevent="handleCommandSelect(cmd)">
-          <span class="at-menu-bar" aria-hidden="true" />
-          <component :is="cmd.source === 'clawbench' ? Wrench : Bot" :size="14" class="at-menu-icon" />
-          <span class="at-menu-label" :class="cmd.source + '-label'" v-html="highlightText(cmd.label, cmd.query)" />
-          <span class="at-menu-desc">{{ cmd.description }}</span>
-        </button>
-      </PopupMenu>
+      <!-- Unified completion menus (shared component).
+           Slash commands ("/" prefix) and @ file references share the same
+           interaction + rendering; only the trigger parser, data source and
+           select behaviour differ. -->
+      <CompletionMenu
+        :items="commandMenuItems"
+        :active-index="commandMenuIndex"
+        :show="showCommandMenu"
+        :target-element="textareaRef"
+        @select="handleCommandSelect"
+        @update:show="onCommandMenuShowChange"
+      />
+      <CompletionMenu
+        :items="fileMenuItems"
+        :active-index="fileMenuIndex"
+        :show="showFileMenu"
+        :target-element="textareaRef"
+        @select="handleFileSelect"
+        @update:show="onFileMenuShowChange"
+      />
       <!-- Context usage detail popup -->
       <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
@@ -307,13 +314,16 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, Wrench, Bot } from 'lucide-vue-next'
-import { highlightText } from '@/utils/searchUtils.ts'
+import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
+import { joinPath } from '@/utils/path.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import CompletionMenu from '@/components/common/CompletionMenu.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
@@ -333,6 +343,11 @@ import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useChatContext } from '@/composables/useChatContext'
+import { useCompletionMenu } from '@/composables/useCompletionMenu'
+import { useRecentFiles } from '@/composables/useRecentFiles'
+import { useShareIn } from '@/composables/useShareIn'
+import { useUploadRecent } from '@/composables/useUploadRecent'
+import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
@@ -782,16 +797,14 @@ function openSettingsDrawer(tab) {
 // ── Context usage popup ──
 const showUsagePopup = ref(false)
 const usageElRef = ref(null)
-// ── Unified slash command autocomplete ──
-// Two command sources share the "/" prefix:
-//   - 'clawbench': ClawBench built-ins, namespaced under /cb- (always available)
-//   - 'agent':     commands reported by the current ACP agent (acp-stdio only)
-// They are merged into one list. On a name collision both entries are kept and
-// distinguished by their source bar/icon; the cb- namespace makes an actual
-// collision practically impossible.
-const showCommandMenu = ref(false)
-const commandMenuIndex = ref(-1)
-
+// ── Unified completion menus (slash commands + @ file references) ──
+// Both menus share useCompletionMenu (state/keyboard/select) and
+// CompletionMenu.vue (rendering); they differ only in trigger parsing, data
+// source and select behaviour:
+//   - slash: input starts with "/" and has no space; selecting writes the
+//            command back and closes.
+//   - at:    an "@" preceded by whitespace; selecting attaches the file,
+//            removes the "@query" and keeps the menu open for multi-select.
 const clawbenchCommands = computed(() => {
   return [
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
@@ -799,28 +812,15 @@ const clawbenchCommands = computed(() => {
   ]
 })
 
-const commandMenuItems = computed(() => {
-  const text = inputText.value
-  if (!text.startsWith('/')) return []
-  const query = text.slice(1) // strip leading '/'
-  const lowerQ = query.toLowerCase()
-
+// Slash candidates. Command names arrive inconsistently: CodeBuddy ACP reports
+// skills slashless ("mmx-cli"), while pre-scanned names may keep a leading "/".
+// Normalize for display and dedupe on the canonical (slash-stripped) name so
+// the same command cannot appear twice.
+const slashCandidates = computed(() => {
   const items = []
-  // ClawBench built-ins first (stable, always present).
   for (const cmd of clawbenchCommands.value) {
-    items.push({
-      key: cmd.key,
-      label: cmd.label,
-      description: cmd.description,
-      inputHint: '',
-      source: 'clawbench',
-      query,
-    })
+    items.push({ key: cmd.key, label: cmd.label, description: cmd.description, source: 'clawbench' })
   }
-  // Agent commands (ACP only). Command names arrive inconsistently: CodeBuddy
-  // ACP reports skills slashless ("mmx-cli"), while pre-scanned names may keep a
-  // leading "/". Normalize for display and dedupe on the canonical
-  // (slash-stripped) name so the same command cannot appear twice.
   if (isACPTransport.value) {
     const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
     const seen = new Set()
@@ -828,92 +828,194 @@ const commandMenuItems = computed(() => {
       const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
       if (!canonical || seen.has(canonical)) continue
       seen.add(canonical)
-      items.push({
-        key: toSlash(cmd.name),
-        label: toSlash(cmd.name),
-        description: cmd.description,
-        inputHint: cmd.inputHint || '',
-        source: 'agent',
-        query,
-      })
+      items.push({ key: toSlash(cmd.name), label: toSlash(cmd.name), description: cmd.description, source: 'agent' })
     }
   }
-
-  if (!query) return items
-  return items.filter(item => item.label.toLowerCase().includes(lowerQ))
+  return items
 })
 
-// Directly control menu visibility from inputText changes
-watch(inputText, () => {
-  const text = inputText.value
-  // Unified slash command menu: shown while the input is a bare "/word"
-  const shouldShowCommand = text.startsWith('/')
-    && !text.includes(' ')
-    && commandMenuItems.value.length > 0
-  // A history entry loaded by ArrowUp/ArrowDown must not pop the menu.
-  if (historyNavSuppressMenu) return
-  if (shouldShowCommand && !showCommandMenu.value) commandMenuIndex.value = 0
-  showCommandMenu.value = shouldShowCommand
+const commandMenuItems = computed(() => {
+  const trigger = parseSlashQuery(inputText.value)
+  const all = slashCandidates.value
+  if (!trigger) return []
+  if (!trigger.query) return all
+  const matched = []
+  for (const item of all) {
+    const m = fuzzyMatch(trigger.query, item.label)
+    if (!m) continue
+    matched.push({ ...item, positions: m.positions, score: m.score })
+  }
+  matched.sort((a, b) => (b.score || 0) - (a.score || 0))
+  return matched
 })
 
-// Default to first item when menu items change (VSCode-style: first item pre-selected)
-watch(commandMenuItems, () => { commandMenuIndex.value = commandMenuItems.value.length > 0 ? 0 : -1 })
-
-// Scroll selected menu item into view
-watch(commandMenuIndex, (idx) => {
-  if (idx < 0) return
-  nextTick(() => {
-    // Menus are teleported to <body>, so query from document, not rootRef.
-    const el = document.querySelector('[data-slash-idx="' + idx + '"]')
-    el?.scrollIntoView({ block: 'nearest' })
-  })
+const commandMenu = useCompletionMenu({
+  items: commandMenuItems,
+  getTrigger: () => parseSlashQuery(inputText.value),
+  getText: () => inputText.value,
+  closeOnSelect: true,
+  onSelect: (cmd) => {
+    inputText.value = cmd.key + ' '
+    nextTick(() => textareaRef.value?.focus())
+  },
 })
 
-function handleCommandSelect(cmd) {
-  inputText.value = cmd.key + ' '
-  showCommandMenu.value = false
-  commandMenuIndex.value = -1
-  nextTick(() => {
-    const el = textareaRef.value
-    if (el) el.focus()
-  })
+// ── @ file reference candidates ──
+const recentFiles = useRecentFiles()
+const { recentShares, fetchRecentShares } = useShareIn()
+const { recentUploads, fetchRecentUploads } = useUploadRecent()
+const fileSourcesLoaded = ref(false)
+
+/**
+ * Caret position for @-trigger parsing. The textarea's selectionStart is only
+ * meaningful while it is focused and its DOM value matches the bound text;
+ * otherwise (programmatic draft restore, blurred input) treat the caret as the
+ * end of the text so a trailing "@query" still resolves.
+ */
+function currentCaret() {
+  const el = textareaRef.value
+  if (!el || el.value !== inputText.value) return inputText.value.length
+  if (typeof el.selectionStart === 'number') return el.selectionStart
+  return inputText.value.length
 }
 
-// ── Menu keyboard navigation (PC: ArrowUp/Down + Enter/Tab + Escape) ──
-function handleMenuKeydown(e) {
-  // IME composition (e.g. Chinese pinyin candidate selection): let the IME own
-  // the keystroke — Enter commits the candidate, never selects a menu item.
-  if (isImeCompositionEvent(e)) return false
+// selectionStart is a plain DOM property — Vue cannot track it. This counter is
+// bumped on every caret move so computeds that parse the caret re-evaluate
+// (otherwise the candidate list would stay filtered by the previous query).
+const caretVersion = ref(0)
 
-  if (!showCommandMenu.value) return false
+const fileMenuItems = computed(() => {
+  // Establish the reactive dependency on the caret position.
+  void caretVersion.value
+  const sources = {
+    recentOpen: recentFiles.entries.value.map(e => ({ path: e.path })),
+    currentDir: store.state.dirEntries
+      .filter(e => e.type === 'file')
+      .map(e => ({ path: joinPath(store.state.currentDir, e.name) })),
+    recentRef: recentReferencedFiles.value.map(r => ({ path: r.path })),
+    recentUpload: recentUploads.value.map(u => ({ path: u.path })),
+    recentShare: recentShares.value.map(s => ({ path: s.path })),
+  }
+  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+  const attached = props.attachedFiles.map(f => f.path)
+  // Every file row shows its type icon (the shared menu renders it when present).
+  // The project root lets absolute attachment paths match relative candidates.
+  return buildFileCandidates(sources, query, attached, store.state.projectRoot)
+    .map(item => ({ ...item, icon: FileIcon }))
+})
 
-  // Escape closes the menu
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    showCommandMenu.value = false
-    commandMenuIndex.value = -1
-    return true
-  }
+const fileMenu = useCompletionMenu({
+  items: fileMenuItems,
+  getTrigger: () => parseAtQuery(inputText.value, currentCaret()),
+  getText: () => inputText.value,
+  closeOnSelect: false,
+  stickyAfterSelect: true,
+  onSelect: (item) => {
+    emit('add-attached', item.key, false)
+  },
+  applyText: (value, caret) => {
+    inputText.value = value
+    nextTick(() => {
+      const el = textareaRef.value
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+    })
+  },
+})
 
-  const items = commandMenuItems.value
-  if (items.length === 0) return false
+// Lazily load the share/upload sources the first time an @ trigger appears,
+// then merge them in. Menus elsewhere only fetch these when the attach drawer
+// opens. After the fetch resolves the candidate list changes, so the menu is
+// refreshed — otherwise an @ typed while both sources (and the current dir)
+// were empty would leave the menu hidden until the next keystroke.
+let fileSourcesPromise = null
+function ensureFileSourcesLoaded() {
+  if (fileSourcesLoaded.value) return fileSourcesPromise
+  fileSourcesLoaded.value = true
+  fileSourcesPromise = Promise.all([fetchRecentShares(), fetchRecentUploads()])
+    .then(() => {
+      fileMenu.refresh()
+    })
+    .catch(() => {
+      // Allow a later attempt after a transient failure.
+      fileSourcesLoaded.value = false
+      fileSourcesPromise = null
+    })
+  return fileSourcesPromise
+}
 
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    commandMenuIndex.value = (commandMenuIndex.value + 1) % items.length
-    return true
+// Menu visibility: driven by the composables' refresh(), which reads the
+// current trigger from the text/caret. Kept as refs so the rest of the
+// component (and existing tests) can observe them.
+const showCommandMenu = commandMenu.show
+const commandMenuIndex = commandMenu.activeIndex
+const showFileMenu = fileMenu.show
+const fileMenuIndex = fileMenu.activeIndex
+
+function onCommandMenuShowChange(v) {
+  if (!v) commandMenu.close()
+}
+function onFileMenuShowChange(v) {
+  if (!v) fileMenu.close()
+}
+
+// Recompute both menus whenever the input text changes. A history entry loaded
+// by ArrowUp/ArrowDown must not pop the menu. currentCaret() tolerates the
+// textarea DOM lagging the ref (programmatic restore), so this stays sync.
+// Share/upload sources are fetched as soon as an @ trigger appears — not only
+// once the menu is visible, so an empty current dir does not suppress the
+// merge from those two remote sources.
+watch(inputText, () => {
+  if (historyNavSuppressMenu) return
+  commandMenu.refresh()
+  if (parseAtQuery(inputText.value, currentCaret())) ensureFileSourcesLoaded()
+  fileMenu.refresh()
+})
+
+// Selection/caret moves (arrow keys inside the textarea, clicks) can enter or
+// leave an @ trigger without changing the text — re-evaluate on those events.
+// The counter is only bumped when the caret actually moved: applyText() calls
+// setSelectionRange(), which synchronously fires selectionchange again, and an
+// unconditional bump would loop forever.
+let lastCaret = -1
+function onTextareaSelectionChange() {
+  if (historyNavSuppressMenu) return
+  const caret = currentCaret()
+  if (caret !== lastCaret) {
+    lastCaret = caret
+    caretVersion.value++
   }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    commandMenuIndex.value = commandMenuIndex.value <= 0 ? items.length - 1 : commandMenuIndex.value - 1
-    return true
-  }
-  if ((e.key === 'Enter' || e.key === 'Tab') && commandMenuIndex.value >= 0 && commandMenuIndex.value < items.length) {
-    e.preventDefault()
-    handleCommandSelect(items[commandMenuIndex.value])
-    return true
-  }
-  return false
+  if (parseAtQuery(inputText.value, caret)) ensureFileSourcesLoaded()
+  fileMenu.refresh()
+}
+
+// Default to first item when the command list changes (VSCode-style).
+watch(commandMenuItems, () => {
+  if (commandMenu.show.value && commandMenuIndex.value < 0) commandMenuIndex.value = 0
+})
+
+// Scroll the highlighted item into view. Menus are teleported to <body>, so
+// query from document rather than the component root.
+function scrollActiveIntoView(idx) {
+  if (idx < 0) return
+  nextTick(() => {
+    const el = document.querySelector('[data-completion-idx="' + idx + '"]')
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+}
+watch(commandMenuIndex, scrollActiveIntoView)
+watch(fileMenuIndex, scrollActiveIntoView)
+
+function handleCommandSelect(cmd) {
+  // Route through the composable so the trigger range is removed + menu closed
+  // with the same code path as the keyboard. `source` disambiguates a built-in
+  // and an agent command that share a name.
+  commandMenu.selectByKey(cmd.key, cmd.source)
+}
+
+function handleFileSelect(item) {
+  fileMenu.selectByKey(item.key)
 }
 
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
@@ -1103,8 +1205,9 @@ function onTextareaKeydown(e) {
   // owns the keystroke — Enter commits the candidate to the input instead of
   // submitting the message.
   if (isImeCompositionEvent(e)) return
-  // Menu keyboard navigation takes priority
-  if (handleMenuKeydown(e)) return
+  // Menu keyboard navigation takes priority (slash menu first, then @ files).
+  if (commandMenu.handleKeydown(e)) return
+  if (fileMenu.handleKeydown(e)) return
   // Input history navigation (ArrowUp/ArrowDown), only when the input is active
   if (handleHistoryKeydown(e)) return
   // Default: Enter (without modifier) sends
@@ -1560,11 +1663,12 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); showCommandMenu.value = false; showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); showCommandMenu.value = false; showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; showCommandMenu.value = false; showUsagePopup.value = false } })
-watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showCommandMenu.value = false } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; fileMenu.close() } })
+watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; commandMenu.close() } })
+watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); commandMenu.close(); fileMenu.close() } })
 
 onMounted(() => {
   fetchItems()
@@ -1574,6 +1678,9 @@ onMounted(() => {
   window.addEventListener('keyup', onVoiceShortcutUp)
   window.addEventListener('blur', onVoiceBlurStop)
   window.addEventListener('clawbench-recommendation', onRecommendationEvent)
+  // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
+  // changing the text, so the @ menu must re-evaluate on selection changes.
+  document.addEventListener('selectionchange', onTextareaSelectionChange)
   measureActionLabels()
   if (typeof ResizeObserver !== 'undefined' && actionBarRef.value) {
     actionBarObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
@@ -1588,6 +1695,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', onVoiceShortcutUp)
   window.removeEventListener('blur', onVoiceBlurStop)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
+  document.removeEventListener('selectionchange', onTextareaSelectionChange)
   stopMachine.destroy()
   if (voicePressTimer) {
     clearTimeout(voicePressTimer)
@@ -2501,115 +2609,8 @@ defineExpose({
   margin: 3px 6px;
 }
 
-/* Unified command autocomplete menu styles */
-.at-menu-title {
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted, #999);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.at-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px 8px 9px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.at-menu-item.at-menu-selected {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-}
-@media (hover: hover) {
-  .at-menu-item:hover {
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  }
-}
-
-/* Left color bar + icon distinguish the two command sources:
-   clawbench = purple (#8b5cf6), agent = blue (#0ea5e9) */
-.at-menu-bar {
-  flex-shrink: 0;
-  width: 3px;
-  align-self: stretch;
-  border-radius: 2px;
-}
-
-.at-menu-item--clawbench .at-menu-bar {
-  background: #8b5cf6;
-}
-.at-menu-item--agent .at-menu-bar {
-  background: #0ea5e9;
-}
-
-.at-menu-icon {
-  flex-shrink: 0;
-}
-
-.at-menu-item--clawbench .at-menu-icon {
-  color: #8b5cf6;
-}
-.at-menu-item--agent .at-menu-icon {
-  color: #0ea5e9;
-}
-
-.at-menu-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #8b5cf6;
-  white-space: nowrap;
-}
-
-:root[data-theme-base="dark"] .at-menu-label {
-  color: #a78bfa;
-}
-
-.at-menu-label.agent-label {
-  color: #0ea5e9;
-}
-
-:root[data-theme-base="dark"] .at-menu-label.agent-label {
-  color: #38bdf8;
-}
-
-:root[data-theme-base="dark"] .at-menu-item--clawbench .at-menu-bar {
-  background: #a78bfa;
-}
-:root[data-theme-base="dark"] .at-menu-item--clawbench .at-menu-icon {
-  color: #a78bfa;
-}
-:root[data-theme-base="dark"] .at-menu-item--agent .at-menu-bar {
-  background: #38bdf8;
-}
-:root[data-theme-base="dark"] .at-menu-item--agent .at-menu-icon {
-  color: #38bdf8;
-}
-
-.at-menu-label mark {
-  background: rgba(255, 230, 0, 0.5);
-  color: inherit;
-  padding: 0 1px;
-  font-weight: 700;
-}
-
-:root[data-theme-base="dark"] .at-menu-label mark {
-  background: rgba(255, 230, 0, 0.35);
-}
-
-.at-menu-desc {
-  font-size: 12px;
-  color: var(--text-secondary, #495057);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Unified command autocomplete menu styles moved to
+   components/common/CompletionMenu.vue (shared with the @ file menu). */
 
 /* Context usage detail popup */
 .usage-popup {

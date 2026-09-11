@@ -324,6 +324,17 @@ export default {
     slashCommand: {
       title: '命令',
     },
+    completion: {
+      source: {
+        recentOpen: '最近打开',
+        currentDir: '当前目录',
+        recentRef: '最近引用',
+        recentUpload: '最近上传',
+        recentShare: '最近分享',
+        clawbench: '内置',
+        agent: '智能体',
+      },
+    },
     acpSession: {
       title: 'ACP 会话',
       resumeTitle: '恢复 {agent} 会话',

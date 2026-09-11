@@ -66,6 +66,17 @@ const i18n = createI18n({
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
         clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task' },
         slashCommand: { title: 'Slash' },
+        completion: {
+          source: {
+            recentOpen: 'Recent',
+            currentDir: 'Current dir',
+            recentRef: 'Referenced',
+            recentUpload: 'Uploaded',
+            recentShare: 'Shared',
+            clawbench: 'Built-in',
+            agent: 'Agent',
+          },
+        },
         acpSession: { title: 'ACP Sessions' },
         sessionInfo: {
           contextUsage: 'Context',
@@ -190,18 +201,49 @@ vi.mock('@/composables/useTabDrawer', () => ({
   resetTabDrawerState: vi.fn(),
 }))
 
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: {
-      currentFile: null,
-      currentDir: '',
-      chatUnreadCount: 0,
+vi.mock('@/stores/app.ts', async () => {
+  const { reactive } = await import('vue')
+  return {
+    store: {
+      state: reactive({
+        currentFile: null,
+        currentDir: '',
+        dirEntries: [],
+        projectRoot: '/project',
+        chatUnreadCount: 0,
+      }),
     },
-  },
-}))
+  }
+})
 
 vi.mock('@/utils/path.ts', () => ({
   baseName: (p: string) => p.split('/').pop() || '',
+  dirName: (p: string) => p.split('/').slice(0, -1).join('/'),
+  joinPath: (dir: string, name: string) => (dir ? dir.replace(/\/+$/, '') + '/' + name : name),
+  normalizeSlashes: (p: string) => p.replace(/\\/g, '/'),
+  toProjectRelative: (p: string, root: string) => {
+    if (!root) return p
+    const norm = p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const normRoot = root.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (norm === normRoot) return ''
+    return norm.startsWith(normRoot + '/') ? norm.slice(normRoot.length + 1) : norm
+  },
+}))
+
+// @ file reference sources — empty by default; individual tests override.
+const mockRecentFileEntries = ref([])
+const mockRecentShares = ref([])
+const mockRecentUploads = ref([])
+const mockFetchRecentShares = vi.fn().mockResolvedValue(undefined)
+const mockFetchRecentUploads = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/composables/useRecentFiles.ts', () => ({
+  useRecentFiles: () => ({ entries: mockRecentFileEntries }),
+}))
+vi.mock('@/composables/useShareIn.ts', () => ({
+  useShareIn: () => ({ recentShares: mockRecentShares, fetchRecentShares: mockFetchRecentShares }),
+}))
+vi.mock('@/composables/useUploadRecent.ts', () => ({
+  useUploadRecent: () => ({ recentUploads: mockRecentUploads, fetchRecentUploads: mockFetchRecentUploads }),
 }))
 
 vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
@@ -961,17 +1003,17 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/cb-chat'
     await wrapper.vm.$nextTick()
-    // The unified menu filters ClawBench built-ins by input
-    const items = wrapper.findAll('.at-menu-item')
+    // The unified menu fuzzy-filters ClawBench built-ins by input
+    const items = wrapper.findAll('.completion-item')
     expect(items.length).toBeGreaterThan(0)
-    expect(items[0].find('.at-menu-label').text()).toContain('/cb-chatsearch')
+    expect(items[0].find('.completion-label').text()).toContain('/cb-chatsearch')
   })
 
   it('command menu does NOT show for @ input (merged into / only)', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '@chat'
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.at-menu-item').exists()).toBe(false)
+    // @ opens the FILE menu, never the slash-command menu
     expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
@@ -983,7 +1025,7 @@ describe('ChatInputBar', () => {
     wrapper.vm.inputText = '/hel'
     await wrapper.vm.$nextTick()
     // The agent command should be filtered into the unified menu
-    const labels = wrapper.findAll('.at-menu-label').map(i => i.text())
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
     expect(labels.some(l => l.includes('/help'))).toBe(true)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
@@ -994,8 +1036,8 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/cb-chatsearch'
     await wrapper.vm.$nextTick()
-    // The menu item mousedown calls handleCommandSelect
-    await wrapper.findAll('.at-menu-item')[0].trigger('mousedown')
+    // The menu item mousedown routes through the composable's select path
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
     expect(wrapper.vm.showCommandMenu).toBe(false)
@@ -1008,13 +1050,12 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    const clawbench = wrapper.find('.at-menu-item--clawbench')
-    const agent = wrapper.find('.at-menu-item--agent')
+    const clawbench = wrapper.find('.completion-item--clawbench')
+    const agent = wrapper.find('.completion-item--agent')
     expect(clawbench.exists()).toBe(true)
     expect(agent.exists()).toBe(true)
-    // Each row carries a left color bar and an icon
-    expect(clawbench.find('.at-menu-bar').exists()).toBe(true)
-    expect(clawbench.find('.at-menu-icon').exists()).toBe(true)
+    // Each row carries a source icon.
+    expect(clawbench.find('.completion-source-icon').exists()).toBe(true)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
@@ -1029,10 +1070,10 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/cb-task'
     await wrapper.vm.$nextTick()
-    const items = wrapper.findAll('.at-menu-item')
+    const items = wrapper.findAll('.completion-item')
     expect(items).toHaveLength(2)
-    expect(wrapper.findAll('.at-menu-item--clawbench')).toHaveLength(1)
-    expect(wrapper.findAll('.at-menu-item--agent')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(1)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
@@ -1288,6 +1329,201 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
+  // ── @ file reference menu ──
+  it('@ opens the file menu listing current-dir files', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [
+      { name: 'main.ts', type: 'file' },
+      { name: 'sub', type: 'dir' },
+    ] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+    expect(items[0].find('.completion-source').text()).toBe('Current dir')
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu excludes directories from the current dir', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [{ name: 'only-dir', type: 'dir' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+  })
+
+  it('@ menu fuzzy-filters by basename', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [
+      { name: 'main.ts', type: 'file' },
+      { name: 'other.ts', type: 'file' },
+    ] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+    store.state.dirEntries = [] as any
+  })
+
+  it('@ menu does not trigger for an email-like @', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'a@b'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('selecting an @ candidate emits add-attached and removes the query', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'look @main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')).toBeTruthy()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/main.ts', false])
+    // the "@main" trigger is removed; surrounding text is preserved
+    expect(wrapper.vm.inputText).toBe('look ')
+    // the menu stays open for multi-select (browse mode)
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('Esc dismisses the @ menu and it stays closed while the query continues', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Escape' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    // typing more within the same query must not reopen it
+    wrapper.vm.inputText = '@mainx'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+  })
+
+  it('an unmatched @ query closes the menu but keeps the text', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@zzz'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('@zzz')
+    store.state.dirEntries = [] as any
+  })
+
+  it('an already-attached file is filtered out of the @ menu', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar({ attachedFiles: [{ path: 'src/main.ts' }] })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu merges recent-open and recent-share sources with source labels', async () => {
+    mockRecentFileEntries.value = [{ path: 'lib/opened.go', accessedAt: 1 }]
+    mockRecentShares.value = [{ name: 'shared.txt', path: '.clawbench/share-in/shared.txt' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    const labels = items.map(i => i.find('.completion-label').text())
+    expect(labels).toContain('opened.go')
+    expect(labels).toContain('shared.txt')
+    // source labels distinguish the two origins
+    const sources = items.map(i => i.find('.completion-source').text())
+    expect(sources).toContain('Recent')
+    expect(sources).toContain('Shared')
+    mockRecentFileEntries.value = []
+    mockRecentShares.value = []
+  })
+
+  it('@ menu fetches share/upload sources on first open', async () => {
+    mockFetchRecentShares.mockClear()
+    mockFetchRecentUploads.mockClear()
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(mockFetchRecentShares).toHaveBeenCalled()
+    expect(mockFetchRecentUploads).toHaveBeenCalled()
+  })
+
+  it('@ menu appears once async share/upload sources resolve with no local files', async () => {
+    // Nothing in the current dir and no local history: the only candidates come
+    // from the remote share source, which resolves after the first refresh.
+    mockRecentShares.value = [{ name: 'late.txt', path: '.clawbench/share-in/late.txt' }]
+    mockFetchRecentShares.mockImplementation(async () => { /* resolves immediately */ })
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels).toContain('late.txt')
+    mockRecentShares.value = []
+  })
+
+  it('@ menu browse mode ends when the user types plain text', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // Typing a real message must dismiss the browse-mode menu.
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('opening the slash menu closes the @ menu (no overlapping popups)', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    // Enter @ browse mode via a select, then type a slash command.
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
   it('Enter confirms the pre-selected first command item when menu opens', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
@@ -1355,7 +1591,7 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-slash-idx="1"]')
+    expect(qs).toHaveBeenCalledWith('[data-completion-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
   })
@@ -1374,10 +1610,10 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    const items = wrapper.findAll('.at-menu-item')
+    const items = wrapper.findAll('.completion-item')
     // 2 ClawBench built-ins + 2 deduped agent commands
     expect(items).toHaveLength(4)
-    const labels = items.map(i => i.find('.at-menu-label').text())
+    const labels = items.map(i => i.find('.completion-label').text())
     expect(labels.some(l => l.startsWith('//'))).toBe(false)
     expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
     expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
