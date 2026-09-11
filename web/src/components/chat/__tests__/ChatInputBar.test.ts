@@ -124,9 +124,12 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
 }))
 
 const mockUploadAndAttach = vi.fn()
+// Shared mutable pendingFiles so tests can drive the tags-row gate (a completed
+// upload is mirrored here while its visible card lives in attachedFiles).
+const mockPendingFilesValue = ref<any[]>([])
 vi.mock('@/composables/useFileUpload.ts', () => ({
   useFileUpload: () => ({
-    pendingFiles: { value: [] },
+    pendingFiles: mockPendingFilesValue,
     attachedFiles: { value: [] },
     uploadingFiles: { value: [] },
     isDragOver: { value: false },
@@ -368,6 +371,7 @@ afterEach(() => {
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
+  mockPendingFilesValue.value = []
 })
 
 const stubs = {
@@ -1245,6 +1249,31 @@ describe('ChatInputBar', () => {
     // Should render attachment tags
     expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
     expect(wrapper.find('.attachment-ref').exists()).toBe(true)
+  })
+
+  it('does not render the tags row for a completed pending mirror with no visible card', async () => {
+    // Regression: pendingFiles retains completed (non-uploading) uploads as a
+    // mirror. AttachmentTags only draws in-flight ones, so a lone mirror with
+    // no attached card must NOT mount the container — otherwise its padding
+    // shows as dead vertical space below the input.
+    mockPendingFilesValue.value = [
+      { path: '/tmp/done.png', previewUrl: null, isImage: true, uploading: false, progress: 100, size: 10 },
+    ]
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(false)
+    mockPendingFilesValue.value = []
+  })
+
+  it('renders the tags row while an upload is in flight', async () => {
+    mockPendingFilesValue.value = [
+      { path: '', previewUrl: null, isImage: true, uploading: true, progress: 40, size: 10 },
+    ]
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
+    expect(wrapper.find('.attachment-pending').exists()).toBe(true)
+    mockPendingFilesValue.value = []
   })
 
   it('command menu input watcher opens on / and closes after a space', async () => {

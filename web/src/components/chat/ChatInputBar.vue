@@ -80,7 +80,7 @@
         </div>
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="quoteItems.length > 0 || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+      <div v-if="hasAttachmentTags" class="chat-attachment-tags">
         <!-- Staged quote cards (same size as file cards, accent-colored) -->
         <span v-for="(quote, quoteIndex) in quoteItems" :key="quote.id || quoteIndex" class="chat-file-attachment attachment-quote" :title="quote.note || quote.filePath" @click="$emit('quote-click', quote)">
           <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
@@ -1184,6 +1184,16 @@ watch(() => props.loading, (val) => {
 })
 
 const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
+
+// The tags row must render only when it has VISIBLE children. pendingFiles
+// retains completed (non-uploading) entries as a mirror of attachedFiles, but
+// AttachmentTags only draws in-flight ones — counting those mirrors here would
+// mount a childless container whose padding shows as dead vertical space.
+const hasAttachmentTags = computed(() =>
+  quoteItems.value.length > 0
+  || props.attachedFiles.length > 0
+  || pendingFiles.value.some(f => f.uploading),
+)
 
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {

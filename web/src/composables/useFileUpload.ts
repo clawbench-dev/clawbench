@@ -531,6 +531,31 @@ export function useFileUpload() {
     if (file.previewUrl) URL.revokeObjectURL(file.previewUrl)
   }
 
+  /**
+   * Remove the completed pending mirror of an attached file.
+   *
+   * A drag-drop / clipboard-paste upload lives in TWO stores: `pendingFiles`
+   * (upload lifecycle) and `attachedFiles` (the visible card AND the send
+   * payload source in ChatPanelContent.sendMessage). Removing the attached
+   * card used to clear only `attachedFiles`, so the stale `pendingFiles`
+   * entry kept the file in the send payload and kept the (now childless)
+   * tags container mounted — reserving dead vertical space. Clear the mirror
+   * here so removal is symmetric.
+   *
+   * In-flight entries are left alone; those are cancelled via removeFile.
+   */
+  function removePendingByPath(path: string) {
+    if (!path) return
+    let changed = false
+    const next = pendingFiles.value.filter(f => {
+      if (f.uploading || f.path !== path) return true
+      if (f.previewUrl) URL.revokeObjectURL(f.previewUrl)
+      changed = true
+      return false
+    })
+    if (changed) pendingFiles.value = next
+  }
+
   function cleanupPreviewUrls() {
     pendingFiles.value.forEach(f => {
       if (f.previewUrl) URL.revokeObjectURL(f.previewUrl)
@@ -550,6 +575,7 @@ export function useFileUpload() {
     handleFileDrop,
     uploadAndAttach,
     removeFile,
+    removePendingByPath,
     addAttachedFile,
     removeAttachedFile,
     cleanupPreviewUrls,

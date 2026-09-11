@@ -195,6 +195,44 @@ describe('useFileUpload', () => {
     })
   })
 
+  describe('removePendingByPath', () => {
+    it('removes the completed mirror entry for a path', () => {
+      const upload = useFileUpload()
+      upload.pendingFiles.value.push({ path: '.clawbench/uploads/a.png', previewUrl: null, isImage: true, uploading: false, progress: 100, size: 10 })
+      upload.removePendingByPath('.clawbench/uploads/a.png')
+      expect(upload.pendingFiles.value).toHaveLength(0)
+    })
+
+    it('leaves other paths untouched', () => {
+      const upload = useFileUpload()
+      upload.pendingFiles.value.push({ path: '/a.txt', previewUrl: null, isImage: false, uploading: false, progress: 100, size: 0 })
+      upload.pendingFiles.value.push({ path: '/b.txt', previewUrl: null, isImage: false, uploading: false, progress: 100, size: 0 })
+      upload.removePendingByPath('/a.txt')
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      expect(upload.pendingFiles.value[0].path).toBe('/b.txt')
+    })
+
+    it('does not remove an in-flight upload (cancelled via removeFile instead)', () => {
+      const upload = useFileUpload()
+      upload.pendingFiles.value.push({ path: '/busy.txt', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 0 })
+      upload.removePendingByPath('/busy.txt')
+      expect(upload.pendingFiles.value).toHaveLength(1)
+    })
+
+    it('ignores empty path and revokes the preview URL', () => {
+      if (!URL.revokeObjectURL) URL.revokeObjectURL = vi.fn()
+      const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
+      const upload = useFileUpload()
+      upload.pendingFiles.value.push({ path: '/img.png', previewUrl: 'blob:img', isImage: true, uploading: false, progress: 100, size: 10 })
+      upload.removePendingByPath('')
+      expect(upload.pendingFiles.value).toHaveLength(1)
+      upload.removePendingByPath('/img.png')
+      expect(upload.pendingFiles.value).toHaveLength(0)
+      expect(revokeSpy).toHaveBeenCalledWith('blob:img')
+      revokeSpy.mockRestore()
+    })
+  })
+
   describe('chat upload (no dir)', () => {
     it('successful upload adds to pendingFiles and updates entry', async () => {
       xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/test.txt')
@@ -591,6 +629,29 @@ describe('useFileUpload', () => {
       expect(upload.pendingFiles.value[0].uploading).toBe(false)
       expect(upload.attachedFiles.value).toHaveLength(1)
       expect(upload.attachedFiles.value[0].path).toBe('.clawbench/uploads/test.txt')
+    })
+
+    it('removing the attached card clears the pending mirror used by sendMessage', async () => {
+      // Regression: sendMessage builds its upload payload from
+      // pendingFiles.filter(f => f.path). A drag-drop upload populates BOTH
+      // stores; clicking X removed only the attached card, so the message was
+      // still sent with the removed file. removePendingByPath closes the gap.
+      xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/photo.png')
+
+      const upload = useFileUpload()
+      await upload.uploadAndAttach([makeFile('photo.png')])
+
+      expect(upload.attachedFiles.value).toHaveLength(1)
+      // sendMessage's source still holds it before removal
+      expect(upload.pendingFiles.value.filter(f => f.path)).toHaveLength(1)
+
+      // Simulate handleRemoveAttachedEntry: detach + clear the pending mirror
+      upload.removeAttachedFile(0)
+      upload.removePendingByPath('.clawbench/uploads/photo.png')
+
+      expect(upload.attachedFiles.value).toHaveLength(0)
+      // sendMessage's source is now empty → nothing is sent
+      expect(upload.pendingFiles.value.filter(f => f.path)).toHaveLength(0)
     })
 
     it('does not auto-attach on upload failure', async () => {

@@ -316,6 +316,12 @@ function handleRemoveAttachedEntry(entry) {
     const startLine = typeof entry === 'string' ? undefined : entry?.startLine
     const endLine = typeof entry === 'string' ? undefined : entry?.endLine
     removeAttachedFileByPath(path, startLine, endLine)
+    // A drag-drop / clipboard-paste upload also has a mirror entry in
+    // pendingFiles (upload lifecycle) that feeds the send payload. Removing
+    // only the attached card left the file in the message and kept the
+    // now-empty tags row mounted. Whole-file removals clear that mirror too;
+    // a ranged removal of a project file has no pending mirror to clear.
+    if (startLine === undefined) removePendingByPath(path)
 }
 
 async function handleQuoteClick(q) {
@@ -527,7 +533,7 @@ const stream = useChatStream({
   },
 })
 
-const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
+const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
 const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
 
 const manager = useSessionManager({
