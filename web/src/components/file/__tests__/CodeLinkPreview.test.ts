@@ -6,6 +6,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 // Mock highlightCode
 vi.mock('@/utils/globals', () => ({
@@ -2364,5 +2365,91 @@ describe('CodeLinkPreview.vue — docked outside-click behaviour', () => {
     expect(preview.close).toHaveBeenCalled()
     outside.remove()
     wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
+  it('collapses to a single row: no title row, name+meta and Close in the toolbar row', async () => {
+    _setIsPCForTest(false)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: true },
+        global: { plugins: [i18n] },
+        attachTo: document.body,
+      })
+      await flushPromises()
+
+      const card = wrapper.find('.code-link-preview-floating')
+      expect(card.classes()).toContain('is-compact')
+
+      // The desktop title row (with the file path) is not rendered at all, so
+      // the pane has exactly one row of chrome.
+      expect(wrapper.find('.code-preview-header').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(false)
+
+      // The file name is the only thing on the left — the line/size summary
+      // is deliberately omitted in this mode.
+      expect(wrapper.find('.code-preview-meta .code-preview-compact-name').text()).toBe('build.gradle')
+      expect(wrapper.find('.code-preview-compact-meta').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta-info').text()).toBe('build.gradle')
+
+      // Close lives in that same row, but OUTSIDE the scrollable tool strip —
+      // as a child it would scroll out of reach for a code file (10 tools).
+      const close = wrapper.find('.code-preview-meta > .code-preview-btn.close')
+      expect(close.exists()).toBe(true)
+      expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
+
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('keeps the two-row desktop layout when not compact', async () => {
+    _setIsPCForTest(true)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: true },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+
+      const card = wrapper.find('.code-link-preview-floating')
+      expect(card.classes()).not.toContain('is-compact')
+      // Title row present with the directory path; Close in the header.
+      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-header-actions .close').exists()).toBe(true)
+      // No compact name, and no second close in the meta row.
+      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta > .code-preview-btn.close').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('does not use the compact layout for a floating card on touch', async () => {
+    _setIsPCForTest(false)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: false },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
   })
 })

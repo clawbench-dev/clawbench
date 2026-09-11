@@ -262,7 +262,12 @@
     <div
       ref="cardRef"
       class="code-link-preview-floating"
-      :class="{ 'is-dragging': isDraggingCard, 'is-media': isMediaView, 'is-docked': docked }"
+      :class="{
+        'is-dragging': isDraggingCard,
+        'is-media': isMediaView,
+        'is-docked': docked,
+        'is-compact': compactLayout,
+      }"
       role="dialog"
       :aria-label="t('file.codePreview.title')"
       :style="cardStyle"
@@ -286,9 +291,10 @@
         </div>
       </Transition>
 
-      <!-- Titlebar / Drag Handle -->
-      <!-- Titlebar / Drag Handle: Row 1 (File Path + Copy Path Button) -->
-      <div class="code-preview-header" @pointerdown="onDragPointerDown">
+      <!-- Titlebar / Drag Handle: Row 1 (File Path + Copy Path Button).
+           Hidden in the compact layout, where the toolbar row below is the
+           pane's only chrome (see the meta row). -->
+      <div v-if="!compactLayout" class="code-preview-header" @pointerdown="onDragPointerDown">
         <div
           class="code-preview-title"
           :data-tooltip="fullPathTooltipText"
@@ -335,10 +341,18 @@
         </div>
       </div>
 
-      <!-- Row 2: File Meta & Remaining Action Tools -->
+      <!-- Row 2: File Meta & Remaining Action Tools.
+           In the compact layout this is the pane's ONLY row: the file name on
+           the left, tools + Close on the right. The line/size summary is
+           omitted there — the name is what identifies the pane. -->
       <div class="code-preview-meta" @pointerdown="onDragPointerDown">
         <div class="code-preview-meta-info">
-          <span>{{ contextMeta || t('file.codePreview.title') }}</span>
+          <!-- Compact carries the file name here, since the title row is gone. -->
+          <template v-if="compactLayout">
+            <span class="code-preview-compact-name">{{ fileBaseName }}</span>
+            <span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
+          </template>
+          <span v-else>{{ contextMeta || t('file.codePreview.title') }}</span>
         </div>
 
         <div class="code-preview-actions" @pointerdown.stop>
@@ -496,6 +510,19 @@
             <ExternalLink :size="12" />
           </button>
         </div>
+
+        <!-- Compact layout: the title row is gone, so Close sits at the end of
+             this same row. It is a sibling of the (scrollable) tool strip so a
+             long tool set can never scroll it out of reach. -->
+        <button
+          v-if="compactLayout"
+          class="code-preview-btn close"
+          :title="t('file.codePreview.close')"
+          :aria-label="t('file.codePreview.close')"
+          @click="handleClose()"
+        >
+          <X :size="13" />
+        </button>
       </div>
 
       <!-- Desktop In-Preview Search Bar -->
@@ -625,6 +652,7 @@ import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/u
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
@@ -643,6 +671,21 @@ const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
+const { isPC } = usePlatformDetect()
+
+/**
+ * Compact layout: the docked pane on a touch / narrow device.
+ *
+ * A phone leaves the pane only ~200-300px, and the desktop chrome does not fit:
+ * the title row spends its width on the full directory path, and the toolbar is
+ * squeezed against the meta text. Compact mode instead mirrors the mobile
+ * (BottomSheet) mode's toolbar — ONE row — so:
+ * - the title row (and its directory path) is not rendered at all;
+ * - that single row carries the file name on the left and the tools plus Close
+ *   on the right;
+ * - the line/size summary is dropped: the name is what identifies the pane.
+ */
+const compactLayout = computed(() => props.docked && !isPC.value)
 
 const emit = defineEmits<{
   /** Fired after the preview is dismissed. Docked callers use it to collapse

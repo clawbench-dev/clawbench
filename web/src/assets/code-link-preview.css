@@ -862,3 +862,79 @@ body.code-preview-dragging * {
 .code-link-preview-floating.is-docked .code-preview-meta {
   cursor: default;
 }
+
+/* ── Compact layout: docked pane on a touch / narrow device ─────────────────
+   Mirrors the mobile (BottomSheet) mode's toolbar rather than restyling the
+   desktop card: ONE row, matching `.code-preview-sheet-row2` — the file name on
+   the left, icon tools plus Close on the right. The desktop title row (file
+   path) is not rendered at all in this mode, and neither is the line/size
+   summary: the name is what identifies the pane. */
+.code-link-preview-floating.is-compact .code-preview-meta {
+  /* Exactly the mobile sheet row's metrics (.code-preview-sheet-row2): a 32px
+     row with 28px buttons — the same weight as the 31px desktop meta row, not
+     a thicker bar. The tight paddings/gaps are what let a 10-tool code file
+     fit beside the file name on a 390px screen without the name collapsing. */
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 8px;
+}
+.code-link-preview-floating.is-compact .code-preview-meta-info {
+  /* The file name is the only thing on the left. A code file shows up to 10
+     tools, which would otherwise crush the name to zero width — so the name
+     keeps a floor and the tool row scrolls instead. */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 84px;
+  font-size: 11px;
+  overflow: hidden;
+}
+.code-link-preview-floating.is-compact .code-preview-compact-name {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #202124);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-link-preview-floating.is-compact .code-preview-actions {
+  /* Scrolls rather than shrinking the name away. */
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* Close ends the row but lives OUTSIDE the scrollable strip, so a long tool set
+   cannot scroll it out of reach. */
+.code-link-preview-floating.is-compact .code-preview-meta > .code-preview-btn.close {
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: 2px;
+  color: var(--text-secondary, #5f6368);
+}
+.code-link-preview-floating.is-compact .code-preview-actions::-webkit-scrollbar {
+  display: none;
+}
+.code-link-preview-floating.is-compact .code-preview-btn {
+  /* Same 28px target as the mobile sheet's `.icon-only` buttons — the desktop
+     24px control is too small to tap, but a bigger row is what made this feel
+     heavy, so match the mobile mode instead of inventing a new size. */
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.code-link-preview-floating.is-compact .code-preview-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.code-link-preview-floating.is-compact .code-preview-actions-divider {
+  height: 14px;
+  margin: 0 1px;
+}
