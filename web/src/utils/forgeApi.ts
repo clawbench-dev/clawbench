@@ -202,3 +202,11 @@ export function setForgeToken(host: string, token: string): Promise<{ host: stri
 export function deleteForgeToken(host: string): Promise<void> {
     return forgeFetch(`/api/forge/credentials?host=${encodeURIComponent(host)}`, { method: 'DELETE' })
 }
+
+export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number }> {
+    return forgeFetch('/api/forge/unread', { signal })
+}
+
+export function markForgeRead(): Promise<{ count: number }> {
+    return forgeFetch('/api/forge/read', { method: 'POST' })
+}

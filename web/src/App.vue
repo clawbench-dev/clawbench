@@ -383,6 +383,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -551,6 +552,7 @@ import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
@@ -799,6 +801,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab, force = false) {
+  // Opening the Issues & PRs tab clears its unread badge.
+  if (tab === 'forge') {
+    void markForgeRead()
+  }
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -2000,6 +2006,7 @@ function handleWideDockTabClick(tab) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile, addUrlAttachment } = useChatContext()
+const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead, bump: bumpForgeUnread } = useForgeUnread()
 
 // "Analyze with AI" from the Issues & PRs tab. Reuses the quote-input flow: the
 // issue/PR URL becomes a URL attachment chip, and the body is injected into the
@@ -2103,6 +2110,7 @@ function wideDockBtnClass(tab) {
 function wideDockBadgeCount(tab) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
+    case 'forge': return forgeUnreadCount.value
     case 'tasks': return store.state.taskUnreadCount
     case 'terminal': return store.state.terminalSessionCount
     case 'proxy': return store.state.portForwardEnabledCount
@@ -2467,6 +2475,9 @@ function playQuoteEmitAnimation(e) {
 
 onMounted(async () => {
     applyTheme(theme.value)
+    // Prime the forge unread badge (server-authoritative; independent of the
+    // notification toggles).
+    void refreshForgeUnread()
     let resp
     try {
         resp = await fetch('/api/me')

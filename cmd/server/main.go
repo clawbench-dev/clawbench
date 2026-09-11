@@ -37,6 +37,7 @@ import (
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/cli"
+	"clawbench/internal/forge"
 	"clawbench/internal/frontend"
 	"clawbench/internal/frp"
 	"clawbench/internal/handler"
@@ -792,6 +793,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
@@ -934,6 +936,32 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the GitHub/GitLab change poller. It is read-only and only runs when
+	// at least one project is bound to a repository; the provider factory is
+	// supplied by the handler package (which owns credential + TLS policy).
+	{
+		limiter := forge.NewLimiter(2, 5, 4)
+		// Broadcast forge events over the existing WS channel; the IM notifier is
+		// nil for now (the push backends expose a task-shaped API; a forge-shaped
+		// push is a follow-up).
+		dispatcher := service.NewForgeEventDispatcher(
+			func() model.Config { return model.ConfigInstance },
+			func(msg any) {
+				if m := ws.GetManager(); m != nil {
+					m.BroadcastEvent(ws.ServerMessage{
+						Type:  ws.MessageTypeEvent,
+						ID:    ws.GenerateEventID(),
+						Event: "forge_event",
+						Data:  msg,
+					})
+				}
+			},
+			nil,
+		)
+		syncer := service.NewForgeSyncer(handler.NewForgeProvider, dispatcher)
+		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
+	}
 
 	// Initialize proxy service (port forwarding) and SSH tunnel server.
 	// ProxyRegistry is only created when SSH tunnel is enabled — it has no

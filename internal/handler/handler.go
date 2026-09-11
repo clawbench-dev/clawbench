@@ -284,6 +284,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/forge/binding", middleware.Auth(ServeForgeBinding))
 	register("/api/forge/remotes", middleware.Auth(ServeForgeRemotes))
 	register("/api/forge/test", middleware.Auth(ServeForgeTest))
+	register("/api/forge/unread", middleware.Auth(ServeForgeUnread))
+	register("/api/forge/read", middleware.Auth(ServeForgeMarkRead))
 
 	// Public file-share links. Management endpoints are auth-protected; the
 	// public data endpoints (/api/share/{token}/...) and the share SPA page

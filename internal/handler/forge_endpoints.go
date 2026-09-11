@@ -550,3 +550,35 @@ func suggestForgeBinding(projectPath string) map[string]any {
 	}
 	return nil
 }
+
+// ServeForgeUnread returns the unread forge-event count. The count is
+// independent of the notification toggles: it tracks "are there new changes",
+// so turning every notification off does not silently kill the badge.
+//
+//	GET /api/forge/unread
+func ServeForgeUnread(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	n, err := service.CountUnreadForgeEvents()
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": n})
+}
+
+// ServeForgeMarkRead clears the unread count (called when the user opens the
+// Issues & PRs tab).
+//
+//	POST /api/forge/read
+func ServeForgeMarkRead(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if err := service.MarkForgeEventsRead(); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": 0})
+}

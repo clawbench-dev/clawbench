@@ -328,3 +328,46 @@ func runGitInDir(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v failed: %v: %s", args, err, out)
 	}
 }
+
+func TestServeForgeUnreadAndMarkRead(t *testing.T) {
+	_, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// Seed an unread event.
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
+		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+	})
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeUnread, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(1), resp["count"])
+
+	// Mark read.
+	req = newRequest(t, http.MethodPost, "/api/forge/read", nil)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeForgeMarkRead, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Now zero.
+	req = newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeForgeUnread, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["count"])
+}
+
+func TestServeForgeUnread_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupForgeEnv(t)
+	defer teardown()
+	req := newRequest(t, http.MethodPost, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeUnread, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}

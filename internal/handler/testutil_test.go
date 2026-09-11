@@ -315,9 +315,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		t.Fatalf("failed to create file share tables: %v", err)
 	}
 
-	// Create forge binding tables
-	if _, err := db.Exec(service.ProjectForgesDDL); err != nil {
-		t.Fatalf("failed to create project_forges table: %v", err)
+	// Create forge binding + sync tables
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("failed to create forge tables: %v", err)
+		}
 	}
 
 	service.SetDBForTest(db, db)

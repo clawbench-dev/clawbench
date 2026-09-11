@@ -137,3 +137,11 @@ func forgeContext(r *http.Request) context.Context {
 func errorsAsForge(err error, target **forge.Error) bool {
 	return errors.As(err, target)
 }
+
+// NewForgeProvider is the exported provider factory used by the service-layer
+// poller. It lives here because this package owns the credential and TLS policy;
+// exporting it lets main.go bridge the two packages without either importing
+// the other.
+func NewForgeProvider(pf service.ProjectForge) (forge.Provider, error) {
+	return newForgeProvider(&pf)
+}
