@@ -42,9 +42,20 @@ import (
 // Processing limits and gallery caps.
 const (
 	// MaxLongEdge is the target longest-edge pixel size for raster wallpapers
-	// (png/jpeg). Larger sources are downscaled to keep multi-device decode
-	// cost low while remaining sharp on hi-DPI screens.
+	// (png/jpeg) supplied by a user. Larger sources are downscaled to keep
+	// multi-device decode cost low while remaining sharp on hi-DPI screens.
+	//
+	// Only uploads use this: they are user-triggered and may run concurrently, so
+	// their cost must stay bounded. The Bing fetch passes an explicit, higher cap
+	// (see ProcessWithMaxEdge) because it runs once a day in the background and
+	// the daily image is served at 3840x2160.
 	MaxLongEdge = 2048
+
+	// BingMaxLongEdge is the longest-edge cap for the Bing daily wallpaper. The
+	// source is 3840x2160, and keeping it native is both sharper and cheaper than
+	// downscaling: the Catmull-Rom reduction to 2048 costs more CPU and RAM than
+	// encoding the original 4K frame.
+	BingMaxLongEdge = 3840
 
 	// MaxDimension is the hard upper bound on a source image's width/height.
 	// Enforced via image.DecodeConfig BEFORE full decode so a small-but-huge
@@ -221,10 +232,28 @@ type Processed struct {
 // size/dimension limits, downscales png/jpeg, and returns the final bytes.
 // Content is verified by decode/sniff — never by trusting the file extension
 // alone, so extension spoofing is impossible.
+//
+// Uses MaxLongEdge as the downscale target. Callers that legitimately handle
+// larger images (the Bing daily wallpaper) should use ProcessWithMaxEdge.
 func Process(srcBytes []byte, srcName string) (*Processed, error) {
+	return ProcessWithMaxEdge(srcBytes, srcName, MaxLongEdge)
+}
+
+// ProcessWithMaxEdge is Process with an explicit longest-edge downscale target.
+//
+// The cap is a parameter rather than a global because the two sources have
+// different cost profiles: uploads are user-triggered and may run concurrently
+// (keep them at MaxLongEdge), while the Bing fetch runs once a day in the
+// background and is served at 3840x2160 (BingMaxLongEdge). Passing the wrong cap
+// here silently changes image quality, so callers should name the constant that
+// matches their source rather than inlining a number.
+func ProcessWithMaxEdge(srcBytes []byte, srcName string, maxEdge int) (*Processed, error) {
 	ext := strings.ToLower(filepath.Ext(srcName))
 	if !model.IsThemeAllowedExt(srcName) {
 		return nil, fmt.Errorf("unsupported image format: %s", ext)
+	}
+	if maxEdge <= 0 {
+		maxEdge = MaxLongEdge
 	}
 
 	// Per-format size caps.
@@ -238,36 +267,7 @@ func Process(srcBytes []byte, srcName string) (*Processed, error) {
 
 	switch ext {
 	case ".png", ".jpg", ".jpeg":
-		// Full decode doubles as content verification: a "png" that is not
-		// really a PNG fails here, so extension spoofing is impossible.
-		img, err := decodeRaster(srcBytes)
-		if err != nil {
-			return nil, fmt.Errorf("cannot decode image: %w", err)
-		}
-		bounds := img.Bounds()
-		dst := img
-		if bounds.Dx() > MaxLongEdge || bounds.Dy() > MaxLongEdge {
-			ratio := float64(MaxLongEdge) / float64(max(bounds.Dx(), bounds.Dy()))
-			dstW := max(1, int(float64(bounds.Dx())*ratio))
-			dstH := max(1, int(float64(bounds.Dy())*ratio))
-			dst = Scale(img, dstW, dstH)
-		}
-
-		var buf bytes.Buffer
-		var outExt string
-		if ext == ".png" {
-			// Keep PNG as PNG to preserve alpha transparency (JPEG has none).
-			if err := png.Encode(&buf, dst); err != nil {
-				return nil, fmt.Errorf("cannot encode png: %w", err)
-			}
-			outExt = ".png"
-		} else {
-			if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: JPEGQuality}); err != nil {
-				return nil, fmt.Errorf("cannot encode jpeg: %w", err)
-			}
-			outExt = ".jpg"
-		}
-		return &Processed{Data: buf.Bytes(), Ext: outExt}, nil
+		return processRaster(srcBytes, ext, maxEdge)
 
 	case ".gif", ".webp":
 		// Stored verbatim (no re-encode — the Go stdlib has no GIF/WebP
@@ -294,6 +294,39 @@ func Scale(src image.Image, dstW, dstH int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
 	return dst
+}
+
+// processRaster decodes a png/jpeg, downscales it to maxEdge on the long edge,
+// and re-encodes it (PNG stays PNG to preserve alpha; JPEG is re-encoded).
+func processRaster(srcBytes []byte, ext string, maxEdge int) (*Processed, error) {
+	// Full decode doubles as content verification: a "png" that is not really a
+	// PNG fails here, so extension spoofing is impossible.
+	img, err := decodeRaster(srcBytes)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode image: %w", err)
+	}
+
+	bounds := img.Bounds()
+	dst := img
+	if bounds.Dx() > maxEdge || bounds.Dy() > maxEdge {
+		ratio := float64(maxEdge) / float64(max(bounds.Dx(), bounds.Dy()))
+		dstW := max(1, int(float64(bounds.Dx())*ratio))
+		dstH := max(1, int(float64(bounds.Dy())*ratio))
+		dst = Scale(img, dstW, dstH)
+	}
+
+	var buf bytes.Buffer
+	if ext == ".png" {
+		// Keep PNG as PNG to preserve alpha transparency (JPEG has none).
+		if err := png.Encode(&buf, dst); err != nil {
+			return nil, fmt.Errorf("cannot encode png: %w", err)
+		}
+		return &Processed{Data: buf.Bytes(), Ext: ".png"}, nil
+	}
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: JPEGQuality}); err != nil {
+		return nil, fmt.Errorf("cannot encode jpeg: %w", err)
+	}
+	return &Processed{Data: buf.Bytes(), Ext: ".jpg"}, nil
 }
 
 // decodeRaster fully decodes a png/jpeg/gif source after checking its

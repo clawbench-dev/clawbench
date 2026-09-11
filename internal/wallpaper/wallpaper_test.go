@@ -117,6 +117,45 @@ func TestProcess_JPEGReencodedAndSmaller(t *testing.T) {
 	assert.LessOrEqual(t, cfg.Height, MaxLongEdge)
 }
 
+// TestProcessWithMaxEdge_UsesCallerCap pins the explicit-cap API that lets the
+// Bing fetch keep its native 4K while uploads stay at the smaller upload cap.
+func TestProcessWithMaxEdge_UsesCallerCap(t *testing.T) {
+	// 3000 wide: above MaxLongEdge (2048) but below BingMaxLongEdge (3840).
+	src := makePNG(3000, 1000)
+
+	// The default cap still downscales it.
+	byDefault, err := Process(src, "big.png")
+	require.NoError(t, err)
+	defCfg, _, err := image.DecodeConfig(bytes.NewReader(byDefault.Data))
+	require.NoError(t, err)
+	assert.Equal(t, MaxLongEdge, defCfg.Width)
+
+	// An explicit larger cap keeps it at 3000 (not upscaled to the cap).
+	kept, err := ProcessWithMaxEdge(src, "big.png", BingMaxLongEdge)
+	require.NoError(t, err)
+	keptCfg, _, err := image.DecodeConfig(bytes.NewReader(kept.Data))
+	require.NoError(t, err)
+	assert.Equal(t, 3000, keptCfg.Width, "a source under the cap must not be resized")
+
+	// An explicit smaller cap downscales further.
+	small, err := ProcessWithMaxEdge(src, "big.png", 1024)
+	require.NoError(t, err)
+	smallCfg, _, err := image.DecodeConfig(bytes.NewReader(small.Data))
+	require.NoError(t, err)
+	assert.Equal(t, 1024, smallCfg.Width)
+}
+
+// TestProcessWithMaxEdge_NonPositiveFallsBackToDefault guards the zero value:
+// a caller passing 0 must get the safe upload cap rather than no limit at all.
+func TestProcessWithMaxEdge_NonPositiveFallsBackToDefault(t *testing.T) {
+	out, err := ProcessWithMaxEdge(makePNG(3000, 1000), "big.png", 0)
+	require.NoError(t, err)
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(out.Data))
+	require.NoError(t, err)
+	assert.Equal(t, MaxLongEdge, cfg.Width)
+}
+
 func TestProcess_SmallImageNotUpscaled(t *testing.T) {
 	out, err := Process(makePNG(64, 48), "small.png")
 	require.NoError(t, err)

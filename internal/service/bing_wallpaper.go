@@ -219,6 +219,40 @@ func (w *BingWallpaperWorker) work() {
 	}
 }
 
+// bingImageURLs returns the candidate download URLs for one archive entry, most
+// preferred first.
+//
+// Bing's `url` field is only the 1920x1080 variant, which looks soft when a
+// high-DPI display stretches it to fill the window. The same image is served at
+// 3840x2160 from `urlbase` + "_UHD.jpg", so that is preferred; the other forms
+// are fallbacks for the rare entry that has no UHD rendition.
+func bingImageURLs(meta bingArchiveImage) []string {
+	var urls []string
+	add := func(u string) {
+		if u == "" {
+			return
+		}
+		if strings.HasPrefix(u, "/") {
+			u = bingBaseURL + u
+		}
+		for _, existing := range urls {
+			if existing == u {
+				return // avoid retrying an identical URL
+			}
+		}
+		urls = append(urls, u)
+	}
+
+	if meta.URLBase != "" {
+		add(meta.URLBase + "_UHD.jpg")
+	}
+	add(meta.URL)
+	if meta.URLBase != "" {
+		add(meta.URLBase + "_1920x1080.jpg")
+	}
+	return urls
+}
+
 // fetchBingWallpaper resolves and downloads the current Bing image for the
 // given market, returning the state to record on success. On failure the
 // returned state carries only what is known (copyright/title may be empty).
@@ -231,26 +265,32 @@ func fetchBingWallpaper(mkt, today string) (wallpaper.BingState, error) {
 		return wallpaper.BingState{}, err
 	}
 
-	imgURL := meta.URL
-	if imgURL == "" {
-		// Fall back to the documented 1920x1080 variant of urlbase.
-		imgURL = meta.URLBase + "_1920x1080.jpg"
-	}
-	if imgURL == "" {
+	candidates := bingImageURLs(meta)
+	if len(candidates) == 0 {
 		return wallpaper.BingState{}, fmt.Errorf("bing response contained no image url")
 	}
-	if strings.HasPrefix(imgURL, "/") {
-		imgURL = bingBaseURL + imgURL
+
+	// Try each rendition in order: a missing UHD variant must not cost us the
+	// whole day's wallpaper when a lower-resolution copy is still available.
+	var data []byte
+	var lastErr error
+	for _, imgURL := range candidates {
+		data, lastErr = downloadBingImage(ctx, imgURL)
+		if lastErr == nil {
+			break
+		}
+		slog.Warn("bing image download failed, trying next rendition",
+			slog.String("url", imgURL), slog.String("err", lastErr.Error()))
+	}
+	if lastErr != nil {
+		return wallpaper.BingState{}, lastErr
 	}
 
-	data, err := downloadBingImage(ctx, imgURL)
-	if err != nil {
-		return wallpaper.BingState{}, err
-	}
-
-	// Reuse the shared pipeline so the Bing image gets the same validation and
-	// downscaling as an upload.
-	processed, err := wallpaper.Process(data, "bing.jpg")
+	// Reuse the shared pipeline so the Bing image gets the same validation as an
+	// upload, but keep its native 4K size: the source is 3840x2160, and
+	// downscaling it to the upload cap costs more CPU and RAM than encoding the
+	// original while looking softer on hi-DPI displays.
+	processed, err := wallpaper.ProcessWithMaxEdge(data, "bing.jpg", wallpaper.BingMaxLongEdge)
 	if err != nil {
 		return wallpaper.BingState{}, fmt.Errorf("invalid bing image: %w", err)
 	}

@@ -1,7 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +19,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
+
+// bigJPEG encodes a solid-color JPEG of the given size, used to assert how the
+// pipeline resizes an oversized source.
+func bigJPEG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y += 7 {
+		for x := 0; x < w; x += 7 {
+			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 128, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 70}); err != nil {
+		t.Fatalf("encode test jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
 
 // bingTestEnv points model.DataDir at a temp dir and stubs the HTTP client plus
 // the config-persistence callback, returning the recorded Bing states.
@@ -312,6 +333,174 @@ func TestBingWorker_FallsBackToUrlBase(t *testing.T) {
 	}
 	if (*persisted)[0].LastError != "" {
 		t.Errorf("LastError = %q, want empty (urlbase fallback should succeed)", (*persisted)[0].LastError)
+	}
+}
+
+// ── Download URL selection ───────────────────────────────────────────────────
+
+func TestBingImageURLs_PrefersUHD(t *testing.T) {
+	origBase := bingBaseURL
+	bingBaseURL = "https://example.test"
+	t.Cleanup(func() { bingBaseURL = origBase })
+
+	got := bingImageURLs(bingArchiveImage{
+		URL:     "/th?id=OHR.X_1920x1080.jpg&pid=hp",
+		URLBase: "/th?id=OHR.X",
+	})
+
+	// Bing's `url` field is only 1920x1080; the same image is served at
+	// 3840x2160 from urlbase + "_UHD.jpg", which must be tried first.
+	if len(got) == 0 {
+		t.Fatal("no candidate URLs")
+	}
+	if got[0] != "https://example.test/th?id=OHR.X_UHD.jpg" {
+		t.Errorf("first candidate = %q, want the UHD rendition", got[0])
+	}
+	// The lower-resolution forms stay as fallbacks.
+	wantFallbacks := []string{
+		"https://example.test/th?id=OHR.X_1920x1080.jpg&pid=hp",
+		"https://example.test/th?id=OHR.X_1920x1080.jpg",
+	}
+	for _, want := range wantFallbacks {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("candidate list %v is missing fallback %q", got, want)
+		}
+	}
+}
+
+func TestBingImageURLs_WithoutURLBaseUsesURL(t *testing.T) {
+	origBase := bingBaseURL
+	bingBaseURL = "https://example.test"
+	t.Cleanup(func() { bingBaseURL = origBase })
+
+	got := bingImageURLs(bingArchiveImage{URL: "/th?id=only"})
+
+	if len(got) != 1 || got[0] != "https://example.test/th?id=only" {
+		t.Errorf("candidates = %v, want just the url field", got)
+	}
+}
+
+func TestBingImageURLs_EmptyWhenNoImageFields(t *testing.T) {
+	if got := bingImageURLs(bingArchiveImage{}); len(got) != 0 {
+		t.Errorf("candidates = %v, want none", got)
+	}
+}
+
+func TestBingImageURLs_DeduplicatesIdenticalForms(t *testing.T) {
+	origBase := bingBaseURL
+	bingBaseURL = "https://example.test"
+	t.Cleanup(func() { bingBaseURL = origBase })
+
+	// url already is the 1080p variant, so it must not be added twice.
+	got := bingImageURLs(bingArchiveImage{
+		URL:     "/th?id=OHR.X_1920x1080.jpg",
+		URLBase: "/th?id=OHR.X",
+	})
+	seen := map[string]int{}
+	for _, u := range got {
+		seen[u]++
+	}
+	for u, n := range seen {
+		if n > 1 {
+			t.Errorf("url %q appears %d times, want once", u, n)
+		}
+	}
+}
+
+// TestBingWorker_FallsBackWhenUHDFails covers an entry with no UHD rendition:
+// the worker must fall through to the lower-resolution URL rather than losing
+// the whole day's wallpaper.
+func TestBingWorker_FallsBackWhenUHDFails(t *testing.T) {
+	persisted, cleanup := bingTestEnv(t)
+	defer cleanup()
+
+	img := bingTestImage(t)
+	var triedUHD, triedFallback bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "HPImageArchive") {
+			fmt.Fprint(w, `{"images":[{"url":"/img.png","urlbase":"/th?id=nouhd","copyright":"c","title":"t"}]}`)
+			return
+		}
+		if strings.Contains(r.URL.RawQuery, "_UHD") {
+			triedUHD = true
+			http.NotFound(w, r) // no UHD rendition available
+			return
+		}
+		triedFallback = true
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(img)
+	}))
+	defer srv.Close()
+	pointBingAt(t, srv)
+
+	model.ConfigInstance.Appearance.Bing.Enabled = true
+
+	w := NewBingWallpaperWorker()
+	w.work()
+
+	if !triedUHD {
+		t.Error("the UHD rendition was never attempted")
+	}
+	if !triedFallback {
+		t.Error("the worker did not fall back to a lower-resolution URL")
+	}
+	if len(*persisted) != 1 || (*persisted)[0].LastError != "" {
+		t.Errorf("state = %+v, want a successful fetch via fallback", *persisted)
+	}
+}
+
+// TestBingWorker_KeepsNativeResolution pins option A: the Bing image is stored
+// at its native 4K size, while uploads keep the smaller upload cap.
+func TestBingWorker_KeepsNativeResolution(t *testing.T) {
+	_, cleanup := bingTestEnv(t)
+	defer cleanup()
+
+	// A 4000x2000 source: wider than the upload cap (2048) but within the Bing
+	// cap (3840), so it must be downscaled to 3840 — not 2048.
+	img := bigJPEG(t, 4000, 2000)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "HPImageArchive") {
+			fmt.Fprint(w, `{"images":[{"url":"/img.jpg","urlbase":"/th?id=big","copyright":"c","title":"t"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(img)
+	}))
+	defer srv.Close()
+	pointBingAt(t, srv)
+
+	model.ConfigInstance.Appearance.Bing.Enabled = true
+
+	w := NewBingWallpaperWorker()
+	w.work()
+
+	entries, err := os.ReadDir(wallpaper.BingDir())
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no cached bing image: %v", err)
+	}
+	f, err := os.Open(filepath.Join(wallpaper.BingDir(), entries[0].Name()))
+	if err != nil {
+		t.Fatalf("open cached image: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		t.Fatalf("decode cached image: %v", err)
+	}
+
+	if cfg.Width != wallpaper.BingMaxLongEdge {
+		t.Errorf("cached width = %d, want %d (native-ish 4K, not the upload cap %d)",
+			cfg.Width, wallpaper.BingMaxLongEdge, wallpaper.MaxLongEdge)
+	}
+	if cfg.Width == wallpaper.MaxLongEdge {
+		t.Error("the Bing image was downscaled to the upload cap — option A regressed")
 	}
 }
 
