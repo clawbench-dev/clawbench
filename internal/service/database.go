@@ -734,11 +734,38 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add title_renamed column. Set to 1 when the user manually renames
 	// a session, so the first-message auto-title does not overwrite their choice.
+	// DEPRECATED: superseded by title_source below; retained for old readers only.
 	var hasTitleRenamed int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_renamed'").Scan(&hasTitleRenamed)
 	if hasTitleRenamed == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_renamed INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add title_renamed column: %w", err)
+		}
+	}
+
+	// Migrate: add title_source column — the source/priority of the session
+	// title: 'placeholder' (auto placeholder like "New Session 3", replaceable
+	// by the first message) < 'auto' (derived from the first user message) <
+	// 'custom' (deliberately chosen: manual rename, meaningful title at
+	// creation, task name, fork, imported title). A write may only overwrite a
+	// title of strictly lower rank, so a custom title is never clobbered by the
+	// first-message auto-title. This replaces title_renamed as the source of
+	// truth (see the deprecation note on title_renamed above).
+	var hasTitleSource int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_source'").Scan(&hasTitleSource)
+	if hasTitleSource == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add title_source column: %w", err)
+		}
+		// Backfill existing rows: title_renamed=1 -> custom; otherwise a session
+		// with at least one user message was auto-titled -> auto; a session with
+		// no user messages still holds its creation placeholder -> placeholder.
+		// (title_renamed alone cannot distinguish placeholder from auto.)
+		if _, err := WriteExec(`UPDATE chat_sessions SET title_source = CASE
+			WHEN title_renamed = 1 THEN 'custom'
+			WHEN EXISTS (SELECT 1 FROM chat_history h WHERE h.session_id = chat_sessions.id AND h.role = 'user') THEN 'auto'
+			ELSE 'placeholder' END`); err != nil {
+			return fmt.Errorf("failed to backfill title_source: %w", err)
 		}
 	}
 

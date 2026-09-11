@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -399,19 +400,18 @@ func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
 	assert.False(t, renamed, "auto-titled sessions must not be marked as renamed")
 }
 
-// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the placeholder title path
-// leaves the lock untouched, so first-message auto-titling still applies.
-func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
+// TestAutoTitleAppliesToPlaceholderSource verifies the placeholder source path
+// (plain CreateSession) leaves the title replaceable, so first-message
+// auto-titling still applies.
+func TestAutoTitleAppliesToPlaceholderSource(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
-	require.NoError(t, service.UpdateSessionTitle(sid, "Placeholder Title"))
-
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	require.NoError(t, err)
 	assert.False(t, renamed)
 
-	// Because it was not locked, the first message may still auto-title it.
+	// Because it is only a placeholder, the first message may auto-title it.
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites placeholder", nil, false, "NewSession")
 	assert.NoError(t, err)
 	title, err := service.GetSessionTitle(sid)
