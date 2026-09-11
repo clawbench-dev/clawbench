@@ -38,9 +38,9 @@ rag:
   api_key: ""
   chunk_size: 512
   chunk_overlap: 64
-  poll_interval: "10s"
-  batch_size: 10
-  search_limit: 20
+  poll_interval: "5s"
+  batch_size: 50
+  search_limit: 100
   search_pool_size: 20
   retention_days: 90
 ```
@@ -52,9 +52,9 @@ rag:
 | `api_key` | empty | Optional cloud-service credential |
 | `chunk_size` | `512` | Tokens per chunk |
 | `chunk_overlap` | `64` | Overlap between adjacent chunks |
-| `poll_interval` | `10s` | Indexer polling interval |
-| `batch_size` | `10` | Messages processed per batch |
-| `search_limit` | `20` | Default result count |
+| `poll_interval` | `5s` | Indexer polling interval |
+| `batch_size` | `50` | Messages processed per batch (hot-reloadable) |
+| `search_limit` | `100` | Default result count |
 | `search_pool_size` | `20` | Candidates per source before RRF fusion |
 | `retention_days` | `90` | Soft-deleted data retention; `0` keeps data forever |
 

@@ -7,7 +7,7 @@
  * - Single active instance across screen
  * - Request generation tracking & AbortController to prevent race conditions
  * - Deduplication and LRU caching (previewCache)
- * - Switch: markdownCodeLinkPreview (default false)
+ * - Switch: markdownCodeLinkPreview (default true)
  * - Touch detection ((hover: none), (pointer: coarse))
  */
 

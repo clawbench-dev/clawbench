@@ -68,6 +68,25 @@ sequenceDiagram
 
 ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写入文件）。系统通过 WebSocket 推送 `permission_pending` 事件，前端离线时缓冲事件等待重连。用户批准或拒绝后，前端调用 `/api/ai/permission/respond` 回传结果，系统将响应转发给 ACP 连接。未决的审批请求不会被会话切换/回合结束取消——权限保留到用户响应或 agent 连接死亡时自动清理，避免"审批永远失效"。
 
+### 子智能体内容分组链路
+
+```mermaid
+sequenceDiagram
+    participant Agent as ACP Agent
+    participant 后端 as extractParentToolCallID
+    participant 累加 as AccumulateBlock
+    participant 前端 as ContentBlocks
+
+    Agent->>后端: 子智能体 content/thinking/tool<br/>_meta[parentToolCallId]
+    后端->>后端: 按后端归一化提取父 id
+    后端->>累加: StreamEvent.ParentToolCallID
+    累加->>累加: 子块不并入父 / 不跨父合并 thinking
+    累加->>前端: ContentBlock + WS parent_tool_call_id
+    前端->>前端: 按父 id 分块，折叠进父 Agent 卡片
+```
+
+父 Agent 卡片就是那条发起子智能体的工具调用（前端渲染为 Agent 胶囊）。子智能体产出的 thinking/text/tool 全部收进同一张卡片，折叠时只显示步数摘要、展开才挂载并递归复用主渲染组件——这样一条"派发多个子智能体并行探索"的长轨迹不会淹没主对话。归属靠 Agent 在 `_meta` 上打的父工具调用 id 精确判定，不靠时间窗口推断。
+
 ## 功能与设计要点
 
 ### 功能清单
@@ -86,6 +105,7 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
 - **ACP 计划模式**：ACP 后端在执行前展示计划（步骤列表），用户可以跟踪进度。让用户理解 AI 将要做什么，而非只能看到结果
+- **子智能体内容分组**：当 ACP Agent 派生子智能体（如 CodeBuddy 的 Task/Agent 工具、Claude/Codex 的子线程）时，子智能体产出的 thinking/text/工具调用不再平铺进主对话，而是收进发起它的那条父 Agent 卡片内——折叠态只显示「N 步」摘要胶囊，展开才递归渲染完整子轨迹。父卡片与普通工具胶囊交互一致（步数 + chevron 内联），展开后底部带"收起"footer（长轨迹滚到底可直接收起），收起时锚定视口避免长内容骤减导致跳动；子 thinking 走惰性加载。归属由后端从 `_meta` 提取的父工具调用 id 精确判定（CodeBuddy 扁平键 / Claude·Qoder 嵌套键），前端按父 id 分块；孤儿或嵌套子块回退扁平渲染不丢内容。让"派发多个子智能体并行探索"这类长轨迹保持可读，用户按需下钻
 - **thinking 惰性加载**：流结束后 thinking Block 被拆分到独立的 `chat_thinking` 表，前端只显示缩略 Block。用户展开时才通过 `GET /api/ai/chat/thinking` 按需加载全文——减少长思考过程对聊天视图的视觉占用
 - **工具调用耗时展示**：每个工具调用的执行时长追踪并持久化到 `chat_tool_calls.duration_ms`，前端在工具详情抽屉中展示耗时。用户可以理解 AI 各步骤的时间分布，判断"哪个工具最慢"
 - **@chatsearch / @task 命令注入**：用户消息以 `@chatsearch ` 或 `@task ` 开头时，后端 `processAtCommand()`（`internal/handler/at_command.go`）检测并替换为模板指令——`@chatsearch` 注入 `rag search` CLI 用法（模板含 `{{CLAWBENCH_BIN}}`、`{{PROJECT_PATH}}`、`{{SESSION_ID}}` 等占位符），`@task` 注入 `task` CLI 用法。前端 `extractAtCommand()`（`web/src/utils/contentBlocks.ts`）检测相同前缀，将命令部分渲染为紫色徽章（`<span class="at-command-badge">`），`ChatInputBar.vue` 提供自动补全
@@ -100,8 +120,9 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **推荐回复横幅**：AI 回复完成后在输入栏上方展示推荐横幅，可展开/折叠。横幅不遮挡输入区域，折叠后仅显示一行摘要
 - **快捷发送菜单**：空输入时点击发送按钮弹出快捷菜单，选择预设 prompt 一键发送。与已有快捷发送功能互补，提供更轻量的入口
 - **ACP 斜杠命令自动补全**：ACP 后端的斜杠命令在输入栏自动补全，用户输入 `/` 时弹出匹配的命令列表，减少记忆负担
-- **上下文用量弹窗**：显示 token 使用详情（输入/输出/缓存），帮助用户了解当前会话的上下文消耗情况，决定是否需要压缩或新建会话。流式过程中扩展字段（缓存读/缓存命中/信用额度/分类用量）采用"有值覆盖"而非"全量快照"语义——CodeBuddy 一轮内推送多个 usage_update 通知、各带一部分扩展字段，有值覆盖保证收到部分通知时面板不闪回最简视图
-- **ACP _meta 扩展元信息展示**：ACP Agent 通过 `_meta` 字段携带异构的 token/成本/追踪信息（CodeBuddy 的 OpenAI 风格 usage + cache split + credit、Claude/Codex 的 `_meta.quota` 分项、OpenCode 走标准 usage_update），后端按 agent 适配器解析并归一化，持久化到 `chat_metadata` 扩展列（缓存读/写 token、thought token、cache 分类、credit、request/trace ID、模型名、stop reason 等）。前端上下文面板、Token 明细与消息详情弹窗集中展示——缓存命中行与缓存读同值但标签区分，另展示缓存命中率（hit/(hit+miss)）。让用户理解每次 AI 回复的真实模型、用量分项与成本，而不只是一个大致的 token 数
+- **上下文用量弹窗**：显示 token 使用详情（输入/输出/缓存），帮助用户了解当前会话的上下文消耗情况，决定是否需要压缩或新建会话。流式过程中 ACP usage 采用「最新完整快照」语义——CodeBuddy 一轮内推送多个 usage_update 通知、各带一部分扩展字段，带 token 计数的完整快照整体替换、纯 cost 裸通知永不覆盖，保证面板收到部分通知时不闪回最简视图、token 行始终内部自洽（累计型 counter 不被逐字段拼接），使下游用量统计 SUM 聚合有意义
+- **ACP _meta 扩展元信息展示**：ACP Agent 通过 `_meta` 字段携带异构的 token/成本/追踪信息（CodeBuddy 的 OpenAI 风格 usage + cache split + credit、Claude/Codex 的 `_meta.quota` 分项、OpenCode 走标准 usage_update），后端按 agent 适配器解析并归一化，持久化到 `chat_metadata` 扩展列（缓存读/写 token、thought token、cache 分类、credit、request/trace ID、模型名、stop reason 等）。前端上下文面板、Token 明细与消息详情弹窗集中展示——缓存命中行与缓存读同值但标签区分，另展示缓存命中率（hit/(hit+miss)）。让用户理解每次 AI 回复的真实模型、用量分项与成本，而不只是一个大致的 token 数。这些逐条用量行同时是[数据统计面板](../features/usage-stats.md)的数据源——按项目对 `chat_metadata` 做维度聚合
+- **消息回溯（Rewind）**：助手消息行内按钮（`POST /api/ai/session/rewind`）把会话历史**原址截断**到锚点 assistant 消息——事务删除其后全部 `chat_history` 及子表行（raw/tool_calls/thinking/summaries/recommendations），并清理对应 RAG 索引分块（RAG purge 在写锁释放后进行，避免自死锁）；`chat_metadata` 用量台账**刻意保留**——被回溯的轮次真实消耗过 token/成本，删掉会少计用量，而重发会生成新 message id 故不会双计；随后取消运行中的流、清空外部会话映射并回收 agent 连接，重启为全新 AI 会话——下次发送靠 fork-context 注入把保留的历史喂给新会话。被删除的最近一条用户消息文本回传给前端预填输入框，用户可重新编辑这条问题再发。锚点须为非流式 assistant 消息且有后续消息（无可回溯内容时返回错误、前端禁用最后一条按钮）。与「会话重置」不同：重置保留历史只回收卡死进程，Rewind 物理删除历史——解决"AI 从某处走偏，想删掉其后垃圾重来但保留此前上下文"的需求
 - **Compact 按钮**：上下文使用率 ≥ 75% 时显示 Compact 按钮，一键发送 `/compact` 命令压缩上下文。降低用户手动管理上下文的认知负担
 - **模式长按切换自动审批**：长按模式芯片切换自动审批，无需每次工具调用都手动确认。适合信任 AI 操作的进阶用户
 - **会话重置**：AI 错误/警告横幅上的"重置会话"按钮（`POST /api/ai/session/reset`）解决 ACP 会话卡死——当一轮交互以"工具已批准但从未执行"的悬挂状态结束时，后续 prompt 会毫秒级空响应。重置**刻意保留外部会话 ID 映射**，只回收卡死的 agent 进程，下一次 prompt 通过 ResumeSession 重新附着同一 agent 会话，对话上下文与聊天历史完整保留；前端确认后自动重发最后一条用户消息
@@ -115,7 +136,8 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **排队消息持久化到 DB**：排队消息在入队时即写入 `chat_history`（`queued=1` 标记 + 队列 ID），由 drain loop 原子出队（写锁事务下翻转 `queued=0` 为普通会话记录）。相比纯内存队列，排队状态有数据库权威记录——历史加载、取消队列（按 `queue_id` 删除）、前端乐观 pending 气泡都以 `queued` 状态为准对齐，drain 循环与前端不会出现"消息已发但队列不知情"的分歧
 - **归档保留 RAG 可搜索性**：归档的会话和消息标记 `archived=1` 而非物理删除，RAG 索引仍可检索到，用户可通过会话搜索恢复归档的会话——历史知识不应因用户整理而丢失
 - **单 WS 通道统一推送**：聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）和系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）共用 `/api/ai/events/ws`，由 `StreamHub`（`internal/ws/stream_hub.go`）做会话级扇出。同一 session 可被多客户端同时订阅；客户端通过 `subscribe` 消息加入，`unsubscribe` 退出
-- **前端 Block 合并**：连续的 text/thinking 事件在 `AccumulateBlock` 中向后搜索同类型块进行合并，tool_use 作为自然边界——减少 DOM 更新频率，提升渲染性能。ACP 子代理完整重放产生的重复文本块通过前缀匹配去重，避免子代理回放时在 UI 中出现重复内容
+- **前端 Block 合并**：连续的 text/thinking 事件在 `AccumulateBlock` 中向后搜索同类型块进行合并，tool_use 作为自然边界——减少 DOM 更新频率，提升渲染性能。ACP 子代理完整重放产生的重复文本块通过前缀匹配去重，避免子代理回放时在 UI 中出现重复内容。父工具调用 id 是合并的硬边界：子 thinking 不并入父、连续 thinking 合并不跨父——否则子智能体的思考会被缝进父的思考块，分组信息丢失
+- **子智能体归属用精确键而非窗口推断**：Agent 在 `_meta` 上主动标记父工具调用 id，是协议层给的可信归属信号；若靠"某段内容出现在某工具调用之后"推断，长回合中并行子智能体的内容会互相错配。因此后端只在标记存在时分组，缺失时回退扁平渲染——宁可少分组，不可错分组
 - **自动摘要固定提取结论**：`summarizeMessage` 统一调度入口从消息 Block 中直接提取最后回答文本（`ExtractLastAnswerFromBlocks`，同步、无 AI 调用），聊天与定时任务行为一致。摘要结果存入统一的 `summaries` 表（含 `summary_cards` 列），通过 WS `summary_update` 事件推送（含 SummaryCards 结构化卡片元数据）——摘要生成与聊天流解耦，不影响流式体验
 - **SessionExecutor 统一执行引擎**：交互式聊天和定时任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑
 - **分叉上下文仅截断工具输出**：`buildForkContext` 从原始消息读取（`GetMessagesBySessionIDRaw`——不走会剥离已摘要 assistant 回复 content blocks 的路径），仅截断工具调用的输出（`truncateRunes` 截断到 500 runes），避免工具输出过长撑爆分叉会话的上下文窗口。分叉标题由源会话标题 + emoji 前缀派生
