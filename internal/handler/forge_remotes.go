@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // gitRemote is a named git remote and its fetch URL.
@@ -15,7 +17,10 @@ type gitRemote struct {
 // fetch remotes. Returns an error when the project is not a git repository or
 // git is unavailable.
 func listGitRemotes(projectPath string) ([]gitRemote, error) {
-	cmd := exec.Command("git", "remote", "-v")
+	// Bound the call: a hung git (e.g. a stale lock) must not stall the request.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "remote", "-v")
 	cmd.Dir = projectPath
 	out, err := cmd.Output()
 	if err != nil {

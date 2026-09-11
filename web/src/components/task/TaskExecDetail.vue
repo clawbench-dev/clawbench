@@ -8,6 +8,11 @@
 
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
+      <!-- Trigger source: links an event-triggered run back to its issue/PR. -->
+      <a v-if="execDetail?.eventUrl" class="exec-event-source" :href="execDetail.eventUrl" target="_blank" rel="noopener noreferrer">
+        <Zap :size="12" />
+        <span>{{ t('task.exec.eventTriggeredFrom') }}</span>
+      </a>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -88,7 +93,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, Square } from 'lucide-vue-next'
+import { MessageSquare, Square, Zap } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -661,6 +666,24 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 12px 0;
+}
+
+/* Trigger source link for event-triggered runs. */
+.exec-event-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 12px 10px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--bg-secondary, #f3f4f6);
+  color: var(--text-secondary, #4b5563);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.exec-event-source:hover {
+  color: var(--accent, #2563eb);
 }
 
 /* Fixed bottom action bar */

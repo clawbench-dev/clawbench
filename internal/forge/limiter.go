@@ -229,7 +229,7 @@ func (l *Limiter) WrapError(host string, err error) error {
 	if errors.As(err, &fe) {
 		if fe.Kind == ErrKindRateLimit {
 			l.ObserveRateLimit(host, fe.RetryAfterSeconds)
-			return fmt.Errorf("%w: %v", ErrRateLimited, err)
+			return fmt.Errorf("%w: %w", ErrRateLimited, err)
 		}
 	}
 	return err

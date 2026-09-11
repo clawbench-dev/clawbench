@@ -43,7 +43,7 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 		// Refuse to store a credential for a host that is unsafe to contact, so
 		// the token can never be pointed at loopback/private/metadata addresses.
 		if err := checkForgeHostAllowed(host); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
 			return
 		}
 		if err := setForgeToken(host, req.Token); err != nil {
@@ -51,7 +51,7 @@ func ServeForgeCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"host":      host,
+			jsonHost:    host,
 			"has_token": req.Token != "",
 		})
 	case http.MethodDelete:

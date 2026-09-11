@@ -41,8 +41,6 @@ type Provider struct {
 	token   string
 	project string // URL-encoded namespace/project path
 	client  *http.Client
-	// projectID is resolved lazily from the project path when needed.
-	projectID string
 }
 
 // New builds a GitLab provider scoped to a single namespace/project path.
@@ -103,7 +101,7 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 	}
 
 	var raw []gitlabItem
-	resp, err := p.getRaw(ctx, path, q, &raw)
+	hdr, err := p.getRaw(ctx, path, q, &raw)
 	if err != nil {
 		return forge.ListResult{}, err
 	}
@@ -111,7 +109,7 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 	for i := range raw {
 		items = append(items, raw[i].toItem(opts.Type))
 	}
-	return listResult(items, resp), nil
+	return listResult(items, hdr), nil
 }
 
 // GetItem returns a single issue or merge request.
@@ -182,13 +180,15 @@ func (p *Provider) get(ctx context.Context, path string, q url.Values, out any) 
 	return err
 }
 
-// getRaw performs a GET and returns the raw response alongside the decoded body.
-func (p *Provider) getRaw(ctx context.Context, path string, q url.Values, out any) (*http.Response, error) {
+// getRaw performs a GET and returns the response headers (for pagination) after
+// decoding the body. The body is fully consumed and closed before returning, so
+// no caller holds an open response.
+func (p *Provider) getRaw(ctx context.Context, path string, q url.Values, out any) (http.Header, error) {
 	u := p.baseURL + path
 	if len(q) > 0 {
 		u += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, &forge.Error{Kind: forge.ErrKindNetwork, Message: err.Error(), Err: err}
 	}
@@ -201,18 +201,18 @@ func (p *Provider) getRaw(ctx context.Context, path string, q url.Values, out an
 	if err != nil {
 		return nil, &forge.Error{Kind: forge.ErrKindNetwork, Message: err.Error(), Err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return resp, p.classifyError(resp, body)
+		return resp.Header, p.classifyError(resp, body)
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return resp, &forge.Error{Kind: forge.ErrKindUnknown, Message: "decode response: " + err.Error(), Err: err}
+			return resp.Header, &forge.Error{Kind: forge.ErrKindUnknown, Message: "decode response: " + err.Error(), Err: err}
 		}
 	}
-	return resp, nil
+	return resp.Header, nil
 }
 
 // classifyError maps a non-2xx GitLab response to a forge.Error.
@@ -406,12 +406,12 @@ func perPageOrDefault(n int) int {
 }
 
 // listResult derives pagination state from GitLab's X-Next-Page header.
-func listResult(items []forge.Item, resp *http.Response) forge.ListResult {
+func listResult(items []forge.Item, hdr http.Header) forge.ListResult {
 	res := forge.ListResult{Items: items}
-	if resp == nil {
+	if hdr == nil {
 		return res
 	}
-	if next := resp.Header.Get("X-Next-Page"); next != "" {
+	if next := hdr.Get("X-Next-Page"); next != "" {
 		if n, err := strconv.Atoi(next); err == nil && n > 0 {
 			res.HasMore = true
 			res.NextPage = n

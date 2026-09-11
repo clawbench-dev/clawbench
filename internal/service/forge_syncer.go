@@ -95,11 +95,41 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 		since = watermark.Add(-s.overlapWindow)
 	}
 
-	maxUpdated := watermark
-	itemsSeen := 0
-
 	// Drain both item types. The issues endpoint excludes PRs (github adapter)
 	// and GitLab serves them separately, so both must be fetched.
+	maxUpdated, itemsSeen, err := s.drainAllTypes(ctx, provider, repoKey, repoRef, remote, since, firstSync, opts)
+	if err != nil {
+		return err
+	}
+
+	if err := s.advanceWatermark(repoKey, watermark, maxUpdated, firstSync); err != nil {
+		return err
+	}
+
+	slog.Debug(
+		"forge sync complete",
+		slog.String("repo", repoRef.Key()),
+		slog.Int("items", itemsSeen),
+		slog.Bool("first_sync", firstSync),
+	)
+	return nil
+}
+
+// drainAllTypes pages through every item type, processing each item and
+// tracking the newest updated_at seen. The watermark is NOT advanced here: the
+// caller only advances it once every page has been consumed, so a mid-pagination
+// failure leaves the window intact for the next run.
+func (s *ForgeSyncer) drainAllTypes(
+	ctx context.Context,
+	provider forge.Provider,
+	repoKey ForgeRepoKey,
+	repoRef ForgeRepoRef,
+	remote forge.Remote,
+	since time.Time,
+	firstSync bool,
+	opts SyncOptions,
+) (maxUpdated time.Time, itemsSeen int, err error) {
+	maxUpdated = since
 	for _, typ := range []forge.ItemType{forge.ItemTypeIssue, forge.ItemTypeChangeRequest} {
 		page := 1
 		for {
@@ -113,8 +143,7 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 				Direction: "asc",
 			})
 			if err != nil {
-				// Do not advance the watermark: the window was not fully read.
-				return fmt.Errorf("list %s page %d: %w", typ, page, err)
+				return time.Time{}, itemsSeen, fmt.Errorf("list %s page %d: %w", typ, page, err)
 			}
 
 			for _, item := range res.Items {
@@ -123,7 +152,7 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 					maxUpdated = item.UpdatedAt
 				}
 				if err := s.processItem(ctx, provider, repoKey, repoRef, remote, typ, item, firstSync, opts); err != nil {
-					return err
+					return time.Time{}, itemsSeen, err
 				}
 			}
 
@@ -136,25 +165,23 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 			}
 		}
 	}
+	return maxUpdated, itemsSeen, nil
+}
 
-	// Advance the watermark only now that every page has been consumed.
-	if !maxUpdated.IsZero() && maxUpdated.After(watermark) {
+// advanceWatermark moves the stored watermark forward, or initializes it on a
+// first sync that saw no items (so history is not re-fetched forever).
+func (s *ForgeSyncer) advanceWatermark(repoKey ForgeRepoKey, prev, maxUpdated time.Time, firstSync bool) error {
+	if !maxUpdated.IsZero() && maxUpdated.After(prev) {
 		if err := SetForgeSyncWatermark(repoKey, maxUpdated); err != nil {
 			return fmt.Errorf("advance watermark: %w", err)
 		}
-	} else if firstSync {
-		// A first sync with no items still records "now" so history is not
-		// re-fetched forever.
+		return nil
+	}
+	if firstSync {
 		if err := SetForgeSyncWatermark(repoKey, s.now().UTC()); err != nil {
 			return fmt.Errorf("init watermark: %w", err)
 		}
 	}
-
-	slog.Debug("forge sync complete",
-		slog.String("repo", repoRef.Key()),
-		slog.Int("items", itemsSeen),
-		slog.Bool("first_sync", firstSync),
-	)
 	return nil
 }
 

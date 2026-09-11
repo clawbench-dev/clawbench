@@ -11,6 +11,7 @@ import (
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- ServeAgents ----------
@@ -193,6 +194,73 @@ func TestServeTasks_Post(t *testing.T) {
 	var result map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &result)
 	assert.Equal(t, true, result["ok"])
+}
+
+// TestServeTasks_PostEventTask verifies an event-triggered task can be created
+// without a cron expression, which the cron path would reject.
+func TestServeTasks_PostEventTask(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":         "On new PR",
+		"agent_id":     "coder",
+		"prompt":       "Review it",
+		"trigger_mode": "event",
+		"event_types":  "opened,commented",
+		"event_repo":   "github|github.com|acme/widgets",
+		// Deliberately no cron_expr.
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	task, _ := result["task"].(map[string]any)
+	require.NotNil(t, task)
+	assert.Equal(t, "event", task["triggerMode"])
+	assert.Equal(t, "opened,commented", task["eventTypes"])
+	assert.Equal(t, "github|github.com|acme/widgets", task["eventRepo"])
+}
+
+// TestServeTasks_PostEventTaskNeedsEventTypes guards the validation: an event
+// task with no subscription must be rejected rather than silently never firing.
+func TestServeTasks_PostEventTaskNeedsEventTypes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":         "Bad",
+		"agent_id":     "coder",
+		"prompt":       "x",
+		"trigger_mode": "event",
+		// No event_types.
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
 }
 
 func TestServeTasks_PostMissingFields(t *testing.T) {

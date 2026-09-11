@@ -84,36 +84,12 @@ func ParseRemoteURL(raw string) (Remote, error) {
 		return Remote{}, ErrInvalidRemote
 	}
 
-	path = strings.Trim(path, "/")
-	path = strings.TrimSuffix(path, ".git")
-	if path == "" {
-		return Remote{}, ErrInvalidRemote
+	segments, err := remotePathSegments(path)
+	if err != nil {
+		return Remote{}, err
 	}
 
-	segments := strings.Split(path, "/")
-	for _, seg := range segments {
-		if seg == "" {
-			return Remote{}, ErrInvalidRemote
-		}
-		// GitLab reserves "-" as the web-UI path separator; it can never be a
-		// namespace or repository name, so its presence means this is a web URL
-		// (e.g. /group/repo/-/tree/main) rather than a clone URL.
-		if seg == "-" {
-			return Remote{}, ErrInvalidRemote
-		}
-	}
-	if len(segments) < 2 {
-		return Remote{}, ErrInvalidRemote
-	}
-
-	platform := PlatformGitLab
-	hostname := host
-	if i := strings.LastIndex(hostname, ":"); i >= 0 {
-		hostname = hostname[:i]
-	}
-	if hostname == GitHubHost {
-		platform = PlatformGitHub
-	}
+	platform := platformForHost(host)
 
 	// GitHub namespaces are always a single owner segment. A deeper path means
 	// this is not a GitHub clone URL (e.g. a /tree/main web URL).
@@ -128,6 +104,47 @@ func ParseRemoteURL(raw string) (Remote, error) {
 	}
 
 	return Remote{Platform: platform, Host: host, Owner: owner, Repo: repo}, nil
+}
+
+// remotePathSegments splits and validates a remote's path into namespace/repo
+// segments. It rejects empty segments, GitLab's web-UI "-" separator, and paths
+// too shallow to identify a repository.
+func remotePathSegments(path string) ([]string, error) {
+	path = strings.Trim(path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	if path == "" {
+		return nil, ErrInvalidRemote
+	}
+
+	segments := strings.Split(path, "/")
+	for _, seg := range segments {
+		if seg == "" {
+			return nil, ErrInvalidRemote
+		}
+		// GitLab reserves "-" as the web-UI path separator; it can never be a
+		// namespace or repository name, so its presence means this is a web URL
+		// (e.g. /group/repo/-/tree/main) rather than a clone URL.
+		if seg == "-" {
+			return nil, ErrInvalidRemote
+		}
+	}
+	if len(segments) < 2 {
+		return nil, ErrInvalidRemote
+	}
+	return segments, nil
+}
+
+// platformForHost maps a host to its forge platform. The port is stripped
+// before comparison so "github.com:443" is still recognized.
+func platformForHost(host string) Platform {
+	hostname := host
+	if i := strings.LastIndex(hostname, ":"); i >= 0 {
+		hostname = hostname[:i]
+	}
+	if hostname == GitHubHost {
+		return PlatformGitHub
+	}
+	return PlatformGitLab
 }
 
 // splitRemote extracts the host and path from a supported remote form.
@@ -152,12 +169,12 @@ func splitRemote(raw string) (host, path string, err error) {
 	// scp-like form: [user@]host:path
 	if at := strings.Index(raw, "@"); at >= 0 {
 		rest := raw[at+1:]
-		colon := strings.Index(rest, ":")
-		if colon <= 0 {
+		h, p, found := strings.Cut(rest, ":")
+		if !found || h == "" {
 			return "", "", ErrUnsupportedRemote
 		}
-		host = rest[:colon]
-		path = rest[colon+1:]
+		host = h
+		path = p
 		if host == "" || path == "" {
 			return "", "", ErrInvalidRemote
 		}

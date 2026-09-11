@@ -46,6 +46,51 @@
 
       <div class="form-section">
         <h3 class="section-title">{{ t('task.form.scheduleInfo') }}</h3>
+        <!-- Trigger mode: cron schedule or forge event -->
+        <div class="form-group">
+          <label class="form-label">{{ t('task.form.triggerMode') }}</label>
+          <div class="preset-buttons">
+            <button class="preset-btn" :class="{ active: form.triggerMode !== 'event' }" @click="form.triggerMode = 'cron'">
+              {{ t('task.form.triggerCron') }}
+            </button>
+            <button class="preset-btn" :class="{ active: form.triggerMode === 'event' }" @click="form.triggerMode = 'event'">
+              {{ t('task.form.triggerEvent') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Event configuration (event mode) -->
+        <template v-if="form.triggerMode === 'event'">
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventTypes') }}</label>
+            <div class="event-type-checks">
+              <label v-for="et in eventTypeOptions" :key="et.value" class="checkbox-label">
+                <input type="checkbox" :value="et.value" v-model="selectedEventTypes" />
+                <span>{{ et.label }}</span>
+              </label>
+            </div>
+            <div v-if="errors.eventTypes" class="form-error">{{ errors.eventTypes }}</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventRepo') }}</label>
+            <select class="form-select" v-model="form.eventRepo">
+              <option value="">{{ t('task.form.eventRepoAny') }}</option>
+              <option v-for="repo in boundRepos" :key="repo.value" :value="repo.value">{{ repo.label }}</option>
+            </select>
+            <div class="form-hint">{{ t('task.form.eventRepoHint') }}</div>
+          </div>
+
+          <!-- Read-only event context block: shows exactly what will be injected.
+               Not editable — the variables are filled from the triggering event. -->
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventContext') }}</label>
+            <pre class="event-context-block">{{ eventContextTemplate }}</pre>
+            <div class="form-hint">{{ t('task.form.eventContextHint') }}</div>
+          </div>
+        </template>
+
+        <template v-else>
         <!-- Frequency preset -->
         <div class="form-group">
           <label class="form-label">{{ t('task.form.frequency') }}</label>
@@ -177,6 +222,7 @@
           <label class="form-label">{{ t('task.form.maxRuns') }}</label>
           <input type="number" class="form-input" v-model.number="form.maxRuns" min="1" />
         </div>
+        </template>
       </div>
 
       <div class="form-section flex-fill">
@@ -226,6 +272,7 @@ import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
+import { fetchForgeBinding } from '@/utils/forgeApi'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -265,6 +312,66 @@ function handleAgentSelect(agentId) {
 const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
   mode: computed(() => props.mode),
   onSuccess: (taskId) => emit('saved', taskId),
+})
+
+// ── Event trigger configuration ──
+// The event-type list mirrors the backend's validForgeEventTypes set.
+const eventTypeOptions = computed(() => [
+  { value: 'opened', label: t('task.form.eventOpened') },
+  { value: 'closed', label: t('task.form.eventClosed') },
+  { value: 'merged', label: t('task.form.eventMerged') },
+  { value: 'reopened', label: t('task.form.eventReopened') },
+  { value: 'commented', label: t('task.form.eventCommented') },
+  { value: 'pipeline_done', label: t('task.form.eventPipeline') },
+])
+
+// selectedEventTypes is a view over form.eventTypes (comma-separated).
+const selectedEventTypes = computed({
+  get: () => (form.value.eventTypes ? form.value.eventTypes.split(',').map(s => s.trim()).filter(Boolean) : []),
+  set: (vals) => { form.value.eventTypes = vals.join(',') },
+})
+
+// The project has at most one binding (1:1), so the repo scope is a two-way
+// choice: any bound repo of the project, or an explicit one. We offer the
+// project's binding when it exists.
+const boundRepos = ref([])
+
+async function loadBoundRepos() {
+  try {
+    const res = await fetchForgeBinding()
+    const b = res.binding
+    if (b) {
+      const key = `${b.platform}|${b.host}|${b.owner}/${b.repo}`
+      boundRepos.value = [{ value: key, label: `${b.owner}/${b.repo}` }]
+    } else {
+      boundRepos.value = []
+    }
+  } catch {
+    boundRepos.value = []
+  }
+}
+
+// The read-only context block mirrors the backend's EventPromptTemplate: only
+// variables relevant to the selected event types are listed.
+const eventContextTemplate = computed(() => {
+  const types = selectedEventTypes.value
+  const showAll = types.length === 0
+  const show = (scoped) => showAll || !scoped || types.includes(scoped)
+  const lines = [
+    `- ${t('task.form.varEventType')}：{{EVENT_TYPE}}`,
+    `- ${t('task.form.varRepo')}：{{REPO}}`,
+    `- ${t('task.form.varItem')}：{{ITEM_TYPE}} #{{ITEM_NUMBER}}`,
+    `- ${t('task.form.varTitle')}：{{TITLE}}`,
+    `- ${t('task.form.varUrl')}：{{URL}}`,
+    `- ${t('task.form.varAuthor')}：{{AUTHOR}}`,
+    `- ${t('task.form.varState')}：{{STATE}}`,
+  ]
+  if (show('commented')) lines.push(`- ${t('task.form.varCommentBody')}：{{COMMENT_BODY}}`)
+  if (show('pipeline_done')) {
+    lines.push(`- ${t('task.form.varPipelineStatus')}：{{PIPELINE_STATUS}}`)
+    lines.push(`- ${t('task.form.varPipelineUrl')}：{{PIPELINE_URL}}`)
+  }
+  return `## ${t('task.form.eventContextHeader')}\n${lines.join('\n')}`
 })
 
 // Frequency preset
@@ -355,7 +462,10 @@ function validateForm() {
   if (!form.value.name.trim()) e.name = t('task.form.nameRequired')
   if (!form.value.agentId) e.agentId = t('task.form.agentRequired')
   if (!form.value.prompt.trim()) e.prompt = t('task.form.promptRequired')
-  if (preset.value === 'custom' && !customCron.value.trim()) {
+  if (form.value.triggerMode === 'event') {
+    // An event task must subscribe to at least one event type.
+    if (selectedEventTypes.value.length === 0) e.eventTypes = t('task.form.eventTypesRequired')
+  } else if (preset.value === 'custom' && !customCron.value.trim()) {
     e.cronExpr = t('task.form.cronRequired')
   }
   errors.value = e
@@ -388,6 +498,9 @@ onMounted(() => {
   if (agents.value.length === 0) {
     loadAgents()
   }
+  // Only needed when the user switches to event mode, but loading it eagerly
+  // avoids a visible delay on that switch.
+  void loadBoundRepos()
 })
 </script>
 
@@ -678,6 +791,38 @@ onMounted(() => {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* Event trigger configuration */
+.event-type-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-secondary, #4b5563);
+  cursor: pointer;
+}
+
+/* Read-only event context block: visually distinct from editable inputs so the
+   user can tell it will be injected verbatim and cannot be changed. */
+.event-context-block {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-secondary, #f9fafb);
+  border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary, #4b5563);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
 }
 
 .preset-btn {

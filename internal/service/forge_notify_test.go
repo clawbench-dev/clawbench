@@ -1,11 +1,12 @@
 package service_test
 
 import (
+	"context"
+	"testing"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
-	"context"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,4 +145,32 @@ func TestForgeDispatcher_PayloadCarriesItemIdentity(t *testing.T) {
 	it := payload["item"].(map[string]any)
 	assert.Equal(t, 1, it["number"])
 	assert.Equal(t, item.URL, it["url"], "the item URL must be present for deep-linking")
+}
+
+func TestFormatForgeEventMessage(t *testing.T) {
+	event := service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "pr", Number: 42, EventType: "merged",
+	}
+	item := forge.Item{
+		Type: forge.ItemTypeChangeRequest, Number: 42, Title: "Fix the thing",
+		URL: "https://github.com/acme/widgets/pull/42", Author: forge.Author{Login: "alice"},
+	}
+
+	title, body := service.FormatForgeEventMessage(event, item)
+	assert.Contains(t, title, "acme/widgets")
+	assert.Contains(t, title, "#42")
+	assert.Contains(t, title, "合并")
+	assert.Contains(t, body, "Fix the thing")
+	assert.Contains(t, body, "alice")
+	assert.Contains(t, body, "https://github.com/acme/widgets/pull/42")
+	// The item type must render as PR/MR, not the raw "pr".
+	assert.Contains(t, body, "PR/MR")
+}
+
+func TestFormatForgeEventMessage_UnknownEventTypeFallsBack(t *testing.T) {
+	event := service.ForgeEvent{Owner: "a", Repo: "b", ItemType: "issue", Number: 1, EventType: "weird"}
+	item := forge.Item{Number: 1, Title: "t"}
+	title, _ := service.FormatForgeEventMessage(event, item)
+	assert.Contains(t, title, "weird", "an unrecognized event type must still render, not panic or blank out")
 }

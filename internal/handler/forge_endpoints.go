@@ -9,6 +9,17 @@ import (
 	"clawbench/internal/service"
 )
 
+// JSON field names shared by the forge endpoints. Extracted so the same key is
+// never spelled two different ways across responses.
+const (
+	jsonItems          = "items"
+	jsonHasMore        = "hasMore"
+	jsonBinding        = "binding"
+	jsonHost           = "host"
+	jsonNoForgeBinding = "NoForgeBinding"
+	jsonCode           = "code"
+)
+
 // forgeItemView is the frontend-facing shape of an issue or PR. It flattens the
 // provider's Item and adds the binding identity so the UI never needs to know
 // which platform served it.
@@ -89,14 +100,14 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 	}
 	if pf == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{
-			"error": "no repository bound to this project",
-			"code":  "NoForgeBinding",
+			strReqError: "no repository bound to this project",
+			jsonCode:    jsonNoForgeBinding,
 		})
 		return
 	}
 	provider, err := newForgeProvider(pf)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
 		return
 	}
 
@@ -117,7 +128,7 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 
 	res, err := provider.ListItems(forgeContext(r), opts)
 	if err != nil {
-		writeForgeError(w, r, err)
+		writeForgeError(w, err)
 		return
 	}
 
@@ -130,19 +141,19 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 	if q.Get("mine") == "1" {
 		me, meErr := provider.CurrentUser(forgeContext(r))
 		if meErr != nil {
-			writeForgeError(w, r, meErr)
+			writeForgeError(w, meErr)
 			return
 		}
 		items = filterForgeItemsMine(items, me.Login, q.Get("mineScope"))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":    items,
-		"hasMore":  res.HasMore,
-		"nextPage": res.NextPage,
-		"binding": map[string]any{
+		jsonItems:   items,
+		jsonHasMore: res.HasMore,
+		"nextPage":  res.NextPage,
+		jsonBinding: map[string]any{
 			"platform": pf.Platform,
-			"host":     pf.Host,
+			jsonHost:   pf.Host,
 			"owner":    pf.Owner,
 			"repo":     pf.Repo,
 			"slug":     pf.Slug(),
@@ -211,7 +222,7 @@ func ServeForgeItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pf == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no repository bound", "code": "NoForgeBinding"})
+		writeJSON(w, http.StatusNotFound, map[string]any{strReqError: "no repository bound", jsonCode: jsonNoForgeBinding})
 		return
 	}
 	number := atoiDefault(r.URL.Query().Get("number"), 0)
@@ -226,12 +237,12 @@ func ServeForgeItem(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := newForgeProvider(pf)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
 		return
 	}
 	item, err := provider.GetItem(forgeContext(r), typ, number)
 	if err != nil {
-		writeForgeError(w, r, err)
+		writeForgeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": toForgeItemView(pf, item)})
@@ -254,7 +265,7 @@ func ServeForgeComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pf == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no repository bound", "code": "NoForgeBinding"})
+		writeJSON(w, http.StatusNotFound, map[string]any{strReqError: "no repository bound", jsonCode: jsonNoForgeBinding})
 		return
 	}
 	number := atoiDefault(r.URL.Query().Get("number"), 0)
@@ -269,7 +280,7 @@ func ServeForgeComments(w http.ResponseWriter, r *http.Request) {
 
 	provider, err := newForgeProvider(pf)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{strReqError: err.Error()})
 		return
 	}
 	comments, err := provider.ListComments(
@@ -278,7 +289,7 @@ func ServeForgeComments(w http.ResponseWriter, r *http.Request) {
 		atoiDefault(r.URL.Query().Get("perPage"), 30),
 	)
 	if err != nil {
-		writeForgeError(w, r, err)
+		writeForgeError(w, err)
 		return
 	}
 
@@ -318,12 +329,12 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 			// confirm, which is also the SSRF guard's explicit-confirmation step
 			// for non-official hosts.
 			writeJSON(w, http.StatusOK, map[string]any{
-				"binding":   nil,
+				jsonBinding: nil,
 				"suggested": suggestForgeBinding(projectPath),
 			})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"binding": bindingView(pf)})
+		writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(pf)})
 	case http.MethodPost:
 		serveForgeBindingSet(w, r, projectPath)
 	case http.MethodDelete:
@@ -361,7 +372,7 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 	if req.URL != "" {
 		parsed, err := forge.ParseRemoteURL(req.URL)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid repository url", "code": "InvalidRemoteURL"})
+			writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "invalid repository url", jsonCode: "InvalidRemoteURL"})
 			return
 		}
 		remote = parsed
@@ -380,7 +391,7 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 
 	// Refuse to bind a host that must never receive credentials.
 	if err := checkForgeHostAllowed(remote.Host); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "code": "UnsafeHost"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error(), jsonCode: "UnsafeHost"})
 		return
 	}
 
@@ -390,7 +401,7 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 	}
 	pf := service.ProjectForgeFromRemote(projectPath, remote, source)
 	if err := service.UpsertProjectForge(pf); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
 		return
 	}
 	stored, err := service.GetProjectForge(projectPath)
@@ -398,7 +409,7 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"binding": bindingView(stored)})
+	writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(stored)})
 }
 
 // ServeForgeRemotes lists the project's git remotes, parsed into forge
@@ -455,12 +466,12 @@ func ServeForgeTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pf == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "no repository bound", "code": "NoForgeBinding"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, strReqError: "no repository bound", jsonCode: jsonNoForgeBinding})
 		return
 	}
 	provider, err := newForgeProvider(pf)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, strReqError: err.Error()})
 		return
 	}
 	user, err := provider.CurrentUser(forgeContext(r))
@@ -470,20 +481,20 @@ func ServeForgeTest(w http.ResponseWriter, r *http.Request) {
 		if errorsAsForge(err, &fe) {
 			code = string(fe.Kind)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "code": code})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, strReqError: err.Error(), jsonCode: code})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"identity": user.Login,
-		"binding":  bindingView(pf),
+		"ok":        true,
+		"identity":  user.Login,
+		jsonBinding: bindingView(pf),
 	})
 }
 
 func bindingView(pf *service.ProjectForge) map[string]any {
 	return map[string]any{
 		"platform": pf.Platform,
-		"host":     pf.Host,
+		jsonHost:   pf.Host,
 		"owner":    pf.Owner,
 		"repo":     pf.Repo,
 		"slug":     pf.Slug(),
@@ -541,7 +552,7 @@ func suggestForgeBinding(projectPath string) map[string]any {
 		}
 		return map[string]any{
 			"platform": string(parsed.Platform),
-			"host":     parsed.Host,
+			jsonHost:   parsed.Host,
 			"owner":    parsed.Owner,
 			"repo":     parsed.Repo,
 			"slug":     parsed.Slug(),

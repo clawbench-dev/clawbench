@@ -70,9 +70,9 @@ func testBinding() service.ProjectForge {
 	}
 }
 
-func issue(num int, state string, updated time.Time) forge.Item {
+func issue(state string, updated time.Time) forge.Item {
 	return forge.Item{
-		Platform: forge.PlatformGitHub, Type: forge.ItemTypeIssue, Number: num,
+		Platform: forge.PlatformGitHub, Type: forge.ItemTypeIssue, Number: 1,
 		State: forge.State(state), Title: "t", URL: "u", UpdatedAt: updated,
 	}
 }
@@ -82,7 +82,7 @@ func TestForgeSyncer_FirstSyncEstablishesBaselineWithoutEvents(t *testing.T) {
 	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
 	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
-		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", now)}}},
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", now)}}},
 	}}
 	sink := &fakeSink{}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
@@ -92,13 +92,15 @@ func TestForgeSyncer_FirstSyncEstablishesBaselineWithoutEvents(t *testing.T) {
 
 	// The baseline snapshot and watermark are recorded.
 	got, err := service.GetForgeItemSnapshot(
-		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}, "issue", 1)
+		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}, "issue", 1,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "open", got.State)
 
 	wm, err := service.GetForgeSyncWatermark(
-		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"})
+		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"},
+	)
 	require.NoError(t, err)
 	assert.False(t, wm.IsZero())
 }
@@ -109,7 +111,7 @@ func TestForgeSyncer_SecondSyncEmitsCloseEvent(t *testing.T) {
 	t1 := t0.Add(time.Hour)
 
 	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
-		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", t0)}}},
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
 	}}
 	sink := &fakeSink{}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
@@ -120,7 +122,7 @@ func TestForgeSyncer_SecondSyncEmitsCloseEvent(t *testing.T) {
 
 	// The item is closed on the remote.
 	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
-		1: {Items: []forge.Item{issue(1, "closed", t1)}},
+		1: {Items: []forge.Item{issue("closed", t1)}},
 	}
 	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
 
@@ -136,7 +138,7 @@ func TestForgeSyncer_WatermarkNotAdvancedWhenPaginationFails(t *testing.T) {
 	// Page 1 has more pages; page 2 fails. The whole window is not read.
 	provider := &fakeProvider{
 		pages: map[forge.ItemType]map[int]forge.ListResult{
-			forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", t0)}, HasMore: true, NextPage: 2}},
+			forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}, HasMore: true, NextPage: 2}},
 		},
 		errOnPage: map[forge.ItemType]int{forge.ItemTypeIssue: 2},
 	}
@@ -148,7 +150,8 @@ func TestForgeSyncer_WatermarkNotAdvancedWhenPaginationFails(t *testing.T) {
 
 	// The watermark must remain unset so the next run retries the same window.
 	wm, werr := service.GetForgeSyncWatermark(
-		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"})
+		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"},
+	)
 	require.NoError(t, werr)
 	assert.True(t, wm.IsZero(), "watermark must not advance when the window was not fully read")
 }
@@ -159,7 +162,7 @@ func TestForgeSyncer_EventDedupedAcrossRuns(t *testing.T) {
 	t1 := t0.Add(time.Hour)
 
 	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
-		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", t0)}}},
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
 	}}
 	sink := &fakeSink{}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
@@ -171,7 +174,7 @@ func TestForgeSyncer_EventDedupedAcrossRuns(t *testing.T) {
 	// the same updated_at — the overlap window re-fetches it, yet dedupe must
 	// prevent a second dispatch.
 	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
-		1: {Items: []forge.Item{issue(1, "closed", t1)}},
+		1: {Items: []forge.Item{issue("closed", t1)}},
 	}
 	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
 	require.Len(t, sink.events, 1)
@@ -187,7 +190,7 @@ func TestForgeSyncer_CommentEvent(t *testing.T) {
 
 	provider := &fakeProvider{
 		pages: map[forge.ItemType]map[int]forge.ListResult{
-			forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", t0)}}},
+			forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
 		},
 		comments: map[int][]forge.Comment{
 			1: {{ID: 10, UpdatedAt: t0}},
@@ -214,7 +217,7 @@ func TestForgeSyncer_CommentFailureDoesNotAbortSync(t *testing.T) {
 	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
 	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
-		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue(1, "open", t0)}}},
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
 	}}
 	sink := &fakeSink{}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
@@ -222,7 +225,8 @@ func TestForgeSyncer_CommentFailureDoesNotAbortSync(t *testing.T) {
 	// First sync with comments unavailable still records the item snapshot.
 	require.NoError(t, syncer.SyncRepo(context.Background(), testBinding()))
 	got, err := service.GetForgeItemSnapshot(
-		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}, "issue", 1)
+		service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}, "issue", 1,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, got, "the item snapshot must be recorded even if comments fail")
 }

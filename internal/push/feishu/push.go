@@ -180,3 +180,16 @@ func sendToAllSubscribers(title, content string) bool {
 	slog.Debug("feishu: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
 	return sent > 0
 }
+
+// PushForgeEvent sends a Feishu notification for a GitHub/GitLab event.
+// title/body are provided by the service layer, which owns the event wording;
+// this function only owns the transport and the push-mode gate.
+func PushForgeEvent(title, content string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || content == "" {
+		return false
+	}
+	return sendToAllSubscribers(title, content)
+}

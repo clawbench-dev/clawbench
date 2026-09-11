@@ -245,8 +245,8 @@ func TestFilterForgeItemsMine(t *testing.T) {
 	assert.Equal(t, 3, review[0].Number)
 
 	// Default: any involvement.
-	any := filterForgeItemsMine(items, "me", "")
-	require.Len(t, any, 3)
+	allInvolved := filterForgeItemsMine(items, "me", "")
+	require.Len(t, allInvolved, 3)
 }
 
 func TestFilterForgeItemsMine_EmptyLoginReturnsAll(t *testing.T) {
@@ -279,8 +279,10 @@ func errorCode(body string) string {
 	return ""
 }
 
-var _ = httptest.NewRecorder
-var _ = forge.PlatformGitHub
+var (
+	_ = httptest.NewRecorder
+	_ = forge.PlatformGitHub
+)
 
 // TestSuggestForgeBinding_FromGitRemote verifies auto-detection: a project with
 // an origin remote pointing at a forge yields a suggestion, and the suggestion

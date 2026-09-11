@@ -1,0 +1,294 @@
+package service_test
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"clawbench/internal/forge"
+	"clawbench/internal/model"
+	"clawbench/internal/service"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func triggerRepo() service.ForgeRepoRef {
+	return service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}
+}
+
+func triggerItem(number int) forge.Item {
+	return forge.Item{
+		Platform: forge.PlatformGitHub, Type: forge.ItemTypeIssue, Number: number,
+		Title: "t", URL: "https://github.com/acme/widgets/issues/1", State: forge.StateOpen,
+		Author: forge.Author{Login: "alice"},
+	}
+}
+
+// eventTask builds an active event-triggered task scoped to a repo slug.
+func forgeTriggerTask(id int64, eventTypes, repoSlug string) model.ScheduledTask {
+	return model.ScheduledTask{
+		ID:          id,
+		ProjectPath: "/proj",
+		Name:        "task",
+		Status:      "active",
+		TriggerMode: "event",
+		EventTypes:  eventTypes,
+		EventRepo:   repoSlug,
+	}
+}
+
+func TestForgeTaskTrigger_FiresMatchingTask(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired []int64
+	var mu sync.Mutex
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{
+			forgeTriggerTask(1, "commented", triggerRepo().Key()),
+			forgeTriggerTask(2, "opened", triggerRepo().Key()), // not subscribed to commented
+		}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []int64{1}, fired, "only the subscribed task fires")
+}
+
+func TestForgeTaskTrigger_KillSwitchSuppresses(t *testing.T) {
+	cfg := fullNotifyConfig()
+	cfg.Forge.PauseEventTasks = true
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, fired, "kill-switch must prevent firing")
+}
+
+func TestForgeTaskTrigger_SelfAuthoredSuppressed(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
+		func(service.ForgeRepoRef) string { return "alice" })
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, fired, "an event authored by our own account must not fire a task")
+}
+
+func TestForgeTaskTrigger_ExternalAuthorFires(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
+		func(service.ForgeRepoRef) string { return "bot-account" })
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		return fired == 1
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestForgeTaskTrigger_UnknownIdentityDoesNotSuppress(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
+		func(service.ForgeRepoRef) string { return "" })
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool { return fired == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestForgeTaskTrigger_DebounceCollapsesBurst(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(time.Hour) // effectively "only the first fires"
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	for i := range 5 {
+		tr.HandleChange(context.Background(), triggerRepo(), triggerItem(i+1),
+			forge.Change{Type: forge.EventCommented, Number: i + 1})
+	}
+
+	time.Sleep(80 * time.Millisecond)
+	assert.Equal(t, 1, fired, "a burst on one repo must collapse to a single fire")
+}
+
+func TestForgeTaskTrigger_QueueDropsNothingWhileRunning(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	var fired []int64
+	gate := make(chan struct{})
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(0) // disable debounce so every event is offered
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		first := len(fired) == 1
+		mu.Unlock()
+		if first {
+			<-gate // hold the drain loop open while more events arrive
+		}
+		return true
+	})
+
+	// First event starts the drain and blocks.
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	// Wait until the first fire is in flight.
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 1
+	}, 2*time.Second, 5*time.Millisecond)
+
+	// Three more events arrive while the task is running: they must be queued,
+	// not dropped.
+	for i := 2; i <= 4; i++ {
+		tr.HandleChange(context.Background(), triggerRepo(), triggerItem(i),
+			forge.Change{Type: forge.EventCommented, Number: i})
+	}
+
+	require.Eventually(t, func() bool { return tr.PendingCount(1) >= 1 }, 2*time.Second, 5*time.Millisecond,
+		"events arriving during a run must be queued")
+
+	close(gate) // release the drain loop
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 4
+	}, 3*time.Second, 10*time.Millisecond, "all queued events must eventually fire")
+
+	assert.Equal(t, 0, tr.PendingCount(1), "queue must be empty after draining")
+}
+
+func TestForgeTaskTrigger_RepoScopedTaskIgnoresOtherRepos(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", "github|github.com|other/repo")}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, fired, "a task scoped to another repo must not fire")
+}
+
+func TestForgeCompositeSink_FansOut(t *testing.T) {
+	var a, b int
+	sinkA := sinkFunc(func(context.Context, service.ForgeRepoRef, forge.Item, forge.Change) { a++ })
+	sinkB := sinkFunc(func(context.Context, service.ForgeRepoRef, forge.Item, forge.Change) { b++ })
+
+	composite := service.NewForgeCompositeSink(sinkA, nil, sinkB)
+	composite.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventOpened, Number: 1})
+
+	assert.Equal(t, 1, a, "first sink must receive the event")
+	assert.Equal(t, 1, b, "second sink must receive the event")
+}
+
+type sinkFunc func(context.Context, service.ForgeRepoRef, forge.Item, forge.Change)
+
+func (f sinkFunc) HandleChange(ctx context.Context, r service.ForgeRepoRef, i forge.Item, c forge.Change) {
+	f(ctx, r, i, c)
+}
+
+// TestForgeTaskTrigger_RetriesWhileTaskBusy guards the R6 fix: when the task is
+// busy for a reason outside the event queue (e.g. a cron run holds the running
+// flag), the event must be retried rather than dropped.
+func TestForgeTaskTrigger_RetriesWhileTaskBusy(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	attempts := 0
+	succeeded := 0
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		attempts++
+		// Fail the first two attempts (busy), succeed afterwards.
+		if attempts <= 2 {
+			return false
+		}
+		succeeded++
+		return true
+	})
+	tr.SetRetryBackoffForTest(time.Millisecond)
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return succeeded == 1
+	}, 2*time.Second, 5*time.Millisecond, "a busy task must be retried until it starts")
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 3, attempts, "two failed attempts then one success")
+}

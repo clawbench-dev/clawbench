@@ -276,6 +276,9 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyCommented', descriptionKey: 'settings.items.forgeNotifyCommentedDesc', key: 'forge.notify.commented', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyPipeline', descriptionKey: 'settings.items.forgeNotifyPipelineDesc', key: 'forge.notify.pipeline', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.forgeInsecureTLS', descriptionKey: 'settings.items.forgeInsecureTLSDesc', key: 'forge.insecure_tls', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeTlsSection' } },
+    // Global kill-switch for event-triggered AI tasks. Notifications and unread
+    // keep working while it is on; only automatic task firing stops.
+    { type: 'item', spec: { labelKey: 'settings.items.forgePauseEventTasks', descriptionKey: 'settings.items.forgePauseEventTasksDesc', key: 'forge.pause_event_tasks', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
   ],
   notification: [
     { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.notificationSoundSection' } },

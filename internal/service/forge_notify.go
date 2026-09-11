@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"clawbench/internal/forge"
@@ -66,15 +67,15 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 
 	if d.broadcaster != nil {
 		d.broadcaster(map[string]any{
-			"type":  "forge_event",
-			"event": event,
+			contentKeyType: "forge_event",
+			"event":        event,
 			"item": map[string]any{
-				"type":   string(item.Type),
-				"number": item.Number,
-				"title":  item.Title,
-				"url":    item.URL,
-				"state":  string(item.State),
-				"author": item.Author.Login,
+				contentKeyType: string(item.Type),
+				"number":       item.Number,
+				"title":        item.Title,
+				"url":          item.URL,
+				"state":        string(item.State),
+				"author":       item.Author.Login,
 			},
 		})
 	}
@@ -84,6 +85,38 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 			slog.Debug("forge event pushed to IM", slog.String("event", string(change.Type)))
 		}
 	}
+}
+
+// FormatForgeEventMessage renders a forge event as an IM-ready title + body.
+// It lives in the service package so the wording is shared by every push
+// backend, while the backends own only the transport.
+func FormatForgeEventMessage(event ForgeEvent, item forge.Item) (title, body string) {
+	kind := "issue"
+	if event.ItemType == string(forge.ItemTypeChangeRequest) {
+		kind = "PR/MR"
+	}
+	verb := map[string]string{
+		string(forge.EventOpened):    "新开",
+		string(forge.EventClosed):    "关闭",
+		string(forge.EventMerged):    "合并",
+		string(forge.EventReopened):  "重新打开",
+		string(forge.EventCommented): "有新评论",
+		string(forge.EventPipeline):  "流水线完成",
+	}[event.EventType]
+	if verb == "" {
+		verb = event.EventType
+	}
+
+	title = fmt.Sprintf("%s %s #%d %s", event.Owner+"/"+event.Repo, kind, event.Number, verb)
+	body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: #%d %s\n\n**事件**: %s",
+		title, event.Owner, event.Repo, kind, event.Number, item.Title, verb)
+	if item.Author.Login != "" {
+		body += fmt.Sprintf("\n\n**作者**: %s", item.Author.Login)
+	}
+	if item.URL != "" {
+		body += fmt.Sprintf("\n\n[查看详情](%s)", item.URL)
+	}
+	return title, body
 }
 
 // notifyEnabled reports whether the given event type should notify, based on

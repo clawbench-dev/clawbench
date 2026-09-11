@@ -70,37 +70,10 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 	}
 
 	var changes []Change
-
-	// State transitions. merged takes precedence so a multi-step interval
-	// collapses to the single most informative event.
-	if prev.State != cur.State || (!prev.Merged && cur.Merged) {
-		switch {
-		case cur.Merged:
-			changes = append(changes, Change{
-				Type: EventMerged, PrevState: prev.State, NewState: string(StateMerged),
-			})
-		case cur.State == string(StateClosed) && prev.State != string(StateClosed):
-			changes = append(changes, Change{
-				Type: EventClosed, PrevState: prev.State, NewState: cur.State,
-			})
-		case cur.State == string(StateOpen) && prev.State == string(StateClosed):
-			changes = append(changes, Change{
-				Type: EventReopened, PrevState: prev.State, NewState: cur.State,
-			})
-		}
+	if c, ok := deriveStateChange(prev, cur); ok {
+		changes = append(changes, c)
 	}
-
-	// Comment activity: a new id, or an edit (same id, newer updated_at).
-	commentChanged := false
-	switch {
-	case cur.LatestCommentID > prev.LastCommentID:
-		commentChanged = true
-	case cur.LatestCommentID == prev.LastCommentID &&
-		cur.LatestCommentID != 0 &&
-		cur.LatestCommentUpdatedAt.After(prev.LastCommentUpdatedAt):
-		commentChanged = true
-	}
-	if commentChanged {
+	if deriveCommentChange(prev, cur) {
 		changes = append(changes, Change{
 			Type: EventCommented, CommentID: cur.LatestCommentID,
 			PrevState: prev.State, NewState: cur.State,
@@ -111,6 +84,36 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 		changes[i].Number = number
 	}
 	return changes
+}
+
+// deriveStateChange picks the most informative state transition, if any.
+// merged takes precedence so a multi-step interval (closed→reopened→merged)
+// collapses to the single event worth reporting.
+func deriveStateChange(prev *Snapshot, cur ItemState) (Change, bool) {
+	if prev.State == cur.State && (prev.Merged || !cur.Merged) {
+		return Change{}, false
+	}
+	switch {
+	case cur.Merged:
+		return Change{Type: EventMerged, PrevState: prev.State, NewState: string(StateMerged)}, true
+	case cur.State == string(StateClosed) && prev.State != string(StateClosed):
+		return Change{Type: EventClosed, PrevState: prev.State, NewState: cur.State}, true
+	case cur.State == string(StateOpen) && prev.State == string(StateClosed):
+		return Change{Type: EventReopened, PrevState: prev.State, NewState: cur.State}, true
+	default:
+		return Change{}, false
+	}
+}
+
+// deriveCommentChange reports comment activity: a new comment id, or an edit
+// (same id, newer updated_at).
+func deriveCommentChange(prev *Snapshot, cur ItemState) bool {
+	if cur.LatestCommentID > prev.LastCommentID {
+		return true
+	}
+	return cur.LatestCommentID == prev.LastCommentID &&
+		cur.LatestCommentID != 0 &&
+		cur.LatestCommentUpdatedAt.After(prev.LastCommentUpdatedAt)
 }
 
 // DedupeKey builds a stable identity for an event so the same event is never

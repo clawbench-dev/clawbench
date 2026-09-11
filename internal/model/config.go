@@ -113,6 +113,10 @@ type ForgeConfig struct {
 	InsecureTLS bool `yaml:"insecure_tls"`
 	// Notify controls which event kinds push a notification. All default true.
 	Notify ForgeNotifyConfig `yaml:"notify"`
+	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
+	// When true, forge events still notify and count as unread, but no task is
+	// fired. Off by default.
+	PauseEventTasks bool `yaml:"pause_event_tasks"`
 }
 
 // ForgeNotifyConfig selects which forge events push a notification. Each flag

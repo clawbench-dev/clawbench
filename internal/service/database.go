@@ -619,11 +619,42 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Schema migrations: add columns that may not exist in older databases.
 	// NOTE: Migration reads use db (write pool) directly, NOT dbRead, because
 	// dbRead is not initialized until after all migrations complete.
+	// Forge event-triggered tasks: trigger_mode selects cron vs event, and the
+	// event columns scope which forge events fire the task.
+	for _, col := range []struct{ name, ddl string }{
+		{"trigger_mode", "ALTER TABLE scheduled_tasks ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'cron'"},
+		{"event_types", "ALTER TABLE scheduled_tasks ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"},
+		{"event_repo", "ALTER TABLE scheduled_tasks ADD COLUMN event_repo TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add scheduled_tasks.%s column: %w", col.name, err)
+			}
+		}
+	}
+
 	var hasReadAt int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
 	if hasReadAt == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
+		}
+	}
+
+	// Migrate: record the forge event that triggered an execution, so the run is
+	// traceable back to the originating issue/PR.
+	for _, col := range []struct{ name, ddl string }{
+		{"event_url", "ALTER TABLE task_executions ADD COLUMN event_url TEXT NOT NULL DEFAULT ''"},
+		{"event_summary", "ALTER TABLE task_executions ADD COLUMN event_summary TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add task_executions.%s column: %w", col.name, err)
+			}
 		}
 	}
 

@@ -14,7 +14,7 @@ func TestLimiter_AdmitsUpToBurstImmediately(t *testing.T) {
 	l.now = func() time.Time { return time.Unix(0, 0) }
 
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.NoError(t, l.Wait(ctx, "github.com"), "burst slot %d must be admitted", i)
 		l.Release()
 	}
@@ -34,7 +34,7 @@ func TestLimiter_BlocksWhenBucketEmpty(t *testing.T) {
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	err := l.Wait(cancelled, "github.com")
-	assert.Error(t, err, "an empty bucket must block and honour context cancellation")
+	assert.Error(t, err, "an empty bucket must block and honor context cancellation")
 }
 
 func TestLimiter_GlobalConcurrencyCap(t *testing.T) {

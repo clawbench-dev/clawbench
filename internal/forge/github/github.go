@@ -331,7 +331,7 @@ func wrapErr(err error) error {
 		if rateLimit.Response != nil {
 			status = rateLimit.Response.StatusCode
 			if v := rateLimit.Response.Header.Get("Retry-After"); v != "" {
-				fmt.Sscanf(v, "%d", &retryAfter)
+				_, _ = fmt.Sscanf(v, "%d", &retryAfter)
 			}
 		}
 		return forge.NewRateLimitError(status, retryAfter, rateLimit.Message)

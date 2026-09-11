@@ -3,6 +3,7 @@ package service
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -90,10 +91,11 @@ func GetProjectForge(projectPath string) (*ProjectForge, error) {
 // scanProjectForge reads a single row, returning (nil, nil) on no rows.
 func scanProjectForge(row interface {
 	Scan(dest ...any) error
-}) (*ProjectForge, error) {
+},
+) (*ProjectForge, error) {
 	var pf ProjectForge
 	err := row.Scan(&pf.ID, &pf.ProjectPath, &pf.Platform, &pf.Host, &pf.Owner, &pf.Repo, &pf.Source, &pf.CreatedAt, &pf.UpdatedAt)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

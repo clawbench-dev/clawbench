@@ -34,7 +34,7 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 		// Self-signed certificates are common on self-hosted instances. This is
 		// opt-in and logged when enabled (see applyHotReloadGlobals).
 		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // opt-in by explicit config
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // opt-in by explicit config (see InsecureTLS)
 		}
 	}
 
@@ -60,33 +60,10 @@ func newForgeProvider(pf *service.ProjectForge) (forge.Provider, error) {
 	}
 }
 
-// forgeProviderForProject resolves the project's binding and returns a provider.
-// The bool is false when the caller should stop (an error response was written).
-func forgeProviderForProject(w http.ResponseWriter, r *http.Request, projectPath string) (forge.Provider, bool) {
-	pf, err := service.GetProjectForge(projectPath)
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return nil, false
-	}
-	if pf == nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{
-			"error": "no repository bound to this project",
-			"code":  "NoForgeBinding",
-		})
-		return nil, false
-	}
-	provider, err := newForgeProvider(pf)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return nil, false
-	}
-	return provider, true
-}
-
 // writeForgeError maps a classified forge error to an HTTP response, preserving
 // the error kind so the frontend can react (auth → settings, rate limit → retry
 // later, network → check connectivity).
-func writeForgeError(w http.ResponseWriter, r *http.Request, err error) {
+func writeForgeError(w http.ResponseWriter, err error) {
 	var fe *forge.Error
 	status := http.StatusBadGateway
 	code := "ForgeError"
@@ -115,7 +92,7 @@ func writeForgeError(w http.ResponseWriter, r *http.Request, err error) {
 			status = http.StatusBadGateway
 		}
 	}
-	body := map[string]any{"error": message, "code": code}
+	body := map[string]any{strReqError: message, jsonCode: code}
 	if retryAfter > 0 {
 		body["retryAfterSeconds"] = retryAfter
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))

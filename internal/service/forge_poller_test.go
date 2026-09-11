@@ -23,26 +23,21 @@ type recordingProvider struct {
 func (p *recordingProvider) CurrentUser(context.Context) (forge.Author, error) {
 	return forge.Author{Login: "me"}, nil
 }
+
 func (p *recordingProvider) ListItems(_ context.Context, opts forge.ListOptions) (forge.ListResult, error) {
 	if opts.Page > 1 {
 		return forge.ListResult{}, nil
 	}
 	return forge.ListResult{Items: p.items}, nil
 }
+
 func (p *recordingProvider) GetItem(context.Context, forge.ItemType, int) (forge.Item, error) {
 	return forge.Item{}, nil
 }
+
 func (p *recordingProvider) ListComments(context.Context, forge.ItemType, int, int, int) ([]forge.Comment, error) {
 	p.commentCalls++
 	return nil, nil
-}
-
-func seedBinding(t *testing.T) {
-	t.Helper()
-	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
-		ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
-		Owner: "acme", Repo: "widgets", Source: "manual",
-	}))
 }
 
 // TestForgeSyncer_StateOnlyPassSkipsComments verifies the comment-降频 flag is
@@ -69,7 +64,7 @@ func TestForgePoller_SyncNowDeduplicatesRepos(t *testing.T) {
 	setupTestDBForForgeSync(t)
 
 	// Two projects, same repository.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
 			ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
 			Owner: "acme", Repo: "widgets", Source: "manual",

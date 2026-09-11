@@ -16,7 +16,7 @@ import (
 
 // setupTestDBForProjectForges creates an in-memory SQLite with the
 // project_forges table (mirrors the production DDL in database.go).
-func setupTestDBForProjectForges(t *testing.T) *sql.DB {
+func setupTestDBForProjectForges(t *testing.T) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
@@ -30,7 +30,6 @@ func setupTestDBForProjectForges(t *testing.T) *sql.DB {
 		cleanup()
 		_ = db.Close()
 	})
-	return db
 }
 
 func TestProjectForge_UpsertAndGet(t *testing.T) {
@@ -105,14 +104,14 @@ func TestProjectForge_NormalizesPath(t *testing.T) {
 
 func TestProjectForge_NormalizesSymlink(t *testing.T) {
 	setupTestDBForProjectForges(t)
-	real := t.TempDir()
+	realDir := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(realDir, link); err != nil {
 		t.Skipf("symlinks unsupported: %v", err)
 	}
 
 	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
-		ProjectPath: real, Platform: "github", Host: "github.com", Owner: "a", Repo: "b", Source: "auto",
+		ProjectPath: realDir, Platform: "github", Host: "github.com", Owner: "a", Repo: "b", Source: "auto",
 	}))
 
 	// Looking up via the symlink must find the binding stored under the real path.

@@ -38,6 +38,12 @@ export function useTaskForm(options: UseTaskFormOptions) {
     prompt: '',
     repeatMode: 'unlimited',
     maxRuns: 0,
+    // Trigger mode: 'cron' (default) or 'event'.
+    triggerMode: 'cron',
+    // Comma-separated forge event subscription (event mode).
+    eventTypes: '',
+    // Optional repo scope for an event task (platform|host|owner/repo).
+    eventRepo: '',
   })
 
   const errors = ref<Record<string, string>>({})
@@ -56,6 +62,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
         prompt: (taskData.prompt as string) || '',
         repeatMode: (taskData.repeatMode as string) || 'unlimited',
         maxRuns: (taskData.maxRuns as number) || 0,
+        triggerMode: (taskData.triggerMode as string) || 'cron',
+        eventTypes: (taskData.eventTypes as string) || '',
+        eventRepo: (taskData.eventRepo as string) || '',
       }
     } else {
       form.value = {
@@ -66,6 +75,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
         prompt: '',
         repeatMode: 'unlimited',
         maxRuns: 0,
+        triggerMode: 'cron',
+        eventTypes: '',
+        eventRepo: '',
       }
     }
   }
@@ -85,13 +97,19 @@ export function useTaskForm(options: UseTaskFormOptions) {
     saving.value = true
     formError.value = ''
 
+    const isEvent = form.value.triggerMode === 'event'
     const payload = {
       name: form.value.name,
-      cron_expr: form.value.cronExpr || '0 9 * * *',
+      // An event task has no cron schedule; send an empty expression so the
+      // server does not synthesize a meaningless one.
+      cron_expr: isEvent ? '' : (form.value.cronExpr || '0 9 * * *'),
       agent_id: form.value.agentId,
       prompt: form.value.prompt,
       repeat_mode: form.value.repeatMode,
       max_runs: form.value.maxRuns,
+      trigger_mode: form.value.triggerMode,
+      event_types: isEvent ? form.value.eventTypes : '',
+      event_repo: isEvent ? form.value.eventRepo : '',
     }
 
     try {

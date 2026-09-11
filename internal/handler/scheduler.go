@@ -54,11 +54,26 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			RepeatMode string `json:"repeat_mode"`
 			MaxRuns    int    `json:"max_runs"`
 			SessionID  string `json:"session_id"`
+			// TriggerMode is "cron" (default) or "event".
+			TriggerMode string `json:"trigger_mode"`
+			// EventTypes is the comma-separated event subscription (event mode).
+			EventTypes string `json:"event_types"`
+			// EventRepo scopes an event task to one repository (platform|host|owner/repo).
+			EventRepo string `json:"event_repo"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if req.Name == "" || req.CronExpr == "" || req.AgentID == "" || req.Prompt == "" {
+		if req.Name == "" || req.AgentID == "" || req.Prompt == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
+			return
+		}
+		if req.TriggerMode == "" {
+			req.TriggerMode = "cron"
+		}
+		// An event task is driven by forge events and needs no cron expression;
+		// a cron task still requires one.
+		if req.TriggerMode == "cron" && req.CronExpr == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
 			return
 		}
@@ -75,6 +90,9 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			RepeatMode:  req.RepeatMode,
 			MaxRuns:     req.MaxRuns,
 			SessionID:   req.SessionID,
+			TriggerMode: req.TriggerMode,
+			EventTypes:  req.EventTypes,
+			EventRepo:   req.EventRepo,
 		}
 
 		if err := service.GlobalScheduler.AddTask(task); err != nil {
@@ -172,6 +190,11 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			Prompt      string `json:"prompt"`
 			RepeatMode  string `json:"repeat_mode"`
 			MaxRuns     *int   `json:"max_runs"` // pointer to distinguish "not provided" (nil) from "set to 0" (ISS-043)
+			// TriggerMode is "cron" or "event"; empty means "leave unchanged".
+			TriggerMode string `json:"trigger_mode"`
+			// EventTypes / EventRepo configure an event-triggered task.
+			EventTypes string `json:"event_types"`
+			EventRepo  string `json:"event_repo"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -297,6 +320,18 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		if req.RepeatMode != "" {
 			task.RepeatMode = req.RepeatMode
 		}
+		// Trigger configuration. Switching to event clears the cron schedule;
+		// switching back to cron leaves the stored cron expression in place so
+		// the user can reuse it.
+		if req.TriggerMode != "" {
+			task.TriggerMode = req.TriggerMode
+		}
+		if req.EventTypes != "" {
+			task.EventTypes = req.EventTypes
+		}
+		if req.EventRepo != "" {
+			task.EventRepo = req.EventRepo
+		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).
 		// Go's JSON decoder leaves pointer fields nil when the key is absent,
 		// so we can distinguish "not provided" from "set to 0".
@@ -382,11 +417,15 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		Summary     *string `json:"summary"`
 		CreatedAt   string  `json:"createdAt"`
 		IsUnread    bool    `json:"isUnread"`
+		// EventURL/EventSummary identify the forge event that triggered this
+		// run, so the user can trace a notification back to the issue/PR.
+		EventURL     string `json:"eventUrl,omitempty"`
+		EventSummary string `json:"eventSummary,omitempty"`
 	}
 
 	query := `
 		SELECT te.id, ch.id, te.session_id, te.trigger_type, te.status, te.created_at,
-		       te.read_at, sm.summary,
+		       te.read_at, sm.summary, te.event_url, te.event_summary,
 		       ch.content AS assistant_content
 		FROM task_executions te
 		LEFT JOIN chat_history ch ON ch.id = (
@@ -428,7 +467,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		var summary sql.NullString
 		var readAt sql.NullTime
 		var messageID sql.NullInt64
-		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &content); err != nil {
+		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &exec.EventURL, &exec.EventSummary, &content); err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to scan execution record")))
 			return
 		}

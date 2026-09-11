@@ -32,7 +32,7 @@ func TestContract_BothAdaptersImplementProvider(t *testing.T) {
 	glProvider, err := gl.New(gl.Config{Host: glSrv.URL[len("http://"):], Scheme: "http"}, "g", "r")
 	require.NoError(t, err)
 
-	var providers []forge.Provider = []forge.Provider{ghProvider, glProvider}
+	providers := []forge.Provider{ghProvider, glProvider}
 	assert.Len(t, providers, 2)
 }
 

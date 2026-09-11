@@ -61,7 +61,8 @@ func (p *ForgePoller) Start() {
 	p.mu.Unlock()
 
 	go p.run()
-	slog.Info("forge poller started",
+	slog.Info(
+		"forge poller started",
 		slog.Duration("state_interval", p.stateEvery),
 		slog.Duration("comment_interval", p.commentEvery),
 	)
@@ -155,9 +156,9 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 			// Classify: a rate-limit error parks the host; an auth error means
 			// the credential is bad and the host should stop being polled until
 			// the user fixes it.
-			p.limiter.WrapError(pf.Host, err)
+			classified := p.limiter.WrapError(pf.Host, err)
 			slog.Warn("forge poller: sync failed",
-				slog.String("repo", key), slog.String("err", err.Error()))
+				slog.String("repo", key), slog.String("err", classified.Error()))
 			continue
 		}
 		p.limiter.ObserveSuccess(pf.Host)

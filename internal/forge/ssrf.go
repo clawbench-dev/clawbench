@@ -70,7 +70,7 @@ func CheckHostSafety(host string, resolve HostResolver) error {
 	}
 	ips, err := resolve(hostname)
 	if err != nil {
-		return fmt.Errorf("%w: cannot resolve %q: %v", ErrUnsafeHost, hostname, err)
+		return fmt.Errorf("%w: cannot resolve %q: %w", ErrUnsafeHost, hostname, err)
 	}
 	if len(ips) == 0 {
 		return fmt.Errorf("%w: %q resolved to no addresses", ErrUnsafeHost, hostname)

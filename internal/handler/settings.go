@@ -128,6 +128,7 @@ var hotReloadFields = map[string]bool{
 	"forge.notify.reopened":     true,
 	"forge.notify.commented":    true,
 	"forge.notify.pipeline":     true,
+	"forge.pause_event_tasks":   true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
@@ -373,6 +374,8 @@ type configForge struct {
 	CredentialHosts []string `json:"credential_hosts"`
 	// InsecureTLS allows skipping TLS verification for self-hosted instances.
 	InsecureTLS bool `json:"insecure_tls"`
+	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
+	PauseEventTasks bool `json:"pause_event_tasks"`
 	// Notify carries the per-event notification toggles.
 	Notify configForgeNotify `json:"notify"`
 }
@@ -505,6 +508,7 @@ func buildConfigForge(cfg model.Config) configForge {
 	return configForge{
 		CredentialHosts: hosts,
 		InsecureTLS:     cfg.Forge.InsecureTLS,
+		PauseEventTasks: cfg.Forge.PauseEventTasks,
 		Notify: configForgeNotify{
 			Opened:    cfg.Forge.Notify.Opened,
 			Closed:    cfg.Forge.Notify.Closed,
@@ -619,6 +623,7 @@ var PatchableConfigPaths = map[string]bool{
 	"forge.notify.reopened":             true,
 	"forge.notify.commented":            true,
 	"forge.notify.pipeline":             true,
+	"forge.pause_event_tasks":           true,
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
