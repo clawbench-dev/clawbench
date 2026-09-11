@@ -2,6 +2,10 @@
   <div ref="rootRef" class="session-sidebar" :style="{ width: `${width}px` }">
     <SplitDivider @dragmove="onDragMove" />
     <div class="sidebar-inner">
+      <ProjectChipsBar
+        :project-root="store.state.projectRoot"
+        :home-dir="store.state.homeDir"
+      />
       <div class="bs-header session-sidebar-header">
         <SessionListHeader
           :session-count="sessionCount"
@@ -39,6 +43,7 @@ import { PanelRight } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import ProjectChipsBar from '@/components/session/ProjectChipsBar.vue'
 import { useAgents } from '@/composables/useAgents'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'

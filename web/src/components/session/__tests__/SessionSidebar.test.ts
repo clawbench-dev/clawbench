@@ -23,6 +23,12 @@ vi.mock('@/components/session/SessionListHeader.vue', () => ({
     emits: ['refresh'],
   },
 }))
+vi.mock('@/components/session/ProjectChipsBar.vue', () => ({
+  default: {
+    name: 'ProjectChipsBar',
+    template: '<div class="project-chips-stub" />',
+  },
+}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div />' },
 }))
