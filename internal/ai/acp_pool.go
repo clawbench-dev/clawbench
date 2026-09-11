@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -777,7 +776,7 @@ func (m *ACPConnManager) GetPendingApprovalSessionIDs() map[string]bool {
 // Safe patterns for notification callbacks:
 //   - Read immutable fields (agent, clawbenchSID) directly without locking
 //   - Use atomic operations (TouchSessionUpdate, SetToolInFlight)
-//   - Use dedicated locks (rawOutputMu, lastSetConfigMu) that don't interact with c.mu
+//   - Use dedicated locks (metaMu, lastSetConfigMu) that don't interact with c.mu
 //   - Use ClawBenchACPClient.mu (different lock) for client-internal state
 //
 // If an RPC must be made while holding c.mu (e.g. reapplyConfigOption), the only
@@ -918,15 +917,6 @@ type ACPConn struct {
 	// given internal category maps to for the connection's agent.
 	setConfigOptionFn func(ctx context.Context, acpSessionID, configID, value string) error
 
-	// rawOutputBuf accumulates raw ACP JSON-RPC notification payloads for
-	// debugging (written to ai_raw_responses on Finalize). This is a separate
-	// buffer from the StreamEvent channel so raw_output events don't consume
-	// channel buffer space and cause content events to be dropped when the
-	// channel is full (previously ~27K drops/day on busy sessions).
-	// Protected by rawOutputMu. Cleared at the start of each Prompt call.
-	rawOutputMu  sync.Mutex
-	rawOutputBuf strings.Builder
-
 	// metaMu guards accumulated per-agent _meta extensions for the current
 	// turn. Unlike c.mu, it is safe to acquire from the ACP notification
 	// goroutine (mapACPSessionUpdate) — it never interacts with RPC paths.
@@ -1000,31 +990,6 @@ func (c *ACPConn) waitProcessExit(timeout time.Duration) bool {
 	case <-time.After(timeout):
 		return false
 	}
-}
-
-// AppendRawOutput appends a raw ACP notification payload to the connection's
-// raw output buffer. Called from mapACPSessionUpdate (on the ACP SDK's
-// notification goroutine) instead of sending a raw_output StreamEvent through
-// the channel, which would consume channel buffer space and cause content
-// events to be dropped when the channel is full.
-func (c *ACPConn) AppendRawOutput(rawJSON string) {
-	c.rawOutputMu.Lock()
-	if c.rawOutputBuf.Len() > 0 {
-		c.rawOutputBuf.WriteByte('\n')
-	}
-	c.rawOutputBuf.WriteString(rawJSON)
-	c.rawOutputMu.Unlock()
-}
-
-// ResetRawOutput clears the raw output buffer and returns the accumulated
-// content. Called at the start of each Prompt to reset the buffer, and after
-// Prompt returns to collect the raw output for the completed turn.
-func (c *ACPConn) ResetRawOutput() string {
-	c.rawOutputMu.Lock()
-	s := c.rawOutputBuf.String()
-	c.rawOutputBuf.Reset()
-	c.rawOutputMu.Unlock()
-	return s
 }
 
 // TouchSessionUpdate records the current time as the connection's most recent

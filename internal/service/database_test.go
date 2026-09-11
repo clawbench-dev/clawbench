@@ -1430,14 +1430,6 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_default INTEGER NOT NULL DEFAULT 0
 		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL,
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
 	`)
 	assert.NoError(t, err)
 
@@ -1799,11 +1791,6 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, project_path TEXT UNIQUE NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL, backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, target_type TEXT NOT NULL,
 			target_id INTEGER NOT NULL, summary TEXT NOT NULL,
@@ -1900,6 +1887,80 @@ func TestSchema_DropHistoryDeletedColumn_Idempotent(t *testing.T) {
 
 	columns = getTableColumns(t, UnsafeDBForTest(), "chat_history")
 	assert.NotContains(t, columns, "deleted", "deleted column should still not exist after second InitDB")
+}
+
+// TestSchema_DropsLegacyRawResponsesTable verifies that InitDB drops the
+// legacy ai_raw_responses table on an existing install (the feature was
+// removed because a single multi-hundred-MB row INSERT could hold the global
+// write lock long enough to stall other sessions' streaming flushes and cause
+// their stream events to be dropped).
+func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Step 1: Create a DB with the legacy ai_raw_responses table (and indexes).
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	assert.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+
+	_, err = oldDB.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS ai_raw_responses (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id),
+			backend TEXT NOT NULL DEFAULT '',
+			raw_output TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_raw_responses_session ON ai_raw_responses(session_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_raw_responses_message ON ai_raw_responses(message_id);
+	`)
+	assert.NoError(t, err)
+	oldDB.Close()
+
+	// Step 2: Run InitDB — should drop the legacy table.
+	err = InitDB()
+	assert.NoError(t, err)
+
+	var tableCount int
+	err = UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'",
+	).Scan(&tableCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, tableCount, "legacy ai_raw_responses table should be dropped")
+
+	// Step 3: InitDB must stay idempotent on a DB that no longer has the table.
+	CloseDB()
+	err = InitDB()
+	assert.NoError(t, err)
+	err = UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'",
+	).Scan(&tableCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, tableCount, "table must stay absent after a second InitDB")
+	CloseDB()
 }
 
 // TestSchema_RenameSessionDeletedToArchived verifies that when a database has

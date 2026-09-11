@@ -108,14 +108,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, cr
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, updated_at DESC, id DESC);
-CREATE TABLE IF NOT EXISTS ai_raw_responses (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	session_id TEXT NOT NULL,
-	message_id INTEGER NOT NULL,
-	backend TEXT NOT NULL DEFAULT '',
-	raw_output TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -1823,9 +1815,6 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
 	_ = service.ArchiveSession("/project", "claude", sid)
 
-	// Add a raw response for this session
-	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
-
 	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{sid})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
@@ -1839,11 +1828,6 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 
 	// Verify messages are completely gone
 	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, count)
-
-	// Verify raw responses are gone
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -1899,7 +1883,6 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Active To HardDelete")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "msg1", nil, false, "NewSession")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
-	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
 
 	err := service.HardDeleteSession(sid)
 	assert.NoError(t, err)
@@ -1910,8 +1893,6 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 	assert.Equal(t, 0, count, "session should be gone")
 	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "messages should be gone")
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count))
-	assert.Equal(t, 0, count, "raw responses should be gone")
 }
 
 func TestHardDeleteSession_ArchivedSession(t *testing.T) {
@@ -3850,80 +3831,6 @@ func TestGetStreamingMessageInfo_NoStreamingRow(t *testing.T) {
 	id, queueID := service.GetStreamingMessageInfo(sid)
 	assert.Equal(t, int64(0), id)
 	assert.Equal(t, "", queueID)
-}
-
-// ---------- SaveRawResponse ----------
-
-func TestSaveRawResponse(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Raw Test")
-
-	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "test", nil, false, "")
-	assert.NoError(t, err)
-
-	msgID := service.GetStreamingMessageID(sid)
-
-	err = service.SaveRawResponse(sid, "claude", msgID, "raw output data")
-	assert.NoError(t, err)
-
-	// Verify it was saved
-	var rawOutput string
-	err = service.UnsafeDBForTest().QueryRow("SELECT raw_output FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&rawOutput)
-	assert.NoError(t, err)
-	assert.Equal(t, "raw output data", rawOutput)
-}
-
-func TestPruneRawResponses(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Prune Test")
-
-	// Insert 10 raw responses
-	for i := range 10 {
-		_, err := service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("msg %d", i), nil, false, "")
-		assert.NoError(t, err)
-		msgID := service.GetStreamingMessageID(sid)
-		err = service.SaveRawResponse(sid, "claude", msgID, fmt.Sprintf("raw %d", i))
-		assert.NoError(t, err)
-	}
-
-	// Count before prune
-	var countBefore int
-	err := service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countBefore)
-	assert.NoError(t, err)
-	assert.Equal(t, 10, countBefore)
-
-	// Prune to keep 3 most recent
-	service.PruneRawResponses(3)
-
-	var countAfter int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, countAfter)
-
-	// Verify the 3 kept are the newest (IDs 8, 9, 10 — raw "7", "8", "9")
-	var outputs []string
-	rows, err := service.UnsafeDBForTest().Query("SELECT raw_output FROM ai_raw_responses ORDER BY id ASC")
-	assert.NoError(t, err)
-	defer rows.Close()
-	for rows.Next() {
-		var o string
-		assert.NoError(t, rows.Scan(&o))
-		outputs = append(outputs, o)
-	}
-	assert.NoError(t, rows.Err())
-	assert.Equal(t, []string{"raw 7", "raw 8", "raw 9"}, outputs)
-
-	// Prune with limit larger than count — no-op
-	service.PruneRawResponses(100)
-	var countAfter2 int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter2)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, countAfter2)
-
-	// Prune with zero — no-op
-	service.PruneRawResponses(0)
 }
 
 // ---------- GetUnindexedMessages / MarkMessageIndexed / UnindexedCount ----------

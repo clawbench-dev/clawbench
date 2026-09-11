@@ -105,17 +105,6 @@ UNIQUE：`(project_path, backend, id)`
 
 UNIQUE：`(tool_id, message_id)`
 
-### ai_raw_responses（原始响应）
-
-| 列名 | 类型 | 约束 | 默认值 | 说明 |
-|---|---|---|---|---|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
-| session_id | TEXT | NOT NULL | — | FK → chat_sessions.id (CASCADE) |
-| message_id | INTEGER | NOT NULL, FK → chat_history.id (CASCADE) | — | 所属消息 |
-| backend | TEXT | NOT NULL | `''` | 后端名称 |
-| raw_output | TEXT | NOT NULL | — | 原始 CLI 输出 |
-| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
-
 ### summaries（摘要）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
@@ -324,8 +313,6 @@ UNIQUE：`(type, key_id)`
 | chat_metadata.message_id | chat_history.id | 无外键 | 独立用量台账（刻意不级联，会话删除后保留） |
 | chat_tool_calls.message_id | chat_history.id | CASCADE | 数据库外键 |
 | chat_tool_calls.session_id | chat_sessions.id | CASCADE | 数据库外键 |
-| ai_raw_responses.session_id | chat_sessions.id | CASCADE | 数据库外键 |
-| ai_raw_responses.message_id | chat_history.id | CASCADE | 数据库外键 |
 | tts_summaries.message_id | chat_history.id | CASCADE | 数据库外键 |
 | task_executions.task_id | scheduled_tasks.id | CASCADE | 数据库外键 |
 | agent_api_keys.agent_id | agents.id | CASCADE | 数据库外键 |
@@ -404,15 +391,6 @@ erDiagram
         TEXT status
         INTEGER done
         TEXT summary
-        DATETIME created_at
-    }
-
-    ai_raw_responses {
-        INTEGER id PK
-        TEXT session_id FK
-        INTEGER message_id FK
-        TEXT backend
-        TEXT raw_output
         DATETIME created_at
     }
 
@@ -585,8 +563,6 @@ erDiagram
     chat_history ||--o| chat_metadata : "message_id 1:1 无外键（独立台账）"
     chat_history ||--o{ chat_tool_calls : "message_id CASCADE 1:N"
     chat_sessions ||--o{ chat_tool_calls : "session_id CASCADE"
-    chat_history ||--o{ ai_raw_responses : "message_id CASCADE"
-    chat_sessions ||--o{ ai_raw_responses : "session_id CASCADE"
     chat_history ||--o| tts_summaries : "message_id CASCADE"
     scheduled_tasks ||--o{ task_executions : "task_id CASCADE"
     agents ||--o{ agent_api_keys : "agent_id CASCADE"

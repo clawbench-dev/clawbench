@@ -716,11 +716,6 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	}()
 
 	childPred := "SELECT id FROM chat_history WHERE session_id = ? AND id > ?"
-	// ai_raw_responses: FK on message_id but NO cascade.
-	_, _ = tx.Exec(
-		"DELETE FROM ai_raw_responses WHERE session_id = ? AND message_id IN ("+childPred+")",
-		sessionID, sessionID, anchorID,
-	)
 	// chat_tool_calls / chat_thinking: FK ON DELETE CASCADE, but deleted
 	// explicitly for visible semantics.
 	_, _ = tx.Exec(

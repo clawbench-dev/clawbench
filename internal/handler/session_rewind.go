@@ -110,10 +110,10 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 		// Wait for the executor goroutine to fully finish its Finalize before
 		// truncating. CancelSession is asynchronous — the goroutine still drains
 		// and finalizes after cancel(). Truncating in that window could let a
-		// late SaveRawResponse (which falls back to GetStreamingMessageID = the
-		// latest streaming=0 row, i.e. the preserved anchor) write the cancelled
-		// turn's raw output onto the anchor message. Bounded wait; a timeout only
-		// logs and proceeds (the remaining race is the same as Archive/Destroy).
+		// late FinalizeStreamingMessage / UpdateStreamingMessage (which target
+		// the streaming row by id) land on the preserved anchor row. Bounded
+		// wait; a timeout only logs and proceeds (the remaining race is the same
+		// as Archive/Destroy).
 		service.WaitSessionStreamDrained(req.SessionID, 2*time.Second)
 	}
 

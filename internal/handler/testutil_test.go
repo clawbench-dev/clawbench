@@ -173,14 +173,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL,
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
 		CREATE TABLE IF NOT EXISTS tts_summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id   INTEGER NOT NULL,

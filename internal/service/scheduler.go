@@ -874,7 +874,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Finalize: persist blocks to DB, save metadata, drain raw output
+	// Finalize: persist blocks to DB, save metadata, drain remaining events
 	runResult = executor.Finalize(runResult, nil)
 
 	// Mark execution as completed

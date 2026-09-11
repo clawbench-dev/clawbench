@@ -1501,7 +1501,7 @@ func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
 
 	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
 
-	// Should get 1 event: usage_update (raw_output is now accumulated on ACPConn, not sent through channel)
+	// Should get 1 event: usage_update
 	var foundUsage bool
 	for range 1 {
 		select {

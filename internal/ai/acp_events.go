@@ -23,23 +23,13 @@ import (
 // for queued notifications to be processed (SDK waitNotificationsUpTo).
 // Only lock-free operations are safe: reading immutable fields (AgentID, BackendID),
 // atomic operations (SetToolInFlight, TouchSessionUpdate), or dedicated locks
-// (rawOutputMu, ClawBenchACPClient.mu).
+// (metaMu, ClawBenchACPClient.mu).
 func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) { //nolint:gocognit,gocyclo,revive,unparam // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention; ctx reserved for future use
 	// Extract backendID once for all downstream ACP event mapping.
 	// conn.agent.Backend provides the backend identifier (e.g. "kimi", "claude").
 	backendID := ""
 	if conn != nil {
 		backendID = conn.BackendID()
-	}
-	// Accumulate raw ACP notification payloads for debugging (ai_raw_responses).
-	// Previously sent as raw_output StreamEvent through the channel, but this
-	// consumed channel buffer space and caused content events to be dropped when
-	// the channel was full (~27K drops/day on busy sessions). Now accumulated
-	// directly on the ACPConn buffer instead.
-	if conn != nil {
-		if rawJSON, err := json.Marshal(update); err == nil {
-			conn.AppendRawOutput(string(rawJSON))
-		}
 	}
 
 	switch {
@@ -55,8 +45,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// the stale text is appended to the new message's first text block and
 		// its stale _meta pollutes the message-level metadata.requestId (both
 		// observed in production: a replayed ask-question block surfaced in the
-		// wrong assistant message). Drop such chunks here — the raw output
-		// buffer (AppendRawOutput above) still keeps every line for debugging.
+		// wrong assistant message). Drop such chunks here.
 		//
 		// Deliberately scoped to CodeBuddy text chunks only:
 		//   - Compared against the last COMPLETED TURN's requestId, not a
@@ -65,8 +54,6 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		//   - agent_thought_chunk is left untouched: a thinking-only turn can
 		//     legitimately reuse a requestId, and thinking duplication is
 		//     already handled by the frontend's think_id mechanism.
-		//   - AppendRawOutput (above) is intentionally unconditional so the
-		//     ai_raw_responses debug trail stays complete.
 		replayed := false
 		if conn != nil && content.Text != nil && backendID == "codebuddy" {
 			if rid := metaString(update.AgentMessageChunk.Meta[metaKeyCodeBuddyRequestID]); rid != "" && rid == conn.getLastCompletedRequestID() {

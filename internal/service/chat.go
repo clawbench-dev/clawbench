@@ -2327,35 +2327,6 @@ func UpdateMessageContent(messageID int, content string) error {
 	return err
 }
 
-// PruneRawResponses keeps only the most recent maxRows rows in ai_raw_responses.
-// Called at server startup to prevent unbounded growth of this debug-only table.
-func PruneRawResponses(maxRows int) {
-	if maxRows <= 0 {
-		return
-	}
-	result, err := WriteExec(
-		"DELETE FROM ai_raw_responses WHERE id NOT IN (SELECT id FROM ai_raw_responses ORDER BY id DESC LIMIT ?)",
-		maxRows,
-	)
-	if err != nil {
-		slog.Error("failed to prune ai_raw_responses", slog.String("err", err.Error()))
-		return
-	}
-	if n, _ := result.RowsAffected(); n > 0 {
-		slog.Info("pruned ai_raw_responses", slog.Int64("deleted", n), slog.Int("kept", maxRows))
-	}
-}
-
-// SaveRawResponse saves the raw AI backend output for debugging/analysis.
-// Called only after the AI response is fully complete.
-func SaveRawResponse(sessionID, backend string, messageID int64, rawOutput string) error {
-	_, err := WriteExec(
-		"INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, ?, ?, ?)",
-		sessionID, messageID, backend, rawOutput,
-	)
-	return err
-}
-
 // UpdateExternalSessionID sets the external session ID for a ClawBench session.
 func UpdateExternalSessionID(sessionID, externalID string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET external_session_id = ? WHERE id = ?", externalID, sessionID)
@@ -2506,8 +2477,8 @@ func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 }
 
 // PurgeArchivedData hard-deletes archived sessions and their associated data.
-// Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
-// tts_summaries → chat_history → task_executions → chat_sessions.
+// Deletes in order: chat_tool_calls → summaries → tts_summaries →
+// chat_history → task_executions → chat_sessions.
 // Returns counts of purged sessions and messages.
 //
 // chat_metadata (the usage ledger) is deliberately left untouched — see
@@ -2535,9 +2506,6 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 		placeholders += "?"
 		args[i] = id
 	}
-
-	// Delete ai_raw_responses for these sessions
-	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id IN ("+placeholders+")", args...)
 
 	// Delete chat_tool_calls for these sessions
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id IN ("+placeholders+")", args...)
@@ -2576,7 +2544,7 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 // of deletion status. Used by ACP LoadSession to clean up existing sessions
 // before recreating them with fresh replay data, and by DestroySession for
 // user-initiated permanent deletion.
-// Deletes in order: ai_raw_responses → chat_tool_calls → summaries →
+// Deletes in order: chat_tool_calls → summaries →
 // tts_summaries → chat_history → task_executions → chat_sessions.
 //
 // chat_metadata (the usage ledger) is deliberately NOT deleted: it records
@@ -2591,7 +2559,6 @@ func HardDeleteSession(sessionID string) error {
 	defer writeMu.Unlock()
 	defer tx.Rollback()
 
-	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
 	// Delete summaries and tts_summaries before chat_history (they reference chat_history.id)
@@ -2616,7 +2583,7 @@ type ReplayMessage struct {
 
 // ReplaceSessionHistory atomically replaces a session's chat history with the
 // given messages (and their tool calls). It deletes the session's prior history
-// and child rows (tool calls, thinking, summaries, raw responses) then inserts
+// and child rows (tool calls, thinking, summaries) then inserts
 // the new messages, all in one transaction — on any error the transaction rolls
 // back so the original history is preserved. Returns the number of messages
 // inserted.
@@ -2633,7 +2600,6 @@ func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []Re
 	defer writeMu.Unlock()
 	defer tx.Rollback()
 
-	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)

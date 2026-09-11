@@ -322,7 +322,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
@@ -331,7 +331,6 @@ type StreamEvent struct {
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)
-	RawOutput      string                 // Raw stdout lines from AI backend (Type=raw_output)
 	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain)
 	Mode           *ModeState             // Mode state (Type=mode_update)
 	Config         *ConfigOptionState     // Config option state (Type=config_update)

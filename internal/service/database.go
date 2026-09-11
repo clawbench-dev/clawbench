@@ -340,21 +340,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL REFERENCES chat_history(id),
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
 		-- Create indexes for efficient queries
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
-		CREATE INDEX IF NOT EXISTS idx_raw_responses_session ON ai_raw_responses(session_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_raw_responses_message ON ai_raw_responses(message_id);
 		CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_path, archived);
 
@@ -832,6 +821,28 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to create new tts_summaries table: %w", err)
 		}
 	}
+	// Migrate: drop the legacy ai_raw_responses table. Raw ACP/CLI backend
+	// output used to be persisted there for debugging, but a single turn could
+	// produce a multi-hundred-MB row whose INSERT held the global write lock for
+	// tens of seconds — stalling other sessions' streaming flushes and causing
+	// their stream events to be dropped (silent assistant-output truncation).
+	// The feature is removed, so drop any leftover table (and its indexes).
+	// NOTE: DROP TABLE only frees pages to the freelist — the DB file keeps its
+	// high-water mark. Reclaiming disk requires an offline `VACUUM`, which is
+	// deliberately NOT run here (a full-file rewrite holding writeMu at startup
+	// would be the very kind of long blocking write this removal is fixing).
+	var hasRawResponses int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'").Scan(&hasRawResponses)
+	if hasRawResponses > 0 {
+		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_session")
+		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_message")
+		if _, err := WriteExec("DROP TABLE ai_raw_responses"); err != nil {
+			slog.Warn("failed to drop legacy ai_raw_responses table", slog.String("err", err.Error()))
+		} else {
+			slog.Info("dropped legacy ai_raw_responses table")
+		}
+	}
+
 	// Create new tts_summaries table if it doesn't exist yet (fresh install)
 	var hasTTSSummaries int
 	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
@@ -914,11 +925,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if len(orphans) > 0 {
 			slog.Info("cleaned up orphaned streaming messages", slog.Int("count", len(orphans)))
 		}
-	}
-
-	// Prune ai_raw_responses: keep only recent 200 rows for debugging.
-	if isServerStartup {
-		PruneRawResponses(200)
 	}
 
 	// Migrate: add ACP transport columns to agents table.

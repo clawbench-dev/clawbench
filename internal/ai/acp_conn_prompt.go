@@ -41,13 +41,6 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	c.cachedPlanState = nil
 	c.mu.Unlock()
 
-	// Reset raw output buffer for this turn. Raw ACP notification payloads
-	// are accumulated directly on the ACPConn (not through the channel) to
-	// avoid consuming channel buffer space that would cause content events
-	// to be dropped. The buffer is flushed to the channel as a single
-	// raw_output event after Prompt returns.
-	c.ResetRawOutput()
-
 	// Reset the per-turn _meta extension accumulator so stale metadata from a
 	// previous turn cannot leak into this one's message-level metadata.
 	c.getAndClearMetaAccum()
@@ -129,16 +122,6 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		Prompt:    prompt,
 	})
 	slog.Info("acp conn: conn.Prompt done", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(promptStart), "error", err)
-
-	// Flush accumulated raw ACP notification payloads to the channel as a
-	// single raw_output event. This is read by SessionExecutor to persist
-	// to ai_raw_responses for debugging. Previously, each ACP notification
-	// sent a separate raw_output event through the channel, which consumed
-	// channel buffer space and caused content events to be dropped.
-	// Flush on both success and error paths so partial output is preserved.
-	if rawOutput := c.ResetRawOutput(); rawOutput != "" {
-		forwardACPEvent(streamCh, StreamEvent{Type: "raw_output", RawOutput: rawOutput})
-	}
 
 	if err != nil {
 		if ctx.Err() != nil {

@@ -163,7 +163,7 @@ func (w *SessionCleanupWorker) cleanup() {
 		// Continue with session data purge even if chunk deletion fails
 	}
 
-	// Purge session data (ai_raw_responses, chat_tool_calls, chat_history, task_executions, chat_sessions)
+	// Purge session data (chat_tool_calls, chat_history, task_executions, chat_sessions)
 	sessionsPurged, messagesPurged, err := w.svc.PurgeArchivedData(sessionIDs)
 	if err != nil {
 		slog.Error("session cleanup: failed to purge session data", slog.String("err", err.Error()))

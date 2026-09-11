@@ -144,8 +144,6 @@ type RunResult struct {
 	Blocks []model.ContentBlock
 	// Metadata contains token usage, cost, duration, and other response metadata.
 	Metadata *ai.Metadata
-	// RawOutput is the collected raw AI backend output for debugging.
-	RawOutput string
 
 	// WallMs is the wall-clock duration of the execution in milliseconds.
 	WallMs int
@@ -176,7 +174,6 @@ type SessionExecutor struct {
 	// Internal state accumulated during execution
 	blocks           []model.ContentBlock
 	responseMetadata *ai.Metadata
-	rawOutput        string
 	receivedTerminal bool
 	wallStart        int64 // unix millis at execution start
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
@@ -348,9 +345,8 @@ func activeStreamCount() int {
 // It is used by the rewind handler: CancelSession cancels the Go context but is
 // asynchronous — the executor goroutine still drains its event channel and runs
 // Finalize afterwards. Truncating the history in that window lets a late
-// Finalize write the cancelled turn's raw output onto the preserved anchor via
-// GetStreamingMessageID's fallback to the latest streaming=0 row. Waiting for
-// the executor to unregister closes that window.
+// FinalizeStreamingMessage / UpdateStreamingMessage land on the preserved anchor
+// row. Waiting for the executor to unregister closes that window.
 //
 // On timeout it logs a warning and returns (best-effort — same exposure as
 // Archive/Destroy which do not wait at all).
@@ -371,7 +367,7 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
-//nolint:gocyclo,gocognit // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
+//nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// content_reset: clear accumulated blocks from a failed Prompt before retry.
 	// Sent by ACPBackend.ExecuteStream when the first Prompt fails due to peer
@@ -384,7 +380,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 			slog.String("session", e.cfg.SessionID),
 			slog.Int("blocks_before", len(e.blocks)))
 		e.blocks = nil
-		e.rawOutput = ""
 		e.responseMetadata = nil
 		e.lastFlush = time.Time{}
 		e.toolStarts = make(map[string]time.Time)
@@ -422,15 +417,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		}
 		// Forward to WS clients so the frontend clears its rendered partial content.
 		e.forwardEvent(event)
-		return
-	}
-
-	// raw_output: accumulate but don't forward or count
-	if event.Type == "raw_output" {
-		if e.rawOutput != "" {
-			e.rawOutput += "\n"
-		}
-		e.rawOutput += event.RawOutput
 		return
 	}
 
@@ -639,7 +625,6 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 		Empty:            empty,
 		Blocks:           blocks,
 		Metadata:         e.responseMetadata,
-		RawOutput:        e.rawOutput,
 		WallMs:           wallMs,
 	}
 }
@@ -1105,10 +1090,9 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 }
 
 // drainRemainingEvents reads all remaining events from the channel until it is
-// closed. In addition to raw_output (for debugging), it also processes
-// tool_use/tool_result events that arrive after the main event loop exited
-// (e.g., debouncer flushAll on cancel), persisting them via AccumulateBlock +
-// upsertToolCallToDB.
+// closed. It processes tool_use/tool_result events that arrive after the main
+// event loop exited (e.g., debouncer flushAll on cancel), persisting them via
+// AccumulateBlock + upsertToolCallToDB.
 //
 // It also processes session_capture and metadata events to persist the external
 // session ID, even when the stream was cancelled before the main loop processed
@@ -1117,17 +1101,12 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 // Draining until close (rather than a one-shot non-blocking scan) guarantees
 // the producer's channel sends never block forever on a full buffer, so the
 // producer goroutine can always exit and close the channel.
-func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
+func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 	if eventCh == nil {
-		return rawOutput
+		return
 	}
 	for event := range eventCh {
 		switch event.Type {
-		case "raw_output":
-			if rawOutput != "" {
-				rawOutput += "\n"
-			}
-			rawOutput += event.RawOutput
 		case eventTypeToolUse, eventTypeToolResult:
 			e.trackToolDuration(&event)
 			// e.blocks is only touched by this executor's goroutines; a
@@ -1146,25 +1125,24 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 			}
 		}
 	}
-	return rawOutput
 }
 
 // Finalize persists the RunResult to the database: builds the content JSON,
-// finalizes the streaming message, saves metadata, drains remaining events,
-// and saves raw output. Returns the finalized RunResult with DB message ID.
+// finalizes the streaming message, saves metadata, and drains remaining events.
+// Returns the finalized RunResult with DB message ID.
 //
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
-	// Drain remaining events first (raw_output + tool calls flushed by debouncer
-	// after the main event loop exited on cancel). This updates e.blocks so that
+	// Drain remaining events first (tool calls flushed by debouncer after the
+	// main event loop exited on cancel). This updates e.blocks so that
 	// buildContentJSON includes the latest tool call data.
 	//
 	// NOTE: not holding e.mu here — drainRemainingEvents blocks until the
 	// producer closes the channel, and it takes e.mu itself around the
 	// AccumulateBlock calls. Holding e.mu across the blocking drain would
 	// deadlock against a producer goroutine that tries to take e.mu.
-	rawOutput := e.drainRemainingEvents(eventCh, result.RawOutput)
+	e.drainRemainingEvents(eventCh)
 
 	// Use e.blocks (may have been updated by drain) instead of result.Blocks
 	// snapshot. Snapshot under lock so FlushStreamingNow (shutdown goroutine)
@@ -1231,21 +1209,9 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 		}
 	}
 
-	// Save raw AI backend output for debugging/analysis
-	if rawOutput != "" {
-		if streamMsgID := GetStreamingMessageID(e.cfg.SessionID); streamMsgID > 0 {
-			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, streamMsgID, rawOutput); err != nil {
-				slog.Error("failed to save raw response",
-					slog.String("session", e.cfg.SessionID),
-					slog.String("err", err.Error()))
-			}
-		}
-	}
-
 	// Update result with finalized blocks and metadata
 	result.Blocks = blocks
 	result.Metadata = responseMetadata
-	result.RawOutput = rawOutput
 	result.MsgID = msgID
 
 	// Stream is fully persisted — stop tracking it for graceful shutdown flushes.

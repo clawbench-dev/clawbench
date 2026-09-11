@@ -764,7 +764,7 @@ func executeStreamRun(
 	executor := service.NewSessionExecutor(ctx, cfg)
 	runResult := executor.RunWithChannel(eventCh)
 
-	// Finalize: persist to DB, drain channel, save metadata/raw
+	// Finalize: persist to DB, drain channel, save metadata
 	runResult = executor.Finalize(runResult, eventCh)
 
 	// Send updated metadata (with wallMs) to WS clients before the terminal event
