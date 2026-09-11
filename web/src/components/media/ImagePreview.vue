@@ -3,14 +3,13 @@
     @keydown="handleKeyDown"
     tabindex="0"
     ref="containerRef">
-    <div class="image-preview-body"
-      @mousedown="handleMouseDown"
-      @touchstart.passive="handleTouchStart"
-      @touchmove="handleTouchMove"
-      @touchend="handleTouchEnd"
-      @touchcancel="handleTouchEnd">
+    <div class="image-preview-body">
+      <!-- Draggable (wide-screen) onto the chat column to attach the existing
+           file — same internal payload the file manager uses, no re-upload. -->
       <img :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
-        :style="{ transform: `translateX(${dragOffsetX}px)`, transition: isDragging ? 'none' : 'transform 0.25s ease-out' }" />
+        :draggable="isWideScreen"
+        @dragstart="onImageDragStart"
+        @dragend="onImageDragEnd" />
       <!-- Prev overlay -->
       <div v-if="hasPrev" class="img-nav-hint img-nav-prev" @click="goPrev">
         <ChevronLeft :size="18" />
@@ -27,11 +26,13 @@
 
 <script setup>
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { buildLocalFileUrl } from '@/utils/download.ts'
+import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 
 const props = defineProps({
     file: Object,
@@ -49,15 +50,7 @@ const mediaUrl = computed(() => {
 )
 
 const containerRef = ref(null)
-const dragOffsetX = ref(0)
-const isDragging = ref(false)
-const dragStartX = ref(0)
-const dragLastX = ref(0)
-const hasMoved = ref(false)
-
-// Touch state
-const touchStartX = ref(0)
-const touchLastX = ref(0)
+const { isWideScreen } = useWideScreenLayout()
 
 // Build list of image files in the same directory
 const siblingImages = computed(() => {
@@ -96,83 +89,24 @@ function handleKeyDown(e) {
     else if (e.key === 'ArrowRight') { e.preventDefault(); goNext() }
 }
 
-// Mouse drag
-function handleMouseDown(e) {
-    if (e.button !== 0) return
-    isDragging.value = true
-    dragStartX.value = e.clientX
-    dragLastX.value = e.clientX
-    hasMoved.value = false
+/** Drag the previewed image onto the chat column → attach this path (no upload). */
+function onImageDragStart(e) {
+    const path = props.file?.path
+    if (!path) return
+    startAttachDrag(e, path, baseName(path))
 }
 
-function handleGlobalMouseMove(e) {
-    if (!isDragging.value) return
-    const dx = e.clientX - dragStartX.value
-    if (Math.abs(dx) > 5) hasMoved.value = true
-    dragLastX.value = e.clientX
-    dragOffsetX.value = dx * 0.3 // resistance
-}
-
-function handleGlobalMouseUp() {
-    if (!isDragging.value) return
-    isDragging.value = false
-
-    const dx = dragStartX.value - dragLastX.value
-    const absDx = Math.abs(dx)
-
-    if (hasMoved.value && absDx > 60) {
-        if (dx > 0) goNext()
-        else goPrev()
-    }
-
-    dragOffsetX.value = 0
-}
-
-// Touch swipe
-function handleTouchStart(e) {
-    if (e.touches.length !== 1) return
-    isDragging.value = true
-    touchStartX.value = e.touches[0].clientX
-    touchLastX.value = e.touches[0].clientX
-    hasMoved.value = false
-}
-
-function handleTouchMove(e) {
-    if (!isDragging.value || e.touches.length !== 1) return
-    const dx = e.touches[0].clientX - touchStartX.value
-    if (Math.abs(dx) > 5) hasMoved.value = true
-    touchLastX.value = e.touches[0].clientX
-    dragOffsetX.value = dx * 0.3
-}
-
-function handleTouchEnd() {
-    if (!isDragging.value) return
-    isDragging.value = false
-
-    const dx = touchStartX.value - touchLastX.value
-    if (hasMoved.value && Math.abs(dx) > 50) {
-        if (dx > 0) goNext()
-        else goPrev()
-    }
-
-    dragOffsetX.value = 0
+function onImageDragEnd() {
+    cleanupDragGhost()
 }
 
 // Focus container on mount for keyboard events
 onMounted(() => {
-    document.addEventListener('mousemove', handleGlobalMouseMove)
-    document.addEventListener('mouseup', handleGlobalMouseUp)
     containerRef.value?.focus()
-})
-
-onUnmounted(() => {
-    document.removeEventListener('mousemove', handleGlobalMouseMove)
-    document.removeEventListener('mouseup', handleGlobalMouseUp)
 })
 
 // Re-focus when file changes
 watch(() => props.file, () => {
-    dragOffsetX.value = 0
     containerRef.value?.focus()
 })
 </script>
@@ -208,7 +142,6 @@ watch(() => props.file, () => {
     object-fit: contain;
     cursor: default;
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-    will-change: transform;
 }
 
 :global([data-theme-base="dark"]) .image-preview-img {

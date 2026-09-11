@@ -1,6 +1,36 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import ImagePreview from '@/components/media/ImagePreview.vue'
+import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
+
+// Drive the draggable gate directly instead of depending on jsdom's viewport.
+const mockIsWideScreen = ref(false)
+vi.mock('@/composables/useWideScreenLayout.ts', () => ({
+  useWideScreenLayout: () => ({ isWideScreen: mockIsWideScreen }),
+}))
+function _setWideScreenForTest(v: boolean) { mockIsWideScreen.value = v }
+function _resetForTest() { mockIsWideScreen.value = false }
+
+// Minimal DataTransfer stand-in: enough for setAttachDragData/readAttachDragData.
+function mockDataTransfer(): DataTransfer {
+  const store: Record<string, string> = {}
+  const types: string[] = []
+  return {
+    setData(type: string, value: string) {
+      store[type] = value
+      if (!types.includes(type)) types.push(type)
+    },
+    getData(type: string) {
+      return store[type] ?? ''
+    },
+    get types() {
+      return Object.freeze([...types])
+    },
+    setDragImage: vi.fn(),
+    effectAllowed: 'none',
+  } as unknown as DataTransfer
+}
 
 // ── Mocks ──
 
@@ -67,6 +97,13 @@ describe('ImagePreview', () => {
       { name: 'doc.md', type: 'file' },
       { name: 'pic.gif', type: 'file' },
     ]
+  })
+
+  // A dragstart without a matching dragend leaves the 5s ghost safety timer
+  // pending; clear it so the suite reports no async leaks.
+  afterEach(() => {
+    cleanupDragGhost()
+    _resetForTest()
   })
 
   function mountPreview(props = {}) {
@@ -213,60 +250,37 @@ describe('ImagePreview', () => {
     expect(src).toMatch(/t=\d+/)
   })
 
-  // ── Mouse drag state ──
+  // ── Drag-to-attach (internal payload, no re-upload) ──
 
-  it('starts drag on mousedown', async () => {
+  it('is draggable on wide screens and writes the attach payload on dragstart', async () => {
+    _setWideScreenForTest(true)
     const wrapper = mountPreview()
-    const body = wrapper.find('.image-preview-body')
-    await body.trigger('mousedown', { button: 0, clientX: 100 })
+    const img = wrapper.find('.image-preview-img')
+    expect(img.attributes('draggable')).toBe('true')
 
-    expect(wrapper.vm.isDragging).toBe(true)
+    const dt = mockDataTransfer()
+    img.element.dispatchEvent(Object.assign(new Event('dragstart'), { dataTransfer: dt }))
+    expect(readAttachDragData(dt)).toEqual({ path: '/project/src/image.png', isDir: false })
+    _resetForTest()
   })
 
-  it('ignores right-click mousedown', async () => {
+  it('is not draggable on narrow screens', () => {
+    _setWideScreenForTest(false)
     const wrapper = mountPreview()
-    const body = wrapper.find('.image-preview-body')
-    await body.trigger('mousedown', { button: 2, clientX: 100 })
-
-    expect(wrapper.vm.isDragging).toBe(false)
+    expect(wrapper.find('.image-preview-img').attributes('draggable')).toBe('false')
+    _resetForTest()
   })
 
-  // ── Touch events ──
-
-  it('starts drag on touchstart', async () => {
+  it('removes the drag ghost on dragend', () => {
+    _setWideScreenForTest(true)
     const wrapper = mountPreview()
-    const body = wrapper.find('.image-preview-body')
-    await body.trigger('touchstart', { touches: [{ clientX: 100 }] })
+    const img = wrapper.find('.image-preview-img')
+    img.element.dispatchEvent(Object.assign(new Event('dragstart'), { dataTransfer: mockDataTransfer() }))
+    expect(document.querySelector('[data-attach-ghost]')).toBeTruthy()
 
-    expect(wrapper.vm.isDragging).toBe(true)
-  })
-
-  it('resets drag offset on touchend', async () => {
-    const wrapper = mountPreview()
-    const body = wrapper.find('.image-preview-body')
-    await body.trigger('touchstart', { touches: [{ clientX: 100 }] })
-    await body.trigger('touchend')
-
-    expect(wrapper.vm.isDragging).toBe(false)
-    expect(wrapper.vm.dragOffsetX).toBe(0)
-  })
-
-  // ── Cleanup ──
-
-  it('removes event listeners on unmount', () => {
-    const addSpy = vi.spyOn(document, 'addEventListener')
-    const removeSpy = vi.spyOn(document, 'removeEventListener')
-
-    const wrapper = mountPreview()
-    expect(addSpy).toHaveBeenCalledWith('mousemove', expect.any(Function))
-    expect(addSpy).toHaveBeenCalledWith('mouseup', expect.any(Function))
-
-    wrapper.unmount()
-    expect(removeSpy).toHaveBeenCalledWith('mousemove', expect.any(Function))
-    expect(removeSpy).toHaveBeenCalledWith('mouseup', expect.any(Function))
-
-    addSpy.mockRestore()
-    removeSpy.mockRestore()
+    img.element.dispatchEvent(new Event('dragend'))
+    expect(document.querySelector('[data-attach-ghost]')).toBeNull()
+    _resetForTest()
   })
 
 })

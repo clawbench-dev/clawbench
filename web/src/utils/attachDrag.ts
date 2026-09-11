@@ -67,6 +67,25 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
   }
 }
 
+/**
+ * Begin an internal attach drag for a known file path: writes the attach
+ * payload, sets effectAllowed and installs the custom drag ghost. Used by drag
+ * sources that already hold the path (image previews) so they attach the
+ * existing file instead of triggering an OS re-upload.
+ *
+ * Returns false when the event carries no dataTransfer (synthetic events) or
+ * the path is empty. Callers must call cleanupDragGhost() from their dragend.
+ */
+export function startAttachDrag(e: DragEvent, path: string, name: string, isDir = false): boolean {
+  const dt = e.dataTransfer
+  if (!dt || !path) return false
+  dt.effectAllowed = 'copy'
+  setAttachDragData(dt, path, isDir)
+  const ghost = buildAttachDragImage(name || path, isDir)
+  dt.setDragImage(ghost, 14, 16)
+  return true
+}
+
 // ── Custom drag ghost ──────────────────────────────────────────────────────
 // The OS-native drag image snapshots the source element, so a selected/accent
 // item renders with a jarring gradient + tint over the browser's translucent
@@ -81,6 +100,7 @@ export function hasAttachDragData(dt: DataTransfer | null | undefined): boolean 
 // safety timeout.
 
 let pendingGhost: HTMLElement | null = null
+let pendingGhostTimer: ReturnType<typeof setTimeout> | null = null
 
 export const ATTACH_DRAG_GHOST_FONT = 'bold 13px system-ui, sans-serif'
 export const ATTACH_DRAG_GHOST_PAD_X = 14
@@ -179,8 +199,12 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement 
   document.body.appendChild(el)
   pendingGhost = el
 
-  // Safety timeout: auto-clean after 5s in case dragend never fires
-  setTimeout(cleanupDragGhost, 5000)
+  // Safety timeout: auto-clean after 5s in case dragend never fires. Capture
+  // THIS element — pendingGhost is module-global, so a stale timer left over
+  // from an earlier drag must not remove a newer drag's ghost mid-drag.
+  pendingGhostTimer = setTimeout(() => {
+    if (pendingGhost === el) cleanupDragGhost()
+  }, 5000)
 
   return el
 }
@@ -190,6 +214,10 @@ export function buildAttachDragImage(name: string, isDir: boolean): HTMLElement 
  * Call this from a dragend handler, or it auto-cleans after the safety timeout.
  */
 export function cleanupDragGhost() {
+  if (pendingGhostTimer !== null) {
+    clearTimeout(pendingGhostTimer)
+    pendingGhostTimer = null
+  }
   if (pendingGhost && pendingGhost.parentNode) {
     pendingGhost.parentNode.removeChild(pendingGhost)
   }
