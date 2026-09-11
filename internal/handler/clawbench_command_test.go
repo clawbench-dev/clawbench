@@ -67,6 +67,24 @@ func TestProcessClawbenchCommand_PartialPrefixNoMatch(t *testing.T) {
 	assert.Equal(t, "/cb-chat something", result)
 }
 
+func TestProcessClawbenchCommand_BareChatSearchReturnsRaw(t *testing.T) {
+	// A bare /cb-chatsearch (no trailing space) — exactly what the frontend
+	// sends after trimming a menu selection — has an empty query and must
+	// return the raw message so the caller can emit SearchQueryRequired.
+	result := processClawbenchCommand("/cb-chatsearch", "/project", "session-123")
+	assert.Equal(t, "/cb-chatsearch", result)
+}
+
+func TestProcessClawbenchCommand_BareTaskInjects(t *testing.T) {
+	model.ClawbenchBin = "/usr/local/bin/clawbench"
+	defer func() { model.ClawbenchBin = "" }()
+
+	// A bare /cb-task (no trailing space) must still inject the task template.
+	result := processClawbenchCommand("/cb-task", "/project", "session-123")
+	assert.Contains(t, result, "scheduled task management")
+	assert.NotContains(t, result, "/cb-task")
+}
+
 func TestProcessClawbenchCommand_AgentSlashCommandPassesThrough(t *testing.T) {
 	// A regular agent slash command (no cb- namespace) must pass through
 	// untouched — it is forwarded to the agent, not injected locally.
@@ -79,6 +97,11 @@ func TestProcessClawbenchCommand_AgentSlashCommandPassesThrough(t *testing.T) {
 func TestIsClawbenchCommand(t *testing.T) {
 	assert.True(t, IsClawbenchCommand("/cb-chatsearch query"))
 	assert.True(t, IsClawbenchCommand("/cb-task do thing"))
+	// Bare commands (no trailing space) are what the frontend sends after
+	// trimming — they must still be recognized so they are not misrouted to
+	// the ACP slash-command path (regression).
+	assert.True(t, IsClawbenchCommand("/cb-chatsearch"))
+	assert.True(t, IsClawbenchCommand("/cb-task"))
 	assert.False(t, IsClawbenchCommand("/compact"))
 	assert.False(t, IsClawbenchCommand("/cb-chatsearchx query")) // no space after command
 	assert.False(t, IsClawbenchCommand("hello"))

@@ -57,12 +57,22 @@ Rules:
 - Use the user's language for task names and prompts
 `
 
+// matchClawbenchCommand reports whether msg is exactly cmd, or cmd followed by
+// a space (i.e. cmd with arguments). A bare command with no trailing space is
+// still a ClawBench command: the frontend trims trailing whitespace before
+// sending, so selecting "/cb-task" from the menu and pressing Enter sends
+// "/cb-task" with no space. Treating only "/cb-task " as a match would let the
+// bare form slip into the ACP slash-command path and be forwarded to the agent.
+func matchClawbenchCommand(msg, cmd string) bool {
+	return msg == cmd || strings.HasPrefix(msg, cmd+" ")
+}
+
 // IsClawbenchCommand reports whether the raw user message starts with one of
 // ClawBench's built-in "/cb-" commands. Used to keep these commands out of the
 // ACP slash-command path (they must not be forwarded to the agent).
 func IsClawbenchCommand(rawMsg string) bool {
-	return strings.HasPrefix(rawMsg, ClawbenchCmdChatSearch+" ") ||
-		strings.HasPrefix(rawMsg, ClawbenchCmdTask+" ")
+	return matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdTask)
 }
 
 // processClawbenchCommand checks if the raw user message starts with a
@@ -77,9 +87,9 @@ func IsClawbenchCommand(rawMsg string) bool {
 // For /cb-chatsearch with empty query, returns the raw message unchanged (caller
 // should handle the error response).
 func processClawbenchCommand(rawMsg, projectPath, sessionID string) string {
-	if strings.HasPrefix(rawMsg, ClawbenchCmdChatSearch+" ") {
-		query := strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch+" ")
-		if strings.TrimSpace(query) == "" {
+	if matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) {
+		query := strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch))
+		if query == "" {
 			return rawMsg
 		}
 		tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
@@ -90,7 +100,7 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) string {
 		// Return only the template; the caller appends the original prompt separately
 		return tmpl
 	}
-	if strings.HasPrefix(rawMsg, ClawbenchCmdTask+" ") {
+	if matchClawbenchCommand(rawMsg, ClawbenchCmdTask) {
 		tmpl := strings.ReplaceAll(taskInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))

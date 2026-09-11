@@ -432,21 +432,23 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// template to prompt. Must happen after file path prefixes are added so the
 	// AI sees both the injected context and file context, but detection is on
 	// raw req.Message (since file prefixes would break the "/cb-" prefix check).
-	if strings.HasPrefix(req.Message, ClawbenchCmdChatSearch+" ") {
+	// matchClawbenchCommand also matches the bare command (no trailing space),
+	// which is what the frontend sends after trimming a menu selection.
+	if matchClawbenchCommand(req.Message, ClawbenchCmdChatSearch) {
 		// RAG availability check — GlobalStore is nil when RAG index is not ready
 		if rag.GlobalStore == nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotReady")
 			return
 		}
 		// Empty query rejection
-		query := strings.TrimPrefix(req.Message, ClawbenchCmdChatSearch+" ")
-		if strings.TrimSpace(query) == "" {
+		query := strings.TrimSpace(strings.TrimPrefix(req.Message, ClawbenchCmdChatSearch))
+		if query == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
 			return
 		}
 		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
 		prompt = atInjected + "\n\n" + prompt
-	} else if strings.HasPrefix(req.Message, ClawbenchCmdTask+" ") {
+	} else if matchClawbenchCommand(req.Message, ClawbenchCmdTask) {
 		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
 		prompt = atInjected + "\n\n" + prompt
 	}
