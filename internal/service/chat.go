@@ -1093,12 +1093,12 @@ func generateSessionID() string {
 }
 
 // GetSessions retrieves chat sessions for a given project path,
-// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
+// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
 // If backend is non-empty, filters by backend; otherwise returns all backends.
 // Only returns sessions with session_type='chat' (excludes scheduled sessions).
 func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	sessions := []model.ChatSession{}
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at,
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
 		COALESCE(unread.cnt, 0) AS unread_count
 		FROM chat_sessions s
 		LEFT JOIN (
@@ -1116,7 +1116,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
 	}
-	query += " ORDER BY s.created_at DESC, s.id DESC"
+	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC"
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
@@ -1128,7 +1128,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1185,7 +1185,7 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 }
 
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
-// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
+// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
 // limit=0 means no limit (returns all sessions).
 // cursor and cursorID: when non-empty, only return sessions with
 //
@@ -1203,7 +1203,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	}
 
 	// Build main query with cursor and limit+1
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at,
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
 		COALESCE(unread.cnt, 0) AS unread_count
 		FROM chat_sessions s
 		LEFT JOIN (
@@ -1225,7 +1225,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
 		args = append(args, cursor, cursor, cursorID)
 	}
-	query += " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := dbRead.Query(query, args...)
@@ -1239,7 +1239,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, false, err
 		}
 		if lastRead.Valid {
@@ -1601,6 +1601,13 @@ func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
 // ACP session import, where the title is derived from the CLI's own transcript.
 func SetSessionTitleLocked(sessionID, title string) error {
 	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceCustom, sessionID)
+	return err
+}
+
+// UpdateSessionPinned sets the pinned state for a session.
+// Pinned sessions sort to the top of the session list.
+func UpdateSessionPinned(sessionID string, pinned bool) error {
+	_, err := WriteExec("UPDATE chat_sessions SET pinned = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", pinned, sessionID)
 	return err
 }
 

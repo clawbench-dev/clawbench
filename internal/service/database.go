@@ -769,6 +769,22 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add pinned column for session pin-to-top feature
+	var hasPinned int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='pinned'").Scan(&hasPinned)
+	if hasPinned == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add pinned column: %w", err)
+		}
+		// Rebuild covering index to include pinned for optimal ORDER BY pinned DESC, created_at DESC
+		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
+		}
+		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
+			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
+		}
+	}
+
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
