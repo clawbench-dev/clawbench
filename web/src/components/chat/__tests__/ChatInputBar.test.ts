@@ -8,13 +8,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 // default 5s testTimeout, causing flaky `Test timed out in 5000ms` failures
 // that drag down src/components coverage. Bump this file's timeout only.
 vi.setConfig({ testTimeout: 30_000 })
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import { apiGet } from '@/utils/api'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
+import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 
 vi.mock('@/utils/api', () => ({
   apiGet: vi.fn().mockResolvedValue(undefined),
@@ -414,6 +415,9 @@ afterEach(() => {
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
   mockPendingFilesValue.value = []
+  // The text draft store is module-level (survives component remounts on
+  // purpose), so drafts must be cleared between tests or they leak across cases.
+  _resetChatDraftsForTesting()
 })
 
 const stubs = {
@@ -699,6 +703,107 @@ describe('ChatInputBar', () => {
     await wrapper.setProps({ currentSessionId: 'sess-1' })
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
+  })
+
+  it('survives an SPA project switch that resets the session and changes the key in one tick', async () => {
+    // Faithful reproduction of App.vue hotSwitchProject(): resetIdentity() sets
+    // currentSessionId to '' and projectKey changes in the SAME synchronous tick,
+    // so Vue replaces the keyed subtree in one render. The old component is torn
+    // down without its currentSessionId watcher ever observing the change — the
+    // draft must be persisted at unmount time, not by the watcher.
+    const sid = ref('sess-1')
+    const projectKey = ref('project-A')
+    const Parent = defineComponent({
+      setup() {
+        return () => h('div', { key: projectKey.value }, [
+          h(ChatInputBar, {
+            inputDisabled: false,
+            currentSessionId: sid.value,
+            currentAgentId: '',
+            attachedFiles: [],
+            pendingFiles: [],
+          }),
+        ])
+      },
+    })
+    const wrapper = mount(Parent, {
+      global: { plugins: [i18n], stubs, directives: { 'long-press': { mounted: () => {}, unmounted: () => {} } } },
+    })
+    const first = wrapper.findComponent(ChatInputBar)
+    first.vm.inputText = 'unsent text in project A'
+    await nextTick()
+
+    // Both mutations with NO await in between — exactly as hotSwitchProject does.
+    sid.value = ''
+    projectKey.value = 'project-B'
+    await nextTick()
+    await nextTick()
+
+    // The remounted component restores the session (initSessionFromAPI sets the
+    // id) and must pull the draft back into the input box.
+    sid.value = 'sess-1'
+    await nextTick()
+    await nextTick()
+    const second = wrapper.findComponent(ChatInputBar)
+    expect(second.vm).not.toBe(first.vm)
+    expect(second.vm.inputText).toBe('unsent text in project A')
+  })
+
+  it('does not resurrect a sent message after a project switch', async () => {
+    // Sending calls clearInput(), which drops the draft. A later project switch
+    // must not bring the delivered text back.
+    const sid = ref('sess-1')
+    const projectKey = ref('project-A')
+    const Parent = defineComponent({
+      setup() {
+        return () => h('div', { key: projectKey.value }, [
+          h(ChatInputBar, {
+            inputDisabled: false,
+            currentSessionId: sid.value,
+            currentAgentId: '',
+            attachedFiles: [],
+            pendingFiles: [],
+          }),
+        ])
+      },
+    })
+    const wrapper = mount(Parent, {
+      global: { plugins: [i18n], stubs, directives: { 'long-press': { mounted: () => {}, unmounted: () => {} } } },
+    })
+    const first = wrapper.findComponent(ChatInputBar)
+    first.vm.inputText = 'already sent'
+    await nextTick()
+    first.vm.saveDraft()
+    first.vm.clearInput()
+    await nextTick()
+    expect(first.vm.hasDraft('sess-1')).toBe(false)
+
+    sid.value = ''
+    projectKey.value = 'project-B'
+    await nextTick()
+    await nextTick()
+
+    sid.value = 'sess-1'
+    await nextTick()
+    await nextTick()
+    const second = wrapper.findComponent(ChatInputBar)
+    expect(second.vm.inputText).toBe('')
+  })
+
+  it('drafts from the previous project do not leak into a different session after remount', async () => {
+    const first = mountBar({ currentSessionId: 'sess-A' })
+    first.vm.inputText = 'draft for A'
+    await first.vm.$nextTick()
+    first.vm.saveDraft()
+    first.unmount()
+
+    const second = mountBar({ currentSessionId: '' })
+    await second.vm.$nextTick()
+    // The new project opens a different session — it must not inherit A's text.
+    await second.setProps({ currentSessionId: 'sess-B' })
+    await second.vm.$nextTick()
+    expect(second.vm.inputText).toBe('')
+    expect(second.vm.getDraft('sess-B')).toBe(null)
   })
 
   it('injectToInput appends text on newline when existing content', async () => {

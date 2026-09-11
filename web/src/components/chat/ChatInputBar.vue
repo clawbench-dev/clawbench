@@ -343,6 +343,7 @@ import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useChatContext } from '@/composables/useChatContext'
+import { setChatDraft, getChatDraft, hasChatDraft, deleteChatDraft } from '@/utils/chatDraftStore.ts'
 import { useCompletionMenu } from '@/composables/useCompletionMenu'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useShareIn } from '@/composables/useShareIn'
@@ -1240,9 +1241,10 @@ function handleStopClick() {
   }
 }
 
-// Per-session draft cache: save input text when switching away, restore when switching back
-const draftCache = new Map()
-
+// Per-session draft cache: save input text when switching away, restore when
+// switching back. Backed by a module-level store (not component state) so the
+// draft survives the component remount caused by an SPA project switch — see
+// chatDraftStore.ts for why.
 watch(() => props.currentSessionId, (newId, oldId) => {
   // History navigation is per-session: a session switch must start fresh from
   // the new session's newest history entry.
@@ -1251,14 +1253,16 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   if (oldId) {
     const text = inputText.value
     if (text) {
-      draftCache.set(oldId, text)
+      setChatDraft(oldId, text)
     }
     // Don't delete existing draft when inputText is empty — saveDraft() may have
     // already saved it before clearInputPreserveDraft() cleared the visible text.
     // Only clearInput() (called after message send) explicitly deletes the draft.
   }
-  // Restore draft for the new session (or clear if none)
-  inputText.value = newId ? (draftCache.get(newId) || '') : ''
+  // Restore draft for the new session (or clear if none). This also runs on the
+  // remount after a project switch: currentSessionId is reset to '' first, then
+  // initSessionFromAPI() sets the restored session id, firing this watcher.
+  inputText.value = newId ? getChatDraft(newId) : ''
   // autoResizeTextarea is called automatically by the inputText watcher
 })
 
@@ -1539,7 +1543,7 @@ function clearInput() {
   inputText.value = ''
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
-    draftCache.delete(props.currentSessionId)
+    deleteChatDraft(props.currentSessionId)
   }
   // A new message starts fresh history navigation from the newest entry.
   resetInputHistory()
@@ -1551,19 +1555,14 @@ function clearInput() {
 function restoreInput(text) {
   inputText.value = text ?? ''
   if (props.currentSessionId && text) {
-    draftCache.set(props.currentSessionId, text)
+    setChatDraft(props.currentSessionId, text)
   }
 }
 
 /** Save current input text to draft cache without clearing it (called before session switch). */
 function saveDraft() {
   if (props.currentSessionId) {
-    const text = inputText.value
-    if (text) {
-      draftCache.set(props.currentSessionId, text)
-    } else {
-      draftCache.delete(props.currentSessionId)
-    }
+    setChatDraft(props.currentSessionId, inputText.value)
   }
 }
 
@@ -1627,10 +1626,8 @@ function injectToInput(text) {
  *  re-editing (replace + focus, unlike injectToInput which appends). */
 function prefillInput(text) {
   inputText.value = text ?? ''
-  if (props.currentSessionId && text) {
-    draftCache.set(props.currentSessionId, text)
-  } else if (props.currentSessionId) {
-    draftCache.delete(props.currentSessionId)
+  if (props.currentSessionId) {
+    setChatDraft(props.currentSessionId, text ?? '')
   }
   resetInputHistory()
   nextTick(() => {
@@ -1689,6 +1686,17 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // The SPA project switch (App.vue hotSwitchProject) calls resetIdentity() and
+  // changes :key="projectKey" in the SAME synchronous tick. Vue then replaces
+  // the whole keyed subtree, so this component is unmounted with its props still
+  // pointing at the OLD session — the currentSessionId watcher above never
+  // observes the change and never saves. Persist the draft here so it survives
+  // the remount and can be restored when the user switches back.
+  // Only write when there is text: an empty input must not delete a draft that
+  // saveDraft() already stored before clearInputPreserveDraft() hid the text.
+  if (props.currentSessionId && inputText.value) {
+    setChatDraft(props.currentSessionId, inputText.value)
+  }
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
   window.removeEventListener('keydown', onVoiceShortcutDown)
@@ -1730,9 +1738,9 @@ defineExpose({
   clearInputPreserveDraft,
   clearRecommendation,
   inputText,
-  deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
-  hasDraft: (sessionId) => draftCache.has(sessionId),
-  getDraft: (sessionId) => draftCache.get(sessionId) ?? null,
+  deleteDraft: (sessionId) => { deleteChatDraft(sessionId) },
+  hasDraft: (sessionId) => hasChatDraft(sessionId),
+  getDraft: (sessionId) => (hasChatDraft(sessionId) ? getChatDraft(sessionId) : null),
   injectToInput,
   prefillInput,
   handleQuickSendClick,
