@@ -8,6 +8,41 @@ import (
 	"path/filepath"
 )
 
+// FirstRun records whether this process started against a brand-new install.
+// It is captured during ApplyDefaults (before the database is created) and
+// exposed to the client so the frontend can apply out-of-box appearance
+// defaults such as the default theme. It is process-scoped, not persisted:
+// a restart of an existing install re-evaluates to false.
+var FirstRun bool
+
+// HealedBingFetch records that ApplyDefaults repaired an unrepresentable
+// appearance state — the wallpaper mode says Bing while the fetch switch is off
+// — so startup knows the repaired value needs writing to disk. ApplyDefaults
+// fixes the value in memory, so this flag is the only surviving evidence that a
+// write is needed.
+var HealedBingFetch bool
+
+// IsFreshInstall reports whether this is a brand-new installation, which is
+// what gates the out-of-box appearance defaults (Bing daily wallpaper).
+//
+// A missing config.yaml alone is not sufficient evidence: config.yaml is
+// optional and is never written at startup, so a long-running install that
+// simply never changed a setting looks identical to a fresh one. The database
+// file, by contrast, is created on every startup (service.InitDB) and is
+// therefore a reliable "this install has run before" marker.
+func IsFreshInstall(presence map[string]bool) bool {
+	if presence != nil {
+		return false
+	}
+	if DataDir == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(DataDir, "ClawBench.db")); err == nil {
+		return false
+	}
+	return true
+}
+
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
 // keys that were explicitly present. For example, given:
 //
@@ -79,7 +114,71 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Appearance.PanelOpacity <= 0 {
 		cfg.Appearance.PanelOpacity = 0.85
 	}
-	// WallpaperFile empty is the intentional default (no wallpaper set).
+	// Wallpaper source selection. Two independent sources exist (a local
+	// gallery and the Bing daily image) but only one is shown at a time.
+	//
+	// Fresh installs ship with the Bing daily wallpaper auto-following, which is
+	// what makes the out-of-box appearance work with no bundled image. Existing
+	// installs are deliberately left alone: a user who never enabled a wallpaper
+	// must not have one appear after an upgrade.
+	//
+	// The decision is captured in FirstRun because the database file this check
+	// relies on is created later in startup, so it cannot be re-evaluated once
+	// the server is serving requests.
+	FirstRun = IsFreshInstall(presence)
+	if FirstRun {
+		if cfg.Appearance.WallpaperMode == "" {
+			cfg.Appearance.WallpaperMode = "bing"
+		}
+		cfg.Appearance.WallpaperEnabled = true
+		cfg.Appearance.Bing.Enabled = true
+		if cfg.Appearance.Bing.Mkt == "" {
+			cfg.Appearance.Bing.Mkt = "zh-CN"
+		}
+	} else if cfg.Appearance.WallpaperFile != "" && cfg.Appearance.Local.Selected == "" {
+		// Upgrade path: adopt the legacy single-file wallpaper into the gallery
+		// so it stays selectable alongside new uploads. The file itself is not
+		// moved — unprefixed names keep resolving in the theme root — so an
+		// in-flight serve request never 404s.
+		//
+		// Skip adoption when the gallery already lists this file (the user may
+		// have deleted it, or a previous run already migrated it), and when the
+		// file is gone from disk: re-adding a deleted image would resurrect a
+		// wallpaper whose bytes no longer exist, leaving a permanently broken
+		// serve. wallpaper.FilePath would introduce an import cycle here, so the
+		// theme-root path is derived directly.
+		legacyPath := filepath.Join(DataDir, "theme", cfg.Appearance.WallpaperFile)
+		alreadyInGallery := false
+		for _, it := range cfg.Appearance.Local.Items {
+			if it.File == cfg.Appearance.WallpaperFile {
+				alreadyInGallery = true
+				break
+			}
+		}
+		if _, statErr := os.Stat(legacyPath); statErr == nil && !alreadyInGallery {
+			cfg.Appearance.Local.Selected = cfg.Appearance.WallpaperFile
+			cfg.Appearance.Local.Items = append(cfg.Appearance.Local.Items, LocalWallpaperItem{
+				File: cfg.Appearance.WallpaperFile,
+				Name: cfg.Appearance.WallpaperFile,
+			})
+			if cfg.Appearance.WallpaperMode == "" {
+				cfg.Appearance.WallpaperMode = "local"
+			}
+			cfg.Appearance.WallpaperEnabled = true
+		}
+	}
+
+	// Bing is the selected source, so its fetch switch must be on. This is
+	// normally kept in step by the mode endpoint, but configs written before
+	// that coupling existed can say mode=bing with the switch off — a state the
+	// settings UI cannot reach or repair, where the worker silently refuses to
+	// fetch and the sync button appears to do nothing.
+	if cfg.Appearance.WallpaperMode == "bing" {
+		// Record that the value needed repairing so startup persists it; the
+		// assignment below destroys the evidence.
+		HealedBingFetch = !cfg.Appearance.Bing.Enabled
+		cfg.Appearance.Bing.Enabled = true
+	}
 
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)

@@ -82,9 +82,18 @@ func setupTestBinDir(t *testing.T) string {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
 	origDataDir := DataDir
+	origFirstRun := FirstRun
+	origHealed := HealedBingFetch
 	BinDir = tmpDir
 	DataDir = filepath.Join(tmpDir, ".clawbench")
-	t.Cleanup(func() { BinDir = origBinDir; DataDir = origDataDir })
+	// ApplyDefaults writes process-global flags; restore them so one test's
+	// fresh-install / heal state cannot leak into another.
+	t.Cleanup(func() {
+		BinDir = origBinDir
+		DataDir = origDataDir
+		FirstRun = origFirstRun
+		HealedBingFetch = origHealed
+	})
 	return tmpDir
 }
 
@@ -172,8 +181,264 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Appearance.PanelOpacity != 0.85 {
 		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
 	}
+	// A nil presence map with no database present is a fresh install, which
+	// ships with the Bing daily wallpaper enabled.
+	if cfg.Appearance.WallpaperMode != "bing" {
+		t.Errorf("Appearance.WallpaperMode = %q, want bing (fresh install)", cfg.Appearance.WallpaperMode)
+	}
+	if !cfg.Appearance.WallpaperEnabled {
+		t.Error("Appearance.WallpaperEnabled = false, want true (fresh install)")
+	}
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Appearance.Bing.Enabled = false, want true (fresh install)")
+	}
+	if cfg.Appearance.Bing.Mkt != "zh-CN" {
+		t.Errorf("Appearance.Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
+	}
 	if cfg.Appearance.WallpaperFile != "" {
-		t.Errorf("Appearance.WallpaperFile = %q, want empty (no wallpaper set)", cfg.Appearance.WallpaperFile)
+		t.Errorf("Appearance.WallpaperFile = %q, want empty (no legacy wallpaper)", cfg.Appearance.WallpaperFile)
+	}
+}
+
+// seedExistingInstall marks the current DataDir as a pre-existing installation
+// by creating the database file that InitDB would have produced.
+func seedExistingInstall(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(DataDir, 0o755); err != nil {
+		t.Fatalf("create data dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, "ClawBench.db"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db marker: %v", err)
+	}
+}
+
+// seedThemeFile writes a file into <DataDir>/theme so legacy-wallpaper adoption
+// (which now verifies the file still exists) has something to find.
+func seedThemeFile(t *testing.T, name string) {
+	t.Helper()
+	themeDir := filepath.Join(DataDir, "theme")
+	if err := os.MkdirAll(themeDir, 0o755); err != nil {
+		t.Fatalf("create theme dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(themeDir, name), []byte("png"), 0o644); err != nil {
+		t.Fatalf("seed theme file: %v", err)
+	}
+}
+
+// TestApplyDefaultsHealsBingModeWithFetchDisabled covers configs written before
+// the mode endpoint kept the two in step: mode says Bing while the fetch switch
+// is off. The settings UI cannot reach or repair this state, so loading the
+// config must turn the switch back on.
+func TestApplyDefaultsHealsBingModeWithFetchDisabled(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperMode = "bing"
+	cfg.Appearance.Bing.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
+
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = false, want true when the mode is Bing")
+	}
+	// The flag is what tells startup to write the repaired value to disk.
+	if !HealedBingFetch {
+		t.Error("HealedBingFetch = false, want true so the repair is persisted")
+	}
+}
+
+// TestApplyDefaultsLocalModeLeavesBingFetchAlone is the counterpart: a local
+// install must not have Bing fetching switched on by loading its config.
+func TestApplyDefaultsLocalModeLeavesBingFetchAlone(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperMode = "local"
+	cfg.Appearance.Bing.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
+
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want it untouched for a local-mode install")
+	}
+	if HealedBingFetch {
+		t.Error("HealedBingFetch = true, want no heal for a local-mode install")
+	}
+}
+
+// TestApplyDefaultsFreshInstallBingOn pins the out-of-box appearance: a brand
+// new install has no config.yaml and no database.
+func TestApplyDefaultsFreshInstallBingOn(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Appearance.WallpaperMode != "bing" {
+		t.Errorf("WallpaperMode = %q, want bing", cfg.Appearance.WallpaperMode)
+	}
+	if !cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = false, want true")
+	}
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = false, want true")
+	}
+	if cfg.Appearance.Bing.Mkt != "zh-CN" {
+		t.Errorf("Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
+	}
+}
+
+// TestApplyDefaultsExistingInstallBingOff is the regression guard for upgrades:
+// an existing install that never set a wallpaper must not suddenly get one.
+func TestApplyDefaultsExistingInstallBingOff(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+
+	// A database file marks this install as pre-existing, and an empty presence
+	// map models a config.yaml that exists but has no appearance section.
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{"port": true})
+
+	if cfg.Appearance.WallpaperMode != "" {
+		t.Errorf("WallpaperMode = %q, want empty (existing install must not enable Bing)", cfg.Appearance.WallpaperMode)
+	}
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = true, want false (existing install must not enable a wallpaper)")
+	}
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want false (existing install must not enable Bing)")
+	}
+	_ = tmpDir
+}
+
+// TestApplyDefaultsExistingInstallWithoutConfigFile covers the case that a
+// missing config.yaml alone must not be mistaken for a fresh install: a
+// long-running install that never wrote a config still has its database.
+func TestApplyDefaultsExistingInstallWithoutConfigFile(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want false: a database without config.yaml is an existing install")
+	}
+}
+
+// TestApplyDefaultsMigratesLegacyWallpaperFileToGallery ensures the pre-gallery
+// single-file wallpaper stays selectable after the upgrade.
+func TestApplyDefaultsMigratesLegacyWallpaperFileToGallery(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+	seedThemeFile(t, "background.png")
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
+
+	if cfg.Appearance.WallpaperMode != "local" {
+		t.Errorf("WallpaperMode = %q, want local", cfg.Appearance.WallpaperMode)
+	}
+	if !cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = false, want true (an existing wallpaper stays visible)")
+	}
+	if cfg.Appearance.Local.Selected != "background.png" {
+		t.Errorf("Local.Selected = %q, want background.png", cfg.Appearance.Local.Selected)
+	}
+	if len(cfg.Appearance.Local.Items) != 1 {
+		t.Fatalf("Local.Items length = %d, want 1", len(cfg.Appearance.Local.Items))
+	}
+	if cfg.Appearance.Local.Items[0].File != "background.png" {
+		t.Errorf("Local.Items[0].File = %q, want background.png", cfg.Appearance.Local.Items[0].File)
+	}
+	// The legacy field is retained so the old endpoint keeps working.
+	if cfg.Appearance.WallpaperFile != "background.png" {
+		t.Errorf("WallpaperFile = %q, want it retained", cfg.Appearance.WallpaperFile)
+	}
+}
+
+// TestApplyDefaultsMigrationIsIdempotent guards against duplicating the gallery
+// entry when the migrated config is loaded again.
+func TestApplyDefaultsMigrationIsIdempotent(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+	seedThemeFile(t, "background.png")
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
+
+	if len(cfg.Appearance.Local.Items) != 1 {
+		t.Errorf("Local.Items length = %d, want 1 after a second pass", len(cfg.Appearance.Local.Items))
+	}
+}
+
+// TestApplyDefaultsDoesNotResurrectDeletedLegacyWallpaper covers the upgrade
+// path after the user deleted the migrated image: the file is gone from disk,
+// so re-adopting it would leave the config pointing at a missing file (a
+// permanently broken wallpaper that the client still tries to display).
+func TestApplyDefaultsDoesNotResurrectDeletedLegacyWallpaper(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	// Note: no theme/background.png on disk.
+	cfg := Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
+
+	if len(cfg.Appearance.Local.Items) != 0 {
+		t.Errorf("Local.Items = %v, want empty (file is gone)", cfg.Appearance.Local.Items)
+	}
+	if cfg.Appearance.WallpaperMode == "local" {
+		t.Error("WallpaperMode = local, want unchanged when the legacy file no longer exists")
+	}
+}
+
+// TestApplyDefaultsAdoptsLegacyWallpaperThatStillExists is the counterpart: a
+// legacy wallpaper whose file is present must still be adopted.
+func TestApplyDefaultsAdoptsLegacyWallpaperThatStillExists(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	themeDir := filepath.Join(DataDir, "theme")
+	if err := os.MkdirAll(themeDir, 0o755); err != nil {
+		t.Fatalf("mkdir theme: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(themeDir, "background.png"), []byte("png"), 0o644); err != nil {
+		t.Fatalf("seed legacy wallpaper: %v", err)
+	}
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperFile = "background.png"
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
+
+	if len(cfg.Appearance.Local.Items) != 1 {
+		t.Fatalf("Local.Items = %v, want the legacy wallpaper adopted", cfg.Appearance.Local.Items)
+	}
+	if cfg.Appearance.Local.Selected != "background.png" {
+		t.Errorf("Selected = %q, want background.png", cfg.Appearance.Local.Selected)
+	}
+	if cfg.Appearance.WallpaperMode != "local" {
+		t.Errorf("WallpaperMode = %q, want local", cfg.Appearance.WallpaperMode)
+	}
+}
+
+func TestIsFreshInstall(t *testing.T) {
+	setupTestBinDir(t)
+
+	if !IsFreshInstall(nil) {
+		t.Error("IsFreshInstall(nil) = false with no database, want true")
+	}
+	if IsFreshInstall(map[string]bool{}) {
+		t.Error("IsFreshInstall(non-nil) = true, want false: a config.yaml means the install has run")
+	}
+
+	seedExistingInstall(t)
+	if IsFreshInstall(nil) {
+		t.Error("IsFreshInstall(nil) = true with a database present, want false")
 	}
 }
 

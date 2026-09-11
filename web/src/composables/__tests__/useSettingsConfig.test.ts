@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig } from '@/composables/useSettingsConfig'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -131,6 +131,17 @@ describe('useSettingsConfig', () => {
     expect('swipeSession' in localConfig).toBe(true)
   })
 
+  it('serverDefaults exposes the wallpaper source keys', () => {
+    // These back the wallpaper mode/Bing controls before /api/config resolves,
+    // so the settings panel renders meaningful values on first paint.
+    const { getServerValueWithDefault } = useSettingsConfig()
+
+    expect(getServerValueWithDefault('appearance.wallpaper_mode')).toBe('')
+    expect(getServerValueWithDefault('appearance.wallpaper_enabled')).toBe(false)
+    expect(getServerValueWithDefault('appearance.bing.enabled')).toBe(false)
+    expect(getServerValueWithDefault('appearance.bing.mkt')).toBe('zh-CN')
+  })
+
   it('localConfig has markdownCodeLinkPreview defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
     localStorage.removeItem('clawbench-settings-markdownCodeLinkPreview')
@@ -154,7 +165,6 @@ describe('useSettingsConfig', () => {
 
     localStorage.removeItem('clawbench-settings-filePreviewMode')
   })
-
 
   it('localConfig has notificationSound defaulting to true', () => {
     const { localConfig } = useSettingsConfig()
@@ -861,6 +871,98 @@ describe('useSettingsConfig', () => {
       // Clean up
       document.documentElement.style.zoom = ''
       localStorage.removeItem('clawbench-settings-uiScale')
+    })
+  })
+
+  // ── first-run appearance defaults ──
+
+  describe('applyFirstRunThemeDefaults', () => {
+    it('applies the out-of-box theme on a fresh install with no stored theme', () => {
+      localStorage.removeItem('clawbench-settings-theme')
+      localStorage.removeItem('theme')
+
+      applyFirstRunThemeDefaults({ first_run: true })
+
+      expect(localConfig.theme).toBe('gruvbox-dark')
+      expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('gruvbox-dark'))
+      expect(document.documentElement.getAttribute('data-theme')).toBe('gruvbox-dark')
+    })
+
+    it('does not override a theme the user already picked', () => {
+      localStorage.setItem('clawbench-settings-theme', JSON.stringify('dracula'))
+      localConfig.theme = 'dracula'
+
+      applyFirstRunThemeDefaults({ first_run: true })
+
+      expect(localConfig.theme).toBe('dracula')
+      expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('dracula'))
+
+      localStorage.removeItem('clawbench-settings-theme')
+      localConfig.theme = 'auto'
+    })
+
+    it('respects a legacy stored theme key', () => {
+      localStorage.removeItem('clawbench-settings-theme')
+      localStorage.setItem('theme', 'nord')
+      localConfig.theme = 'nord'
+
+      applyFirstRunThemeDefaults({ first_run: true })
+
+      expect(localConfig.theme).toBe('nord')
+      expect(localStorage.getItem('clawbench-settings-theme')).toBeNull()
+
+      localStorage.removeItem('theme')
+      localConfig.theme = 'auto'
+    })
+
+    it('is a no-op on an existing install', () => {
+      localStorage.removeItem('clawbench-settings-theme')
+      localStorage.removeItem('theme')
+      localStorage.removeItem('clawbench-fresh-theme-guess')
+      localConfig.theme = 'auto'
+
+      applyFirstRunThemeDefaults({ first_run: false })
+      applyFirstRunThemeDefaults({})
+
+      expect(localConfig.theme).toBe('auto')
+      expect(localStorage.getItem('clawbench-settings-theme')).toBeNull()
+    })
+
+    it('reverts an optimistic first-visit guess when the server is not fresh', () => {
+      // index.html guesses gruvbox-dark on a first-ever visit because it cannot
+      // know first_run yet; a pre-existing server must undo that guess.
+      // jsdom lacks matchMedia — resolveThemeId('auto') needs it.
+      vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))
+      localStorage.removeItem('clawbench-settings-theme')
+      localStorage.removeItem('theme')
+      localStorage.setItem('clawbench-fresh-theme-guess', '1')
+      localConfig.theme = 'gruvbox-dark'
+
+      try {
+        applyFirstRunThemeDefaults({ first_run: false })
+
+        expect(localConfig.theme).toBe('auto')
+        expect(localStorage.getItem('clawbench-settings-theme')).toBe(JSON.stringify('auto'))
+        expect(localStorage.getItem('clawbench-fresh-theme-guess')).toBeNull()
+      } finally {
+        vi.unstubAllGlobals()
+        localStorage.removeItem('clawbench-settings-theme')
+      }
+    })
+
+    it('clears the guess marker once a fresh install is confirmed', () => {
+      localStorage.removeItem('clawbench-settings-theme')
+      localStorage.removeItem('theme')
+      localStorage.setItem('clawbench-fresh-theme-guess', '1')
+      localConfig.theme = 'gruvbox-dark'
+
+      applyFirstRunThemeDefaults({ first_run: true })
+
+      expect(localConfig.theme).toBe('gruvbox-dark')
+      expect(localStorage.getItem('clawbench-fresh-theme-guess')).toBeNull()
+
+      localStorage.removeItem('clawbench-settings-theme')
+      localConfig.theme = 'auto'
     })
   })
 })

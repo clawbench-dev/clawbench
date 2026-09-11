@@ -49,12 +49,9 @@ type Config struct {
 	Fonts struct {
 		Dir string `yaml:"dir"` // Directory containing user-supplied font files (default: <DataDir>/fonts)
 	} `yaml:"fonts"`
-	Appearance struct {
-		WallpaperFile string  `yaml:"wallpaper_file"` // Active custom wallpaper file name (bare name in <DataDir>/theme); empty = not set
-		PanelOpacity  float64 `yaml:"panel_opacity"`  // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
-	} `yaml:"appearance"`
-	DevPort int `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
-	Upload  struct {
+	Appearance AppearanceConfig `yaml:"appearance"`
+	DevPort    int              `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
+	Upload     struct {
 		MaxSizeMB int `yaml:"max_size_mb"` // Maximum file upload size in MB (default: 100)
 		MaxFiles  int `yaml:"max_files"`   // Maximum number of files per upload (default: 20)
 	} `yaml:"upload"`
@@ -98,6 +95,57 @@ type Config struct {
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+}
+
+// AppearanceConfig holds the custom-wallpaper settings. Two wallpaper sources
+// are supported and are independent of each other — a locally uploaded gallery
+// and the Bing daily image — but only one is displayed at a time, selected by
+// WallpaperMode. WallpaperEnabled is a global switch: turning it off hides the
+// wallpaper while retaining the gallery and its selection.
+type AppearanceConfig struct {
+	// WallpaperFile is the legacy single-file wallpaper. It is retained for
+	// backward compatibility (migrated into the local gallery on load) and is
+	// only still written by the legacy /api/theme-background endpoint.
+	WallpaperFile string  `yaml:"wallpaper_file"`
+	PanelOpacity  float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
+
+	// WallpaperMode selects the active source: "" (none/legacy), "local", or "bing".
+	WallpaperMode string `yaml:"wallpaper_mode"`
+	// WallpaperEnabled is the global on/off switch for the wallpaper layer.
+	WallpaperEnabled bool `yaml:"wallpaper_enabled"`
+
+	Local LocalWallpaperConfig `yaml:"local"`
+	Bing  BingWallpaperConfig  `yaml:"bing"`
+}
+
+// LocalWallpaperConfig holds the user-uploaded wallpaper gallery.
+type LocalWallpaperConfig struct {
+	Selected string               `yaml:"selected"` // Bare file name of the gallery image currently displayed
+	Items    []LocalWallpaperItem `yaml:"items"`    // Gallery contents, in upload order
+}
+
+// LocalWallpaperItem describes one uploaded gallery image. File is a bare name
+// resolved inside <DataDir>/theme/local; Name preserves the original upload
+// file name for display only.
+type LocalWallpaperItem struct {
+	File       string `yaml:"file"`
+	Name       string `yaml:"name"`
+	UploadedAt int64  `yaml:"uploaded_at"` // Unix seconds
+	Size       int64  `yaml:"size"`        // Bytes on disk
+}
+
+// BingWallpaperConfig holds the Bing daily wallpaper state. The fields other
+// than Enabled and Mkt are server-owned (written by the fetch worker), because
+// File is joined onto <DataDir>/theme/bing when served.
+type BingWallpaperConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	LastSuccessDate string `yaml:"last_success_date"` // yyyymmdd of the last successful fetch; prevents refetching the same day
+	File            string `yaml:"file"`              // Bare cached file name, e.g. "bing-20260910.jpg"
+	Copyright       string `yaml:"copyright"`         // Photographer credit, shown in the settings panel only
+	Title           string `yaml:"title"`
+	Mkt             string `yaml:"mkt"`             // Bing market parameter, e.g. "zh-CN" / "en-US"
+	LastError       string `yaml:"last_error"`      // "" when healthy; a failed fetch keeps File so the last good image still serves
+	LastAttemptAt   int64  `yaml:"last_attempt_at"` // Unix seconds of the last fetch attempt
 }
 
 // STTConfig holds configuration for speech-to-text (voice input).

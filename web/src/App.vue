@@ -449,7 +449,7 @@ import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -969,7 +969,9 @@ const wallpaperImageStyle = computed(() =>
 function refreshWallpaper() {
   const appearance = serverConfig.value?.appearance ?? {}
   const state = resolveWallpaperState(serverConfig.value?.appearance)
-  const file = String(appearance.wallpaper_file ?? '')
+  // The server resolves which image is active (mode + enabled + selection);
+  // an empty value means no wallpaper, including the globally-disabled case.
+  const file = resolveActiveFile(serverConfig.value?.appearance)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
   wallpaperActive.value = state === 'set'
@@ -979,7 +981,33 @@ function refreshWallpaper() {
   // panel-alpha CSS variables + wallpaper-active class.
   wallpaperUrl.value = resolveWallpaperUrl(file, false)
   applyWallpaper(file, resolvePanelOpacity(appearance), dark, false)
+
+  scheduleBingFirstImagePoll()
 }
+
+// On a fresh install the Bing wallpaper is enabled but its first fetch runs in
+// the background, so the initial config has no image yet. Poll briefly so the
+// factory wallpaper appears on its own instead of requiring a manual refresh.
+let bingPollTimer = null
+let bingPollAttempts = 0
+const BING_POLL_MAX_ATTEMPTS = 20
+const BING_POLL_INTERVAL_MS = 5000
+
+function scheduleBingFirstImagePoll() {
+  if (bingPollTimer) return
+  if (!isBingFirstImagePending(serverConfig.value?.appearance)) return
+  if (bingPollAttempts >= BING_POLL_MAX_ATTEMPTS) return
+
+  bingPollAttempts += 1
+  bingPollTimer = setTimeout(async () => {
+    bingPollTimer = null
+    try { await loadConfig() } catch { /* keep the current state */ }
+  }, BING_POLL_INTERVAL_MS)
+}
+
+onUnmounted(() => {
+  if (bingPollTimer) clearTimeout(bingPollTimer)
+})
 
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.

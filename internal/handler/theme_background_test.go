@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"clawbench/internal/model"
+	"clawbench/internal/wallpaper"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -111,7 +112,7 @@ func TestServeThemeBackground_PostMultipartJPEGDownscaled(t *testing.T) {
 	themeDir, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
-	// A huge source (5000x4000) must be downscaled to ≤ wallpaperMaxLongEdge.
+	// A huge source (5000x4000) must be downscaled to ≤ wallpaper.MaxLongEdge.
 	jpegBytes := makeJPEG(5000, 4000)
 	body, contentType := makeMultipartBody("huge.jpg", jpegBytes)
 
@@ -172,7 +173,7 @@ func TestServeThemeBackground_PostRejectsOversized(t *testing.T) {
 	defer teardown()
 
 	// File larger than the 10MB cap.
-	big := bytes.Repeat([]byte{0x42}, wallpaperMaxBytes+1024)
+	big := bytes.Repeat([]byte{0x42}, wallpaper.MaxBytes+1024)
 	body, contentType := makeMultipartBody("big.png", big)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
@@ -470,8 +471,8 @@ func TestServeThemeBackground_DeleteWritesConfigWhenDataDirSet(t *testing.T) {
 
 func TestProcessWallpaperSource_RejectsOversizedSVG(t *testing.T) {
 	// SVG over its 1MB cap must be rejected before content scanning.
-	big := bytes.Repeat([]byte("<svg xmlns='http://www.w3.org/2000/svg'>"), wallpaperMaxSVGBytes/40+1)
-	_, err := processWallpaperSource(big, "bg.svg")
+	big := bytes.Repeat([]byte("<svg xmlns='http://www.w3.org/2000/svg'>"), wallpaper.MaxSVGBytes/40+1)
+	_, err := wallpaper.Process(big, "bg.svg")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
 }
@@ -488,16 +489,16 @@ func TestSVGLooksSafe_RejectsForbiddenPatterns(t *testing.T) {
 		`<svg xmlns="http://www.w3.org/2000/svg"><a href="javascript:alert(1)">x</a></svg>`,
 	}
 	for _, tc := range cases {
-		assert.False(t, svgLooksSafe([]byte(tc)), "should reject: %q", tc)
+		assert.False(t, wallpaper.SVGLooksSafe([]byte(tc)), "should reject: %q", tc)
 	}
 	// A plain safe SVG must pass.
-	assert.True(t, svgLooksSafe([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>`)))
+	assert.True(t, wallpaper.SVGLooksSafe([]byte(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>`)))
 	// Empty input is rejected.
-	assert.False(t, svgLooksSafe(nil))
+	assert.False(t, wallpaper.SVGLooksSafe(nil))
 }
 
 func TestProcessWallpaperSource_UnsupportedFormat(t *testing.T) {
-	_, err := processWallpaperSource([]byte("anything"), "photo.xyz")
+	_, err := wallpaper.Process([]byte("anything"), "photo.xyz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported image format")
 }
@@ -505,10 +506,10 @@ func TestProcessWallpaperSource_UnsupportedFormat(t *testing.T) {
 func TestVerifyRasterConfig_RejectsOutOfRangeDimensions(t *testing.T) {
 	// A PNG header claiming 9000px (> 8000 ceiling) is rejected before any
 	// pixel allocation (DecodeConfig surfaces the dimension error).
-	err := verifyRasterConfig(craftPngHeader(9000, 9000))
+	err := wallpaper.VerifyRasterConfig(craftPngHeader(9000, 9000))
 	require.Error(t, err)
 	// A non-image payload fails DecodeConfig outright.
-	err = verifyRasterConfig([]byte("not an image"))
+	err = wallpaper.VerifyRasterConfig([]byte("not an image"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot decode image")
 }
@@ -558,10 +559,10 @@ func TestServeThemeBackground_PostPathCopyFileTooLarge(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// A source file exceeding wallpaperMaxBytes must 400 before any read.
+	// A source file exceeding wallpaper.MaxBytes must 400 before any read.
 	// Project-relative reference keeps path resolution cross-platform.
 	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "huge.png"),
-		bytes.Repeat([]byte{0x89}, wallpaperMaxBytes+1024), 0o644))
+		bytes.Repeat([]byte{0x89}, wallpaper.MaxBytes+1024), 0o644))
 
 	body := strings.NewReader(`{"path":"huge.png"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/theme-background", body)
@@ -680,8 +681,8 @@ func TestServeThemeBackground_DeleteConfigWriteFailure(t *testing.T) {
 }
 
 func TestProcessWallpaperSource_TooLargeRaster(t *testing.T) {
-	// A raster source over wallpaperMaxBytes must fail before decode.
-	_, err := processWallpaperSource(make([]byte, wallpaperMaxBytes+1), "bg.png")
+	// A raster source over wallpaper.MaxBytes must fail before decode.
+	_, err := wallpaper.Process(make([]byte, wallpaper.MaxBytes+1), "bg.png")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
 }
@@ -690,7 +691,7 @@ func TestSVGLooksSafe_HeadLongerThan4096(t *testing.T) {
 	// A safe SVG longer than 4096 bytes must still pass (only head scanned for
 	// the <svg marker, then the full body checked for forbidden content).
 	longSafe := `<svg xmlns="http://www.w3.org/2000/svg">` + strings.Repeat(" ", 5000) + `<rect width="10" height="10"/></svg>`
-	assert.True(t, svgLooksSafe([]byte(longSafe)))
+	assert.True(t, wallpaper.SVGLooksSafe([]byte(longSafe)))
 }
 
 func TestServeThemeBackground_GetRasterServesPNGBody(t *testing.T) {

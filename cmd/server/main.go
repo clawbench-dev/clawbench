@@ -54,6 +54,7 @@ import (
 	"clawbench/internal/summarize"
 	"clawbench/internal/terminal"
 	"clawbench/internal/version"
+	"clawbench/internal/wallpaper"
 	"clawbench/internal/ws"
 )
 
@@ -490,6 +491,31 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	autoPassword := model.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
 
+	// A fresh install derives factory appearance defaults (the Bing daily
+	// wallpaper) that exist only in memory at this point. Persist them now:
+	// the fresh-install marker is the absence of the database file, which
+	// InitDB creates moments from now, so a restart before the first config
+	// write would otherwise classify this install as pre-existing and silently
+	// drop the factory wallpaper.
+	// Persist the appearance values derived (fresh install) or normalized (a
+	// Bing mode with the fetch switch off) during ApplyDefaults. Both exist only
+	// in memory at this point and must survive a restart; ordinary existing
+	// installs write nothing here.
+	if err := handler.PersistStartupAppearance(); err != nil {
+		// Not fatal: the in-memory values still apply for this process.
+		slog.Warn("failed to persist startup appearance", slog.String("err", err.Error()))
+	}
+
+	// Reclaim gallery images left on disk but no longer referenced by config
+	// (e.g. an upload that failed between writing the file and recording it).
+	knownGalleryFiles := make([]string, 0, len(model.ConfigInstance.Appearance.Local.Items))
+	for _, it := range model.ConfigInstance.Appearance.Local.Items {
+		knownGalleryFiles = append(knownGalleryFiles, it.File)
+	}
+	if removed := wallpaper.ReconcileLocalGallery(knownGalleryFiles); len(removed) > 0 {
+		slog.Info("reclaimed orphaned gallery images", slog.Int("count", len(removed)))
+	}
+
 	// Set global variables from config
 	model.RootPaths = platform.ListRootPaths()
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB
@@ -766,6 +792,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopBingWallpaperWorker()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
 	port := cfg.Port
@@ -1096,6 +1123,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Called by applyHotReloadGlobals() after each successful patch.
 	handler.SetReconfigureFunc(func() { hotReloadReconfigure(port) })
 
+	// Wire up the Bing wallpaper worker: the handler persists fetch outcomes
+	// (it owns the config mutex + YAML writer) and can request an immediate
+	// fetch when the user hits "sync now".
+	service.SetPersistBingStateFn(handler.PersistBingWallpaperState)
+	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
+	service.StartBingWallpaperWorker()
+
 	srv := &http.Server{Handler: mux}
 
 	// Optional localhost-only HTTP dev listener (for Vite dev proxy)
@@ -1349,6 +1383,14 @@ func hotReloadReconfigure(port int) {
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
+
+	// --- Bing wallpaper: fetch immediately when enabled ---
+	// The worker runs continuously and re-reads the enabled flag, so enabling
+	// the feature only needs a nudge — otherwise the user would wait up to 24h
+	// for the first image.
+	if cfg.Appearance.Bing.Enabled {
+		service.TriggerBingSync()
+	}
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.

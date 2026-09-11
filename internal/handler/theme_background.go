@@ -2,67 +2,21 @@
 package handler
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"clawbench/internal/model"
-
-	// Register image decoders for image.Decode / image.DecodeConfig (init() side-effects)
-	_ "golang.org/x/image/webp"
-	_ "image/gif"
+	"clawbench/internal/wallpaper"
 )
 
-// Wallpaper path/mime helpers and processing limits.
-const (
-	// wallpaperBaseName is the fixed file name (without extension) used for the
-	// active wallpaper in <DataDir>/theme. Only one wallpaper is kept at a time.
-	wallpaperBaseName = "background"
-
-	// wallpaperMaxLongEdge is the target longest-edge pixel size for raster
-	// wallpapers (png/jpeg). Larger sources are downscaled to keep multi-device
-	// decode cost low while remaining sharp on hi-DPI screens.
-	wallpaperMaxLongEdge = 2048
-
-	// wallpaperMaxDimension is the hard upper bound on a source image's
-	// width/height. Enforced via image.DecodeConfig BEFORE full decode so a
-	// small-but-huge image (decompression bomb) can never allocate megabytes
-	// per pixel in RAM.
-	wallpaperMaxDimension = 8000
-
-	// wallpaperMaxBytes is the byte-size cap for non-SVG wallpapers.
-	wallpaperMaxBytes = 10 * 1024 * 1024
-
-	// wallpaperMaxSVGBytes is the byte-size cap for SVG wallpapers. SVG has no
-	// intrinsic pixel size and is rasterized at viewport scale, so oversized
-	// files (huge paths, embedded payloads) can stall a WebView render.
-	wallpaperMaxSVGBytes = 1 * 1024 * 1024
-
-	// wallpaperJPEGQuality is the encode quality for re-encoded JPEG wallpapers.
-	wallpaperJPEGQuality = 88
-)
-
-// themeMutex serializes wallpaper file writes so concurrent set operations
-// (two tabs, path-copy vs multipart) never interleave rename + old-file cleanup.
-var themeMutex sync.Mutex
-
-// wallpaperMimeTypes maps the allowed wallpaper extensions to MIME types.
-var wallpaperMimeTypes = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
-	".svg":  "image/svg+xml",
-}
+// wallpaperBaseName is the fixed file name (without extension) of the legacy
+// single-file wallpaper in <DataDir>/theme. Processing limits live in the
+// shared wallpaper package.
+const wallpaperBaseName = "background"
 
 // themeBackgroundSetRequest is the JSON body for the path-copy mode of
 // POST /api/theme-background.
@@ -76,6 +30,10 @@ type themeBackgroundSetResponse struct {
 }
 
 // ServeThemeBackground handles POST (set) and DELETE (clear) /api/theme-background.
+//
+// This is the legacy single-file wallpaper endpoint, retained for backward
+// compatibility (e.g. the file viewer's "set as theme background" action). New
+// clients use the gallery endpoints in theme_gallery.go.
 func ServeThemeBackground(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -92,29 +50,27 @@ func ServeThemeBackground(w http.ResponseWriter, r *http.Request) {
 // (multipart mode). Writes the processed image into <DataDir>/theme as
 // background.<ext> and records the file name in config (appearance.wallpaper_file).
 func serveThemeBackgroundSet(w http.ResponseWriter, r *http.Request) {
-	themeMutex.Lock()
-	defer themeMutex.Unlock()
-
 	srcBytes, srcName, handled := readWallpaperSource(w, r)
 	if handled {
 		return
 	}
 
 	// Resolve the intended target file + process (validate, downscale, encode).
-	target, err := processWallpaperSource(srcBytes, srcName)
+	processed, err := wallpaper.Process(srcBytes, srcName)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidImage", map[string]any{"Error": err.Error()})
 		return
 	}
+	fileName := wallpaperBaseName + processed.Ext
 
 	// Writes the processed file atomically and records it in config. On any
 	// failure the previous wallpaper file + config entry remain intact.
-	if err := writeWallpaperFile(target.data, target.ext, target.fileName); err != nil {
+	if err := writeWallpaperFile(processed.Data, processed.Ext, fileName); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, themeBackgroundSetResponse{File: wallpaperBaseName + target.ext})
+	writeJSON(w, http.StatusOK, themeBackgroundSetResponse{File: fileName})
 }
 
 // readWallpaperSource acquires the wallpaper bytes + source file name from the
@@ -147,7 +103,7 @@ func readWallpaperSource(w http.ResponseWriter, r *http.Request) (srcBytes []byt
 		}
 		// Read with a size guard so a huge source can't be slurped before the
 		// per-format limit is applied below.
-		if info.Size() > wallpaperMaxBytes {
+		if info.Size() > wallpaper.MaxBytes {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
 			return nil, "", true
 		}
@@ -160,8 +116,8 @@ func readWallpaperSource(w http.ResponseWriter, r *http.Request) (srcBytes []byt
 	}
 
 	// Multipart mode: read the uploaded file.
-	r.Body = http.MaxBytesReader(w, r.Body, wallpaperMaxBytes+1<<20)        // +1MB multipart overhead
-	if err := r.ParseMultipartForm(wallpaperMaxBytes + 1<<20); err != nil { //nolint:gosec // MaxBytesReader limits parsed size
+	r.Body = http.MaxBytesReader(w, r.Body, wallpaper.MaxBytes+1<<20)        // +1MB multipart overhead
+	if err := r.ParseMultipartForm(wallpaper.MaxBytes + 1<<20); err != nil { //nolint:gosec // MaxBytesReader limits parsed size
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeOrInvalid")
 		return nil, "", true
 	}
@@ -172,81 +128,84 @@ func readWallpaperSource(w http.ResponseWriter, r *http.Request) (srcBytes []byt
 	}
 	defer func() { _ = file.Close() }()
 
-	if header.Size > wallpaperMaxBytes {
+	if header.Size > wallpaper.MaxBytes {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
 		return nil, "", true
 	}
-	buf, err := io.ReadAll(io.LimitReader(file, wallpaperMaxBytes+1))
-	if err != nil || int64(len(buf)) > wallpaperMaxBytes {
+	buf, err := io.ReadAll(io.LimitReader(file, wallpaper.MaxBytes+1))
+	if err != nil || int64(len(buf)) > wallpaper.MaxBytes {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLargeShort")
 		return nil, "", true
 	}
 	return buf, header.Filename, false
 }
 
-// writeWallpaperFile atomically writes the processed wallpaper into the theme
-// dir (temp file + rename), persists its file name in config, and only then
-// removes stale old-extension wallpaper files. Caller must hold themeMutex.
+// writeWallpaperFile atomically writes the legacy single-file wallpaper into the
+// theme dir, persists its file name in config, and only then removes stale
+// old-extension wallpaper files.
+//
+// The whole sequence runs under the wallpaper write lock: the stale-file sweep
+// deletes every background.* except the one just written, so two concurrent
+// sets would otherwise delete each other's file and leave config pointing at
+// a missing image.
 func writeWallpaperFile(data []byte, ext, fileName string) error {
-	themeDir := model.DefaultThemeDir()
+	themeDir := wallpaper.ThemeDir()
 	if themeDir == "" {
 		return fmt.Errorf("theme directory unavailable")
 	}
-	if err := os.MkdirAll(themeDir, 0o755); err != nil {
-		return fmt.Errorf("cannot create theme directory: %w", err)
-	}
 
-	// Atomic write: temp file + rename. Config is updated BEFORE any stale
-	// file cleanup, so a config-write failure leaves the previous wallpaper
-	// file + its config entry fully intact (only the brand-new file is removed
-	// on rollback below), and a successful set never 404s in the interim.
-	finalPath := filepath.Join(themeDir, fileName)
-	tmpPath := filepath.Join(themeDir, fileName+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to write wallpaper")
-	}
-	if err := os.Rename(tmpPath, finalPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to write wallpaper")
-	}
+	return wallpaper.WithWriteLock(func() error {
+		// Atomic write first, so a config-write failure leaves the previous
+		// wallpaper file + its config entry fully intact (only the brand-new
+		// file is removed on rollback below), and a successful set never 404s
+		// in the interim. Config is updated BEFORE any stale file cleanup.
+		if err := wallpaper.WriteAtomicWithinLock(themeDir, fileName, data); err != nil {
+			return err
+		}
+		finalPath := filepath.Join(themeDir, fileName)
 
-	// Persist the file name in config (empty write removes nothing else).
-	if err := setConfigWallpaperFile(wallpaperBaseName + ext); err != nil {
-		// Config write failed — remove the brand-new file. The old wallpaper
-		// file + its config entry were left untouched (no cleanup ran yet), so
-		// the previous background remains active.
-		_ = os.Remove(finalPath)
-		return err
-	}
+		// Persist the file name in config (empty write removes nothing else).
+		if err := setConfigWallpaperFile(wallpaperBaseName + ext); err != nil {
+			// Config write failed — remove the brand-new file. The old wallpaper
+			// file + its config entry were left untouched (no cleanup ran yet),
+			// so the previous background remains active.
+			_ = os.Remove(finalPath)
+			return err
+		}
 
-	// Config now names the new file — safe to remove stale old-extension files.
-	removeStaleWallpapers(themeDir, fileName)
-	return nil
+		// Config now names the new file — safe to remove stale old-extension files.
+		removeStaleWallpapers(themeDir, fileName)
+		return nil
+	})
 }
 
 // serveThemeBackgroundClear handles DELETE /api/theme-background — removes the
-// active wallpaper: clears appearance.wallpaper_file in config and deletes all
-// background.* files in <DataDir>/theme.
+// legacy single-file wallpaper: clears appearance.wallpaper_file in config and
+// deletes all background.* files in <DataDir>/theme.
 func serveThemeBackgroundClear(w http.ResponseWriter, r *http.Request) {
-	themeMutex.Lock()
-	defer themeMutex.Unlock()
-
-	themeDir := model.DefaultThemeDir()
-	if err := setConfigWallpaperFile(""); err != nil {
+	themeDir := wallpaper.ThemeDir()
+	// Hold the write lock across config-clear + file sweep so a concurrent set
+	// cannot interleave (which would leave config cleared but a fresh file
+	// deleted, or vice versa).
+	err := wallpaper.WithWriteLock(func() error {
+		if err := setConfigWallpaperFile(""); err != nil {
+			return err
+		}
+		if themeDir != "" {
+			removeStaleWallpapers(themeDir, "")
+		}
+		return nil
+	})
+	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
 		return
-	}
-	if themeDir != "" {
-		removeStaleWallpapers(themeDir, "")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ServeThemeBackgroundGet handles GET /api/file/theme-background — streams the
-// active wallpaper file from <DataDir>/theme. The config value is trusted only
-// after containment checks (bare name, extension whitelist, symlink-safe
-// under-dir guard) so a corrupted config value can never escape the theme dir.
+// active wallpaper. The active file is resolved from the wallpaper mode and
+// enabled switch, so this endpoint reflects the gallery/Bing selection too.
 func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
@@ -256,30 +215,20 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 	cfg := model.ConfigInstance
 	configMutex.RUnlock()
 
-	name := cfg.Appearance.WallpaperFile
-	if name == "" {
+	name, ok := wallpaper.ResolveActive(&cfg)
+	if !ok {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 		return
 	}
+	serveWallpaperByName(w, r, name)
+}
 
-	// Strict containment: must be a bare file name with a whitelisted ext.
-	if name != filepath.Base(name) || strings.ContainsAny(name, "/\\") {
-		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return
-	}
-	ext := strings.ToLower(filepath.Ext(name))
-	if !model.IsThemeAllowedExt(name) {
-		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return
-	}
-
-	themeDir := model.DefaultThemeDir()
-	if themeDir == "" {
-		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return
-	}
-	absPath := filepath.Join(themeDir, name)
-	if !isPathUnderBase(absPath, themeDir) {
+// serveWallpaperByName streams a wallpaper file identified by a bare name,
+// applying strict containment and per-format cache/security headers. A name
+// that is malformed, escapes its directory, or does not exist yields 404.
+func serveWallpaperByName(w http.ResponseWriter, r *http.Request, name string) {
+	absPath, ok := wallpaper.FilePath(name)
+	if !ok {
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 		return
 	}
@@ -290,7 +239,8 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mime := wallpaperMimeTypes[ext]
+	ext := strings.ToLower(filepath.Ext(name))
+	mime := wallpaper.MimeFor(ext)
 	if mime == "" {
 		mime = mimeOctetStream
 	}
@@ -305,7 +255,7 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 		// (SVG is capped at 1MB at write time, so a full scan is cheap) and
 		// served under a sandbox CSP that disables scripts and external fetches.
 		svgBytes, readErr := os.ReadFile(absPath)
-		if readErr != nil || !svgLooksSafe(svgBytes) {
+		if readErr != nil || !wallpaper.SVGLooksSafe(svgBytes) {
 			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 			return
 		}
@@ -333,7 +283,7 @@ func ServeThemeBackgroundGet(w http.ResponseWriter, r *http.Request) {
 // setConfigWallpaperFile updates appearance.wallpaper_file in the in-memory
 // config AND persists it to config.yaml. On a disk-write failure the whole
 // in-memory ConfigInstance is restored to its snapshot so config never diverges
-// from disk. Caller must hold themeMutex.
+// from disk.
 func setConfigWallpaperFile(fileName string) error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
@@ -348,6 +298,52 @@ func setConfigWallpaperFile(fileName string) error {
 	if err := writeConfigYAML(patch); err != nil {
 		// Disk write failed — restore the full in-memory snapshot so config
 		// (and therefore the active wallpaper file name) never diverges.
+		model.ConfigInstance = snapshot
+		return err
+	}
+	return nil
+}
+
+// PersistBingWallpaperState records the Bing fetch worker's outcome in config.
+// It is injected into the worker via service.SetPersistBingStateFn so the
+// service package never has to import this one.
+//
+// On a disk-write failure the in-memory config is restored, so the worker's
+// view of what is cached never diverges from disk.
+func PersistBingWallpaperState(s wallpaper.BingState) error {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	snapshot := model.ConfigInstance
+	bing := &model.ConfigInstance.Appearance.Bing
+	// A failure reports no File; only the error/attempt fields should change, so
+	// the cached image and its attribution stay intact.
+	if s.File != "" {
+		bing.File = s.File
+		bing.LastSuccessDate = s.LastSuccessDate
+		bing.Copyright = s.Copyright
+		bing.Title = s.Title
+	}
+	if s.Mkt != "" {
+		bing.Mkt = s.Mkt
+	}
+	bing.LastError = s.LastError
+	bing.LastAttemptAt = s.LastAttemptAt
+
+	patch := map[string]any{
+		"appearance": map[string]any{
+			"bing": map[string]any{
+				"file":              bing.File,
+				"last_success_date": bing.LastSuccessDate,
+				"copyright":         bing.Copyright,
+				"title":             bing.Title,
+				"mkt":               bing.Mkt,
+				"last_error":        bing.LastError,
+				"last_attempt_at":   bing.LastAttemptAt,
+			},
+		},
+	}
+	if err := writeConfigYAML(patch); err != nil {
 		model.ConfigInstance = snapshot
 		return err
 	}
@@ -375,140 +371,4 @@ func removeStaleWallpapers(dir, keepFile string) {
 		}
 		_ = os.Remove(filepath.Join(dir, name))
 	}
-}
-
-// processedWallpaper is the final on-disk representation of a wallpaper source.
-type processedWallpaper struct {
-	data     []byte // encoded bytes to write
-	fileName string // full file name, e.g. "background.png"
-	ext      string // lower-cased extension with dot, e.g. ".png"
-}
-
-// processWallpaperSource validates srcBytes against the wallpaper format
-// whitelist, enforces size/dimension limits, downscales png/jpeg, and returns
-// the final bytes + file name. Content is verified by decode/sniff — never by
-// trusting the file extension alone.
-func processWallpaperSource(srcBytes []byte, srcName string) (*processedWallpaper, error) {
-	ext := strings.ToLower(filepath.Ext(srcName))
-	if !model.IsThemeAllowedExt(srcName) {
-		return nil, fmt.Errorf("unsupported image format: %s", ext)
-	}
-
-	// Per-format size caps.
-	maxBytes := int64(wallpaperMaxBytes)
-	if ext == ".svg" {
-		maxBytes = wallpaperMaxSVGBytes
-	}
-	if int64(len(srcBytes)) > maxBytes {
-		return nil, fmt.Errorf("image too large")
-	}
-
-	switch ext {
-	case ".png", ".jpg", ".jpeg":
-		// Full decode doubles as content verification: a "png" that is not
-		// really a PNG fails here, so extension spoofing is impossible.
-		img, err := decodeRaster(srcBytes)
-		if err != nil {
-			return nil, fmt.Errorf("cannot decode image: %w", err)
-		}
-		bounds := img.Bounds()
-		dst := img
-		if bounds.Dx() > wallpaperMaxLongEdge || bounds.Dy() > wallpaperMaxLongEdge {
-			ratio := float64(wallpaperMaxLongEdge) / float64(max(bounds.Dx(), bounds.Dy()))
-			dstW := max(1, int(float64(bounds.Dx())*ratio))
-			dstH := max(1, int(float64(bounds.Dy())*ratio))
-			scaled := scaleImage(img, dstW, dstH)
-			dst = scaled
-		}
-
-		var buf bytes.Buffer
-		var outExt string
-		if ext == ".png" {
-			// Keep PNG as PNG to preserve alpha transparency (JPEG has none).
-			if err := png.Encode(&buf, dst); err != nil {
-				return nil, fmt.Errorf("cannot encode png: %w", err)
-			}
-			outExt = ".png"
-		} else {
-			if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: wallpaperJPEGQuality}); err != nil {
-				return nil, fmt.Errorf("cannot encode jpeg: %w", err)
-			}
-			outExt = ".jpg"
-		}
-		return &processedWallpaper{data: buf.Bytes(), ext: outExt, fileName: wallpaperBaseName + outExt}, nil
-
-	case ".gif", ".webp":
-		// Stored verbatim (no re-encode — the Go stdlib has no GIF/WebP
-		// encoder). Verify decodability + dimension ceiling via DecodeConfig.
-		if err := verifyRasterConfig(srcBytes); err != nil {
-			return nil, err
-		}
-		return &processedWallpaper{data: srcBytes, ext: ext, fileName: wallpaperBaseName + ext}, nil
-
-	case ".svg":
-		if !svgLooksSafe(srcBytes) {
-			return nil, fmt.Errorf("unsupported svg content")
-		}
-		return &processedWallpaper{data: srcBytes, ext: ".svg", fileName: wallpaperBaseName + ".svg"}, nil
-	}
-	return nil, fmt.Errorf("unsupported image format")
-}
-
-// decodeRaster fully decodes a png/jpeg/gif source after checking its
-// dimensions via DecodeConfig (decompression-bomb guard).
-func decodeRaster(srcBytes []byte) (image.Image, error) {
-	if err := verifyRasterConfig(srcBytes); err != nil {
-		return nil, err
-	}
-	img, _, err := image.Decode(bytes.NewReader(srcBytes))
-	return img, err
-}
-
-// verifyRasterConfig reads only the image header and enforces the dimension
-// ceiling before any full-decode work happens.
-func verifyRasterConfig(srcBytes []byte) error {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(srcBytes))
-	if err != nil {
-		return fmt.Errorf("cannot decode image: %w", err)
-	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > wallpaperMaxDimension || cfg.Height > wallpaperMaxDimension {
-		return fmt.Errorf("image dimensions out of range (%dx%d)", cfg.Width, cfg.Height)
-	}
-	return nil
-}
-
-// svgLooksSafe rejects SVG wallpapers that embed scripts, foreign objects,
-// external references, or raster <image> loads — content that is inert when
-// rendered as a CSS background but can leak data or stall rendering. Uses a
-// case-insensitive byte scan on the raw source (SVG is XML; tags are text).
-func svgLooksSafe(src []byte) bool {
-	if len(src) == 0 {
-		return false
-	}
-	// Quick structural sanity: must look like an XML/SVG document.
-	head := src
-	if len(head) > 4096 {
-		head = head[:4096]
-	}
-	if !bytes.Contains(bytes.ToLower(head), []byte("<svg")) {
-		return false
-	}
-
-	lower := bytes.ToLower(src)
-	for _, forbidden := range [][]byte{
-		[]byte("<script"),
-		[]byte("foreignobject"),
-		[]byte("</foreignobject>"),
-		[]byte("xlink:href"),
-		[]byte("href="),
-		[]byte("<image"),
-		[]byte("onload="),
-		[]byte("onerror="),
-		[]byte("javascript:"),
-	} {
-		if bytes.Contains(lower, forbidden) {
-			return false
-		}
-	}
-	return true
 }

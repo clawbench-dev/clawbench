@@ -45,9 +45,44 @@ function buildImageUrl(): string {
   return `/api/file/theme-background?v=${Date.now()}-${imageUrlNonce}`
 }
 
-/** URL of the served wallpaper image, including a version query for cache busting. */
+/**
+ * URL of the served wallpaper image, including a version query for cache busting.
+ * Served from the active-wallpaper endpoint, which follows the current mode.
+ */
 export function wallpaperImageUrl(): string {
   return buildImageUrl()
+}
+
+/**
+ * URL for one specific gallery/Bing image, by bare file name. Used for gallery
+ * thumbnails so each tile shows its own image rather than the active one.
+ *
+ * The URL is cached per file name: gallery tiles call this during every render
+ * (e.g. when `busy` toggles), and a fresh version query each time would treat
+ * every tile as a new URL and re-download the whole gallery, bypassing the
+ * server's immutable caching.
+ */
+const galleryUrlCache = new Map<string, string>()
+
+export function galleryImageUrl(name: string): string {
+  const cached = galleryUrlCache.get(name)
+  if (cached) return cached
+  const url = `/api/file/theme-wallpaper?name=${encodeURIComponent(name)}&v=${Date.now()}-${(imageUrlNonce += 1)}`
+  galleryUrlCache.set(name, url)
+  return url
+}
+
+/**
+ * Drop cached thumbnail URLs for the given file names (or all of them), forcing
+ * a re-fetch on the next render. Call after an upload/replace that reuses a name
+ * with new bytes, since the version query must change to bypass the cache.
+ */
+export function invalidateGalleryImageUrls(names?: string[]): void {
+  if (!names) {
+    galleryUrlCache.clear()
+    return
+  }
+  for (const n of names) galleryUrlCache.delete(n)
 }
 
 /** Scrim overlay color for a resolved theme base. */
@@ -124,10 +159,102 @@ export function applyWallpaperScrim(dark: boolean): void {
 /**
  * Resolve the wallpaper tri-state against the current server config.
  * The `appearance` section exists only after GET /api/config completes.
+ *
+ * The server resolves which image is active (mode + enabled + selection), so
+ * the client reads `active_file` rather than reimplementing that precedence.
+ * `wallpaper_file` is the legacy single-file field, still honoured for configs
+ * served by an older backend.
  */
 export function resolveWallpaperState(appearance: Record<string, unknown> | undefined): WallpaperState {
-  if (!appearance || appearance.wallpaper_file === undefined) return 'unknown'
-  return appearance.wallpaper_file ? 'set' : 'unset'
+  if (!appearance) return 'unknown'
+  // `active_file` is authoritative, but an older backend only sends the legacy
+  // `wallpaper_file`. Treat "neither key present" as unknown rather than
+  // "no wallpaper", so the UI does not briefly show an empty state.
+  if (appearance.active_file === undefined && appearance.wallpaper_file === undefined) return 'unknown'
+  return resolveActiveFile(appearance) ? 'set' : 'unset'
+}
+
+/** Wallpaper source currently in effect. */
+export type WallpaperMode = 'none' | 'local' | 'bing'
+
+/** Resolve the active wallpaper source from the server config. */
+export function resolveWallpaperMode(appearance: Record<string, unknown> | undefined): WallpaperMode {
+  const mode = appearance?.wallpaper_mode
+  if (mode === 'local' || mode === 'bing') return mode
+  return 'none'
+}
+
+/** Whether the wallpaper layer is globally enabled (default: enabled). */
+export function resolveWallpaperEnabled(appearance: Record<string, unknown> | undefined): boolean {
+  if (!appearance || appearance.wallpaper_enabled === undefined) return true
+  return appearance.wallpaper_enabled !== false
+}
+
+/**
+ * Bare name of the wallpaper currently displayed, or '' when none is active.
+ *
+ * `active_file` is authoritative whenever the server sends it — including an
+ * empty string, which is how the server reports "no wallpaper" (globally
+ * disabled, nothing selected, or nothing cached yet). Only a genuinely older
+ * backend, which omits the key entirely, falls back to the legacy field.
+ */
+export function resolveActiveFile(appearance: Record<string, unknown> | undefined): string {
+  const active = appearance?.active_file
+  if (typeof active === 'string') return active
+  const legacy = appearance?.wallpaper_file
+  return typeof legacy === 'string' ? legacy : ''
+}
+
+/** One entry in the local wallpaper gallery, as returned by GET /api/config. */
+export interface GalleryItem {
+  file: string
+  name: string
+  uploaded_at: number
+  size: number
+}
+
+/** Gallery items from the server config, defaulting to an empty list. */
+export function resolveGalleryItems(appearance: Record<string, unknown> | undefined): GalleryItem[] {
+  const local = appearance?.local as Record<string, unknown> | undefined
+  const items = local?.items
+  return Array.isArray(items) ? (items as GalleryItem[]) : []
+}
+
+/** Bare name of the selected gallery image, or ''. */
+export function resolveGallerySelected(appearance: Record<string, unknown> | undefined): string {
+  const local = appearance?.local as Record<string, unknown> | undefined
+  const selected = local?.selected
+  return typeof selected === 'string' ? selected : ''
+}
+
+/** Bing wallpaper state, as returned by GET /api/config or the status endpoint. */
+export interface BingStatus {
+  enabled: boolean
+  file: string
+  last_success_date: string
+  copyright: string
+  title: string
+  mkt: string
+  last_error: string
+  last_attempt_at: number
+}
+
+const EMPTY_BING_STATUS: BingStatus = {
+  enabled: false,
+  file: '',
+  last_success_date: '',
+  copyright: '',
+  title: '',
+  mkt: '',
+  last_error: '',
+  last_attempt_at: 0,
+}
+
+/** Bing state from the server config. */
+export function resolveBingStatus(appearance: Record<string, unknown> | undefined): BingStatus {
+  const bing = appearance?.bing as Partial<BingStatus> | undefined
+  if (!bing) return { ...EMPTY_BING_STATUS }
+  return { ...EMPTY_BING_STATUS, ...bing }
 }
 
 /** Compute the effective panel opacity value (default 0.85). */
@@ -139,6 +266,20 @@ export function resolvePanelOpacity(appearance: Record<string, unknown> | undefi
 /** Compute dark-ness from the resolved theme of the given stored theme value. */
 export function currentThemeIsDark(storedTheme: string | undefined): boolean {
   return isDarkTheme(resolveThemeId(storedTheme ?? 'auto'))
+}
+
+/**
+ * Whether the Bing wallpaper is enabled but has no cached image yet.
+ *
+ * This is the state right after a fresh install: the server enables the Bing
+ * wallpaper at startup and fetches its first image in the background, so the
+ * first config response has no image. Callers use this to poll briefly so the
+ * factory wallpaper appears without a manual refresh.
+ */
+export function isBingFirstImagePending(appearance: Record<string, unknown> | undefined): boolean {
+  if (resolveWallpaperMode(appearance) !== 'bing') return false
+  if (!resolveWallpaperEnabled(appearance)) return false
+  return resolveActiveFile(appearance) === ''
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -178,4 +319,93 @@ export async function uploadWallpaper(file: File): Promise<ThemeBackgroundSetRes
 export async function clearWallpaper(): Promise<void> {
   const resp = await fetch('/api/theme-background', { method: 'DELETE' })
   if (!resp.ok) throw new Error(`clear wallpaper failed: HTTP ${resp.status}`)
+}
+
+// ── Gallery API ───────────────────────────────────────────────────────────────
+
+/** Result of a batch upload: accepted items plus per-file failures. */
+export interface GalleryUploadResult {
+  items: GalleryItem[]
+  errors: { name: string; error: string }[]
+}
+
+/** Wallpaper state returned by the mutation endpoints. */
+export interface WallpaperStateResult {
+  mode: string
+  enabled: boolean
+  active_file: string
+  selected: string
+}
+
+/**
+ * Upload one or more images into the local gallery via
+ * POST /api/theme/local/upload. Uploads are best-effort per file, so a partial
+ * failure is reported in `errors` rather than throwing.
+ */
+export async function uploadGalleryImages(files: File[]): Promise<GalleryUploadResult> {
+  const form = new FormData()
+  for (const f of files) form.append('files', f)
+  const resp = await fetch('/api/theme/local/upload', { method: 'POST', body: form })
+  if (!resp.ok) throw new Error(`upload gallery images failed: HTTP ${resp.status}`)
+  return (await resp.json()) as GalleryUploadResult
+}
+
+/** Remove one gallery image via DELETE /api/theme/local/item. */
+export async function deleteGalleryItem(name: string): Promise<WallpaperStateResult> {
+  const resp = await fetch(`/api/theme/local/item?name=${encodeURIComponent(name)}`, { method: 'DELETE' })
+  if (!resp.ok) throw new Error(`delete gallery item failed: HTTP ${resp.status}`)
+  return (await resp.json()) as WallpaperStateResult
+}
+
+/** Make a gallery image the active wallpaper via POST /api/theme/local/select. */
+export async function selectGalleryItem(name: string): Promise<WallpaperStateResult> {
+  const resp = await fetch('/api/theme/local/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!resp.ok) throw new Error(`select gallery item failed: HTTP ${resp.status}`)
+  return (await resp.json()) as WallpaperStateResult
+}
+
+// ── Mode / Bing API ───────────────────────────────────────────────────────────
+
+/**
+ * Switch the active wallpaper source and/or toggle the global wallpaper switch
+ * via POST /api/theme/wallpaper. Only the supplied fields are applied.
+ */
+export async function setWallpaperMode(patch: { mode?: WallpaperMode; enabled?: boolean }): Promise<WallpaperStateResult> {
+  const resp = await fetch('/api/theme/wallpaper', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!resp.ok) throw new Error(`set wallpaper mode failed: HTTP ${resp.status}`)
+  return (await resp.json()) as WallpaperStateResult
+}
+
+/**
+ * Ask the server for an immediate Bing fetch via POST /api/theme/bing/sync.
+ * The fetch runs in the background; poll fetchBingStatus() for the outcome.
+ */
+export async function syncBingNow(): Promise<BingStatus> {
+  const resp = await fetch('/api/theme/bing/sync', { method: 'POST' })
+  if (!resp.ok) throw new Error(`bing sync failed: HTTP ${resp.status}`)
+  return (await resp.json()) as BingStatus
+}
+
+/** Read the current Bing fetch state via GET /api/theme/bing/status. */
+export async function fetchBingStatus(): Promise<BingStatus> {
+  const resp = await fetch('/api/theme/bing/status')
+  if (!resp.ok) throw new Error(`bing status failed: HTTP ${resp.status}`)
+  return (await resp.json()) as BingStatus
+}
+
+/**
+ * Map a UI locale to the Bing market parameter. Mirrors the server-side
+ * mapping in internal/wallpaper so the persisted market matches what the
+ * fetch worker would choose on its own.
+ */
+export function bingMktForLocale(locale: string): string {
+  return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
 }

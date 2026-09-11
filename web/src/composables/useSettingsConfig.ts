@@ -452,6 +452,10 @@ const serverDefaults: Record<string, unknown> = {
   'tls.cert_dir': '',
   'appearance.wallpaper_file': '',
   'appearance.panel_opacity': 0.85,
+  'appearance.wallpaper_mode': '',
+  'appearance.wallpaper_enabled': false,
+  'appearance.bing.enabled': false,
+  'appearance.bing.mkt': 'zh-CN',
 }
 
 // ── Agent preference helpers ──────────────────────────────
@@ -522,6 +526,76 @@ function getAgentThinkingPref(agentId: string): string | null {
  * the store fields (and /api/roots) use flat names. This bridges the two so a
  * settings PATCH applies without a page reload.
  */
+// ── First-run appearance defaults ──────────────────────────────
+
+/**
+ * Theme applied on a brand-new install. The server reports `first_run`, but the
+ * theme itself lives only in localStorage, so the two must be combined: a fresh
+ * server must not override a returning browser's saved theme.
+ */
+const FIRST_RUN_THEME = 'gruvbox-dark'
+
+/**
+ * Marker written by the inline bootstrap in index.html when it guessed the
+ * factory theme for a first-ever visit (before the server could be asked).
+ */
+const FRESH_GUESS_KEY = 'clawbench-fresh-theme-guess'
+
+/**
+ * Apply the out-of-box theme on a brand-new install. Runs at most once per
+ * page load and only when the user has never stored a theme, so an existing
+ * install (or a browser that already picked one) is never overridden.
+ *
+ * Also reverts the index.html guess: that script cannot know `first_run`, so it
+ * optimistically used gruvbox-dark on a first-ever visit. If the server turns
+ * out to be pre-existing, drop the guess and fall back to the system theme.
+ */
+export function applyFirstRunThemeDefaults(data: Record<string, unknown>): void {
+  if (data.first_run === true) {
+    if (hasStoredTheme()) return
+    setThemeAndPersist(FIRST_RUN_THEME)
+    try { localStorage.removeItem(FRESH_GUESS_KEY) } catch { /* ignore */ }
+    return
+  }
+
+  // Not a fresh install — undo an optimistic first-visit guess if we made one.
+  let guessed = false
+  try { guessed = localStorage.getItem(FRESH_GUESS_KEY) !== null } catch { /* ignore */ }
+  if (!guessed) return
+
+  try {
+    localStorage.removeItem(FRESH_GUESS_KEY)
+    localStorage.removeItem(LOCAL_PREFIX + 'theme')
+  } catch { /* ignore */ }
+  const systemTheme = resolveThemeId('auto')
+  localConfig.theme = 'auto'
+  try { localStorage.setItem(LOCAL_PREFIX + 'theme', JSON.stringify('auto')) } catch { /* ignore */ }
+  applyResolvedTheme(systemTheme)
+}
+
+/** Write a theme choice to localConfig + localStorage and apply it to the DOM. */
+function setThemeAndPersist(themeId: string): void {
+  localConfig.theme = themeId
+  try { localStorage.setItem(LOCAL_PREFIX + 'theme', JSON.stringify(themeId)) } catch { /* ignore */ }
+  applyResolvedTheme(themeId)
+}
+
+/** Apply a resolved theme to the document and notify listeners. */
+function applyResolvedTheme(themeId: string): void {
+  const resolved = resolveThemeId(themeId)
+  applyThemeAttributes(resolved)
+  window.dispatchEvent(new CustomEvent('clawbench-theme-change', { detail: resolved }))
+}
+
+/** Whether the user has ever stored a theme (canonical or legacy key). */
+function hasStoredTheme(): boolean {
+  try {
+    if (localStorage.getItem(LOCAL_PREFIX + 'theme') !== null) return true
+    if (localStorage.getItem('theme') !== null) return true
+  } catch { /* ignore */ }
+  return false
+}
+
 export function syncServerLimits(data: Record<string, unknown>): void {
   const pick = (section: unknown, field: string): number | undefined => {
     if (section == null || typeof section !== 'object') return undefined
@@ -570,6 +644,7 @@ export function useSettingsConfig() {
       // header reflect a settings change immediately instead of only after a
       // page reload (which re-runs loadProject → /api/roots).
       syncServerLimits(data)
+      applyFirstRunThemeDefaults(data)
     } catch {
       // Server may be unreachable — keep existing cached values
     }

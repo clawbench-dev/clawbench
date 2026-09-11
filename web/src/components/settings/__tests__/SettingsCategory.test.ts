@@ -536,14 +536,25 @@ describe('SettingsCategory', () => {
     })
 
     it('enables the panel-opacity slider when a wallpaper is set', async () => {
-      serverConfig.value = { ...serverConfig.value, appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      serverConfig.value = {
+        ...serverConfig.value,
+        appearance: {
+          active_file: 'local-1-a.png',
+          wallpaper_file: '',
+          panel_opacity: 0.85,
+          wallpaper_mode: 'local',
+          wallpaper_enabled: true,
+          local: { selected: 'local-1-a.png', items: [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 10 }] },
+          bing: {},
+        },
+      }
       const wrapper = mountCategory('appearance')
       await wrapper.vm.$nextTick()
       const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
       const slider = wallpaper.find('input[type="range"]')
       expect(slider.attributes('disabled')).toBeUndefined()
-      // Wallpaper thumbnail shows for a set wallpaper.
-      expect(wallpaper.find('img.wallpaper-thumb').exists()).toBe(true)
+      // The gallery tile for the selected wallpaper renders a thumbnail.
+      expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
     })
   })
 
