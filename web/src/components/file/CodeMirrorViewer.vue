@@ -34,6 +34,7 @@ import { tags } from '@lezer/highlight'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
+import { parseLineRanges, flattenLineNumbers } from '@/utils/lineRanges.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 import { LINE_FLASH_MS } from '@/utils/domFlash'
@@ -305,15 +306,26 @@ function centeredScrollTop(editor, pos) {
     const centeredTop = block.top - (viewportHeight - block.height) / 2
     return Math.min(maxScrollTop, Math.max(0, centeredTop))
 }
-function scrollToLine(line, lineEnd) {
+function scrollToLine(line, lineEnd, lineRanges) {
     const editor = view.value
     if (!editor) return
     const target = Math.min(Math.max(1, line || 1), editor.state.doc.lines)
     const pos = editor.state.doc.line(target).from
     editor.scrollDOM.scrollTop = centeredScrollTop(editor, pos)
     const builder = new RangeSetBuilder()
-    const last = Math.min(lineEnd || target, editor.state.doc.lines)
-    for (let n = target; n <= last; n++) {
+    // Multi-range annotations flash every listed line; CodeMirror virtualizes
+    // its DOM so decorations (unlike the sliced preview) are not window-capped.
+    const ranges = lineRanges ? parseLineRanges(lineRanges) : []
+    const lineNumbers = ranges.length > 0
+        ? flattenLineNumbers(ranges, editor.state.doc.lines)
+        : (() => {
+            const last = Math.min(lineEnd || target, editor.state.doc.lines)
+            const out = []
+            for (let n = target; n <= last; n++) out.push(n)
+            return out
+        })()
+    for (const n of lineNumbers) {
+        if (n < 1 || n > editor.state.doc.lines) continue
         const l = editor.state.doc.line(n)
         builder.add(l.from, l.from, Decoration.line({ class: 'line-flash' }))
     }
@@ -400,7 +412,7 @@ function onScrollToLine(e) {
         pendingScrollRequestId = null
         pendingScrollRAF = null
         window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
-        scrollToLine(d.line, d.lineEnd)
+        scrollToLine(d.line, d.lineEnd, d.lineRanges)
         window.dispatchEvent(new CustomEvent('cm-scroll-to-line-handled', { detail: { requestId: d.requestId } }))
     }
     // Always defer the first measurement by one frame so the editor has its

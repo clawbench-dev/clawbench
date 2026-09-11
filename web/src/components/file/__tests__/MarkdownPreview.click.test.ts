@@ -30,6 +30,16 @@ vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
     resolveRelativePath: vi.fn((href) => href),
     openFilePath,
     parseFileUri: vi.fn(),
+    readLineTargetFromEl: (el: Element) => {
+      const startAttr = el.getAttribute('data-line-start')
+      const endAttr = el.getAttribute('data-line-end')
+      return {
+        filePath: el.getAttribute('data-file-path'),
+        lineStart: startAttr ? parseInt(startAttr, 10) : undefined,
+        lineEnd: endAttr ? parseInt(endAttr, 10) : undefined,
+        lineRanges: el.getAttribute('data-line-ranges') || undefined,
+      }
+    },
   }),
 }))
 

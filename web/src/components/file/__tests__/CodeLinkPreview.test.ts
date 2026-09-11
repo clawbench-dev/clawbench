@@ -302,6 +302,39 @@ describe('CodeLinkPreview.vue', () => {
     expect(codeEl?.textContent).toContain('const a = 1')
   })
 
+  it('highlights every line in a multi-range slice (highlightRanges)', () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: 'l90\nl91\nl92\nl93\nl94\nl95',
+        startLine: 90,
+        endLine: 95,
+        totalLines: 200,
+        highlightStart: 90,
+        highlightEnd: 95,
+        highlightRanges: [
+          { start: 90, end: 91 },
+          { start: 95, end: 95 },
+        ],
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const rows = document.querySelectorAll('.code-preview-line-row')
+    const highlighted = Array.from(rows)
+      .map((row, i) => ({ line: 90 + i, on: row.classList.contains('is-target-line') }))
+      .filter(r => r.on)
+      .map(r => r.line)
+    // Only 90, 91 and 95 are target lines — not the whole 90-95 span.
+    expect(highlighted).toEqual([90, 91, 95])
+  })
+
   it('renders large file notice when isLargeFile is true', () => {
     const preview = createMockPreviewController({
       isLargeFile: ref(true),

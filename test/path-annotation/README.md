@@ -54,3 +54,14 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - `README.md:1-3` — 相对路径 + 行号范围
 - `/etc/hosts:1-5` — 绝对路径 + 行号范围
 - `~/.bashrc:5-10` — tilde 路径 + 行号范围
+
+### 多区间行号（逗号分隔，点击跳到最早区间并闪烁全部指定行）
+
+- `web/src/App.vue:879-885,1000,1200-1205` — 跳转并闪烁 879–885、1000、1200–1205
+- `web/src/composables/useFilePathAnnotation.ts:400,410-415,430` — 乱序也支持：`430,400,410-415`
+- `go.mod:1,3,5` — 项目根 go.mod 多行
+- `/etc/hosts:1-2,4` — 绝对路径 + 多区间
+- `~/.bashrc:1,5-6` — tilde 路径 + 多区间
+- `web/src/App.vue:L879-L885,L1000` — 带 L 前缀的多区间
+- `web/src/App.vue:879-885, 1000, 1200-1205` — 逗号后允许空格
+- `web/src/App.vue:1-1000` — 区间过宽，预览卡只高亮窗口内（约 200 行）的部分

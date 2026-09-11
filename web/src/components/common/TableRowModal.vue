@@ -28,7 +28,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { flashElement } from '@/utils/domFlash'
 import { gt } from '@/composables/useLocale'
-import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { openFilePath, readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -163,16 +163,11 @@ async function handleValueClick(event) {
   if (fileBtn) {
     event.preventDefault()
     event.stopPropagation()
-    const filePath = fileBtn.getAttribute('data-file-path')
-    const lineStart = fileBtn.getAttribute('data-line-start')
-    const lineEnd = fileBtn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(fileBtn)
     if (filePath) {
       // openFilePath decides the destination tab (file → view, dir → browse).
-      await openFilePath(
-        filePath,
-        lineStart ? parseInt(lineStart, 10) : undefined,
-        lineEnd ? parseInt(lineEnd, 10) : undefined,
-      )
+      if (lineRanges) await openFilePath(filePath, lineStart, lineEnd, undefined, lineRanges)
+      else await openFilePath(filePath, lineStart, lineEnd)
       emit('close')
     }
     return

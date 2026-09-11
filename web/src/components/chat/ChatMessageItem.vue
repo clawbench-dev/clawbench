@@ -339,11 +339,13 @@ function handleOpenFilePayload(payload) {
   const path = typeof payload === 'string' ? payload : payload.path
   const lineStart = typeof payload === 'string' ? undefined : payload.lineStart
   const lineEnd = typeof payload === 'string' ? undefined : payload.lineEnd
+  const lineRanges = typeof payload === 'string' ? undefined : payload.lineRanges
   // AI may return absolute paths (e.g. /home/user/project/src/foo.ts).
   // Strip projectRoot prefix so openFilePath doesn't treat them as external.
   const root = store.state.projectRoot
   const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
-  openFilePath(relPath, lineStart, lineEnd, 'chat')
+  if (lineRanges) openFilePath(relPath, lineStart, lineEnd, 'chat', lineRanges)
+  else openFilePath(relPath, lineStart, lineEnd, 'chat')
 }
 
 // Copy message markdown — only the final conclusion (last text block)

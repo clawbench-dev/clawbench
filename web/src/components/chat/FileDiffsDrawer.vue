@@ -51,6 +51,7 @@ import TableRowModal from '@/components/common/TableRowModal.vue'
 import { handleToolAction, handleToolContentHeaderClick, updateAskSubmitState } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import { readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -206,10 +207,8 @@ function handleBodyClick(event) {
   // File-open buttons or path inside the diff headers
   const fileBtn = event.target.closest('.chat-file-open-btn, .chat-file-path')
   if (fileBtn) {
-    const path = fileBtn.getAttribute('data-file-path')
-    const lineStart = fileBtn.getAttribute('data-line-start')
-    const lineEnd = fileBtn.getAttribute('data-line-end')
-    if (path) emit('file-open', { path, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(fileBtn)
+    if (filePath) emit('file-open', { path: filePath, lineStart, lineEnd, lineRanges })
     return
   }
 

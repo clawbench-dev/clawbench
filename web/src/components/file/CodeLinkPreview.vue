@@ -717,7 +717,7 @@ function measureSheetTitle() {
 }
 
 watch(
-  () => [props.preview.target.value?.filePath, props.preview.target.value?.lineStart, props.preview.target.value?.lineEnd, props.preview.visible.value],
+  () => [props.preview.target.value?.filePath, props.preview.target.value?.lineStart, props.preview.target.value?.lineEnd, props.preview.target.value?.lineRanges, props.preview.visible.value],
   () => {
     // Let the DOM settle with the new title before measuring.
     nextTick(() => measureSheetTitle())
@@ -834,13 +834,7 @@ let pathCopiedTimer: ReturnType<typeof setTimeout> | null = null
 const handleCopyPath = async () => {
   const target = props.preview.target.value
   if (!target?.filePath) return
-  let pathText = target.filePath
-  if (target.lineStart) {
-    pathText += `:${target.lineStart}`
-    if (target.lineEnd && target.lineEnd !== target.lineStart) {
-      pathText += `-${target.lineEnd}`
-    }
-  }
+  const pathText = target.filePath + (lineRangeSuffix.value || '')
   try {
     if (navigator?.clipboard?.writeText) {
       await navigator.clipboard.writeText(pathText)
@@ -961,12 +955,17 @@ const fileDirPath = computed(() => {
   return idx >= 0 ? p.slice(0, idx) : ''
 })
 
-const lineRangeText = computed(() => {
-  const start = props.preview.target.value?.lineStart
-  const end = props.preview.target.value?.lineEnd
+/** Canonical `:90-91,309,938-943` suffix (empty when no line target). */
+const lineRangeSuffix = computed(() => {
+  const target = props.preview.target.value
+  if (target?.lineRanges) return `:${target.lineRanges}`
+  const start = target?.lineStart
   if (!start) return ''
+  const end = target?.lineEnd
   return end && end !== start ? `:${start}-${end}` : `:${start}`
 })
+
+const lineRangeText = computed(() => lineRangeSuffix.value)
 
 const sheetTitle = computed(() => {
   const p = targetFilePath.value
@@ -1108,7 +1107,13 @@ const errorMessageText = computed(() => {
 
 const isTargetLine = (lineNum: number): boolean => {
   const sliced = props.preview.slicedCode.value
-  if (!sliced?.highlightStart) return false
+  if (!sliced) return false
+  // Multi-range annotations carry the authoritative per-line ranges (already
+  // clamped to the rendered window); fall back to the single min/max span.
+  if (sliced.highlightRanges && sliced.highlightRanges.length > 0) {
+    return sliced.highlightRanges.some(r => lineNum >= r.start && lineNum <= r.end)
+  }
+  if (!sliced.highlightStart) return false
   const start = sliced.highlightStart
   const end = sliced.highlightEnd ?? start
   return lineNum >= start && lineNum <= end

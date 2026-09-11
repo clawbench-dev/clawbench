@@ -16,6 +16,7 @@ import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
+import { parseLineRanges } from '@/utils/lineRanges'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
@@ -40,6 +41,8 @@ export interface PreviewTarget {
   filePath: string
   lineStart?: number
   lineEnd?: number
+  /** Full multi-range target (canonical "90-91,309,938-943"), when annotated. */
+  lineRanges?: string
   anchorEl?: HTMLElement
 }
 
@@ -143,6 +146,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         contextExpansion: contextExpansion.value,
         expandAboveLines: extraAboveLines.value,
         expandBelowLines: extraBelowLines.value,
+        lineRanges: target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined,
       }
     )
   }
@@ -362,9 +366,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const openFull = () => {
     if (!target.value) return
-    const { filePath, lineStart, lineEnd } = target.value
+    const { filePath, lineStart, lineEnd, lineRanges } = target.value
     options.onBeforeOpen?.()
-    openFilePath(filePath, lineStart, lineEnd, options.source)
+    if (lineRanges) {
+      openFilePath(filePath, lineStart, lineEnd, options.source, lineRanges)
+    } else {
+      openFilePath(filePath, lineStart, lineEnd, options.source)
+    }
     close()
   }
 
@@ -393,11 +401,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const endAttr = targetEl.getAttribute('data-line-end')
     const lineStart = startAttr ? parseInt(startAttr, 10) : undefined
     const lineEnd = endAttr ? parseInt(endAttr, 10) : undefined
+    const lineRanges = targetEl.getAttribute('data-line-ranges') || undefined
 
     return {
       filePath,
       lineStart,
       lineEnd,
+      lineRanges,
       anchorEl: targetEl,
     }
   }

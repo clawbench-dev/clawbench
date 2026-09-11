@@ -79,7 +79,7 @@ import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/forma
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
-const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
+const { verifyFilePaths, openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
@@ -208,11 +208,10 @@ function handlePromptClick(event: MouseEvent) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = linkOrBtn.getAttribute('data-file-path')
-    const lineStart = linkOrBtn.getAttribute('data-line-start')
-    const lineEnd = linkOrBtn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
     if (filePath) {
-      openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
+      if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'task', lineRanges)
+      else openFilePath(filePath, lineStart, lineEnd, 'task')
     }
     return
   }

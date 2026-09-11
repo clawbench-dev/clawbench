@@ -520,6 +520,7 @@ import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
+import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
 import { useGlobalEvents } from './composables/useGlobalEvents'
@@ -2209,9 +2210,15 @@ function handleOpenTerminal(cwd) {
 let activeLineScrollCancel = null
 let lineScrollRequestId = 0
 
-function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, anchorId) {
+function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, anchorId, lineRanges) {
     const startLine = Math.max(1, line)
     const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
+    // Multi-range annotations flash every listed line (clamped to a sane cap);
+    // otherwise the single [startLine, endLine] span is flashed.
+    const parsedRanges = lineRanges ? parseLineRanges(lineRanges) : []
+    const flashLines = parsedRanges.length > 0
+        ? flattenLineNumbers(parsedRanges, 2000)
+        : (() => { const out = []; for (let i = startLine; i <= endLine; i++) out.push(i); return out })()
     const selector = `.code-line[data-line="${startLine}"]`
     const requestId = ++lineScrollRequestId
     const maxAttempts = 60
@@ -2244,7 +2251,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
         // CodeMirror may mount asynchronously when a rendered Markdown file is
         // switched to source mode. Retry the same request until it acknowledges it.
         window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
-            detail: { line: startLine, lineEnd, path, requestId },
+            detail: { line: startLine, lineEnd, path, requestId, lineRanges },
         }))
         if (handled) return
 
@@ -2254,8 +2261,8 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
             // so it doesn't override our scroll target
             window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
             firstEl.scrollIntoView({ behavior: 'auto', block: 'center' })
-            // Flash the range
-            for (let i = startLine; i <= endLine; i++) {
+            // Flash the target lines (all ranges, or the single span)
+            for (const i of flashLines) {
                 const el = document.querySelector(`.code-line[data-line="${i}"]`)
                 if (el) {
                     flashElement(el)

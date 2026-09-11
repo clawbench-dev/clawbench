@@ -126,7 +126,7 @@ const { t } = useI18n()
 const { refreshExecDetail } = useTaskTab()
 const identity = useSessionIdentity()
 const theme = inject('theme', ref('light'))
-const { openFilePath, verifyFilePaths } = useFilePathAnnotation()
+const { openFilePath, verifyFilePaths, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -363,9 +363,10 @@ const {
 } = useToolDetailDrawer({
   chatRender,
   tabId: 'tasks',
-  onFileOpen: (path, lineStart, lineEnd) => {
-    openFilePath(path, lineStart, lineEnd, 'task')
-    emit('open-file', { path, lineStart, lineEnd })
+  onFileOpen: (path, lineStart, lineEnd, lineRanges) => {
+    if (lineRanges) openFilePath(path, lineStart, lineEnd, 'task', lineRanges)
+    else openFilePath(path, lineStart, lineEnd, 'task')
+    emit('open-file', { path, lineStart, lineEnd, lineRanges })
   },
   findLiveBlock: findLiveToolBlock,
   sessionId: () => props.execDetail?.sessionId,
@@ -548,12 +549,11 @@ function handleContentClick(event) {
   event.preventDefault()
   event.stopPropagation()
   codeLinkPreview.close()
-  const filePath = linkOrBtn.getAttribute('data-file-path')
-  const lineStart = linkOrBtn.getAttribute('data-line-start')
-  const lineEnd = linkOrBtn.getAttribute('data-line-end')
+  const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
   if (filePath) {
-    openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
-    emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+    if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'task', lineRanges)
+    else openFilePath(filePath, lineStart, lineEnd, 'task')
+    emit('open-file', { path: filePath, lineStart, lineEnd, lineRanges })
   }
 }
 

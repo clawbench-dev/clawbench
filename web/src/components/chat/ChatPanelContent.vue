@@ -354,9 +354,9 @@ const {
 } = useToolDetailDrawer({
   chatRender: render,
   tabId: 'chat',
-  onFileOpen: async (path, lineStart, lineEnd) => {
+  onFileOpen: async (path, lineStart, lineEnd, lineRanges) => {
     // openFilePath decides the destination tab itself (file → view, dir → browse).
-    await openFilePath(path, lineStart, lineEnd, 'chat')
+    await openFilePath(path, lineStart, lineEnd, 'chat', lineRanges)
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })

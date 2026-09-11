@@ -28,6 +28,8 @@ export type OpenFileOverlayPayload = {
   path?: string
   lineStart?: number
   lineEnd?: number
+  /** Canonical multi-range suffix ("90-91,309,938-943"), when annotated. */
+  lineRanges?: string
   source?: string
 }
 
@@ -53,7 +55,7 @@ export interface NavigationCoordinatorOptions {
     exitEdit: () => void
   }
   viewActions?: {
-    scrollToLine?: (start: number, end?: number, path?: string) => void
+    scrollToLine?: (start: number, end?: number, path?: string, anchorId?: unknown, lineRanges?: string) => void
     closeOverlayAndSync?: () => void
     handleOpenFileManager?: () => void
     isFileManagerMultiSelectActive?: () => boolean
@@ -223,15 +225,18 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     }
   }
 
-  function openFileInViewer(path: string, options: { lineStart?: number; lineEnd?: number } = {}): void {
-    const { lineStart, lineEnd } = options
+  function openFileInViewer(path: string, options: { lineStart?: number; lineEnd?: number; lineRanges?: string } = {}): void {
+    const { lineStart, lineEnd, lineRanges } = options
     if (lineStart) {
       markdownViewMode.value = 'raw'
     } else if (getFileType(path).isMarkdown) {
       markdownViewMode.value = 'rendered'
     }
-    fileNav.openFile(path, { lineStart, lineEnd, viewMode: markdownViewMode.value })
-    if (lineStart) scrollToLine(lineStart, lineEnd, path)
+    fileNav.openFile(path, { lineStart, lineEnd, lineRanges, viewMode: markdownViewMode.value })
+    if (lineStart) {
+      if (lineRanges) scrollToLine(lineStart, lineEnd, path, undefined, lineRanges)
+      else scrollToLine(lineStart, lineEnd, path)
+    }
   }
 
   async function goBackFile(): Promise<boolean> {
@@ -281,7 +286,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         },
       }))
     } else if (location.lineStart) {
-      scrollToLine(location.lineStart, location.lineEnd, previousPath)
+      if (location.lineRanges) scrollToLine(location.lineStart, location.lineEnd, previousPath, undefined, location.lineRanges)
+      else scrollToLine(location.lineStart, location.lineEnd, previousPath)
     }
     return true
   }
@@ -334,7 +340,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
             },
           }))
         } else if (origin.lineStart) {
-          scrollToLine(origin.lineStart, origin.lineEnd, origin.filePath)
+          if (origin.lineRanges) scrollToLine(origin.lineStart, origin.lineEnd, origin.filePath, undefined, origin.lineRanges)
+          else scrollToLine(origin.lineStart, origin.lineEnd, origin.filePath)
         }
       } else if (origin.surface !== 'file') {
         closeOverlayAndSync()
@@ -433,6 +440,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         viewMode: markdownViewMode.value,
         lineStart: location?.lineStart,
         lineEnd: location?.lineEnd,
+        lineRanges: location?.lineRanges,
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
@@ -527,8 +535,8 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     await navigateBack('close')
   }
 
-  async function handleOverlayOpenFile(payload: string | { path: string; lineStart?: number; lineEnd?: number }): Promise<void> {
-    const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload, lineStart: undefined, lineEnd: undefined } : payload
+  async function handleOverlayOpenFile(payload: string | { path: string; lineStart?: number; lineEnd?: number; lineRanges?: string }): Promise<void> {
+    const { path, lineStart, lineEnd, lineRanges } = typeof payload === 'string' ? { path: payload, lineStart: undefined, lineEnd: undefined, lineRanges: undefined } : payload
     const prevPath = fileNav.currentFilePath.value
     // Snapshot the outgoing file from the live DOM before pushing the new one.
     captureCurrentFileState(prevPath)
@@ -548,7 +556,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     const isExternal = isAbsolutePath(path)
     const ok = await store.selectFile(path)
     if (ok) {
-      openFileInViewer(path, { lineStart, lineEnd })
+      openFileInViewer(path, { lineStart, lineEnd, lineRanges })
       if (isExternal) {
         toast.show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })
       }
@@ -600,7 +608,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     const detail = (e && typeof e === 'object' && 'detail' in e && (e as { detail?: OpenFileOverlayPayload }).detail)
       ? (e as { detail: OpenFileOverlayPayload }).detail
       : (e as OpenFileOverlayPayload)
-    const { path, lineStart, lineEnd, source } = detail || {}
+    const { path, lineStart, lineEnd, lineRanges, source } = detail || {}
     if (!path) return
 
     const isCurrentFileView = panelIsActive('view') && fileNav.overlayOpen.value
@@ -624,7 +632,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     }
 
     switchTab('view')
-    openFileInViewer(path, { lineStart, lineEnd })
+    openFileInViewer(path, { lineStart, lineEnd, lineRanges })
   }
 
   return {

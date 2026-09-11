@@ -159,7 +159,7 @@ function onImageLoad() {
     window.dispatchEvent(new CustomEvent('realign-file-scroll'))
 }
 
-const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri } = useFilePathAnnotation()
+const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri, readLineTargetFromEl } = useFilePathAnnotation()
 const { isPC } = usePlatformDetect()
 const codeLinkPreview = useCodeLinkPreview({
     containerRef: bodyRef,
@@ -264,13 +264,12 @@ function handleClick(event: MouseEvent) {
     if (linkOrBtn) {
         event.preventDefault()
         event.stopPropagation()
-        const filePath = linkOrBtn.getAttribute('data-file-path')
-        const lineStart = linkOrBtn.getAttribute('data-line-start')
-        const lineEnd = linkOrBtn.getAttribute('data-line-end')
+        const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
         if (filePath) {
             captureCurrentScrollState()
             codeLinkPreview.close()
-            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'file')
+            if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'file', lineRanges)
+            else openFilePath(filePath, lineStart, lineEnd, 'file')
         }
         return
     }
@@ -290,7 +289,7 @@ function handleClick(event: MouseEvent) {
             }
         }
     }
-    handleDblClick(event, (href, lineStart, lineEnd) => {
+    handleDblClick(event, (href, lineStart, lineEnd, lineRanges) => {
         event.stopPropagation()
         const anchor = target?.closest<HTMLAnchorElement>('a[href]')
         const annotatedPath = anchor?.getAttribute('data-file-path')
@@ -301,7 +300,8 @@ function handleClick(event: MouseEvent) {
             || (href.startsWith('file://') ? parseFileUri(href).path : resolveRelativePath(href, currentDir))
         captureCurrentScrollState()
         codeLinkPreview.close()
-        openFilePath(resolvedPath, lineStart, lineEnd, 'file')
+        if (lineRanges) openFilePath(resolvedPath, lineStart, lineEnd, 'file', lineRanges)
+        else openFilePath(resolvedPath, lineStart, lineEnd, 'file')
     })
 }
 

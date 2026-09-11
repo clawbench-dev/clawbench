@@ -30,7 +30,7 @@ interface ToastShow {
 }
 
 export interface LinkHandler {
-    (path: string, lineStart?: number, lineEnd?: number): void
+    (path: string, lineStart?: number, lineEnd?: number, lineRanges?: string): void
 }
 
 export interface DoubleClickCopyOptions {
@@ -124,11 +124,14 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             const dataFilePath = anchor.getAttribute('data-file-path')
             const dataLineStart = anchor.getAttribute('data-line-start')
             const dataLineEnd = anchor.getAttribute('data-line-end')
+            const dataLineRanges = anchor.getAttribute('data-line-ranges') || undefined
             const filePath = dataFilePath || decodedHref
             const lineStart = dataLineStart ? parseInt(dataLineStart, 10) : undefined
             const lineEnd = dataLineEnd ? parseInt(dataLineEnd, 10) : undefined
             event.preventDefault()
-            if (lineStart !== undefined) {
+            if (dataLineRanges) {
+                onOpenFile(filePath, lineStart, lineEnd, dataLineRanges)
+            } else if (lineStart !== undefined) {
                 onOpenFile(filePath, lineStart, lineEnd)
             } else {
                 onOpenFile(filePath)

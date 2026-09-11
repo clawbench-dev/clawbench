@@ -10,6 +10,8 @@ export interface NavigationOrigin {
   filePath?: string
   lineStart?: number
   lineEnd?: number
+  /** Canonical multi-range suffix ("90-91,309,938-943"), when annotated. */
+  lineRanges?: string
   viewMode?: string
   scrollTop?: number
   scrollEntry?: FileScrollEntry

@@ -201,7 +201,7 @@ const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'f
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
-const { openFilePath } = useFilePathAnnotation()
+const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 'chat' })
@@ -380,20 +380,22 @@ async function handleChatClick(event) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = linkOrBtn.getAttribute('data-file-path')
-    const lineStart = linkOrBtn.getAttribute('data-line-start')
-    const lineEnd = linkOrBtn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
     if (filePath) {
-      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'chat')
+      const ok = lineRanges
+        ? await openFilePath(filePath, lineStart, lineEnd, 'chat', lineRanges)
+        : await openFilePath(filePath, lineStart, lineEnd, 'chat')
       if (ok) chatUI.navigateToFileViewer?.()
     }
     return
   }
 
-  handleDblClick(event, async (href, lineStart, lineEnd) => {
+  handleDblClick(event, async (href, lineStart, lineEnd, lineRanges) => {
     event.stopPropagation()
     codeLinkPreview.close()
-    const ok = await openFilePath(href, lineStart, lineEnd, 'chat')
+    const ok = lineRanges
+      ? await openFilePath(href, lineStart, lineEnd, 'chat', lineRanges)
+      : await openFilePath(href, lineStart, lineEnd, 'chat')
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }

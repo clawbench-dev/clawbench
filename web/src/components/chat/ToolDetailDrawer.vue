@@ -50,6 +50,7 @@ import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICO
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import { readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -106,10 +107,11 @@ function handleBodyClick(event) {
   // Handle file-open buttons or path
   const fileBtn = event.target.closest('.chat-file-open-btn, .chat-file-path')
   if (fileBtn) {
-    const filePath = fileBtn.getAttribute('data-file-path')
-    const lineStart = fileBtn.getAttribute('data-line-start')
-    const lineEnd = fileBtn.getAttribute('data-line-end')
-    if (filePath) emit('file-open', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(fileBtn)
+    if (filePath) {
+      const payload = { path: filePath, lineStart, lineEnd }
+      emit('file-open', lineRanges ? { ...payload, lineRanges } : payload)
+    }
     return
   }
   // Handle worktree action buttons

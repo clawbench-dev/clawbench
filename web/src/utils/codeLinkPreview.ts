@@ -9,6 +9,7 @@
  */
 
 import { isAbsolutePath, normalizeSlashes } from '@/utils/path'
+import { clampRanges, type LineRange } from '@/utils/lineRanges'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 
 // ── Resource limits & constants ─────────────────────────────────────────────
@@ -50,6 +51,13 @@ export interface CodeSliceResult {
   highlightStart?: number
   /** 1-based end line of target highlight, if any */
   highlightEnd?: number
+  /**
+   * Full set of target ranges intersecting the rendered window (multi-range
+   * annotations). Authoritative for per-line highlighting; absent/empty means
+   * fall back to highlightStart/highlightEnd. `highlightStart`/`highlightEnd`
+   * always describe the overall min/max so legacy consumers stay correct.
+   */
+  highlightRanges?: LineRange[]
   /** Whether the requested line was beyond total lines in file */
   lineOutOfRange: boolean
   /** Whether rendering was truncated due to limits */
@@ -133,6 +141,8 @@ export interface SliceCodeOptions {
   expandAboveLines?: number
   /** Additional lines to expand downward beyond the default context */
   expandBelowLines?: number
+  /** Full multi-range target (overrides lineStart/lineEnd for highlighting). */
+  lineRanges?: LineRange[]
 }
 
 /**
@@ -168,7 +178,19 @@ export function sliceCodeForPreview(
   const lines = content.split(/\r\n|\r|\n/)
   const totalLines = lines.length
 
-  const { start: reqStart, end: reqEnd, hasExplicitRange } = normalizePreviewRange(lineStart, lineEnd)
+  // A multi-range annotation overrides the single (lineStart,lineEnd) pair:
+  // the overall min/max drives the window, and the full list is kept for
+  // per-line highlighting. normalizePreviewRange stays the single-range path.
+  const requestedRanges = options.lineRanges && options.lineRanges.length > 0 ? options.lineRanges : undefined
+  const single = normalizePreviewRange(lineStart, lineEnd)
+  const { start: reqStart, end: reqEnd, hasExplicitRange: singleHasRange } = requestedRanges
+    ? {
+        start: requestedRanges[0].start,
+        end: requestedRanges[requestedRanges.length - 1].end,
+        hasExplicitRange: true,
+      }
+    : single
+  const hasExplicitRange = requestedRanges ? true : singleHasRange
   const expansion = Math.max(0, options.contextExpansion ?? 0)
   const extraAbove = Math.max(0, options.expandAboveLines ?? 0)
   const extraBelow = Math.max(0, options.expandBelowLines ?? 0)
@@ -274,6 +296,12 @@ export function sliceCodeForPreview(
 
   const actualEndLine = renderedLines.length > 0 ? startLine + renderedLines.length - 1 : startLine
 
+  // Ranges are clamped to the rendered window (the 200-line cap means far-apart
+  // ranges can fall outside); only ranges that intersect are highlighted.
+  const highlightRanges = requestedRanges && !lineOutOfRange
+    ? clampRanges(requestedRanges, startLine, actualEndLine)
+    : undefined
+
   return {
     code: renderedLines.join('\n'),
     startLine,
@@ -281,6 +309,7 @@ export function sliceCodeForPreview(
     totalLines,
     highlightStart,
     highlightEnd,
+    highlightRanges,
     lineOutOfRange,
     renderTruncated,
     truncateReason,
