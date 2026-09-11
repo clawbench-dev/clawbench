@@ -819,6 +819,72 @@ func TestBuildConfigAppearance_EmptyItemsIsEmptySlice(t *testing.T) {
 	assert.Empty(t, out.Local.Items)
 }
 
+// ── Absolute paths for thumbnail generation ──────────────────────────────────
+
+// TestBuildConfigAppearance_ExposesAbsPathsForThumbnails covers the field the
+// settings panel hands to GET /api/file/thumb, which takes a path rather than a
+// bare name and returns a small JPEG instead of the full-size image.
+func TestBuildConfigAppearance_ExposesAbsPathsForThumbnails(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// The files must exist: FilePath resolves symlinks on the containing
+	// directory, so a name whose directory is absent has no path to report.
+	require.NoError(t, wallpaper.WriteAtomic(wallpaper.LocalDir(), "local-1-a.png", makePNG(8, 8)))
+	require.NoError(t, wallpaper.WriteAtomic(wallpaper.BingDir(), "bing-20260910.jpg", makeJPEG(8, 8)))
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperMode = "local"
+	cfg.Appearance.WallpaperEnabled = true
+	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
+		{File: "local-1-a.png", Name: "a.png"},
+	}
+	cfg.Appearance.Bing.File = "bing-20260910.jpg"
+
+	out := buildConfigAppearance(cfg)
+
+	require.Len(t, out.Local.Items, 1)
+	wantItem, ok := wallpaper.FilePath("local-1-a.png")
+	require.True(t, ok, "test fixture name should resolve")
+	assert.Equal(t, wantItem, out.Local.Items[0].AbsPath,
+		"gallery item must carry the resolved absolute path")
+
+	wantBing, ok := wallpaper.FilePath("bing-20260910.jpg")
+	require.True(t, ok)
+	assert.Equal(t, wantBing, out.Bing.AbsPath,
+		"the Bing entry must carry the resolved absolute path")
+}
+
+// TestBuildConfigAppearance_AbsPathEmptyWhenUnresolvable guards the fallback:
+// a name that fails containment/extension checks must yield no path at all
+// rather than a partially-built one the client could still request.
+func TestBuildConfigAppearance_AbsPathEmptyWhenUnresolvable(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
+		{File: "../../etc/passwd", Name: "evil"},
+		{File: "notes.txt", Name: "not an image"},
+	}
+	cfg.Appearance.Bing.File = "../escape.jpg"
+
+	out := buildConfigAppearance(cfg)
+
+	require.Len(t, out.Local.Items, 2)
+	for _, it := range out.Local.Items {
+		assert.Empty(t, it.AbsPath, "unresolvable name %q must not expose a path", it.File)
+	}
+	assert.Empty(t, out.Bing.AbsPath)
+}
+
+func TestAbsWallpaperPath_EmptyName(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	assert.Empty(t, absWallpaperPath(""))
+}
+
 // ── Startup appearance persistence (B1) + Bing-mode self-heal ────────────────
 
 func TestPersistStartupAppearance_FreshInstallWritesDefaultsToDisk(t *testing.T) {

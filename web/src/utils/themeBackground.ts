@@ -64,10 +64,39 @@ export function wallpaperImageUrl(): string {
  */
 const galleryUrlCache = new Map<string, string>()
 
-export function galleryImageUrl(name: string): string {
+/**
+ * Preview thumbnail width in CSS pixels. The gallery tile is 72px wide, so 144
+ * covers a 2x device pixel ratio without waste.
+ */
+export const THUMB_WIDTH = 144
+
+/** Extensions GET /api/file/thumb can rasterize; anything else falls back. */
+const THUMB_RASTER_EXTS = ['.png', '.jpg', '.jpeg', '.gif']
+
+/**
+ * URL for a small JPEG preview of a wallpaper.
+ *
+ * Prefers GET /api/file/thumb, which scales server-side: the settings panel
+ * draws a 72px tile, and serving the full image meant downloading 2.4MB for the
+ * Bing 4K wallpaper (a ~470x waste) on every render.
+ *
+ * Falls back to the full-size endpoint when the thumbnail route cannot serve
+ * the file — notably SVG, which /api/file/thumb does not rasterize (it handles
+ * png/jpg/gif only) but which the wallpaper endpoint serves under a sandbox CSP.
+ * A missing absPath (older server, or an unresolvable name) also falls back.
+ */
+export function galleryImageUrl(name: string, absPath?: string): string {
   const cached = galleryUrlCache.get(name)
   if (cached) return cached
-  const url = `/api/file/theme-wallpaper?name=${encodeURIComponent(name)}&v=${Date.now()}-${(imageUrlNonce += 1)}`
+
+  const version = `${Date.now()}-${(imageUrlNonce += 1)}`
+  const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
+  const canThumb = !!absPath && THUMB_RASTER_EXTS.includes(ext)
+
+  const url = canThumb
+    ? `/api/file/thumb?path=${encodeURIComponent(absPath)}&w=${THUMB_WIDTH}`
+    : `/api/file/theme-wallpaper?name=${encodeURIComponent(name)}&v=${version}`
+
   galleryUrlCache.set(name, url)
   return url
 }
@@ -211,6 +240,8 @@ export interface GalleryItem {
   name: string
   uploaded_at: number
   size: number
+  /** Absolute path, for GET /api/file/thumb (which takes a path, not a name). */
+  abs_path?: string
 }
 
 /** Gallery items from the server config, defaulting to an empty list. */
@@ -237,6 +268,8 @@ export interface BingStatus {
   mkt: string
   last_error: string
   last_attempt_at: number
+  /** Absolute path, for GET /api/file/thumb. */
+  abs_path?: string
 }
 
 const EMPTY_BING_STATUS: BingStatus = {

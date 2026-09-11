@@ -399,6 +399,12 @@ type configLocalWallpaperItem struct {
 	Name       string `json:"name"`
 	UploadedAt int64  `json:"uploaded_at"`
 	Size       int64  `json:"size"`
+	// AbsPath is the file's absolute path, for callers that need to address the
+	// file directly — notably GET /api/file/thumb, which takes a path rather
+	// than a bare name and returns a small JPEG instead of the full-size image.
+	// Resolved server-side via wallpaper.FilePath so the client never assembles
+	// a path from the theme directory layout itself. Empty when unresolvable.
+	AbsPath string `json:"abs_path"`
 }
 
 // configBingWallpaper exposes the Bing daily wallpaper state, including the
@@ -412,6 +418,8 @@ type configBingWallpaper struct {
 	Mkt             string `json:"mkt"`
 	LastError       string `json:"last_error"`
 	LastAttemptAt   int64  `json:"last_attempt_at"`
+	// AbsPath mirrors configLocalWallpaperItem.AbsPath for the cached Bing image.
+	AbsPath string `json:"abs_path"`
 }
 
 // buildConfigAppearance renders the appearance section for GET /api/config.
@@ -427,6 +435,7 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 			Name:       it.Name,
 			UploadedAt: it.UploadedAt,
 			Size:       it.Size,
+			AbsPath:    absWallpaperPath(it.File),
 		})
 	}
 
@@ -449,8 +458,28 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 			Mkt:             cfg.Appearance.Bing.Mkt,
 			LastError:       cfg.Appearance.Bing.LastError,
 			LastAttemptAt:   cfg.Appearance.Bing.LastAttemptAt,
+			AbsPath:         absWallpaperPath(cfg.Appearance.Bing.File),
 		},
 	}
+}
+
+// absWallpaperPath resolves a bare wallpaper file name to its absolute path,
+// returning "" when the name is empty or cannot be resolved. Callers use it to
+// hand a path to GET /api/file/thumb (which returns a small JPEG rather than
+// the full-size image).
+//
+// The resolution goes through wallpaper.FilePath so the containment and
+// extension rules are applied in one place; a name that escapes its directory
+// simply yields no path instead of leaking a filesystem location.
+func absWallpaperPath(name string) string {
+	if name == "" {
+		return ""
+	}
+	abs, ok := wallpaper.FilePath(name)
+	if !ok {
+		return ""
+	}
+	return abs
 }
 
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.

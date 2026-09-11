@@ -87,7 +87,7 @@
           </div>
         </div>
         <div v-if="bingStatus.file" class="wallpaper-thumb-wrap">
-          <img :src="galleryImageUrl(bingStatus.file)" class="wallpaper-thumb" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" />
+          <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" />
         </div>
       </div>
 
@@ -134,7 +134,7 @@
             :title="item.name"
           >
             <img
-              :src="galleryImageUrl(item.file)"
+              :src="galleryImageUrl(item.file, item.abs_path)"
               class="wallpaper-gallery__thumb"
               :alt="item.name"
               @click="onSelectItem(item.file)"
@@ -277,6 +277,10 @@ const busy = ref(false)
 const syncing = ref(false)
 const error = ref('')
 
+// Set on unmount so a detached background refresh stops before touching state
+// that no longer has a component behind it.
+let unmounted = false
+
 const appearance = computed(() => serverConfig.value?.appearance as Record<string, unknown> | undefined)
 
 /** Wallpaper tri-state from the live server config. */
@@ -412,18 +416,48 @@ async function onSelectMode(next: 'local' | 'bing') {
   try {
     await setWallpaperMode({ mode: next })
     await reloadFromServer()
-    if (next === 'bing') {
-      // The server kicks off a fetch when the source switches to Bing. Poll for
-      // the preview so the panel fills in on its own instead of showing the
-      // "no image yet" placeholder until the user hits 获取 or reloads.
-      await syncBingMktWithLocale()
-      await pollBingUntilSettled()
-      await reloadFromServer()
-    }
   } catch {
     error.value = t('settings.items.wallpaperSaveFailed')
   } finally {
+    // Release the UI as soon as the switch itself is done. The switch is a
+    // single fast config write; waiting for the image download here held the
+    // whole panel disabled for up to the poll budget, which is what made
+    // changing the source feel stuck.
     busy.value = false
+  }
+  if (next === 'bing') {
+    // Follow the fetch in the background: the preview fills in on its own once
+    // the image lands, and the user can keep interacting meanwhile.
+    void followBingFetch()
+  }
+}
+
+/** In-flight guard so rapid source toggles cannot stack overlapping polls. */
+let followingBing = false
+
+/**
+ * Watch a Bing fetch to completion without blocking the UI, then refresh the
+ * preview. Runs detached from the caller so no click handler awaits it.
+ *
+ * Does nothing when an image is already cached for today: the server skips the
+ * fetch in that case, so polling would spin until the budget expired for a
+ * result that was never coming.
+ */
+async function followBingFetch() {
+  if (followingBing) return
+  followingBing = true
+  try {
+    await syncBingMktWithLocale()
+    if (bingStatus.value.last_success_date === todayStamp()) return
+    await pollBingUntilSettled()
+    if (unmounted) return
+    await reloadFromServer()
+  } catch {
+    // A background refresh failure must not surface as an error; the next
+    // scheduled fetch or a manual 获取 recovers.
+    appLog.w('Wallpaper', 'background bing refresh failed')
+  } finally {
+    followingBing = false
   }
 }
 
@@ -450,8 +484,9 @@ async function pollBingUntilSettled(): Promise<{ status: BingStatus; settled: bo
   const deadline = Date.now() + 15000
   let status = bingStatus.value
   let settled = status.last_success_date === todayStamp()
-  while (Date.now() < deadline && !settled) {
+  while (Date.now() < deadline && !settled && !unmounted) {
     await new Promise((r) => setTimeout(r, 1000))
+    if (unmounted) break
     status = await fetchBingStatus()
     settled = !!status.last_error || status.last_success_date === todayStamp()
   }
@@ -555,6 +590,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  unmounted = true
   window.removeEventListener('clawbench-theme-change', onThemeChange)
   if (opacitySaveTimer) clearTimeout(opacitySaveTimer)
   if (blurSaveTimer) clearTimeout(blurSaveTimer)
@@ -722,12 +758,17 @@ onUnmounted(() => {
   display: block;
 }
 
-/* Fixed-width columns rather than minmax(..., 1fr): a flexible column would let
-   the tiles stretch wider than the Bing preview on a wide panel, which is
-   exactly the mismatch this shared size token exists to prevent. */
+/* minmax(shared-width, 1fr) so the columns absorb the leftover width and the
+   last column reaches the right edge. A fixed track (repeat(auto-fill, 72px))
+   packed from the left and left a ragged gap whenever the panel width was not
+   an exact multiple of the tile + gap.
+   The shared width stays the *minimum*, so a tile never renders smaller than
+   the Bing preview, and because auto-fill picks the largest column count that
+   fits, the per-tile stretch is bounded by one tile+gap divided by the count
+   (a few px in practice) rather than growing without limit. */
 .wallpaper-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, var(--wallpaper-thumb-w));
+  grid-template-columns: repeat(auto-fill, minmax(var(--wallpaper-thumb-w), 1fr));
   gap: 8px;
   width: 100%;
 }

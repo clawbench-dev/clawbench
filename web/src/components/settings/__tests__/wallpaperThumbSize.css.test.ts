@@ -59,9 +59,12 @@ describe('wallpaper preview thumbnail sizing', () => {
   it('sizes gallery columns from the shared width', () => {
     const gallery = blockFor('.wallpaper-gallery')
     expect(gallery).toContain('var(--wallpaper-thumb-w)')
-    // A flexible column (1fr) would let tiles stretch wider than the Bing
-    // preview on a wide panel — the exact mismatch this token prevents.
-    expect(gallery).not.toContain('1fr')
+    // minmax(shared-width, 1fr): the shared width is the floor (so a tile is
+    // never smaller than the Bing preview) while the fr lets columns absorb the
+    // leftover width so the row reaches the right edge. A bare fixed track left
+    // a ragged gap whenever the panel width was not a multiple of tile + gap.
+    expect(gallery).toContain('minmax(var(--wallpaper-thumb-w), 1fr)')
+    expect(gallery).toContain('repeat(auto-fill')
   })
 
   it('no longer hard-codes the old Bing preview size', () => {

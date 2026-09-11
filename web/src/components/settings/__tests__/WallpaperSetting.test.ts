@@ -261,6 +261,60 @@ describe('WallpaperSetting', () => {
         expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/bing/status')).toBe(true)
       }, { timeout: 5000 })
     }, 10000)
+    it('does not block the panel while the Bing image downloads', async () => {
+      // Regression: switching to Bing used to await the whole download poll
+      // while `busy` stayed set, leaving every control disabled for up to the
+      // poll budget. The switch must release the UI immediately.
+      let statusCalls = 0
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/status') {
+          statusCalls += 1
+          return {
+            ok: true,
+            status: 200,
+            // Never settles within the poll budget.
+            json: async () => ({ enabled: true, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const bingBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Bing daily')!
+      await bingBtn.trigger('click')
+
+      // The panel must become interactive without waiting for the download poll.
+      // The status endpoint never settles here, so an awaited poll would keep
+      // the buttons disabled for the full 15-iteration budget.
+      const localBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Local gallery')!
+      await vi.waitFor(() => {
+        expect(localBtn.attributes('disabled')).toBeUndefined()
+      }, { timeout: 2000 })
+      expect(statusCalls).toBeLessThan(5)
+    }, 10000)
+
+    it('does not poll when an image is already cached for today', async () => {
+      // The server skips the fetch when today's image is cached, so polling
+      // would spin until the budget expired for a result that never comes.
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ enabled: true, file: 'bing-today.jpg', last_success_date: todayStamp(), copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+      }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const bingBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Bing daily')!
+      await bingBtn.trigger('click')
+      await nextTick()
+
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/bing/status')).toBe(false)
+    }, 10000)
   })
 
   describe('Bing', () => {

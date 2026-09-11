@@ -9,6 +9,7 @@ import {
   currentThemeIsDark,
   wallpaperImageUrl,
   galleryImageUrl,
+  THUMB_WIDTH,
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
   resolveWallpaperEnabled,
@@ -340,6 +341,43 @@ describe('themeBackground', () => {
       invalidateGalleryImageUrls()
       expect(galleryImageUrl('local-1-a.png')).not.toBe(a)
       expect(galleryImageUrl('local-2-b.png')).not.toBe(b)
+    })
+
+    it('uses the server thumbnail endpoint when an absolute path is given', () => {
+      // Regression: the tile is 72px wide but the full image was downloaded —
+      // 2.4MB for the Bing 4K wallpaper, ~470x more than needed.
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
+
+      expect(url).toContain('/api/file/thumb?path=')
+      expect(url).toContain(encodeURIComponent('/data/theme/local/local-1-a.png'))
+      expect(url).toContain(`w=${THUMB_WIDTH}`)
+      expect(url).not.toContain('theme-wallpaper')
+    })
+
+    it('falls back to the full-size endpoint without an absolute path', () => {
+      // An older server (or an unresolvable name) sends no abs_path.
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.png')
+
+      expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.png')
+      expect(url).not.toContain('/api/file/thumb')
+    })
+
+    it('falls back to the full-size endpoint for SVG', () => {
+      // /api/file/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
+      // keep using the wallpaper endpoint (which serves it under a sandbox CSP).
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.svg', '/data/theme/local/local-1-a.svg')
+
+      expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.svg')
+      expect(url).not.toContain('/api/file/thumb')
+    })
+
+    it('caches the thumbnail URL per file', () => {
+      invalidateGalleryImageUrls()
+      const first = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
+      expect(galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')).toBe(first)
     })
   })
 
