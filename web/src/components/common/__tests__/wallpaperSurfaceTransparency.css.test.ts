@@ -102,6 +102,21 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(edit).toContain('var(--code-bg)')
   })
 
+  it('lets the wallpaper show through the file manager search dock and pill', () => {
+    // The resident search dock and the SearchInput pill both carry the top
+    // toolbar's material (--bg-tertiary); if only the pill went translucent the
+    // solid dock behind it would still render opaque, so the pair is treated
+    // together.
+    const dock = ruleContaining('html.wallpaper-active .fs-nav-bottom')
+    expect(dock).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-tertiary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+    const pill = ruleContaining('html.wallpaper-active .fs-nav-bottom .search-pill')
+    expect(pill).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-tertiary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+  })
+
   it('lets the wallpaper show through the plan panel chip and expanded card', () => {
     // Plan progress UI floats in the chat column between the bubbles and the
     // input bar. Both the collapsed chip (bg-tertiary) and the expanded

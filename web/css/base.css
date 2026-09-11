@@ -232,6 +232,15 @@ html.wallpaper-active .dir-toolbar {
 html.wallpaper-active .dir-nav-bottom {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
+/* File manager resident search dock and its search pill. Both use the top
+   toolbar's material (--bg-tertiary), so both go translucent together at that
+   token — a translucent pill over a solid dock would still read as opaque. */
+html.wallpaper-active .fs-nav-bottom {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .fs-nav-bottom .search-pill {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
 
 /* Section-title bands inside settings cards keep a translucent tint so the
    grouping is still visible without blocking the wallpaper. */

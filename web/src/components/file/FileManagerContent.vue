@@ -3097,12 +3097,14 @@ function scrollSelectedIntoView(path) {
 }
 
 /* ── Bottom dock: resident search bar ── */
+/* Same material as the top toolbar (.dir-toolbar, --bg-tertiary) so the two
+   bars read as a matched pair framing the listing. */
 .fs-nav-bottom {
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     border-top: 1px solid var(--border-color, #e5e5e5);
-    background: var(--bg-primary, #fff);
+    background: var(--bg-tertiary, #f5f5f5);
     padding: 5px 10px 4px;
     gap: 2px;
 }
@@ -3117,6 +3119,10 @@ function scrollSelectedIntoView(path) {
 .fs-input-row :deep(.search-pill) {
     flex: 1;
     min-width: 0;
+    /* Match the dock material (--bg-tertiary) instead of SearchInput's shared
+       default (--bg-primary) — the pill is the only control on the dock, so a
+       contrasting fill would read as a nested box rather than one bar. */
+    background: var(--bg-tertiary, #f5f5f5);
 }
 
 .fs-toggle-btn {
