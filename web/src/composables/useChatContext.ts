@@ -47,6 +47,8 @@ const attachmentDrafts = new Map<string, AttachmentSnapshot>()
  * diagram range to a file that is already attached as a whole keeps both.
  */
 function sameEntry(a: FileEntry, b: FileEntry): boolean {
+  // URL attachments are identified by their address, not a path.
+  if (a.kind === 'url' || b.kind === 'url') return a.kind === b.kind && a.url === b.url
   return a.path === b.path
     && (a.startLine ?? 0) === (b.startLine ?? 0)
     && (a.endLine ?? 0) === (b.endLine ?? 0)
@@ -56,6 +58,20 @@ function addAttachedFile(path: string, isDir: boolean = false, startLine?: numbe
   if (!path) return
   const candidate: FileEntry = { path, isDir, startLine, endLine }
   if (attachedFiles.value.some(f => sameEntry(f, candidate))) return
+  attachedFiles.value.push(candidate)
+}
+
+/**
+ * Attach an external URL (e.g. a GitHub issue or PR) to the chat context.
+ *
+ * The entry carries kind="url" so the backend never tries to resolve it as a
+ * local path. `label` is the chip text (e.g. "owner/repo#123"); the URL itself
+ * is what gets sent.
+ */
+function addUrlAttachment(url: string, label: string) {
+  if (!url) return
+  const candidate: FileEntry = { path: label || url, kind: 'url', url }
+  if (attachedFiles.value.some(f => f.kind === 'url' && f.url === url)) return
   attachedFiles.value.push(candidate)
 }
 
@@ -184,6 +200,7 @@ export function useChatContext() {
     quoteData,
     stagedQuotes,
     addAttachedFile,
+    addUrlAttachment,
     removeAttachedFile,
     removeAttachedFileByPath,
     toggleAttachedFile,

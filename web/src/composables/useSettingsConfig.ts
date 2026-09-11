@@ -397,6 +397,15 @@ const serverConfig = ref<Record<string, unknown>>({})
  * Used as fallback when the API hasn't loaded yet, so items always display meaningful values.
  */
 const serverDefaults: Record<string, unknown> = {
+  // Forge (GitHub/GitLab) notification toggles default ON — mirrors the
+  // server-side ApplyDefaults so the UI shows the same state before load.
+  'forge.notify.opened': true,
+  'forge.notify.closed': true,
+  'forge.notify.merged': true,
+  'forge.notify.reopened': true,
+  'forge.notify.commented': true,
+  'forge.notify.pipeline': true,
+  'forge.insecure_tls': false,
   'chat.initial_messages': 20,
   'chat.page_size': 20,
   'chat.system_prompt_interval': 10,

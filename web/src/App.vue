@@ -211,6 +211,16 @@
                   />
                 </TabPanel>
 
+                <!-- Issues & PRs Tab -->
+                <TabPanel tabId="forge" :activeTab="leftPanelActive" :noHeader="true">
+                  <ForgePanelContent
+                    :active="panelIsActive('forge')"
+                    :project-path="store.state.projectRoot"
+                    @request-project="switchTab('chat')"
+                    @analyze="handleForgeAnalyze"
+                  />
+                </TabPanel>
+
                 <!-- Tasks Tab -->
                 <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
@@ -455,7 +465,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3 } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, GitPullRequest } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -466,6 +476,7 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
+import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
@@ -540,6 +551,7 @@ import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -1838,7 +1850,7 @@ function handleDockTerminal() {
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
 const overflowTabs = computed(() => {
-  const tabs = ['tasks']
+  const tabs = ['forge', 'tasks']
   if (!isTerminalDisabled.value) tabs.push('terminal')
   if (!isSSHDisabled.value) tabs.push('proxy')
   tabs.push('stats')
@@ -1846,6 +1858,7 @@ const overflowTabs = computed(() => {
   return tabs
 })
 const overflowTabMeta = {
+  forge:   { icon: GitPullRequest, titleKey: 'nav.forge' },
   tasks:   { icon: Clock, titleKey: 'nav.tasks' },
   proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
@@ -1986,7 +1999,19 @@ function handleWideDockTabClick(tab) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile } = useChatContext()
+const { addAttachedFile, addUrlAttachment } = useChatContext()
+
+// "Analyze with AI" from the Issues & PRs tab. Reuses the quote-input flow: the
+// issue/PR URL becomes a URL attachment chip, and the body is injected into the
+// input as a fenced markdown block so the user can add their own instruction.
+function handleForgeAnalyze(payload) {
+  const it = payload?.item
+  if (!it) return
+  addUrlAttachment(it.url, `${it.slug}#${it.number}`)
+  switchTab('chat')
+  const fence = '```' + (it.type === 'pr' ? 'pr' : 'issue') + ' ' + it.slug + '#' + it.number + '\n' + (it.body || '') + '\n```'
+  injectChatInput(fence)
+}
 const { uploadAndAttach } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
@@ -2050,6 +2075,7 @@ const wideScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
   view: { icon: FileText, titleKey: 'nav.fileView' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
+  forge: overflowTabMeta.forge,
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
   terminal: overflowTabMeta.terminal,

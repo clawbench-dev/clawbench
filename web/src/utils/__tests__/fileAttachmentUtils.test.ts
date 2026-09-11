@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, folderRelPath, isDirUploadFile } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, folderRelPath, isDirUploadFile, isUrlEntry } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -198,5 +198,48 @@ describe('isDirUploadFile', () => {
   })
   it('returns false for a loose file', () => {
     expect(isDirUploadFile({ name: 'main.go' })).toBe(false)
+  })
+})
+
+// ── URL attachments (GitHub issue / PR references) ──
+
+describe('URL attachments', () => {
+  it('normalizeFileEntry preserves kind and url', () => {
+    const entry = { path: 'acme/widgets#123', kind: 'url' as const, url: 'https://github.com/acme/widgets/issues/123' }
+    const norm = normalizeFileEntry(entry)
+    expect(norm.kind).toBe('url')
+    expect(norm.url).toBe('https://github.com/acme/widgets/issues/123')
+    expect(norm.path).toBe('acme/widgets#123')
+  })
+
+  it('isUrlEntry is true only for url kind with an address', () => {
+    expect(isUrlEntry({ path: 'x', kind: 'url', url: 'https://x' })).toBe(true)
+    expect(isUrlEntry({ path: 'x', kind: 'url' })).toBe(false)
+    expect(isUrlEntry({ path: '/local/file.ts' })).toBe(false)
+  })
+
+  it('dedupeFiles dedupes URLs by address, not label', () => {
+    const a = { path: 'label-a', kind: 'url' as const, url: 'https://github.com/o/r/issues/1' }
+    const b = { path: 'label-b', kind: 'url' as const, url: 'https://github.com/o/r/issues/1' }
+    const result = dedupeFiles([a, b])
+    expect(result).toHaveLength(1)
+    expect(result[0].url).toBe('https://github.com/o/r/issues/1')
+  })
+
+  it('dedupeFiles keeps distinct URLs', () => {
+    const a = { path: 'a', kind: 'url' as const, url: 'https://github.com/o/r/issues/1' }
+    const b = { path: 'b', kind: 'url' as const, url: 'https://github.com/o/r/issues/2' }
+    expect(dedupeFiles([a, b])).toHaveLength(2)
+  })
+
+  it('buildSendChannels routes URL entries through entries, never filePaths', () => {
+    const url = { path: 'acme/widgets#9', kind: 'url' as const, url: 'https://github.com/acme/widgets/pull/9' }
+    const file = { path: '/src/main.go' }
+    const { filePaths, entries } = buildSendChannels([url, file])
+    // A URL must never be treated as a filesystem path.
+    expect(filePaths).toEqual(['/src/main.go'])
+    expect(entries).toHaveLength(1)
+    expect(entries[0].kind).toBe('url')
+    expect(entries[0].url).toBe('https://github.com/acme/widgets/pull/9')
   })
 })

@@ -313,6 +313,7 @@
 
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
+import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
 import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
@@ -1380,6 +1381,14 @@ function onTextareaBlur() {
 // Watch inputText changes (both user input and programmatic changes like draft restore)
 // to ensure textarea height stays in sync with content
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
+
+// Drain text queued by other features (e.g. "analyze this issue/PR"). The
+// producer may run before this component is mounted, so the value is polled
+// reactively rather than delivered via an event.
+watch(pendingChatInputRef, () => {
+  const pending = consumePendingChatInput()
+  if (pending) injectToInput(pending)
+}, { immediate: true })
 
 function onPaste(e) {
   const now = Date.now()
