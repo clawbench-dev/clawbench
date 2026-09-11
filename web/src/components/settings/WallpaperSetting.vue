@@ -569,6 +569,12 @@ onUnmounted(() => {
    scoped styles so the rows look identical to the rest of the settings list. */
 .wallpaper-setting {
   background: transparent;
+
+  /* One source of truth for both preview thumbnails: the Bing preview and the
+     gallery tiles must render at the same size, so neither can drift from the
+     other. Change these two values to resize both together. */
+  --wallpaper-thumb-w: 72px;
+  --wallpaper-thumb-h: 54px;
 }
 
 .wallpaper-setting > .settings-item {
@@ -716,9 +722,12 @@ onUnmounted(() => {
   display: block;
 }
 
+/* Fixed-width columns rather than minmax(..., 1fr): a flexible column would let
+   the tiles stretch wider than the Bing preview on a wide panel, which is
+   exactly the mismatch this shared size token exists to prevent. */
 .wallpaper-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fill, var(--wallpaper-thumb-w));
   gap: 8px;
   width: 100%;
 }
@@ -727,11 +736,15 @@ onUnmounted(() => {
   position: relative;
   border-radius: 8px;
   overflow: hidden;
-  border: 2px solid transparent;
   aspect-ratio: 4 / 3;
+  /* The selection ring is drawn with an inset shadow rather than a border so it
+     does not consume layout space: a 2px border would shrink the photo to
+     68x50 while the Bing preview renders 72x54, leaving the two previews
+     visibly different sizes. */
+  box-shadow: inset 0 0 0 2px transparent;
 }
 .wallpaper-gallery__item--active {
-  border-color: var(--accent-color);
+  box-shadow: inset 0 0 0 2px var(--accent-color);
 }
 
 .wallpaper-gallery__thumb {
@@ -790,9 +803,11 @@ onUnmounted(() => {
   align-items: center;
 }
 
+/* Matches a gallery tile exactly, so the Bing preview and the uploaded-image
+   previews read as the same control rather than two different ones. */
 .wallpaper-thumb {
-  width: 44px;
-  height: 30px;
+  width: var(--wallpaper-thumb-w);
+  height: var(--wallpaper-thumb-h);
   border-radius: 8px;
   object-fit: cover;
   border: 1px solid var(--border-color);
