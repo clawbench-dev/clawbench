@@ -33,7 +33,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [RAG 检索](features/rag.md) | 文档分块（含 chunk_overlap 配置）、向量化（可独立开关）、SQLite vec0 向量索引、混合检索（含 search_mode 配置）、三级索引重建（向量重建 + 全量重建 + 独立 FTS 重建）、可配置批次大小（`rag.batch_size`）、索引磁盘占用展示、会话聚合搜索、消息聚类分析、索引进度跟踪 |
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
 | [完成通知弹窗](features/completion-popup.md) | 后台完成时 Android 通知风格卡片：摘要全文展示、快捷输入框追问、标记已读、成功确认气泡、外部项目 Footer 区隔、防误触关闭、排队依次展示 |
-| [智能体用量统计](features/usage-stats.md) | 按项目聚合 `chat_metadata` 用量行（独立台账，不随会话删除丢失）的数据统计：用量总览饼图 + 缓存命中下钻、按天趋势、维度直方图、24h/7d/30d/自定义时间窗与 model/backend/agent 筛选、费用两位小数统一、移动端纵向堆叠；数据统计页签另含代码存量/代码增量双子页（见 [Git 管理](features/git-management.md)） |
+| [智能体用量统计](features/usage-stats.md) | 按项目聚合 `chat_metadata` 用量行（独立台账，不随会话删除丢失）的数据统计：用量总览环形图 + 缓存命中下钻、按指标拆分的图表（bar/pie/trend 可切换）、24h/7d/30d/自定义时间窗与 model/backend/agent 筛选、费用两位小数统一、移动端纵向堆叠；数据统计页签另含代码存量/代码增量双子页（见 [Git 管理](features/git-management.md)） |
 | [系统资源监控](features/system-resources.md) | gopsutil 采集 CPU/内存/磁盘/网络/负载、500ms 采样缓存、可见性感知轮询、WS 断线时显示连接状态 |
 
 ### infra/ — 基础设施
