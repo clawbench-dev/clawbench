@@ -309,8 +309,7 @@ export default {
       placeholderQueue: 'Type a message to enqueue...',
       placeholderOptional: 'Add description (optional)...',
       placeholderQuickSend: 'Tap ⚡ to quick send message →',
-      placeholderAtCommand: "Type {'@'} for built-in commands",
-      placeholderCommand: "Type {'@'} or {'/'} for commands",
+      placeholderCommand: "Type {'/'} for commands",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
       send: 'Send',
       enqueue: 'Enqueue',
@@ -318,13 +317,12 @@ export default {
       stopGenerating: 'Stop generating',
       confirmStop: 'Confirm stop',
     },
-    atCommand: {
-      title: 'ClawBench Commands',
+    clawbenchCommand: {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage scheduled tasks',
     },
     slashCommand: {
-      title: 'Agent Commands',
+      title: 'Commands',
     },
     acpSession: {
       title: 'ACP Sessions',

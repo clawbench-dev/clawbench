@@ -353,14 +353,9 @@
         </template>
       </template>
 
-      <!-- Text block with @ command badge (user message starting with @chatsearch/@task) -->
-      <template v-else-if="block.type === 'text' && extractAtCommand(block.text || '')">
-        <span class="at-command-badge">{{ extractAtCommand(block.text)!.command }}</span>
-        <span v-if="extractAtCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text)!.rest.trim() }}</span>
-      </template>
-      <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
+      <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command) -->
       <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
-        <span class="slash-command-badge">{{ extractSlashCommand(block.text)!.command }}</span>
+        <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">{{ extractSlashCommand(block.text)!.command }}</span>
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
@@ -409,7 +404,6 @@ import {
   buildTaskKeyIndex,
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
-  extractAtCommand,
   extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
@@ -2045,32 +2039,7 @@ onUnmounted(() => {
   background: #9e9e9e;
 }
 
-/* @ command badge in user messages */
-.at-command-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #8b5cf6;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 4px;
-  vertical-align: baseline;
-  line-height: 1.6;
-}
-
-:root[data-theme-base="dark"] .at-command-badge {
-  background: color-mix(in srgb, #a78bfa 15%, transparent);
-  color: #a78bfa;
-}
-
-/* Inside user bubble: use white-based palette for contrast against colored background */
-.chat-message.user .at-command-badge {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.95);
-}
-
-/* Slash command badge in user messages (ACP backend commands) */
+/* Slash command badge in user messages (agent commands from ACP) */
 .slash-command-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -2091,6 +2060,22 @@ onUnmounted(() => {
 
 /* Inside user bubble: use white-based palette for contrast against colored background */
 .chat-message.user .slash-command-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* ClawBench built-in command badge (/cb-*) — purple, distinct from agent blue */
+.slash-command-badge.clawbench-command-badge {
+  background: color-mix(in srgb, #8b5cf6 15%, transparent);
+  color: #8b5cf6;
+}
+
+:root[data-theme-base="dark"] .slash-command-badge.clawbench-command-badge {
+  background: color-mix(in srgb, #a78bfa 15%, transparent);
+  color: #a78bfa;
+}
+
+.chat-message.user .slash-command-badge.clawbench-command-badge {
   background: rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.95);
 }

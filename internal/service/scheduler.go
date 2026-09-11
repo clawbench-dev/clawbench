@@ -700,9 +700,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// ScheduledExecution flag prevents recursive task creation at the
 	// handler level: even if the AI outputs a <schedule-proposal> tag,
 	// the handler will not create a task from it.
-	// Anti-recursion is also enforced by the @task on-demand injection
+	// Anti-recursion is also enforced by the /cb-task on-demand injection
 	// mechanism: task instructions are only injected when the user
-	// explicitly uses @task, so they never appear during scheduled execution.
+	// explicitly uses /cb-task, so they never appear during scheduled execution.
 	systemPrompt := agent.SystemPrompt
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {

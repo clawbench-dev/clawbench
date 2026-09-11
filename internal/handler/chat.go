@@ -410,7 +410,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Slash commands (e.g. /reload-plugins, /compact) must be sent as-is to ACP
 	// agents — they detect commands by the leading "/" prefix. Prepending file
 	// paths or system instructions would break command detection.
-	isSlashCmd := ai.IsACPSlashCommand(req.Message)
+	// ClawBench's own "/cb-*" commands share the "/" prefix but are NOT agent
+	// commands: they are injected locally below and must keep file prefixes.
+	isSlashCmd := ai.IsACPSlashCommand(req.Message) && !IsClawbenchCommand(req.Message)
 	if !isSlashCmd {
 		if len(validatedFilePaths) > 0 {
 			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
@@ -426,26 +428,26 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// @ command injection: detect on raw req.Message, prepend template to prompt.
-	// Must happen after file path prefixes are added so the AI sees both
-	// the injected context and file context, but detection is on raw req.Message
-	// (since file prefixes would break the @ prefix check).
-	if strings.HasPrefix(req.Message, "@chatsearch ") {
+	// ClawBench built-in command injection: detect on raw req.Message, prepend
+	// template to prompt. Must happen after file path prefixes are added so the
+	// AI sees both the injected context and file context, but detection is on
+	// raw req.Message (since file prefixes would break the "/cb-" prefix check).
+	if strings.HasPrefix(req.Message, ClawbenchCmdChatSearch+" ") {
 		// RAG availability check — GlobalStore is nil when RAG index is not ready
 		if rag.GlobalStore == nil {
 			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotReady")
 			return
 		}
 		// Empty query rejection
-		query := strings.TrimPrefix(req.Message, "@chatsearch ")
+		query := strings.TrimPrefix(req.Message, ClawbenchCmdChatSearch+" ")
 		if strings.TrimSpace(query) == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
 			return
 		}
-		atInjected := processAtCommand(req.Message, projectPath, sessionID)
+		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
 		prompt = atInjected + "\n\n" + prompt
-	} else if strings.HasPrefix(req.Message, "@task ") {
-		atInjected := processAtCommand(req.Message, projectPath, sessionID)
+	} else if strings.HasPrefix(req.Message, ClawbenchCmdTask+" ") {
+		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
 		prompt = atInjected + "\n\n" + prompt
 	}
 
@@ -1115,8 +1117,9 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 		}
 	}
 
-	// @ command injection for queued messages (same logic as primary message path)
-	if atInjected := processAtCommand(qMsg.Text, projectPath, sessionID); atInjected != qMsg.Text {
+	// ClawBench built-in command injection for queued messages (same logic as
+	// the primary message path)
+	if atInjected := processClawbenchCommand(qMsg.Text, projectPath, sessionID); atInjected != qMsg.Text {
 		prompt = atInjected + "\n\n" + prompt
 	}
 

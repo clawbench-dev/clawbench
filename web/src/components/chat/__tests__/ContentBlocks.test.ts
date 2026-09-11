@@ -77,15 +77,14 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   buildTaskKeyIndex: () => ({}),
   hasScheduledTasks: () => false,
   scheduledTaskKeys: () => [],
-  extractAtCommand: (text: string) => {
-    if (text.startsWith('@chatsearch')) return { command: '@chatsearch', rest: text.slice(11) }
-    if (text.startsWith('@task')) return { command: '@task', rest: text.slice(5) }
-    return null
-  },
   extractSlashCommand: (text: string) => {
     if (text.startsWith('/')) {
       const parts = text.split(' ')
-      return { command: parts[0], rest: parts.slice(1).join(' ') }
+      return {
+        command: parts[0],
+        rest: parts.slice(1).join(' '),
+        clawbench: /^\/cb-(chatsearch|task)$/.test(parts[0]),
+      }
     }
     return null
   },
@@ -178,27 +177,33 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('Hello world')
     })
 
-    it('renders @chatsearch badge for text starting with @chatsearch', () => {
+    it('renders ClawBench badge for text starting with /cb-chatsearch', () => {
       const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '@chatsearch how to do X' }],
+        blocks: [{ type: 'text', text: '/cb-chatsearch how to do X' }],
       })
-      expect(wrapper.find('.at-command-badge').exists()).toBe(true)
-      expect(wrapper.find('.at-command-badge').text()).toBe('@chatsearch')
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('/cb-chatsearch')
+      expect(badge.classes()).toContain('clawbench-command-badge')
     })
 
-    it('renders @task badge for text starting with @task', () => {
+    it('renders ClawBench badge for text starting with /cb-task', () => {
       const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '@task run tests' }],
+        blocks: [{ type: 'text', text: '/cb-task run tests' }],
       })
-      expect(wrapper.find('.at-command-badge').exists()).toBe(true)
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.classes()).toContain('clawbench-command-badge')
     })
 
-    it('renders slash command badge for text starting with /', () => {
+    it('renders agent slash command badge for text starting with /', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'text', text: '/commit fix bug' }],
       })
-      expect(wrapper.find('.slash-command-badge').exists()).toBe(true)
-      expect(wrapper.find('.slash-command-badge').text()).toBe('/commit')
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('/commit')
+      expect(badge.classes()).not.toContain('clawbench-command-badge')
     })
   })
 

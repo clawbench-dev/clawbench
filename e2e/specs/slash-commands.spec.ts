@@ -10,10 +10,10 @@ import { ChatPage } from '../pages/chat.page'
  * - Mode config option
  *
  * Key ACP behaviors tested:
- * 1. Slash command autocomplete menu appears when typing "/"
- * 2. @ command autocomplete still works (ClawBench built-in, not affected)
+ * 1. Unified command autocomplete menu appears when typing "/"
+ * 2. ClawBench built-in commands (/cb-*) appear in the same menu
  * 3. Slash command badge renders in user messages
- * 4. @ command badge still renders
+ * 4. ClawBench built-in badge renders for /cb-* messages
  * 5. Mode chip is visible for ACP sessions
  * 6. GET /api/ai/commands returns discovered commands
  * 7. Slash commands are pre-fetched via REST API on page load/session switch
@@ -39,68 +39,70 @@ test.describe.serial('ACP Slash Commands', () => {
   })
 
   // ───────────────────────────────────────────────────────
-  // @ command tests (ClawBench built-in, no ACP needed)
+  // ClawBench built-in command tests (no ACP needed)
   // ───────────────────────────────────────────────────────
 
-  test('should show @ command autocomplete for built-in commands', async ({ page }) => {
+  test('should show ClawBench built-in commands in the unified / menu', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@')
+    await chat.textarea.fill('/')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuTitle = page.locator('.at-menu-title')
+    await expect(menuTitle).toBeVisible({ timeout: 3000 })
 
-    const chatsearchItem = page.locator('.at-menu-item').filter({ hasText: '@chatsearch' })
+    const chatsearchItem = page.locator('.at-menu-item--clawbench').filter({ hasText: '/cb-chatsearch' })
     await expect(chatsearchItem).toBeVisible()
 
-    const taskItem = page.locator('.at-menu-item').filter({ hasText: '@task' })
+    const taskItem = page.locator('.at-menu-item--clawbench').filter({ hasText: '/cb-task' })
     await expect(taskItem).toBeVisible()
   })
 
-  test('should show @chatsearch filtered when typing @c', async ({ page }) => {
+  test('should filter to /cb-chatsearch when typing /cb-c', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@c')
+    await chat.textarea.fill('/cb-c')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuTitle = page.locator('.at-menu-title')
+    await expect(menuTitle).toBeVisible({ timeout: 3000 })
 
-    const chatsearchItem = page.locator('.at-menu-item').filter({ hasText: '@chatsearch' })
+    const chatsearchItem = page.locator('.at-menu-item').filter({ hasText: '/cb-chatsearch' })
     await expect(chatsearchItem).toBeVisible()
 
-    const taskItem = page.locator('.at-menu-item').filter({ hasText: '@task' })
+    const taskItem = page.locator('.at-menu-item').filter({ hasText: '/cb-task' })
     await expect(taskItem).not.toBeVisible()
   })
 
-  test('should show @ command badge in user message after sending @chatsearch', async ({ page }) => {
+  test('should NOT open any menu when typing @', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@chatsearch test query')
+    await chat.textarea.fill('@')
+
+    // @ is no longer a command trigger — the unified menu is "/" only
+    const menuTitle = page.locator('.at-menu-title')
+    await expect(menuTitle).not.toBeVisible({ timeout: 1500 })
+  })
+
+  test('should show ClawBench badge in user message after sending /cb-chatsearch', async ({ page }) => {
+    await chat.textarea.click()
+    await chat.textarea.fill('/cb-chatsearch test query')
     await page.waitForTimeout(200)
     await chat.sendButton.click()
 
     const userMsg = chat.getLastUserMessage()
     await expect(userMsg).toBeVisible({ timeout: 5000 })
 
-    // Badge should be rendered with .at-command-badge class
-    const atBadge = userMsg.locator('.at-command-badge')
-    const isBadgeVisible = await atBadge.isVisible({ timeout: 3000 }).catch(() => false)
-
-    if (isBadgeVisible) {
-      await expect(atBadge).toContainText('@chatsearch')
-    } else {
-      // Fallback: the message text should at least contain @chatsearch
-      await expect(userMsg).toContainText('@chatsearch')
-    }
+    // Badge should be rendered with .clawbench-command-badge class
+    const badge = userMsg.locator('.clawbench-command-badge')
+    await expect(badge).toContainText('/cb-chatsearch')
   })
 
-  test('should close @ menu on blur', async ({ page }) => {
+  test('should close command menu on blur', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@')
+    await chat.textarea.fill('/')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuTitle = page.locator('.at-menu-title')
+    await expect(menuTitle).toBeVisible({ timeout: 3000 })
 
     await page.locator('body').click({ position: { x: 10, y: 10 } })
 
-    await expect(atMenu).not.toBeVisible({ timeout: 2000 })
+    await expect(menuTitle).not.toBeVisible({ timeout: 2000 })
   })
 
   // ───────────────────────────────────────────────────────
@@ -119,7 +121,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.at-menu-label.agent-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 5000 })
 
     const count = await slashItems.count()
@@ -147,7 +149,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands (loaded via prefetch)
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.at-menu-label.agent-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()
@@ -164,7 +166,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands (loaded via prefetch on session switch)
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.at-menu-label.agent-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()
@@ -297,7 +299,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.click()
     await chat.textarea.fill('/')
 
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.at-menu-label.agent-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 5000 })
 
     // Click elsewhere to blur the textarea

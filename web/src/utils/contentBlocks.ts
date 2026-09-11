@@ -235,48 +235,37 @@ export function scheduledTaskKeys(
 }
 
 // ────────────────────────────────────────────────────────────
-// @ command badge detection
-// ────────────────────────────────────────────────────────────
-
-/** Match @ command prefix at start of text: @chatsearch or @task followed by space */
-const AT_COMMAND_RE = /^(@chatsearch|@task)(\s[\s\S]*)?$/
-
-export interface AtCommandBadge {
-  command: string    // e.g. "@chatsearch"
-  rest: string       // e.g. " my query" (including the leading space) or ""
-}
-
-/**
- * Extract @ command prefix from a text block.
- * Returns null if the text doesn't start with an @ command.
- */
-export function extractAtCommand(text: string): AtCommandBadge | null {
-  if (!text.startsWith('@')) return null
-  const match = text.match(AT_COMMAND_RE)
-  if (!match) return null
-  return { command: match[1], rest: match[2] || '' }
-}
-
-// ────────────────────────────────────────────────────────────
-// Slash command badge detection (ACP backend commands)
+// Slash command badge detection (agent + ClawBench built-in commands)
 // ────────────────────────────────────────────────────────────
 
 /** Match slash command prefix at start of text: /command-name (with optional space+rest) */
 const SLASH_COMMAND_RE = /^\/(\w[\w:-]*)(\s[\s\S]*)?$/
 
+/**
+ * ClawBench built-in commands are namespaced under "/cb-" so they can be
+ * distinguished from the current agent's ACP commands (e.g. "/compact").
+ * Mirrors the backend constants in internal/handler/clawbench_command.go.
+ */
+const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task)(\s|$)/
+
 export interface SlashCommandBadge {
   command: string    // e.g. "/commit"
   rest: string       // e.g. " fix auth bug" (including the leading space) or ""
+  clawbench: boolean // true for ClawBench built-in /cb-* commands
 }
 
 /**
  * Extract slash command prefix from a text block.
  * Returns null if the text doesn't start with a slash command.
- * Unlike @ commands, slash commands are dynamic (from ACP) — any /word match is valid.
+ * Covers both agent commands (dynamic, from ACP) and ClawBench built-ins.
  */
 export function extractSlashCommand(text: string): SlashCommandBadge | null {
   if (!text.startsWith('/')) return null
   const match = text.match(SLASH_COMMAND_RE)
   if (!match) return null
-  return { command: '/' + match[1], rest: match[2] || '' }
+  return {
+    command: '/' + match[1],
+    rest: match[2] || '',
+    clawbench: CLAWBENCH_COMMAND_RE.test(text),
+  }
 }

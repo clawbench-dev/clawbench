@@ -64,7 +64,7 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        atCommand: { title: 'At', chatsearchDesc: 'Search', taskDesc: 'Task' },
+        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task' },
         slashCommand: { title: 'Slash' },
         acpSession: { title: 'ACP Sessions' },
         sessionInfo: {
@@ -953,33 +953,85 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
-  it('@ command menu shows when input starts with @', async () => {
+  it('command menu shows ClawBench commands when input starts with /', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/cb-chat'
+    await wrapper.vm.$nextTick()
+    // The unified menu filters ClawBench built-ins by input
+    const items = wrapper.findAll('.at-menu-item')
+    expect(items.length).toBeGreaterThan(0)
+    expect(items[0].find('.at-menu-label').text()).toContain('/cb-chatsearch')
+  })
+
+  it('command menu does NOT show for @ input (merged into / only)', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '@chat'
     await wrapper.vm.$nextTick()
-    // The @ menu should be visible (atMenuItems computed filters by input)
-    // This covers the atMenuItems computed and the inputText watcher
-    expect(true).toBe(true)
+    expect(wrapper.find('.at-menu-item').exists()).toBe(false)
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('slash command menu shows when input starts with /', async () => {
+  it('command menu shows agent commands when input starts with /', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/hel'
     await wrapper.vm.$nextTick()
-    // The slash menu items should filter by input
-    // This covers the slashMenuItems computed and the inputText watcher
-    expect(true).toBe(true)
+    // The agent command should be filtered into the unified menu
+    const labels = wrapper.findAll('.at-menu-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/help'))).toBe(true)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
   })
 
-  it('handleAtSelect sets input text and closes menu', async () => {
+  it('handleCommandSelect sets input text and closes menu', async () => {
     const wrapper = mountBar()
-    const cmd = { key: '@chatsearch', label: '@chatsearch', description: 'Search' }
-    // handleAtSelect is called from the menu item mousedown
-    // But it's not exposed, so we test via inputText watcher
-    wrapper.vm.inputText = '@chatsearch '
+    wrapper.vm.inputText = '/cb-chatsearch'
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
+    // The menu item mousedown calls handleCommandSelect
+    await wrapper.findAll('.at-menu-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
+  it('marks ClawBench vs agent commands with distinct source classes', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const clawbench = wrapper.find('.at-menu-item--clawbench')
+    const agent = wrapper.find('.at-menu-item--agent')
+    expect(clawbench.exists()).toBe(true)
+    expect(agent.exists()).toBe(true)
+    // Each row carries a left color bar and an icon
+    expect(clawbench.find('.at-menu-bar').exists()).toBe(true)
+    expect(clawbench.find('.at-menu-icon').exists()).toBe(true)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('shows both entries when a ClawBench and agent command share a name', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    // An agent command literally named /cb-task collides with the built-in.
+    // Both must remain visible, distinguished by source.
+    mockAvailableCommands.value = [{ name: 'cb-task', description: 'Agent task', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/cb-task'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.at-menu-item')
+    expect(items).toHaveLength(2)
+    expect(wrapper.findAll('.at-menu-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.at-menu-item--agent')).toHaveLength(1)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
   })
 
   it('usage info shows when context size > 0', async () => {
@@ -1195,94 +1247,77 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('.attachment-ref').exists()).toBe(true)
   })
 
-  it('slash command input watcher triggers showSlashMenu', async () => {
-    mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
+  it('command menu input watcher opens on / and closes after a space', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    // The inputText watcher should set showSlashMenu=true
-    // Then type a space to close it
-    wrapper.vm.inputText = '/help '
+    // The inputText watcher should open the unified command menu
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    // Type a space → the input is no longer a bare command token, menu closes
+    wrapper.vm.inputText = '/cb-chatsearch '
     await wrapper.vm.$nextTick()
-    // After space, showSlashMenu should be false
-    expect(true).toBe(true)
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Enter confirms the pre-selected first @ item when menu opens', async () => {
+  it('Enter confirms the pre-selected first command item when menu opens', async () => {
     const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
+    wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; Enter should confirm it
+    // First item is pre-selected at index 0 (ClawBench built-ins come first);
+    // Enter should confirm it
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
-    expect(wrapper.vm.showAtMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Tab confirms the pre-selected first @ item when menu opens', async () => {
+  it('Tab confirms the pre-selected first command item when menu opens', async () => {
     const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
+    wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
     // First item is pre-selected at index 0; Tab should confirm it
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Tab' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
-    expect(wrapper.vm.showAtMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Enter confirms the pre-selected first slash item when menu opens', async () => {
+  it('Enter confirms an agent command when it is selected', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
-    wrapper.vm.inputText = '/'
+    wrapper.vm.inputText = '/help'
     await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; Enter should confirm it
+    // Only the agent /help matches the query
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('/help ')
-    expect(wrapper.vm.showSlashMenu).toBe(false)
+    expect(wrapper.vm.showCommandMenu).toBe(false)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
-  it('ArrowUp from pre-selected first @ item wraps to last item', async () => {
+  it('ArrowUp from pre-selected first command item wraps to last item', async () => {
     const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
+    wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
     // First item pre-selected at index 0; ArrowUp wraps to last
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // atCommands has 2 items: @chatsearch (0), @task (1); ArrowUp wraps to index 1
-    expect(wrapper.vm.atMenuIndex).toBe(1)
+    // ClawBench has 2 items: /cb-chatsearch (0), /cb-task (1); ArrowUp wraps to index 1
+    expect(wrapper.vm.commandMenuIndex).toBe(1)
   })
 
-  it('keyboard nav scrolls highlighted @ item into view even when menu is teleported', async () => {
+  it('keyboard nav scrolls highlighted command item into view even when menu is teleported', async () => {
     // Production PopupMenu Teleports the slot to <body>, so menu items are NOT
     // descendants of the component root — the scroll watcher must query from
     // document instead of rootRef (regression: scrollbar didn't follow highlight).
-    const qs = vi.spyOn(document, 'querySelector')
-    const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
-    await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; ArrowDown moves to index 1
-    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
-    await flushPromises()
-    await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-at-idx="1"]')
-    qs.mockRestore()
-    wrapper.unmount()
-  })
-
-  it('keyboard nav scrolls highlighted slash item into view even when menu is teleported', async () => {
-    mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
-    mockAvailableCommands.value = Array.from({ length: 30 }, (_, i) => ({ name: `cmd${i}`, description: 'desc', inputHint: '' }))
     const qs = vi.spyOn(document, 'querySelector')
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
@@ -1294,12 +1329,9 @@ describe('ChatInputBar', () => {
     expect(qs).toHaveBeenCalledWith('[data-slash-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
-    mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
-    mockSupportsACP.mockReturnValue(false)
   })
 
-  it('slash menu dedupes commands that differ only by slash prefix', async () => {
+  it('command menu dedupes agent commands that differ only by slash prefix', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     // Same skill reported slashless by CodeBuddy ACP and slash-prefixed by the
@@ -1314,8 +1346,9 @@ describe('ChatInputBar', () => {
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
     const items = wrapper.findAll('.at-menu-item')
-    expect(items).toHaveLength(2)
-    const labels = items.map(i => i.text())
+    // 2 ClawBench built-ins + 2 deduped agent commands
+    expect(items).toHaveLength(4)
+    const labels = items.map(i => i.find('.at-menu-label').text())
     expect(labels.some(l => l.startsWith('//'))).toBe(false)
     expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
     expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
@@ -1581,25 +1614,25 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('does not navigate history while an @ or slash menu is open', async () => {
+    it('does not navigate history while the command menu is open', async () => {
       const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
-      // Open the @ menu by typing @ — menu keydown handles ArrowUp
-      wrapper.vm.inputText = '@'
+      // Open the command menu by typing / — menu keydown handles ArrowUp
+      wrapper.vm.inputText = '/'
       await wrapper.vm.$nextTick()
       await pressArrow(wrapper, 'ArrowUp')
-      // Input stays '@' (menu consumed the key, history did not run)
-      expect(wrapper.vm.inputText).toBe('@')
+      // Input stays '/' (menu consumed the key, history did not run)
+      expect(wrapper.vm.inputText).toBe('/')
       wrapper.unmount()
     })
 
-    it('loading a history entry starting with @ does not pop the @ menu', async () => {
+    it('loading a history entry starting with a command does not pop the menu', async () => {
       const wrapper = mountBar({
         currentSessionId: 's1',
-        messages: [{ id: 1, role: 'user', content: '@chatsearch query' }],
+        messages: [{ id: 1, role: 'user', content: '/cb-chatsearch query' }],
       })
       await pressArrow(wrapper, 'ArrowUp')
-      expect(wrapper.vm.inputText).toBe('@chatsearch query')
-      expect(wrapper.vm.showAtMenu).toBe(false)
+      expect(wrapper.vm.inputText).toBe('/cb-chatsearch query')
+      expect(wrapper.vm.showCommandMenu).toBe(false)
       wrapper.unmount()
     })
 

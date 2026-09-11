@@ -309,8 +309,7 @@ export default {
       placeholderQueue: '输入消息加入队列...',
       placeholderOptional: '添加描述（可选）...',
       placeholderQuickSend: '点击⚡快捷发送消息 →',
-      placeholderAtCommand: "输入 {'@'} 执行内置命令",
-      placeholderCommand: "输入 {'@'} 或 {'/'} 执行命令",
+      placeholderCommand: "输入 {'/'} 执行命令",
       placeholderSwipeHistory: '左右滑动切换历史输入',
       send: '发送',
       enqueue: '加入队列',
@@ -318,13 +317,12 @@ export default {
       stopGenerating: '停止生成',
       confirmStop: '确认停止',
     },
-    atCommand: {
-      title: 'ClawBench 命令',
+    clawbenchCommand: {
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理定时任务',
     },
     slashCommand: {
-      title: 'Agent 命令',
+      title: '命令',
     },
     acpSession: {
       title: 'ACP 会话',

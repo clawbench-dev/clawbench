@@ -174,19 +174,16 @@
         @switch-transport="handleSwitchTransport"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
-      <!-- @ command autocomplete menu (ClawBench built-in) -->
-      <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
-        <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
-        <button v-for="(cmd, idx) in atMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === atMenuIndex }" :data-at-idx="idx" @mousedown.prevent="handleAtSelect(cmd)">
-          <span class="at-menu-label" v-html="highlightText(cmd.label, cmd.query)" />
-          <span class="at-menu-desc">{{ cmd.description }}</span>
-        </button>
-      </PopupMenu>
-      <!-- Slash command autocomplete menu (ACP backend commands — only in acp-stdio transport) -->
-      <PopupMenu v-if="isACPTransport && availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" anchor="left" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
+      <!-- Unified slash command autocomplete menu.
+           Merges ClawBench built-in commands (/cb-*) with the current agent's
+           ACP commands into one "/" menu. Each row carries a left color bar +
+           icon so the two sources are visually distinguishable. -->
+      <PopupMenu v-if="commandMenuItems.length > 0" v-model:show="showCommandMenu" :target-element="textareaRef" anchor="left" :max-width="320" :max-height="280" :menu-items-count="commandMenuItems.length">
         <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
-        <button v-for="(cmd, idx) in slashMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === slashMenuIndex }" :data-slash-idx="idx" @mousedown.prevent="handleSlashSelect(cmd)">
-          <span class="at-menu-label slash-label" v-html="highlightText(cmd.label, cmd.query)" />
+        <button v-for="(cmd, idx) in commandMenuItems" :key="cmd.source + ':' + cmd.key" class="at-menu-item" :class="['at-menu-item--' + cmd.source, { 'at-menu-selected': idx === commandMenuIndex }]" :data-slash-idx="idx" @mousedown.prevent="handleCommandSelect(cmd)">
+          <span class="at-menu-bar" aria-hidden="true" />
+          <component :is="cmd.source === 'clawbench' ? Wrench : Bot" :size="14" class="at-menu-icon" />
+          <span class="at-menu-label" :class="cmd.source + '-label'" v-html="highlightText(cmd.label, cmd.query)" />
           <span class="at-menu-desc">{{ cmd.description }}</span>
         </button>
       </PopupMenu>
@@ -310,7 +307,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
+import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, Wrench, Bot } from 'lucide-vue-next'
 import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
@@ -785,87 +782,85 @@ function openSettingsDrawer(tab) {
 // ── Context usage popup ──
 const showUsagePopup = ref(false)
 const usageElRef = ref(null)
-const atCommands = computed(() => {
+// ── Unified slash command autocomplete ──
+// Two command sources share the "/" prefix:
+//   - 'clawbench': ClawBench built-ins, namespaced under /cb- (always available)
+//   - 'agent':     commands reported by the current ACP agent (acp-stdio only)
+// They are merged into one list. On a name collision both entries are kept and
+// distinguished by their source bar/icon; the cb- namespace makes an actual
+// collision practically impossible.
+const showCommandMenu = ref(false)
+const commandMenuIndex = ref(-1)
+
+const clawbenchCommands = computed(() => {
   return [
-    { key: '@chatsearch', label: '@chatsearch', description: t('chat.atCommand.chatsearchDesc') },
-    { key: '@task', label: '@task', description: t('chat.atCommand.taskDesc') },
+    { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
+    { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
   ]
 })
 
-// ── Slash command autocomplete (ACP backend commands) ──
-const showSlashMenu = ref(false)
-const slashMenuIndex = ref(-1)
-
-// ── @ command autocomplete ──
-const showAtMenu = ref(false)
-const atMenuIndex = ref(-1)
-
-const atMenuItems = computed(() => {
-  const text = inputText.value
-  if (!text.startsWith('@')) return []
-  const query = text.slice(1) // strip leading '@'
-  const cmds = atCommands.value // unwrap computed ref
-  if (!query) return cmds.map(cmd => ({ ...cmd, query: '' })) // empty query → show all
-  const lowerQ = query.toLowerCase()
-  return cmds
-    .filter(cmd => cmd.key.toLowerCase().includes(lowerQ))
-    .map(cmd => ({ ...cmd, query }))
-})
-
-const slashMenuItems = computed(() => {
+const commandMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
   const query = text.slice(1) // strip leading '/'
-  // Command names arrive inconsistently: CodeBuddy ACP reports skills slashless
-  // ("mmx-cli"), while pre-scanned names may keep a leading "/". Normalize for
-  // display and dedupe on the canonical (slash-stripped) name so the same
-  // command cannot appear twice — otherwise each duplicate renders as a
-  // double-slash entry.
-  const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
-  const seen = new Set()
+  const lowerQ = query.toLowerCase()
+
   const items = []
-  for (const cmd of availableCommands.value) {
-    const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
-    if (!canonical || seen.has(canonical)) continue
-    seen.add(canonical)
+  // ClawBench built-ins first (stable, always present).
+  for (const cmd of clawbenchCommands.value) {
     items.push({
-      key: toSlash(cmd.name),
-      label: toSlash(cmd.name),
+      key: cmd.key,
+      label: cmd.label,
       description: cmd.description,
-      inputHint: cmd.inputHint || '',
-      query: query.toLowerCase(),
+      inputHint: '',
+      source: 'clawbench',
+      query,
     })
   }
+  // Agent commands (ACP only). Command names arrive inconsistently: CodeBuddy
+  // ACP reports skills slashless ("mmx-cli"), while pre-scanned names may keep a
+  // leading "/". Normalize for display and dedupe on the canonical
+  // (slash-stripped) name so the same command cannot appear twice.
+  if (isACPTransport.value) {
+    const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
+    const seen = new Set()
+    for (const cmd of availableCommands.value) {
+      const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
+      if (!canonical || seen.has(canonical)) continue
+      seen.add(canonical)
+      items.push({
+        key: toSlash(cmd.name),
+        label: toSlash(cmd.name),
+        description: cmd.description,
+        inputHint: cmd.inputHint || '',
+        source: 'agent',
+        query,
+      })
+    }
+  }
+
   if (!query) return items
-  const lowerQ = query.toLowerCase()
   return items.filter(item => item.label.toLowerCase().includes(lowerQ))
 })
 
 // Directly control menu visibility from inputText changes
 watch(inputText, () => {
   const text = inputText.value
-  // @ command menu
-  const shouldShowAt = text.startsWith('@')
+  // Unified slash command menu: shown while the input is a bare "/word"
+  const shouldShowCommand = text.startsWith('/')
     && !text.includes(' ')
-    && atMenuItems.value.length > 0
-  // Slash command menu
-  const shouldShowSlash = text.startsWith('/')
-    && !text.includes(' ')
-    && slashMenuItems.value.length > 0
+    && commandMenuItems.value.length > 0
   // A history entry loaded by ArrowUp/ArrowDown must not pop the menu.
   if (historyNavSuppressMenu) return
-  if (shouldShowAt && !showAtMenu.value) atMenuIndex.value = 0
-  showAtMenu.value = shouldShowAt
-  if (shouldShowSlash && !showSlashMenu.value) slashMenuIndex.value = 0
-  showSlashMenu.value = shouldShowSlash
+  if (shouldShowCommand && !showCommandMenu.value) commandMenuIndex.value = 0
+  showCommandMenu.value = shouldShowCommand
 })
 
 // Default to first item when menu items change (VSCode-style: first item pre-selected)
-watch(slashMenuItems, () => { slashMenuIndex.value = slashMenuItems.value.length > 0 ? 0 : -1 })
-watch(atMenuItems, () => { atMenuIndex.value = atMenuItems.value.length > 0 ? 0 : -1 })
+watch(commandMenuItems, () => { commandMenuIndex.value = commandMenuItems.value.length > 0 ? 0 : -1 })
 
 // Scroll selected menu item into view
-watch(slashMenuIndex, (idx) => {
+watch(commandMenuIndex, (idx) => {
   if (idx < 0) return
   nextTick(() => {
     // Menus are teleported to <body>, so query from document, not rootRef.
@@ -873,29 +868,11 @@ watch(slashMenuIndex, (idx) => {
     el?.scrollIntoView({ block: 'nearest' })
   })
 })
-watch(atMenuIndex, (idx) => {
-  if (idx < 0) return
-  nextTick(() => {
-    // Menus are teleported to <body>, so query from document, not rootRef.
-    const el = document.querySelector('[data-at-idx="' + idx + '"]')
-    el?.scrollIntoView({ block: 'nearest' })
-  })
-})
 
-function handleAtSelect(cmd) {
+function handleCommandSelect(cmd) {
   inputText.value = cmd.key + ' '
-  showAtMenu.value = false
-  atMenuIndex.value = -1
-  nextTick(() => {
-    const el = textareaRef.value
-    if (el) el.focus()
-  })
-}
-
-function handleSlashSelect(cmd) {
-  inputText.value = cmd.key + ' '
-  showSlashMenu.value = false
-  slashMenuIndex.value = -1
+  showCommandMenu.value = false
+  commandMenuIndex.value = -1
   nextTick(() => {
     const el = textareaRef.value
     if (el) el.focus()
@@ -908,38 +885,32 @@ function handleMenuKeydown(e) {
   // the keystroke — Enter commits the candidate, never selects a menu item.
   if (isImeCompositionEvent(e)) return false
 
-  // Determine which menu is active (slash takes priority if both open)
-  const isSlash = showSlashMenu.value
-  const isAt = showAtMenu.value
-  if (!isSlash && !isAt) return false
+  if (!showCommandMenu.value) return false
 
-  // Escape closes the active menu
+  // Escape closes the menu
   if (e.key === 'Escape') {
     e.preventDefault()
-    if (isSlash) { showSlashMenu.value = false; slashMenuIndex.value = -1 }
-    else { showAtMenu.value = false; atMenuIndex.value = -1 }
+    showCommandMenu.value = false
+    commandMenuIndex.value = -1
     return true
   }
 
-  const items = isSlash ? slashMenuItems.value : atMenuItems.value
-  const indexRef = isSlash ? slashMenuIndex : atMenuIndex
+  const items = commandMenuItems.value
   if (items.length === 0) return false
 
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    indexRef.value = (indexRef.value + 1) % items.length
+    commandMenuIndex.value = (commandMenuIndex.value + 1) % items.length
     return true
   }
   if (e.key === 'ArrowUp') {
     e.preventDefault()
-    indexRef.value = indexRef.value <= 0 ? items.length - 1 : indexRef.value - 1
+    commandMenuIndex.value = commandMenuIndex.value <= 0 ? items.length - 1 : commandMenuIndex.value - 1
     return true
   }
-  if ((e.key === 'Enter' || e.key === 'Tab') && indexRef.value >= 0 && indexRef.value < items.length) {
+  if ((e.key === 'Enter' || e.key === 'Tab') && commandMenuIndex.value >= 0 && commandMenuIndex.value < items.length) {
     e.preventDefault()
-    const selected = items[indexRef.value]
-    if (isSlash) handleSlashSelect(selected)
-    else handleAtSelect(selected)
+    handleCommandSelect(items[commandMenuIndex.value])
     return true
   }
   return false
@@ -1282,11 +1253,10 @@ function onTextareaBlur() {
   if (!inputText.value.trim()) {
     startPlaceholderRotation()
   }
-  // Close @ and / command menus when textarea loses focus (clicking menu items uses
+  // Close the command menu when textarea loses focus (clicking menu items uses
   // @mousedown.prevent so blur won't fire for those interactions)
   nextTick(() => {
-    showAtMenu.value = false
-    showSlashMenu.value = false
+    showCommandMenu.value = false
   })
 }
 
@@ -1580,11 +1550,11 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSlashMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); showCommandMenu.value = false; showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); showCommandMenu.value = false; showUsagePopup.value = false } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; showCommandMenu.value = false; showUsagePopup.value = false } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false } })
+watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showCommandMenu.value = false } })
 
 onMounted(() => {
   fetchItems()
@@ -2521,7 +2491,7 @@ defineExpose({
   margin: 3px 6px;
 }
 
-/* @ command autocomplete menu styles */
+/* Unified command autocomplete menu styles */
 .at-menu-title {
   padding: 6px 12px;
   font-size: 11px;
@@ -2536,7 +2506,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 9px;
   border: none;
   background: none;
   cursor: pointer;
@@ -2553,6 +2523,33 @@ defineExpose({
   }
 }
 
+/* Left color bar + icon distinguish the two command sources:
+   clawbench = purple (#8b5cf6), agent = blue (#0ea5e9) */
+.at-menu-bar {
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+}
+
+.at-menu-item--clawbench .at-menu-bar {
+  background: #8b5cf6;
+}
+.at-menu-item--agent .at-menu-bar {
+  background: #0ea5e9;
+}
+
+.at-menu-icon {
+  flex-shrink: 0;
+}
+
+.at-menu-item--clawbench .at-menu-icon {
+  color: #8b5cf6;
+}
+.at-menu-item--agent .at-menu-icon {
+  color: #0ea5e9;
+}
+
 .at-menu-label {
   font-size: 13px;
   font-weight: 600;
@@ -2564,11 +2561,24 @@ defineExpose({
   color: #a78bfa;
 }
 
-.at-menu-label.slash-label {
+.at-menu-label.agent-label {
   color: #0ea5e9;
 }
 
-:root[data-theme-base="dark"] .at-menu-label.slash-label {
+:root[data-theme-base="dark"] .at-menu-label.agent-label {
+  color: #38bdf8;
+}
+
+:root[data-theme-base="dark"] .at-menu-item--clawbench .at-menu-bar {
+  background: #a78bfa;
+}
+:root[data-theme-base="dark"] .at-menu-item--clawbench .at-menu-icon {
+  color: #a78bfa;
+}
+:root[data-theme-base="dark"] .at-menu-item--agent .at-menu-bar {
+  background: #38bdf8;
+}
+:root[data-theme-base="dark"] .at-menu-item--agent .at-menu-icon {
   color: #38bdf8;
 }
 

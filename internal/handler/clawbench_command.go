@@ -7,8 +7,17 @@ import (
 	"clawbench/internal/model"
 )
 
+// ClawBench built-in slash commands. They share the "/" prefix with ACP agent
+// commands but are namespaced under "cb-" so they can never collide with an
+// agent-provided command: any "/cb-*" is routed to ClawBench's own injection,
+// every other "/xxx" is forwarded verbatim to the agent.
+const (
+	ClawbenchCmdChatSearch = "/cb-chatsearch"
+	ClawbenchCmdTask       = "/cb-task"
+)
+
 // chatSearchInjectTemplate is the on-demand instruction template injected when
-// the user sends a message starting with "@chatsearch ". It provides the AI
+// the user sends a message starting with "/cb-chatsearch ". It provides the AI
 // with RAG search command usage and output format requirements.
 // Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{SESSION_ID}}, {{PORT}}, {{DATA_DIR}}
 const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to execute commands.]
@@ -29,7 +38,7 @@ If no results found, answer based on your own knowledge — do NOT mention the s
 `
 
 // taskInjectTemplate is the on-demand instruction template injected when
-// the user sends a message starting with "@task ". It provides the AI
+// the user sends a message starting with "/cb-task ". It provides the AI
 // with scheduled task management command usage.
 // Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{PORT}}, {{DATA_DIR}}
 const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to execute commands.]
@@ -48,19 +57,28 @@ Rules:
 - Use the user's language for task names and prompts
 `
 
-// processAtCommand checks if the raw user message starts with an @ command
-// and returns the injected template (without the original message) to be
-// prepended to the prompt. The caller constructs the final prompt as:
+// IsClawbenchCommand reports whether the raw user message starts with one of
+// ClawBench's built-in "/cb-" commands. Used to keep these commands out of the
+// ACP slash-command path (they must not be forwarded to the agent).
+func IsClawbenchCommand(rawMsg string) bool {
+	return strings.HasPrefix(rawMsg, ClawbenchCmdChatSearch+" ") ||
+		strings.HasPrefix(rawMsg, ClawbenchCmdTask+" ")
+}
+
+// processClawbenchCommand checks if the raw user message starts with a
+// ClawBench built-in command and returns the injected template (without the
+// original message) to be prepended to the prompt. The caller constructs the
+// final prompt as:
 //
-//	prompt = atInjected + "\n\n" + prompt
+//	prompt = injected + "\n\n" + prompt
 //
 // Since `prompt` already contains the original user message (with file prefixes),
-// processAtCommand returns only the template to avoid duplication.
-// For @chatsearch with empty query, returns the raw message unchanged (caller
+// processClawbenchCommand returns only the template to avoid duplication.
+// For /cb-chatsearch with empty query, returns the raw message unchanged (caller
 // should handle the error response).
-func processAtCommand(rawMsg, projectPath, sessionID string) string {
-	if strings.HasPrefix(rawMsg, "@chatsearch ") {
-		query := strings.TrimPrefix(rawMsg, "@chatsearch ")
+func processClawbenchCommand(rawMsg, projectPath, sessionID string) string {
+	if strings.HasPrefix(rawMsg, ClawbenchCmdChatSearch+" ") {
+		query := strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch+" ")
 		if strings.TrimSpace(query) == "" {
 			return rawMsg
 		}
@@ -72,7 +90,7 @@ func processAtCommand(rawMsg, projectPath, sessionID string) string {
 		// Return only the template; the caller appends the original prompt separately
 		return tmpl
 	}
-	if strings.HasPrefix(rawMsg, "@task ") {
+	if strings.HasPrefix(rawMsg, ClawbenchCmdTask+" ") {
 		tmpl := strings.ReplaceAll(taskInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))

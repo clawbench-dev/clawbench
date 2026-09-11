@@ -14,7 +14,6 @@ import {
   buildTaskKeyIndex,
   hasScheduledTasks,
   scheduledTaskKeys,
-  extractAtCommand,
   extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
@@ -406,49 +405,6 @@ describe('scheduledTaskKeys', () => {
   })
 })
 
-// ── extractAtCommand ──
-describe('extractAtCommand', () => {
-  it('extracts @chatsearch with query', () => {
-    const result = extractAtCommand('@chatsearch how to fix bug')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@chatsearch')
-    expect(result!.rest).toBe(' how to fix bug')
-  })
-
-  it('extracts @task with description', () => {
-    const result = extractAtCommand('@task run daily backup')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@task')
-    expect(result!.rest).toBe(' run daily backup')
-  })
-
-  it('extracts @chatsearch with trailing space only', () => {
-    const result = extractAtCommand('@chatsearch ')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@chatsearch')
-    expect(result!.rest).toBe(' ')
-  })
-
-  it('returns null for plain text', () => {
-    expect(extractAtCommand('hello world')).toBeNull()
-  })
-
-  it('returns null for text not starting with known command', () => {
-    expect(extractAtCommand('@other command')).toBeNull()
-  })
-
-  it('returns null for empty string', () => {
-    expect(extractAtCommand('')).toBeNull()
-  })
-
-  it('extracts command without rest text', () => {
-    const result = extractAtCommand('@task')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@task')
-    expect(result!.rest).toBe('')
-  })
-})
-
 // ── extractSlashCommand ──
 describe('extractSlashCommand', () => {
   it('detects /commit with rest text', () => {
@@ -456,6 +412,7 @@ describe('extractSlashCommand', () => {
     expect(result).not.toBeNull()
     expect(result!.command).toBe('/commit')
     expect(result!.rest).toBe(' fix auth bug')
+    expect(result!.clawbench).toBe(false)
   })
 
   it('detects /commit without rest text', () => {
@@ -470,6 +427,30 @@ describe('extractSlashCommand', () => {
     expect(result).not.toBeNull()
     expect(result!.command).toBe('/superpowers:brainstorm')
     expect(result!.rest).toBe(' design')
+  })
+
+  it('marks ClawBench /cb-chatsearch as clawbench', () => {
+    const result = extractSlashCommand('/cb-chatsearch how to fix bug')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-chatsearch')
+    expect(result!.rest).toBe(' how to fix bug')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('marks ClawBench /cb-task as clawbench (no rest)', () => {
+    const result = extractSlashCommand('/cb-task')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-task')
+    expect(result!.rest).toBe('')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('does not mark a cb-prefixed agent command as clawbench', () => {
+    // Only the two known built-ins are ClawBench commands; a hypothetical
+    // agent command named /cb-something must render as an agent badge.
+    const result = extractSlashCommand('/cb-something arg')
+    expect(result).not.toBeNull()
+    expect(result!.clawbench).toBe(false)
   })
 
   it('returns null for plain text', () => {
