@@ -6,6 +6,10 @@ in the web frontend. These files are **not** meant to be compiled or executed.
 - Go files have `//go:build exclude` tags to prevent compilation
 - The vitest config excludes `test/path-annotation/**` from test discovery
 
+**多区间行号专项夹具**：`multirange.md`（Markdown 预览）与 `multirange.go`
+（代码视图/纯文本）覆盖逗号分隔多区间的全部场景（基础、宽容度、折叠边界、
+反例、Windows 盘符、回归对照）。
+
 ## Markdown 标注测试
 
 ### 项目内路径（蓝色）
