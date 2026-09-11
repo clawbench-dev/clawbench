@@ -319,6 +319,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   lineNumbers: false,
   stickyScroll: true,
   fileView: 'list',
+  filePreviewMode: false,
   messageDisplayMode: 'mixed',
   terminalFontSize: 12,
   logCapture: false,
@@ -337,7 +338,6 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
-  filePreviewMode: false,
   wallpaperBlur: 0,
   // Edge fade is ON by default: users who never touched the toggle (or never
   // migrated a legacy value) get the soft blended border out of the box.
