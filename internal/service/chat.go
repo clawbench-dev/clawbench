@@ -1234,18 +1234,31 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 // list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
 	// Set last_read_at to at least the newest finalized assistant message's
-	// created_at. The unread query compares h.created_at > s2.last_read_at with
-	// second-precision SQLite DATETIME — if a message finalized in the same
-	// second as the mark-read call, CURRENT_TIMESTAMP would still leave it
-	// "unread". Anchoring last_read_at to the newest message created_at makes
-	// the comparison robust (last_read_at >= created_at ⇒ not unread).
+	// created_at, but never below now. The unread query compares
+	// h.created_at > s2.last_read_at with second-precision SQLite DATETIME — if
+	// a message finalized in the same second as the mark-read call,
+	// CURRENT_TIMESTAMP would still leave it "unread". Anchoring last_read_at to
+	// the newest message created_at makes the comparison robust
+	// (last_read_at >= created_at ⇒ not unread).
+	//
+	// MAX(CURRENT_TIMESTAMP, ...) is essential: on the cancel path the frontend
+	// marks the session read when the "cancelled" session_update arrives, which
+	// is emitted BEFORE the executor finalizes the interrupted reply
+	// (streaming=1 → 0). At that instant the only finalized assistant row is the
+	// PREVIOUS turn's, so a bare COALESCE would anchor last_read_at backwards to
+	// that older timestamp — the interrupted reply then flips the session back
+	// to unread as soon as it is finalized, even though the user is looking at
+	// it. Taking the max with CURRENT_TIMESTAMP keeps the anchor monotonic.
 	// Falls back to CURRENT_TIMESTAMP when no finalized assistant message exists.
 	WriteExec(`
 		UPDATE chat_sessions
-		SET last_read_at = COALESCE(
-			(SELECT MAX(created_at) FROM chat_history
-			 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
-			CURRENT_TIMESTAMP
+		SET last_read_at = MAX(
+			CURRENT_TIMESTAMP,
+			COALESCE(
+				(SELECT MAX(created_at) FROM chat_history
+				 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
+				CURRENT_TIMESTAMP
+			)
 		)
 		WHERE id = ?`, sessionID, sessionID)
 	// Broadcast a status change so connected clients (e.g. the Android floating

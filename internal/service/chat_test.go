@@ -1607,6 +1607,44 @@ func TestUpdateLastRead_FallsBackToNowWithoutMessages(t *testing.T) {
 	assert.True(t, lastRead.Valid, "last_read_at should still be set via CURRENT_TIMESTAMP fallback")
 }
 
+func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) {
+	// Regression: when the user cancels the turn they are viewing, the frontend
+	// marks the session read on the "cancelled" session_update event — which is
+	// emitted BEFORE the executor finalizes the interrupted reply (streaming=1
+	// -> 0). Anchoring last_read_at to the newest *finalized* assistant message
+	// therefore anchors DOWN to the previous turn's reply, and the interrupted
+	// reply (created_at is newer) flips the session back to unread once it is
+	// finalized. The user is looking right at the session, so it must stay read.
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Cancel Turn")
+
+	// Previous turn: a finalized assistant reply from an earlier time.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// Current turn: user cancelled while the reply row is still streaming=1 —
+	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	service.UpdateLastRead(sid)
+
+	// The executor finalizes the interrupted reply immediately after.
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 0, sessions[0].UnreadCount,
+		"the interrupted reply the user was watching must not become unread")
+}
+
 // ---------- GetSessionAgentID ----------
 
 func TestGetSessionAgentID(t *testing.T) {
