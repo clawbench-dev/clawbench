@@ -121,6 +121,13 @@ var hotReloadFields = map[string]bool{
 	"feishu.app_secret":         true,
 	"feishu.users":              true,
 	"push_mode":                 true,
+	"forge.insecure_tls":        true,
+	"forge.notify.opened":       true,
+	"forge.notify.closed":       true,
+	"forge.notify.merged":       true,
+	"forge.notify.reopened":     true,
+	"forge.notify.commented":    true,
+	"forge.notify.pipeline":     true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
@@ -223,6 +230,7 @@ type configResponse struct {
 	TLS                 configTLS            `json:"tls"`
 	Fonts               configFonts          `json:"fonts"`
 	Appearance          configAppearance     `json:"appearance"`
+	Forge               configForge          `json:"forge"`
 	// FirstRun is true on a brand-new install. The frontend uses it to apply
 	// out-of-box appearance defaults (the default theme) without overriding
 	// choices an existing user has already made.
@@ -357,6 +365,27 @@ type configFeishu struct {
 	Users     []string `json:"users"`
 }
 
+// configForge exposes the GitHub/GitLab integration settings. Credentials are
+// deliberately NOT returned: the response carries only the set of hosts that
+// have a token (has_token), so a token can be written but never read back.
+type configForge struct {
+	// CredentialHosts lists hosts with a configured token, sorted.
+	CredentialHosts []string `json:"credential_hosts"`
+	// InsecureTLS allows skipping TLS verification for self-hosted instances.
+	InsecureTLS bool `json:"insecure_tls"`
+	// Notify carries the per-event notification toggles.
+	Notify configForgeNotify `json:"notify"`
+}
+
+type configForgeNotify struct {
+	Opened    bool `json:"opened"`
+	Closed    bool `json:"closed"`
+	Merged    bool `json:"merged"`
+	Reopened  bool `json:"reopened"`
+	Commented bool `json:"commented"`
+	Pipeline  bool `json:"pipeline"`
+}
+
 type configFileSearch struct {
 	DisplayLimit int `json:"display_limit"`
 }
@@ -463,6 +492,30 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 	}
 }
 
+// buildConfigForge builds the forge section of the config response. It exposes
+// only which hosts have a token — never the token value.
+func buildConfigForge(cfg model.Config) configForge {
+	hosts := make([]string, 0, len(cfg.Forge.Credentials))
+	for host, token := range cfg.Forge.Credentials {
+		if token != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	sort.Strings(hosts)
+	return configForge{
+		CredentialHosts: hosts,
+		InsecureTLS:     cfg.Forge.InsecureTLS,
+		Notify: configForgeNotify{
+			Opened:    cfg.Forge.Notify.Opened,
+			Closed:    cfg.Forge.Notify.Closed,
+			Merged:    cfg.Forge.Notify.Merged,
+			Reopened:  cfg.Forge.Notify.Reopened,
+			Commented: cfg.Forge.Notify.Commented,
+			Pipeline:  cfg.Forge.Notify.Pipeline,
+		},
+	}
+}
+
 // absWallpaperPath resolves a bare wallpaper file name to its absolute path,
 // returning "" when the name is empty or cannot be resolved. Callers use it to
 // hand a path to GET /api/file/thumb (which returns a small JPEG rather than
@@ -559,6 +612,13 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                 true,
 	"feishu.users":                      true,
 	"push_mode":                         true,
+	"forge.insecure_tls":                true,
+	"forge.notify.opened":               true,
+	"forge.notify.closed":               true,
+	"forge.notify.merged":               true,
+	"forge.notify.reopened":             true,
+	"forge.notify.commented":            true,
+	"forge.notify.pipeline":             true,
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
@@ -719,6 +779,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Dir: cfg.ResolveFontsDir(),
 		},
 		Appearance: buildConfigAppearance(cfg),
+		Forge:      buildConfigForge(cfg),
 	}
 
 	// Conditionally populate AISummary API sub-config when a base URL is set
@@ -1558,6 +1619,25 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
+	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if v, ok := forgeMap["insecure_tls"].(bool); ok {
+			cfg.Forge.InsecureTLS = v
+		}
+		if notify, ok := forgeMap["notify"].(map[string]any); ok {
+			applyBool := func(key string, target *bool) {
+				if v, ok := notify[key].(bool); ok {
+					*target = v
+				}
+			}
+			applyBool("opened", &cfg.Forge.Notify.Opened)
+			applyBool("closed", &cfg.Forge.Notify.Closed)
+			applyBool("merged", &cfg.Forge.Notify.Merged)
+			applyBool("reopened", &cfg.Forge.Notify.Reopened)
+			applyBool("commented", &cfg.Forge.Notify.Commented)
+			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
+		}
+	}
+
 	// Also update global variables for hot-reloadable fields
 	applyHotReloadGlobals()
 }
@@ -1672,7 +1752,9 @@ func writeConfigYAML(patch map[string]any) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	// config.yaml holds secrets (API keys, forge tokens, password hash), so it
+	// must not be world-readable.
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp config: %w", err)
 	}
 
