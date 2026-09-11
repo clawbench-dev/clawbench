@@ -816,6 +816,7 @@ export default {
     pinToSidebar: '固定到侧栏',
     unpinToSidebar: '取消固定',
     closeSidebar: '关闭侧栏',
+    refresh: '刷新会话列表',
   },
   sessionSearch: {
     title: '会话搜索',

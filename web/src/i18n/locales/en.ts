@@ -816,6 +816,7 @@ export default {
     pinToSidebar: 'Pin to sidebar',
     unpinToSidebar: 'Unpin',
     closeSidebar: 'Close sidebar',
+    refresh: 'Refresh session list',
   },
   sessionSearch: {
     title: 'Session Search',
