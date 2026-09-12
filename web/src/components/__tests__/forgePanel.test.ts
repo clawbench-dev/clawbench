@@ -220,9 +220,9 @@ describe('ForgePanelContent', () => {
 
   it('uses the GitHub brand icon for the panel identity, semantic glyphs for the type tabs', async () => {
     // The panel header keeps the GitHub brand mark (the forge integration is
-    // GitHub-flavoured), but the issue/PR switch carries the same semantic
-    // glyphs GitHub itself uses: a dot-in-circle for issues, the merge arrow
-    // for pull/merge requests.
+    // GitHub-flavoured), but the issue/PR switch carries distinct semantic
+    // glyphs: a circled question mark for issues (the "what's the problem?"
+    // reading), the merge arrow for pull/merge requests.
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
     state.isBound.value = true
     state.items.value = []
@@ -235,10 +235,10 @@ describe('ForgePanelContent', () => {
     // Header brand mark is still present.
     expect(html).toContain('lucide-github')
     // Each tab gets its own semantic icon, not a shared generic one.
-    expect(html).toContain('lucide-circle-dot')
+    expect(html).toContain('lucide-circle-question-mark')
     expect(html).toContain('lucide-git-pull-request')
     const tabs = wrapper.findAll('.forge-tab')
-    expect(tabs[0].find('.lucide-circle-dot').exists(), 'issues tab uses the issue glyph').toBe(true)
+    expect(tabs[0].find('.lucide-circle-question-mark').exists(), 'issues tab uses the question-mark glyph').toBe(true)
     expect(tabs[1].find('.lucide-git-pull-request').exists(), 'PR tab uses the pull-request glyph').toBe(true)
   })
 
