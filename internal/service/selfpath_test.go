@@ -49,7 +49,7 @@ func TestWriteSelfPath_FileMode(t *testing.T) {
 }
 
 // TestWriteSelfPath_CreatesDataDir covers a first run where DataDir has not
-// been materialised yet (self-path is written before anything else uses it).
+// been materialized yet (self-path is written before anything else uses it).
 func TestWriteSelfPath_CreatesDataDir(t *testing.T) {
 	orig := model.DataDir
 	model.DataDir = filepath.Join(t.TempDir(), "not-yet-created")

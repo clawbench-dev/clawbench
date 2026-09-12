@@ -107,12 +107,12 @@ func shouldShortCircuit(diskVersion, targetVersion string) bool {
 func ResolveSelfBinary() (string, error) {
 	recorded := ReadSelfPath()
 	if recorded != "" {
-		if _, err := os.Stat(recorded); err == nil {
+		_, statErr := os.Stat(recorded)
+		if statErr == nil {
 			return recorded, nil
-		} else {
-			slog.Warn("upgrade: recorded self-path is not usable, falling back",
-				"path", recorded, "error", err)
 		}
+		slog.Warn("upgrade: recorded self-path is not usable, falling back",
+			"path", recorded, "error", statErr)
 	}
 
 	exe, err := upgradeExecutable()
