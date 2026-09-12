@@ -99,9 +99,12 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 // It lives in the service package so the wording is shared by every push
 // backend, while the backends own only the transport.
 func FormatForgeEventMessage(event ForgeEvent, item forge.Item) (title, body string) {
-	kind := "issue"
+	// The message body is Chinese, so the item type uses the Chinese term too
+	// (the previous English "issue"/"PR/MR" read as a mixed-language sentence).
+	// 合并请求 covers both a GitHub pull request and a GitLab merge request.
+	kind := "议题"
 	if event.ItemType == string(forge.ItemTypeChangeRequest) {
-		kind = "PR/MR"
+		kind = "合并请求"
 	}
 	verb := map[string]string{
 		string(forge.EventOpened):    "新开",

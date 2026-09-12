@@ -188,8 +188,9 @@ func TestFormatForgeEventMessage(t *testing.T) {
 	assert.Contains(t, body, "Fix the thing")
 	assert.Contains(t, body, "alice")
 	assert.Contains(t, body, "https://github.com/acme/widgets/pull/42")
-	// The item type must render as PR/MR, not the raw "pr".
-	assert.Contains(t, body, "PR/MR")
+	// The item type must render as the Chinese 合并请求, not the raw "pr" and
+	// not a mixed-language "PR/MR" inside an otherwise Chinese sentence.
+	assert.Contains(t, body, "合并请求")
 }
 
 func TestFormatForgeEventMessage_UnknownEventTypeFallsBack(t *testing.T) {

@@ -23,9 +23,9 @@ describe('forge locale values', () => {
     // These are the visible tab labels; leaving them English was the bug.
     expect(zh.forge.type.issues).not.toBe('Issues')
     expect(zh.forge.type.prs).not.toBe('Pull Requests')
-    // Still recognizable as the standard Chinese-developer shorthand.
-    expect(zh.forge.type.issues).toBe('Issue')
-    expect(zh.forge.type.prs).toBe('Pull Request')
+    // The chosen Chinese terms. 合并请求 covers a GitHub PR and a GitLab MR.
+    expect(zh.forge.type.issues).toBe('议题')
+    expect(zh.forge.type.prs).toBe('合并请求')
   })
 
   it('translates the state filter chips in zh', () => {
@@ -38,12 +38,26 @@ describe('forge locale values', () => {
   })
 
   it('translates the dock nav label in zh', () => {
-    expect(zh.nav.forge).not.toBe('Issues & PRs')
+    expect(zh.nav.forge).toBe('议题与合并请求')
   })
 
-  it('uses a consistent Issue/PR casing in zh search and empty text', () => {
-    expect(zh.forge.searchPlaceholder).not.toContain('issue /')
-    expect(zh.forge.emptyList).not.toContain('issue /')
+  it('leaves no English issue/PR wording anywhere in the zh locale', () => {
+    // A mixed-language sentence ("新开 issue / PR") is exactly what we fixed.
+    // Scans the WHOLE locale, not just the forge namespace: the same wording
+    // also lives under task.form.* and settings.items.*, and a namespace-scoped
+    // check silently missed those.
+    const offenders: string[] = []
+    const walk = (obj: Record<string, unknown>, prefix: string) => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string' && /\b(issue|issues|PR|Pull Request)s?\b/i.test(v)) {
+          offenders.push(`${prefix}.${k} = ${v}`)
+        } else if (v && typeof v === 'object') {
+          walk(v as Record<string, unknown>, `${prefix}.${k}`)
+        }
+      }
+    }
+    walk(zh as unknown as Record<string, unknown>, 'zh')
+    expect(offenders, 'zh strings must not contain English issue/PR').toEqual([])
   })
 
   it('provides the change/unbind switcher labels in both locales', () => {
