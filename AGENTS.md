@@ -116,6 +116,19 @@ Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture�
 - **前端必须使用 appLog**：所有前端代码使用 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`（测试文件除外）。Tag 约定：短 PascalCase 模块名。
 - **Android 必须使用 AppLog**：所有 Android 代码使用 `AppLog.d/i/w/e()`，禁止原始 `android.util.Log`（`AppLog.java` 本身和测试除外）。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
+- **纯前端改动完成后必须自觉编译**：若本次改动只涉及前端（`web/src/`、`web/index.html` 等，未动 Go / Android），改完并跑通测试后**直接执行前端编译**，供用户立即在浏览器/App 中测试，无需用户再要求：
+
+  ```bash
+  cd web && npm run build          # 或项目根目录：npm run build
+  ```
+
+  产物输出到 `public/`，并同步到 Go embed 目录（服务端从 `internal/frontend/dist` 读取内嵌资源，不同步则运行中的服务看不到改动）：
+
+  ```bash
+  rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
+  ```
+
+  注意：`internal/frontend/dist` 是 gitignore 的构建产物，只影响本地/部署运行，不进提交。
 - **覆盖率门槛**：每 PR/推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
 

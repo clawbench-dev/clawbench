@@ -379,7 +379,20 @@
 
       <template #bottom>
         <div v-if="previewPaneVisible" class="fm-preview-pane">
+          <!-- Directory target: list its contents instead of previewing a file. -->
+          <DirPreviewBody
+            v-if="previewShowsDir"
+            :entries="dirPreview.entries.value"
+            :loading="dirPreview.loading.value"
+            :error="dirPreview.error.value"
+            :visible="dirPreview.visible"
+            :dir-name="dirPreviewName"
+            @open-file="onDirPreviewOpenFile"
+            @open-dir="onDirPreviewOpenDir"
+            @closed="collapsePreviewPane"
+          />
           <CodeLinkPreview
+            v-else
             :docked="true"
             :preview="codeLinkPreview"
             @closed="collapsePreviewPane"
@@ -518,6 +531,7 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
+import { useDirPreview } from '@/composables/useDirPreview'
 import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye } from 'lucide-vue-next'
 import {
   buildThumbUrl,
@@ -546,6 +560,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
+import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
@@ -887,13 +902,41 @@ function onPreviewRatioChange(ratio) {
     } catch { /* ignore */ }
 }
 
-/** Split only when preview mode is on, a file is loaded, and the pane isn't collapsed. */
+/** Split only when preview mode is on and something is previewed, and the pane
+ *  isn't collapsed. A directory target counts (its listing is the preview). */
 const previewPaneEnabled = computed(() =>
-    filePreviewMode.value && previewPaneOpen.value && codeLinkPreview.visible.value,
+    filePreviewMode.value && previewPaneOpen.value && previewTargetActive.value,
 )
+
+/** True when the pane has content to show — either a file preview or a
+ *  directory listing. */
+const previewTargetActive = computed(() =>
+    codeLinkPreview.visible.value || dirPreviewPath.value !== '',
+)
+
+/** The directory whose contents the pane lists. Empty when previewing a file
+ *  (or nothing). Set by a directory click; cleared by a file click. */
+const dirPreviewPath = ref('')
+
+const dirPreview = useDirPreview({
+    active: computed(() => filePreviewMode.value && previewPaneOpen.value && dirPreviewPath.value !== ''),
+    dirPath: dirPreviewPath,
+    showHidden: computed(() => props.showHidden),
+})
 
 /** The pane (and the card inside it) exists only while the split is active. */
 const previewPaneVisible = computed(() => previewPaneEnabled.value)
+
+/** Which body the pane renders: a directory listing or a file preview. */
+const previewShowsDir = computed(() => dirPreviewPath.value !== '')
+
+/** Base name of the directory the pane lists, for the pane toolbar title. */
+const dirPreviewName = computed(() => {
+    const p = dirPreviewPath.value
+    if (!p) return ''
+    const base = p.replace(/\/+$/, '').split('/').pop()
+    return base || p
+})
 
 // Minimum pane heights. Mobile viewports are short (a phone leaves ~500px for
 // the panel), so the desktop minimums would leave almost no room to drag; use
@@ -905,20 +948,59 @@ function collapsePreviewPane() {
     previewPaneOpen.value = false
 }
 
-/** Whether a single click should open the quick preview instead of only selecting. */
+/** Whether a single click should open the quick preview instead of only
+ *  selecting. Files preview their contents; directories preview their listing
+ *  (both in the docked pane, and both on desktop and touch). */
 function shouldPreviewOnClick(action, path) {
-    // Files only — directories still navigate on tap.
-    return filePreviewMode.value && action === 'file' && !!path
+    return filePreviewMode.value && !!path && (action === 'file' || action === 'dir')
+}
+
+/** Show a directory's listing in the pane. Clears any file preview so the two
+ *  bodies never fight over the same pane. */
+function showDirPreview(dirPath) {
+    codeLinkPreview.close()
+    dirPreviewPath.value = dirPath
+    previewPaneOpen.value = true
+}
+
+/** Show a file preview in the pane, dropping any directory listing. */
+function showFilePreview(filePath, anchorEl) {
+    dirPreviewPath.value = ''
+    previewPaneOpen.value = true
+    codeLinkPreview.showPreview({ filePath, anchorEl }, 'docked')
+}
+
+/** Pane clicked a directory: navigate the main list into it and collapse the
+ *  pane. The listing the pane showed has become the main list, so keeping the
+ *  pane open would just duplicate it — and the two must never disagree. */
+function onDirPreviewOpenDir(name) {
+    const target = joinPath(dirPreviewPath.value || props.currentDir, name)
+    dirPreviewPath.value = ''
+    emit('navigateDir', target)
+}
+
+/** Pane clicked a file: open it in the full-screen viewer, matching a
+ *  double-click in the main list. */
+function onDirPreviewOpenFile(name) {
+    emit('selectFile', joinPath(dirPreviewPath.value || props.currentDir, name))
 }
 
 /** Close the preview when the directory it was anchored in changes. Turning
  *  preview mode / desktop-ness off is handled by the composable's own
  *  enabled-watch. */
-watch(() => props.currentDir, () => codeLinkPreview.close())
+watch(() => props.currentDir, () => {
+    codeLinkPreview.close()
+    dirPreviewPath.value = ''
+})
 
 // Turning preview mode off collapses the pane too (the composable closes its
 // own state via the enabled-watch; this drops the split back to a full list).
-watch(filePreviewMode, on => { if (!on) previewPaneOpen.value = false })
+watch(filePreviewMode, on => {
+    if (!on) {
+        previewPaneOpen.value = false
+        dirPreviewPath.value = ''
+    }
+})
 
 // ── Unified selection for both files and directories ──
 const selectedPath = ref('')
@@ -1779,14 +1861,19 @@ function handleItemClick(e) {
         setRangeAnchor(path)
         if (alreadySelected) {
             codeLinkPreview.close()
+            dirPreviewPath.value = ''
             openItem(action, path)
             return
         }
-        // First tap: files preview in the docked pane; directories just select
-        // (they have nothing to preview — the next tap enters them).
+        // First tap: both files and directories preview in the docked pane —
+        // a file shows its contents, a directory shows its listing. Entering
+        // (viewer / navigation) needs the second tap on the selected entry.
         if (shouldPreviewOnClick(action, path)) {
-            previewPaneOpen.value = true
-            codeLinkPreview.showPreview({ filePath: path, anchorEl: item }, 'docked')
+            if (action === 'dir') {
+                showDirPreview(path)
+            } else {
+                showFilePreview(path, item)
+            }
         }
         return
     }
@@ -1797,8 +1884,11 @@ function handleItemClick(e) {
     // Single click/tap: preview in the docked pane when preview mode is on.
     // Desktop keeps the native double-click to enter.
     if (shouldPreviewOnClick(action, path)) {
-        previewPaneOpen.value = true
-        codeLinkPreview.showPreview({ filePath: path, anchorEl: item }, 'docked')
+        if (action === 'dir') {
+            showDirPreview(path)
+        } else {
+            showFilePreview(path, item)
+        }
         return
     }
     if (isPC.value) return
@@ -1818,9 +1908,11 @@ function handleItemDblClick(e) {
     if (multiSelect.active) return
     const action = item.dataset.action
     const path = item.dataset.path
-    // Double-click always opens the full viewer; drop any quick-preview card
-    // the preceding single click may have opened.
+    // Double-click always opens the full viewer; drop any quick-preview the
+    // preceding single click may have opened — a file preview OR a directory
+    // listing, since a directory double-click navigates into it.
     codeLinkPreview.close()
+    dirPreviewPath.value = ''
     selectedPath.value = path
     openItem(action, path)
 }

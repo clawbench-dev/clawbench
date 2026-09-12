@@ -1052,6 +1052,13 @@ export default {
     previewModeOn: '开启预览模式：单击文件快捷预览',
     previewPaneResize: '拖动调整预览窗格高度',
     previewModeOff: '关闭预览模式',
+    dirPreview: {
+      loading: '加载中…',
+      empty: '该目录为空',
+      loadFailed: '目录加载失败',
+      close: '关闭预览',
+      count: '{n} 项',
+    },
     context: {
       copy: '复制',
       cut: '剪切',

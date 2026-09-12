@@ -1052,6 +1052,13 @@ export default {
     previewModeOn: 'Enable preview mode: click a file for a quick preview',
     previewPaneResize: 'Drag to resize the preview pane',
     previewModeOff: 'Disable preview mode',
+    dirPreview: {
+      loading: 'Loading…',
+      empty: 'This directory is empty',
+      loadFailed: 'Failed to load directory',
+      close: 'Close preview',
+      count: '{n} items',
+    },
     context: {
       copy: 'Copy',
       cut: 'Cut',
