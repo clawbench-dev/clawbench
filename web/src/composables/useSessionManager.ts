@@ -23,7 +23,7 @@ export interface UseSessionManagerOptions {
   loading: Ref<boolean>
 
   // Session operations (from useChatSession)
-  switchSessionCore: (sessionId: string) => Promise<void>
+  switchSessionCore: (sessionId: string, projectPath?: string) => Promise<void>
   createSessionCore: (agentId?: string) => Promise<void>
   archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
@@ -181,14 +181,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   // ── Unified session operations (cleanup + core) ──
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, projectPath?: string) {
     cleanupActiveStream()
     _clearInputState()
     // No clearPendingMessages here — loadHistory's parseMessages + queueAppend
     // replaces the entire messages array, so old pending messages are naturally
     // removed. Explicit clearPendingMessages would erase pending messages before
     // loadHistory can restore them from the backend queue field.
-    await switchSessionCore(sessionId)
+    await switchSessionCore(sessionId, projectPath)
     _restoreInputState()
   }
 

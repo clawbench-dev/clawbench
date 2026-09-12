@@ -1,45 +1,83 @@
 <template>
-  <div class="session-list" ref="listRef">
-    <!-- Only show the full-screen spinner on first load / when the list is empty.
-         On background refreshes the existing list stays visible so it can be
-         swapped seamlessly to the new data (see loadSessions). -->
-    <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
-    <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
-    <template v-else>
-      <TransitionGroup name="session-list" tag="div" class="session-rows">
-        <div
-          v-for="(session, idx) in sessionsWithStatus"
-          :key="session.id"
-          class="session-row"
-          :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
-        >
-          <span v-if="session.running" class="session-running-line"></span>
+  <div class="session-list">
+    <!-- ── Project pane: the existing infinite-scrolling session list ── -->
+    <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
+      <!-- Only show the full-screen spinner on first load / when the list is empty.
+           On background refreshes the existing list stays visible so it can be
+           swapped seamlessly to the new data (see loadSessions). -->
+      <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
+      <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
+      <template v-else>
+        <TransitionGroup name="session-list" tag="div" class="session-rows">
           <div
-            class="session-item"
-            :class="{ active: session.id === currentSessionId }"
-            @click="selectSession(session.id, session.backend)"
+            v-for="(session, idx) in sessionsWithStatus"
+            :key="session.id"
+            class="session-row"
+            :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
           >
-            <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-            <div class="session-item-info">
-              <div class="session-item-header">
-                <span class="session-item-title">{{ session.title }}</span>
+            <span v-if="session.running" class="session-running-line"></span>
+            <div
+              class="session-item"
+              :class="{ active: session.id === currentSessionId }"
+              @click="selectSession(session.id, session.backend)"
+            >
+              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+              <div class="session-item-info">
+                <div class="session-item-header">
+                  <span class="session-item-title">{{ session.title }}</span>
+                </div>
+                <div class="session-item-meta">
+                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                </div>
               </div>
-              <div class="session-item-meta">
-                <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+            </div>
+            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+              <Archive :size="15" />
+            </button>
+          </div>
+        </TransitionGroup>
+        <div ref="sentinelRef" class="session-list-sentinel"></div>
+        <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
+        <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
+      </template>
+    </div>
+
+    <!-- ── Cross-project pane: active sessions in OTHER projects ── -->
+    <div v-show="activeTab === 'cross'" class="session-list-pane session-list-pane--cross">
+      <LoadingIndicator v-if="crossLoading && !crossLoaded" size="md" :label="t('common.loading')" />
+      <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
+      <template v-else>
+        <div v-for="group in crossGroups" :key="group.name" class="cross-group">
+          <div class="cross-group-header">
+            <span class="cross-group-name">{{ group.displayName }}</span>
+            <span class="cross-group-path" :title="group.name">{{ group.displayPath }}</span>
+          </div>
+          <div
+            v-for="session in group.sessions"
+            :key="group.name + '/' + session.id"
+            class="cross-session-row"
+            :class="{ running: session.running }"
+          >
+            <span v-if="session.running" class="session-running-line"></span>
+            <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
+              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+              <div class="session-item-info">
+                <div class="session-item-header">
+                  <span class="session-item-title">{{ session.title }}</span>
+                </div>
+                <div class="session-item-meta">
+                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                </div>
               </div>
             </div>
           </div>
-          <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-            <Archive :size="15" />
-          </button>
         </div>
-      </TransitionGroup>
-      <div ref="sentinelRef" class="session-list-sentinel"></div>
-      <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
-      <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
-    </template>
+      </template>
+    </div>
   </div>
 </template>
 
@@ -55,6 +93,7 @@ import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -63,14 +102,16 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
+  activeTab: { type: String, default: 'project' },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
+const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
 
 const sessions = ref([])
 const loading = ref(false)
@@ -221,6 +262,18 @@ function selectSession(sessionId, backend) {
   emit('select', sessionId, backend)
 }
 
+/**
+ * Cross-project row click. Emits the owning project path as a third argument so
+ * App.vue can hot-switch projects before opening the session. The row's class is
+ * deliberately `.cross-session-item` (NOT `.session-item`): scrollActiveIntoView
+ * maps useListNav's index onto `querySelectorAll('.session-item')`, and the nav
+ * count only covers project rows — sharing the class would silently corrupt
+ * keyboard navigation.
+ */
+function selectCrossSession(session, projectPath) {
+  emit('select', session.id, session.backend, projectPath)
+}
+
 async function archiveSession(sessionId) {
   const isRunning = props.runningSessionIds.has(sessionId)
   const confirmMsg = isRunning ? t('session.confirmArchiveRunning') : t('session.confirmArchive')
@@ -265,7 +318,10 @@ const listNav = useListNav({
   },
   onActiveChange: scrollActiveIntoView,
 })
-useListKeys({ isOpen: () => props.isActive, nav: listNav })
+// Keyboard navigation is scoped to the project tab: cross-project rows are
+// deliberately outside useListNav (click/tap only), so leaving the nav active
+// while the cross pane is shown would let arrow keys scroll invisible rows.
+useListKeys({ isOpen: () => props.isActive && props.activeTab === 'project', nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -274,6 +330,49 @@ function scrollActiveIntoView(index) {
 }
 
 watch(sessionsWithStatus, () => listNav.reset())
+
+// The project pane is v-show'd (not unmounted) so its scroll position and
+// pagination depth survive tab switches. But when hidden its scroll root has
+// zero size, which makes the load-more sentinel intersect immediately and
+// triggers bogus pagination. Pause the observer while the cross tab is shown
+// and re-arm it on return.
+watch(() => props.activeTab, async (tab) => {
+  if (tab === 'project') {
+    await nextTick()
+    setupObserver()
+  } else {
+    if (observer) { observer.disconnect(); observer = null }
+  }
+})
+
+// Reset to the project tab whenever the current project changes: the session we
+// just opened belongs to the (new) current project and must be visible in the
+// project list, not hidden behind the cross tab.
+watch(() => store.state.projectRoot, () => {
+  if (props.activeTab !== 'project') emit('update:activeTab', 'project')
+})
+
+// Bring the active session into view after a cross-project jump. The row may
+// not be loaded yet (pagination), so retry once after a reload settles.
+watch(() => props.currentSessionId, async (id) => {
+  if (!id) return
+  await nextTick()
+  if (scrollActiveRowIntoView()) return
+  await nextTick()
+  scrollActiveRowIntoView()
+})
+
+/** Scroll the row carrying .session-item.active into view. */
+function scrollActiveRowIntoView() {
+  const rows = listRef.value?.querySelectorAll('.session-row') || []
+  for (const row of rows) {
+    if (row.querySelector('.session-item.active')) {
+      if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+      return true
+    }
+  }
+  return false
+}
 
 // Real-time sync: reload when the global session list version bumps. This fires
 // after create/archive/destroy/read/completion — including cases that don't emit
@@ -304,10 +403,21 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* Root is a flex column hosting the two mutually-exclusive panes. The tab bar
+   itself is rendered by the wrapper (sidebar bottom / BottomSheet #footer) so
+   it can stay pinned outside the scroll area. */
 .session-list {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* Each pane owns its own scrolling so tab switches preserve scroll position. */
+.session-list-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .session-rows {
@@ -567,5 +677,91 @@ onUnmounted(() => {
 
 .session-list-end {
   height: 0;
+}
+
+/* ── Cross-project pane ── */
+
+.cross-group + .cross-group {
+  border-top: 1px solid var(--border-color, #dee2e6);
+}
+
+/* Group header is the primary visual distinction from project rows: it names
+   the owning project so a row can never be mistaken for a local one. */
+.cross-group-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.cross-group-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #495057);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 60%;
+}
+
+.cross-group-path {
+  font-size: 10px;
+  color: var(--text-muted, #999);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cross-session-row {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.cross-session-row.running {
+  background: rgba(34, 197, 94, 0.05);
+  overflow: hidden;
+}
+
+.cross-session-row.running::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.14), transparent);
+  animation: scan-bg 2s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cross-session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-color, #dee2e6);
+  cursor: pointer;
+  /* Subtle left rail marks rows as belonging to another project. */
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+@media (hover: hover) {
+  .cross-session-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  }
+  .cross-session-row.running .cross-session-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
 }
 </style>

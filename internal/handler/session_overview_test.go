@@ -68,6 +68,9 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 			Sessions []struct {
 				ID              string `json:"id"`
 				Title           string `json:"title"`
+				Backend         string `json:"backend"`
+				AgentID         string `json:"agentId"`
+				Model           string `json:"model"`
 				Running         bool   `json:"running"`
 				PendingApproval bool   `json:"pendingApproval"`
 				UnreadCount     int    `json:"unreadCount"`
@@ -82,6 +85,9 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	byName := map[string][]struct {
 		ID              string `json:"id"`
 		Title           string `json:"title"`
+		Backend         string `json:"backend"`
+		AgentID         string `json:"agentId"`
+		Model           string `json:"model"`
 		Running         bool   `json:"running"`
 		PendingApproval bool   `json:"pendingApproval"`
 		UnreadCount     int    `json:"unreadCount"`
@@ -97,6 +103,10 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	assert.Equal(t, sessionA1, aSessions[0].ID)
 	assert.True(t, aSessions[0].Running, "A1 should be running=true")
 	assert.Equal(t, 0, aSessions[0].UnreadCount)
+	// Row rendering needs agent identity — the overview must carry it through
+	// (frontend renders the same agent icon/model chips as the main list).
+	assert.Equal(t, "claude", aSessions[0].Backend, "backend must be populated for row rendering")
+	assert.Equal(t, "claude", aSessions[0].AgentID, "agentId must be populated for row rendering")
 
 	// projectB: B1 unread + B2 pending
 	assert.Contains(t, byName, projectB, "projectB group should exist")
@@ -105,6 +115,9 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	bByID := map[string]struct {
 		ID              string `json:"id"`
 		Title           string `json:"title"`
+		Backend         string `json:"backend"`
+		AgentID         string `json:"agentId"`
+		Model           string `json:"model"`
 		Running         bool   `json:"running"`
 		PendingApproval bool   `json:"pendingApproval"`
 		UnreadCount     int    `json:"unreadCount"`
@@ -114,6 +127,8 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	}
 	assert.Greater(t, bByID["b1-session"].UnreadCount, 0, "B1 should have unread count")
 	assert.True(t, bByID[sessionB2].PendingApproval, "B2 should be pending approval")
+	assert.Equal(t, "claude", bByID[sessionB2].Backend, "backend must be populated for row rendering")
+	assert.Equal(t, "claude", bByID[sessionB2].AgentID, "agentId must be populated for row rendering")
 
 	// A3 must be absent from every group
 	for name, sessions := range byName {

@@ -459,7 +459,7 @@ export async function renameSession(title: string): Promise<boolean> {
 // proxies, which delegate to ChatPanel's implementation.
 // ───────────────────────────────────────────────────────────
 
-let _switchSession: ((sessionId: string) => Promise<void>) | null = null
+let _switchSession: ((sessionId: string, projectPath?: string) => Promise<void>) | null = null
 let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _archiveSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
 let _destroySession: ((sessionId: string) => Promise<void>) | null = null
@@ -475,7 +475,7 @@ let _sessionDrawerRef: { openAgentSelector: () => void } | null = null
 let _openSessionTabOverride: (() => void) | null = null
 
 export interface SessionActions {
-  switchSession: (sessionId: string) => Promise<void>
+  switchSession: (sessionId: string, projectPath?: string) => Promise<void>
   createSession: (agentId?: string) => Promise<void>
   archiveSession: (sessionId: string, backend?: string) => Promise<void>
   destroySession: (sessionId: string) => Promise<void>
@@ -660,10 +660,14 @@ export function useSessionIdentity() {
    * Switch to a different session. Delegates to ChatPanel's
    * implementation if registered, otherwise falls back to a
    * simple API call (pre-ChatPanel mount scenario).
+   *
+   * projectPath is the session's owning project; pass it for cross-project
+   * opens so mark-as-read can prove ownership instead of falling back to the
+   * cookie project (which 403s and leaves the unread badge stuck).
    */
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, projectPath?: string) {
     if (_switchSession) {
-      await _switchSession(sessionId)
+      await _switchSession(sessionId, projectPath)
     }
   }
 

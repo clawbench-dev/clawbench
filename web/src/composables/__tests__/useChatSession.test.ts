@@ -1938,6 +1938,48 @@ describe('switchSession', () => {
     expect(String(readCall![0])).toContain(`session_id=s2`)
   })
 
+  it('passes the owning project path when switching to a cross-project session', async () => {
+    // Cross-project opens must forward project_path. Without it the backend
+    // falls back to the cookie project, rejects ownership (403), and the
+    // session's unread badge never clears — the exact symptom of opening a
+    // session from the "other projects" tab.
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [],
+          total: 0,
+          backend: 'claude',
+          agentId: 'agent1',
+          modelId: '',
+          thinkingEffort: '',
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [] }),
+      })
+
+    const session = createSession()
+    await session.switchSession('s2', '/proj/other')
+
+    const readCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([url, init]) =>
+        typeof url === 'string' &&
+        url.startsWith('/api/ai/chat/read') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    )
+    expect(readCall).toBeDefined()
+    expect(String(readCall![0])).toContain(`session_id=s2`)
+    expect(String(readCall![0])).toContain(`project_path=${encodeURIComponent('/proj/other')}`)
+  })
+
   it('clears chatUnread after switching when all sessions are read', async () => {
     mockState.chatUnreadCount = 1  // was flashing before
 

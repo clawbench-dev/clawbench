@@ -609,6 +609,11 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: newProjectPath })
       }).catch(() => {})
+    } else if (msgKey === 'AccessDenied') {
+      // The project path exists in the session DB but is no longer under the
+      // configured root paths — e.g. a cross-project session row pointing at a
+      // project the admin has since removed from the roots.
+      toast.show(t('appHeader.projectPathNotAllowed'), { icon: '⚠️', type: 'error', duration: 3000 })
     } else {
       toast.show(t('appHeader.switchProjectFailed', { error: err.message }), { icon: '⚠️', type: 'error', duration: 3000 })
     }
@@ -700,7 +705,11 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
         if (id) {
           stopWatch()
           switchTab('chat')
-          sessionIdentity.switchSession(pendingSessionId)
+          // Pass the (now-current) project path so the mark-as-read call can
+          // prove ownership. Without it the backend falls back to the cookie
+          // project and 403s, leaving the cross-project session's unread badge
+          // stuck — the whole point of opening it from the cross-project tab.
+          sessionIdentity.switchSession(pendingSessionId, resolvedProjectPath)
         }
       },
       { immediate: true }
@@ -1238,7 +1247,19 @@ watch(sessionSidebarRef, (ref) => {
 // openAgentSelector is NOT registered here — it's handled via
 // registerSessionDrawerRef above, which is independent.
 
-function handleSessionSelect(sessionId, _backend) {
+function handleSessionSelect(sessionId, _backend, projectPath) {
+  // Cross-project selection: the session belongs to another project, so switch
+  // projects first (hotSwitchProject's Phase 7 opens the session once the new
+  // project's identity is ready). Must run BEFORE the already-active guard —
+  // the guard compares session ids only, and a same-id session cannot exist in
+  // another project (chat_sessions.id is a global PRIMARY KEY).
+  if (projectPath && projectPath !== store.state.projectRoot) {
+    sessionIdentity.sessionDrawer.close()
+    hotSwitchProject(projectPath, sessionId).catch(() => {
+      appLog.w(TAG, 'cross-project session switch failed')
+    })
+    return
+  }
   // Selecting the ALREADY-ACTIVE session must be a no-op for the message list.
   // Without this guard, an Enter keypress anywhere outside the chat input
   // (document-level list navigation in SessionSidebar falls back to item 0,

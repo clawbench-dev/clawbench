@@ -177,6 +177,7 @@ export default {
     noRecentProjects: 'No recent projects',
     browse: 'Browse...',
     projectPathNotFound: 'Project path does not exist or has been deleted',
+    projectPathNotAllowed: 'That project path is outside the allowed roots',
     switchProjectFailed: 'Switch project failed: {error}',
     switchProjectNetworkError: 'Switch project failed: network error',
     recentFiles: 'Recent files',
@@ -825,6 +826,9 @@ export default {
     pinToSidebar: 'Pin to sidebar',
     unpinToSidebar: 'Unpin',
     closeSidebar: 'Close sidebar',
+    tabProject: 'This project',
+    tabCross: 'Other projects',
+    crossEmpty: 'No active sessions in other projects',
   },
   sessionSearch: {
     title: 'Session Search',

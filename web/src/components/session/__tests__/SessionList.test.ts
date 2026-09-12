@@ -3,8 +3,26 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 
-const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore } = vi.hoisted(() => {
-  const mockStore = { state: { chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0 } }
+const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState } = vi.hoisted(() => {
+  // projectRoot/homeDir are required by useCrossProjectSessions' "exclude the
+  // current project" filter — without them the filter compares against
+  // undefined and the test can never exercise the exclusion.
+  const mockStore = { state: { chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0, projectRoot: '/proj/current', homeDir: '/home/u' } }
+  const mockCrossState: {
+    groups: any
+    loading: any
+    loaded: any
+    total: any
+    refresh: any
+    scheduleRefresh: any
+  } = {
+    groups: null,
+    loading: null,
+    loaded: null,
+    total: null,
+    refresh: vi.fn(),
+    scheduleRefresh: vi.fn(),
+  }
   return {
     mockGetAgentBackend: vi.fn(() => ''),
     mockGetAgentName: vi.fn(() => 'Agent'),
@@ -13,6 +31,7 @@ const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRu
     mockRemoveEventHandler: vi.fn(),
     mockEventHolder: { handler: null as null | ((event: string) => void) },
     mockStore,
+    mockCrossState,
   }
 })
 
@@ -46,6 +65,16 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({ runningSessionsVersion: { value: 0 } }),
   reconcileRunningSessions: mockReconcileRunningSessions,
 }))
+vi.mock('@/composables/useCrossProjectSessions', async () => {
+  // Real refs, not plain {value} boxes: Vue only auto-unwraps actual refs in
+  // templates, and the component reads crossGroups.length / crossLoading there.
+  const { ref } = await import('vue')
+  mockCrossState.groups = ref([])
+  mockCrossState.loading = ref(false)
+  mockCrossState.loaded = ref(true)
+  mockCrossState.total = ref(0)
+  return { useCrossProjectSessions: () => mockCrossState }
+})
 vi.mock('@/utils/format', () => ({ formatRelativeTime: (d: string) => d || 'now' }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', template: '<span class="agent-icon-stub" />' },
@@ -84,6 +113,11 @@ describe('SessionList', () => {
     mockDialogHolder.lastOptions = null
     mockEventHolder.handler = null
     mockStore.state.sessionListVersion = 0
+    mockStore.state.projectRoot = '/proj/current'
+    mockCrossState.groups.value = []
+    mockCrossState.loading.value = false
+    mockCrossState.loaded.value = true
+    mockCrossState.total.value = 0
   })
 
   async function mountList(props = {}) {
@@ -350,5 +384,90 @@ describe('SessionList', () => {
 
     wrapper.unmount()
     expect(mockRemoveEventHandler).toHaveBeenCalled()
+  })
+
+  describe('cross-project tab', () => {
+    function crossGroup() {
+      return {
+        name: '/proj/other',
+        displayName: 'other',
+        displayPath: '~/proj/other',
+        sessions: [
+          { id: 'o1', title: 'Other 1', backend: 'cli', agentId: 'agent-1', model: 'gpt-4', running: true, pendingApproval: false, unreadCount: 0, updatedAt: '2025-01-05' },
+          { id: 'o2', title: 'Other 2', backend: 'acp', agentId: 'agent-2', running: false, pendingApproval: false, unreadCount: 3, updatedAt: '2025-01-04' },
+        ],
+      }
+    }
+
+    it('defaults to the project tab', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe('project')
+      expect(wrapper.find('.session-list-pane--cross').attributes('style')).toContain('display: none')
+    })
+
+    it('renders cross-project groups with a project-name header when the prop flips', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      expect(wrapper.findAll('.cross-group').length).toBe(1)
+      expect(wrapper.find('.cross-group-name').text()).toBe('other')
+      expect(wrapper.find('.cross-group-path').text()).toBe('~/proj/other')
+      expect(wrapper.findAll('.cross-session-item').length).toBe(2)
+    })
+
+    it('does not use .session-item for cross rows (keyboard nav index isolation)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      // Project rows keep .session-item; cross rows must not add to that set,
+      // otherwise querySelectorAll('.session-item') indices no longer match
+      // useListNav's count.
+      expect(wrapper.findAll('.session-item').length).toBe(1)
+      expect(wrapper.findAll('.cross-session-item').length).toBe(2)
+    })
+
+    it('emits select with the owning project path for cross rows', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      await wrapper.findAll('.cross-session-item')[0].trigger('click')
+      expect(wrapper.emitted('select')![0]).toEqual(['o1', 'cli', '/proj/other'])
+    })
+
+    it('does not render an archive button on cross rows', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      const crossRows = wrapper.findAll('.cross-session-row')
+      expect(crossRows.length).toBe(2)
+      for (const row of crossRows) {
+        expect(row.find('.session-archive-btn').exists()).toBe(false)
+      }
+    })
+
+    it('shows the empty state when there are no cross-project groups', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = []
+      mockCrossState.loaded.value = true
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      expect(wrapper.find('.session-list-pane--cross').text()).toContain('session.crossEmpty')
+    })
+
+    it('shows a loading indicator before the first successful load', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = []
+      mockCrossState.loaded.value = false
+      mockCrossState.loading.value = true
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      expect(wrapper.find('.session-list-pane--cross').find('.loading-stub').exists()).toBe(true)
+    })
   })
 })

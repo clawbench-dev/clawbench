@@ -794,7 +794,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     handleManualRefresh().catch(() => {})
   })
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, projectPath?: string) {
     // Bump loadHistorySeq so any in-flight loadHistory results are discarded
     // (switchSession takes priority over stale loadHistory responses).
     // loadHistory's own mySeq check handles the actual guard.
@@ -844,10 +844,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     // reloads (WS reconnect refresh, completion-event refresh) hit loadHistory
     // too, so marking read must happen HERE, at the user-intent switch point,
     // and not inside loadHistory itself.
+    //
+    // projectPath must be forwarded for cross-project opens. The backend
+    // verifies session ownership against it; omitting it falls back to the
+    // cookie project, which rejects (403) a session belonging to another
+    // project — the unread badge then never clears. This is the same reason
+    // the completion-event path below passes data.project_path.
     // Await before loadSessionsOnce so the session list reflects the cleared
     // unread state (chatUnread) — the backend's UpdateLastRead must complete
     // first or loadSessionsOnce reads a stale unread badge.
-    await markSessionRead(sessionId).catch(() => {})
+    await markSessionRead(sessionId, projectPath).catch(() => {})
 
     // Recalculate global chatUnread after switching — the backend has already
     // marked this session as read (UpdateLastRead), so the session list will

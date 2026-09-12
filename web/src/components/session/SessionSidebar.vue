@@ -21,6 +21,7 @@
       </div>
       <SessionList
         ref="listRef"
+        v-model:active-tab="activeTab"
         :current-session-id="currentSessionId"
         :running-session-ids="runningSessionIds"
         :is-active="isActive"
@@ -28,6 +29,7 @@
         @archive="handleArchive"
         @destroy="$emit('destroy', $event)"
       />
+      <SessionListTabs v-model:active-tab="activeTab" />
     </div>
   </div>
 </template>
@@ -39,6 +41,7 @@ import { PanelRight } from 'lucide-vue-next'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import { useAgents } from '@/composables/useAgents'
 import { SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/composables/useSessionSidebar'
 import { store } from '@/stores/app.ts'
@@ -51,12 +54,15 @@ defineProps({
 })
 
 const emit = defineEmits(['select', 'archive', 'destroy', 'close', 'resize', 'open-session-search', 'create', 'create-agent-select'])
-
 const { t } = useI18n()
 const { agents, loadAgents } = useAgents()
 
 const listRef = ref(null)
 const rootRef = ref(null)
+// Which pane the list shows. Owned here (not in SessionList) because the tab bar
+// is rendered outside the scroll area, and intentionally not persisted: the list
+// always opens on the current project.
+const activeTab = ref('project')
 // Tracks a manual refresh so the sidebar refresh button can spin for the real
 // load duration (SessionList keeps its list visible during background reloads,
 // so `loading` alone can't drive the button).
@@ -98,8 +104,8 @@ async function handleRefresh() {
   }
 }
 
-function handleSelect(sessionId, backend) {
-  emit('select', sessionId, backend)
+function handleSelect(sessionId, backend, projectPath) {
+  emit('select', sessionId, backend, projectPath)
 }
 
 function handleArchive(sessionId, backend) {

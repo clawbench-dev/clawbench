@@ -40,6 +40,9 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	type overviewSession struct {
 		ID              string    `json:"id"`
 		Title           string    `json:"title"`
+		Backend         string    `json:"backend"`
+		AgentID         string    `json:"agentId"`
+		Model           string    `json:"model"`
 		Running         bool      `json:"running"`
 		PendingApproval bool      `json:"pendingApproval"`
 		UnreadCount     int       `json:"unreadCount"`
@@ -67,6 +70,9 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 		g.Sessions = append(g.Sessions, overviewSession{
 			ID:              s.ID,
 			Title:           s.Title,
+			Backend:         s.Backend,
+			AgentID:         s.AgentID,
+			Model:           s.Model,
 			Running:         running,
 			PendingApproval: pending,
 			UnreadCount:     s.UnreadCount,

@@ -177,6 +177,7 @@ export default {
     noRecentProjects: '暂无最近项目',
     browse: '浏览...',
     projectPathNotFound: '项目路径不存在或已被删除',
+    projectPathNotAllowed: '该项目路径不在允许访问的范围内',
     switchProjectFailed: '切换项目失败: {error}',
     switchProjectNetworkError: '切换项目失败: 网络错误',
     recentFiles: '最近文件',
@@ -825,6 +826,9 @@ export default {
     pinToSidebar: '固定到侧栏',
     unpinToSidebar: '取消固定',
     closeSidebar: '关闭侧栏',
+    tabProject: '本项目',
+    tabCross: '其他项目',
+    crossEmpty: '暂无其他项目的活跃会话',
   },
   sessionSearch: {
     title: '会话搜索',
