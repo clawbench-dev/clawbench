@@ -75,7 +75,7 @@ flowchart LR
 
 | 端点 | 方法 | 用途 |
 |------|------|------|
-| `/api/apk` | GET | APK 下载（从 `go:embed` 读取，路径 `assets/clawbench-android.apk`） |
+| `/api/apk` | GET | APK 下载（恒定从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；不读磁盘 `public/`） |
 | `/api/client-log` | POST | 客户端统一日志（200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
 | `/api/android-log` | POST | Android 端日志（legacy alias，旧 APK 兼容，同 handler 汇入 `client.log`） |
 | `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） |
@@ -153,7 +153,7 @@ flowchart LR
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知
 - **WS 优先 + Worker 回退**：常驻 WS 链路是主路径（实时通知），PendingEventsWorker 是 WS 不可达时的兜底（轮询拉取）。两条路径相互独立，BackgroundService 监控 WS 健康度触发 Worker
 - **AppLog 双写 + Anti-Recursion**：`AppLog` 写入 logcat，同时 POST 到 `/api/android-log` 实现集中持久化。`AppLog.java` 自身是允许调用裸 `android.util.Log` 的唯一生产代码位置，以避免日志封装递归；通过 `OemUtils` 和 `SharedCacheUtils` 共享多进程状态
-- **单二进制包含 APK**：`//go:embed all:dist` 把 APK 嵌入 Go 二进制，无需外部 APK 文件即可部署。`internal/frontend/embed.go::GetFS()` 优先读磁盘 `public/`（热替换），否则从 embed 读取
+- **单二进制包含 APK**：`//go:embed all:dist` 把 APK 嵌入 Go 二进制，无需外部 APK 文件即可部署。`internal/frontend/embed.go::GetFS()` 优先读磁盘 `public/`（热替换），否则从 embed 读取。**APK 例外**：`ServeAPK` 恒定读取 `EmbeddedFS()`（纯 embed，不查 CWD），以免 CWD 下的 `public/` 遮蔽内嵌 APK 导致 `/api/apk` 404，同时保证下载的 APK 与运行中二进制的版本一致
 - **日志处理器统一、客户端端点兼容**：Web 的 `appLog.ts` 使用 `/api/client-log`，Android 的 `AppLog.java` 使用兼容路由 `/api/android-log`；两者都由服务端 `ServeClientLog` 处理，汇入单一 `client.log`，行内 `[js]`/`[android]` 源标记区分来源
 - **屏幕常亮双通道**：`useWakeLock` 优先申请标准 Web Wake Lock，并同时调用 Android `setKeepScreenOn`。页面隐藏时浏览器可能释放锁，重新可见且业务仍需要常亮时自动申请；显式释放会同时关闭两条通道
 - **服务器列表由客户端持有**：Android Bridge 保存多个实例地址和密码，使当前服务器不可达时仍可切换到其他实例，完整流程见[多服务器管理](multi-server.md)
