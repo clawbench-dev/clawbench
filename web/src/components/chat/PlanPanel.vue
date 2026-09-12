@@ -327,6 +327,9 @@ watch(
   line-height: 1.4;
   padding-top: 2px;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .plan-entry__text--done {
