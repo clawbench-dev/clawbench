@@ -106,6 +106,17 @@ func clearQueueAndEmitCancel(cfg DrainConfig) {
 // clears the DB queue and emits queue_cancel so the frontend can immediately
 // remove pending bubbles — see clearQueueAndEmitCancel for why.
 func drainHandleTerminal(cfg DrainConfig, result DrainResult) bool {
+	// Interrupt: the user stopped the CURRENT turn to send something else, but
+	// the queue is exactly what they want to keep — the interrupted turn is
+	// replaced by the next queued message. So this branch must NOT clear the
+	// queue and must NOT send a terminal event: returning false lets
+	// RunDrainLoop fall through and dequeue the next message.
+	//
+	// Distinct from the cancelReasonUser branch below, which drops the queue
+	// (cancel semantics are "I do not want any of this").
+	if result.CancelReason == cancelReasonInterrupt {
+		return false
+	}
 	if result.CancelReason == cancelReasonUser {
 		clearQueueAndEmitCancel(cfg)
 		cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})

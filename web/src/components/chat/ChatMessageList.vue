@@ -74,6 +74,8 @@
       :active="active"
       :isLastAssistant="isLastAssistant(msg, i)"
       :isLastMessage="i === messages.length - 1"
+      :midTurnSupported="midTurnSupported"
+      :pendingActionBusy="pendingActionBusy === msg.queueId || pendingActionBusy === String(msg.id)"
       @toggle-tool="$emit('toggle-tool', $event)"
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
@@ -87,6 +89,7 @@
       @reset-session="$emit('reset-session', $event)"
 
       @remove-pending="$emit('remove-pending', $event)"
+      @pending-action="$emit('pending-action', $event)"
       @fork-from-message="$emit('fork-from-message', $event)"
       @rewind-from-message="$emit('rewind-from-message', $event)"
     />
@@ -195,9 +198,14 @@ const props = defineProps({
   totalMessages: { type: Number, default: 0 },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
+  /** Whether the active backend can inject into the running turn (drives the
+   *  queued bubble's single action label: insert vs interrupt). */
+  midTurnSupported: { type: Boolean, default: false },
+  /** queueId (or id) of the queued bubble whose action request is in flight. */
+  pendingActionBusy: { type: String, default: '' },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'pending-action', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()

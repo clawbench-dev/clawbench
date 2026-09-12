@@ -323,6 +323,7 @@ func LoadAgentsIntoMemory() error {
 			}
 		}
 		agent.SupportsCLI = model.BackendSupportsCLI(agent.Backend)
+		agent.SupportsMidTurn = model.BackendSupportsMidTurn(agent.Backend)
 	}
 
 	// Atomically assign the fully-built map so concurrent readers never see an empty map.

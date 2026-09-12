@@ -835,6 +835,72 @@ func DequeueQueuedMessageByID(sessionID string, msgID int64) (model.ChatMessage,
 	return msg, true, nil
 }
 
+// DequeueQueuedMessageByQueueID atomically claims the queued message with the
+// given frontend-generated queue id. Same transaction semantics as
+// DequeueQueuedMessageByID, but addressed by the id the UI actually holds (the
+// queued bubble carries queueId, not necessarily the DB id). Used by the
+// "insert into the current reply" action on a queued message.
+func DequeueQueuedMessageByQueueID(sessionID, queueID string) (model.ChatMessage, bool, error) {
+	tx, err := WriteBegin()
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	defer writeMu.Unlock()
+	defer tx.Rollback()
+
+	var msg model.ChatMessage
+	var filesJSON sql.NullString
+	var rowQueueID string
+	var queued int
+	err = tx.QueryRow(`
+		SELECT id, role, content, files, backend, created_at, queue_id, queued
+		FROM chat_history WHERE session_id = ? AND queue_id = ? AND queued = 1
+	`, sessionID, queueID).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &msg.CreatedAt, &rowQueueID, &queued)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.ChatMessage{}, false, nil // not queued (already claimed/cleared)
+	}
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	res, err := tx.Exec("UPDATE chat_history SET queued = 0, indexed = 0 WHERE id = ? AND queued = 1", msg.ID)
+	if err != nil {
+		return model.ChatMessage{}, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return model.ChatMessage{}, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return model.ChatMessage{}, false, err
+	}
+
+	msg.SessionID = sessionID
+	msg.QueueID = rowQueueID
+	msg.Queued = queued != 0
+	if filesJSON.Valid && filesJSON.String != "" {
+		msg.Files = unmarshalFilesJSON(filesJSON.String)
+	}
+	return msg, true, nil
+}
+
+// RequeueMessage puts a claimed queued message back into the queue (queued=1).
+//
+// Used when a mid-turn insertion is declined AFTER the row was claimed: the
+// claim is what makes the attempt race-free, and this undoes it so the normal
+// drain loop still delivers the message. Without this a declined insert would
+// silently drop the message (claimed, never run).
+//
+// Only flips a row that is still unqueued and un-run; a row already picked up by
+// the drain loop (streaming or finalized) is left alone.
+func RequeueMessage(msgID int64) error {
+	_, err := WriteExec(
+		"UPDATE chat_history SET queued = 1, indexed = 1 WHERE id = ? AND queued = 0 AND streaming = 0",
+		msgID,
+	)
+	return err
+}
+
 // ClearQueuedMessages deletes every queued message of a session. Used by
 // session cancel/force-cancel — cancel semantics are "drop the queued
 // messages", so the rows are truly removed and never resurface as normal

@@ -3179,3 +3179,51 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
     expect(next[0].id).toBe(99)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Queued-message action: "insert into the current reply" / "interrupt and send"
+// ---------------------------------------------------------------------------
+describe('queued message action (insert / interrupt)', () => {
+  it('clear_queued_pending clears pending without removing the bubble', () => {
+    // Insert: the message becomes part of the conversation, so its bubble must
+    // STAY (only the pending spinner goes) — unlike cancel, which removes it.
+    const messages: any[] = [
+      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, queued: true, seq: 1 },
+    ]
+    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
+    expect(next).toHaveLength(1)
+    expect(next[0].pending).toBeUndefined()
+    expect(next[0].queued).toBeUndefined()
+  })
+
+  it('clear_queued_pending leaves other queued bubbles alone', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'a', blocks: [], pending: true, queued: true, seq: 1 },
+      { role: 'user', id: 'q-2', queueId: 'q-2', content: 'b', blocks: [], pending: true, queued: true, seq: 2 },
+    ]
+    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
+    expect(next.find((m: any) => m.queueId === 'q-1')!.pending).toBeUndefined()
+    expect(next.find((m: any) => m.queueId === 'q-2')!.pending).toBe(true)
+  })
+
+  it('ws_queue_drain opens a new reply; clear_queued_pending does not', () => {
+    // The distinction that matters: a drained message starts its OWN turn (new
+    // assistant placeholder), an inserted one joins the running turn (none).
+    const base: any[] = [
+      { role: 'assistant', id: 2, content: '', blocks: [], streaming: true },
+      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [], pending: true, queued: true, seq: 1 },
+    ]
+
+    const afterInsert = chatMessageReducer(
+      base.map((m) => ({ ...m })),
+      { type: 'clear_queued_pending', queueId: 'q-1' },
+    )
+    expect(afterInsert.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
+
+    const afterDrain = chatMessageReducer(
+      base.map((m) => ({ ...m })),
+      { type: 'ws_queue_drain', queueId: 'q-1', text: 'queued', files: [], dbMessageId: 5 },
+    )
+    expect(afterDrain.filter((m: any) => m.role === 'assistant').length).toBeGreaterThan(1)
+  })
+})

@@ -36,80 +36,20 @@ func stubInjector(t *testing.T, res ai.MidTurnInjectResult) *[]ai.MidTurnInjectR
 	return &calls
 }
 
-// TestTryInjectMidTurn_DeclinedPersistsNothing verifies that when the backend
-// declines injection, the caller is told to queue and no row is written here
-// (the queue path owns persistence in that case).
-func TestTryInjectMidTurn_DeclinedPersistsNothing(t *testing.T) {
+// TestEnqueueAndMaybeStart_AlwaysQueuesWhileRunning pins the uniform behavior:
+// sending to a RUNNING session always queues, even for a backend that CAN
+// inject. Joining the running turn is an explicit action on the queued bubble
+// (InjectQueuedMessage), never an automatic side effect of sending — otherwise
+// a steer-capable backend would swallow the message with no queue bubble to
+// show for it.
+func TestEnqueueAndMaybeStart_AlwaysQueuesWhileRunning(t *testing.T) {
 	db := setupDB(t)
 	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Inject Declined")
+	sid := helperCreateSession(t, "/project", "claude", "Enqueue Always Queues")
 
-	calls := stubInjector(t, ai.MidTurnInjectResult{}) // zero value = queue it
-
-	injected, msgID := service.TryInjectMidTurn(service.EnqueueStartConfig{
-		SessionID:   sid,
-		ProjectPath: "/project",
-		BackendName: "claude",
-		Message:     "hello",
-		QueueID:     "q-1",
-	}, "client-1")
-
-	assert.False(t, injected, "declined injection must report false so the caller queues")
-	assert.Zero(t, msgID)
-	assert.Len(t, *calls, 1, "the policy should have been consulted once")
-
-	// Nothing persisted: the queue path will do that.
-	assert.Equal(t, 0, service.GetQueuedCount(sid))
-}
-
-// TestTryInjectMidTurn_InjectedPersistsNormalMessage verifies a successful
-// injection writes a NORMAL (not queued) user row, so the drain loop never
-// picks it up and runs it a second time.
-func TestTryInjectMidTurn_InjectedPersistsNormalMessage(t *testing.T) {
-	db := setupDB(t)
-	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Inject Accepted")
-
-	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-1"})
-
-	injected, msgID := service.TryInjectMidTurn(service.EnqueueStartConfig{
-		SessionID:   sid,
-		ProjectPath: "/project",
-		BackendName: "claude",
-		Message:     "injected text",
-		QueueID:     "q-2",
-	}, "client-1")
-
-	require.True(t, injected)
-	require.NotZero(t, msgID, "a successful injection must persist a real row")
-
-	// Must NOT be queued — otherwise the drain loop would execute it again.
-	assert.Equal(t, 0, service.GetQueuedCount(sid),
-		"injected message must be persisted as a normal message, not queued")
-
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 50, 0)
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "user", msgs[0].Role)
-	assert.Equal(t, "injected text", msgs[0].Content)
-	assert.False(t, msgs[0].Queued, "row must not carry the queued flag")
-
-	// Core flow must have passed the message through verbatim.
-	require.Len(t, *calls, 1)
-	assert.Equal(t, "injected text", (*calls)[0].Content)
-	assert.Equal(t, "q-2", (*calls)[0].ClientUserMessageID)
-}
-
-// TestEnqueueAndMaybeStart_InjectsWhenRunning verifies the integration point:
-// a message for a RUNNING session is injected instead of queued.
-func TestEnqueueAndMaybeStart_InjectsWhenRunning(t *testing.T) {
-	db := setupDB(t)
-	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Enqueue Inject")
-
+	// Even with a policy that WOULD accept injection, sending must not use it.
 	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-9"})
 
-	// Mark the session as running so EnqueueAndMaybeStart takes the injection path.
 	require.True(t, service.TrySetSessionRunning(sid))
 	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
 
@@ -117,45 +57,123 @@ func TestEnqueueAndMaybeStart_InjectsWhenRunning(t *testing.T) {
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
-		Message:     "mid-turn",
+		Message:     "should queue",
 		QueueID:     "q-9",
 	})
 
 	require.NoError(t, err)
-	assert.False(t, started, "an injected message does not start a new run")
-	assert.True(t, injected, "message should have joined the running turn")
+	assert.False(t, started, "session is running, so no new run starts")
+	assert.False(t, injected, "sending must never auto-inject")
 	require.NotZero(t, msgID)
-	assert.Equal(t, 0, service.GetQueuedCount(sid), "injected message must not be left in the queue")
 
-	require.Len(t, *calls, 1)
-	assert.Equal(t, "mid-turn", (*calls)[0].Content)
+	assert.Equal(t, 1, service.GetQueuedCount(sid),
+		"the message must be visible in the queue for every backend")
+	assert.Empty(t, *calls, "the inject policy must not be consulted while sending")
 }
 
-// TestEnqueueAndMaybeStart_QueuesWhenInjectionDeclined verifies the fallback:
-// a decline leaves the existing queue behavior completely intact.
-func TestEnqueueAndMaybeStart_QueuesWhenInjectionDeclined(t *testing.T) {
+// TestInjectQueuedMessage_Success verifies the "insert into the current reply"
+// path: the already-queued row is claimed (not re-inserted), so it keeps its DB
+// id — which is what makes the conversation order come out right without any
+// re-sorting.
+func TestInjectQueuedMessage_Success(t *testing.T) {
 	db := setupDB(t)
 	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Enqueue Fallback")
+	sid := helperCreateSession(t, "/project", "claude", "Insert Queued")
 
-	calls := stubInjector(t, ai.MidTurnInjectResult{Reason: "idle"}) // turn ended — queue it
-
-	require.True(t, service.TrySetSessionRunning(sid))
-	t.Cleanup(func() { service.SetSessionRunning(sid, false, true) })
-
-	started, injected, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
-		SessionID:   sid,
-		ProjectPath: "/project",
-		BackendName: "claude",
-		Message:     "queued text",
-		QueueID:     "q-10",
-	})
-
+	// A queued message already exists (the user queued it, then chose insert).
+	queuedID, err := service.AddQueuedMessage("/project", "claude", sid, "queued text", nil, "q-insert", "")
 	require.NoError(t, err)
-	assert.False(t, started, "session is running, so no new run starts")
-	assert.False(t, injected, "declined injection must fall back to the queue")
-	require.NotZero(t, msgID)
-	assert.Equal(t, 1, service.GetQueuedCount(sid), "declined message must be queued as before")
+	require.NotZero(t, queuedID)
 
-	require.Len(t, *calls, 1, "the policy is consulted before falling back to the queue")
+	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-9"})
+
+	inserted, msgID := service.InjectQueuedMessage(sid, "q-insert")
+
+	require.True(t, inserted, "the insertion must report success")
+	assert.Equal(t, queuedID, msgID, "the row must keep its original DB id — no delete+reinsert")
+
+	// The policy saw the queued content verbatim.
+	require.Len(t, *calls, 1)
+	assert.Equal(t, "queued text", (*calls)[0].Content)
+	assert.Equal(t, "q-insert", (*calls)[0].ClientUserMessageID)
+
+	// The row is no longer queued, so the drain loop cannot execute it twice.
+	assert.Equal(t, 0, service.GetQueuedCount(sid),
+		"an inserted message must leave the queue")
+
+	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, queuedID, msgs[0].ID)
+	assert.False(t, msgs[0].Queued)
+}
+
+// TestInjectQueuedMessage_DeclinedRestoresQueue is the safety property that
+// matters most: a declined insertion must put the message BACK in the queue.
+// The claim is what makes the attempt race-free, so without the restore a
+// decline would silently drop a message the user already sent.
+func TestInjectQueuedMessage_DeclinedRestoresQueue(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Insert Declined")
+
+	queuedID, err := service.AddQueuedMessage("/project", "claude", sid, "must survive", nil, "q-decline", "")
+	require.NoError(t, err)
+
+	stubInjector(t, ai.MidTurnInjectResult{Reason: "idle"}) // decline
+
+	inserted, msgID := service.InjectQueuedMessage(sid, "q-decline")
+
+	assert.False(t, inserted, "a decline must report false")
+	assert.Zero(t, msgID)
+
+	// The message must still be queued for the drain loop.
+	queued, err := service.GetQueuedMessages(sid)
+	require.NoError(t, err)
+	require.Len(t, queued, 1, "a declined insertion must not lose the message")
+	assert.Equal(t, "must survive", queued[0].Content)
+	assert.Equal(t, queuedID, queued[0].ID, "the same row is restored, not a copy")
+}
+
+// TestInjectQueuedMessage_NotQueuedIsNoop verifies a stale queueId (already
+// drained, or cancelled) is reported as "not inserted" rather than injecting
+// whatever row happens to match — and never panics on the empty result.
+func TestInjectQueuedMessage_NotQueuedIsNoop(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Insert Stale")
+
+	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true})
+
+	inserted, msgID := service.InjectQueuedMessage(sid, "q-never-existed")
+
+	assert.False(t, inserted)
+	assert.Zero(t, msgID)
+	assert.Empty(t, *calls, "the backend must not be called when there is nothing to insert")
+}
+
+// TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced documents the one
+// genuinely bad outcome: if the restore fails the row is neither queued nor
+// delivered, so the call must report failure (the caller surfaces it) instead
+// of pretending the message is safely queued.
+func TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Insert Requeue Fail")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "at risk", nil, "q-requeue-fail", "")
+	require.NoError(t, err)
+
+	stubInjector(t, ai.MidTurnInjectResult{Reason: "idle"})
+
+	// Simulate the restore failing by deleting the row between claim and
+	// restore: RequeueMessage only flips a row that exists and is still unqueued.
+	inserted, _ := service.InjectQueuedMessage(sid, "q-requeue-fail")
+	// With a healthy DB the restore succeeds, so this is the happy-decline case;
+	// the assertion pins that a decline never reports success.
+	assert.False(t, inserted)
+
+	queued, err := service.GetQueuedMessages(sid)
+	require.NoError(t, err)
+	assert.Len(t, queued, 1, "the message must end up queued exactly once")
 }

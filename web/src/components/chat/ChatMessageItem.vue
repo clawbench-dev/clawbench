@@ -46,6 +46,24 @@
     <div v-if="msg.pending" class="pending-hint">
       <LoadingIndicator class="pending-spinner" size="sm" inline />
       {{ t('chat.pending.queuing') }}
+      <!--
+        One action, two labels — the backend decides which. A backend that can
+        inject into the running turn offers "insert into the current reply"
+        (the turn keeps its work); one that cannot offers "interrupt and send"
+        (the turn is stopped, this message runs next). The label always states
+        what will actually happen, so the single button never misleads.
+      -->
+      <button
+        class="pending-action"
+        :class="{ 'pending-action-interrupt': !midTurnSupported }"
+        :disabled="pendingActionBusy"
+        :title="midTurnSupported ? t('chat.pending.insertHint') : t('chat.pending.interruptHint')"
+        @click="$emit('pending-action', msg.queueId || msg.id)"
+      >
+        <Zap v-if="midTurnSupported" :size="11" />
+        <Square v-else :size="11" fill="currentColor" />
+        {{ midTurnSupported ? t('chat.pending.insert') : t('chat.pending.interrupt') }}
+      </button>
       <button class="pending-remove" @click="$emit('remove-pending', msg.queueId || msg.id)" :title="t('common.remove')">×</button>
     </div>
 
@@ -141,7 +159,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, Zap, Square } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -174,9 +192,14 @@ const props = defineProps({
   /** True when this message is the very last entry in the rendered list — rewind
    *  has nothing to truncate after it, so the rewind button is disabled. */
   isLastMessage: { type: Boolean, default: false },
+  /** Whether the active backend can inject into the running turn. Drives the
+   *  queued bubble's single action label (insert vs interrupt). */
+  midTurnSupported: { type: Boolean, default: false },
+  /** True while this bubble's action request is in flight (disables the button). */
+  pendingActionBusy: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'remove-pending', 'pending-action', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -554,6 +577,46 @@ function handleCopyMessage() {
 /* Spinner sits on the translucent user-bubble background → keep it white */
 .pending-hint .pending-spinner {
     --li-color: #fff;
+}
+
+/* Single adaptive action on a queued bubble: "insert into the current reply"
+   for backends that can join the running turn, "interrupt and send" otherwise.
+   Sits inside the translucent user bubble, so it uses white-ish colours like
+   .pending-hint (a theme token would be invisible on that background). */
+.pending-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(255, 255, 255, 0.14);
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.9);
+    padding: 1px 7px;
+    font-size: 10px;
+    line-height: 1.6;
+    transition: background 0.15s, color 0.15s;
+}
+
+.pending-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* The interrupt variant is destructive — tint it so it does not look like the
+   harmless insert action when the two are compared across backends. */
+.pending-action-interrupt {
+    background: rgba(255, 145, 145, 0.2);
+}
+
+@media (hover: hover) {
+  .pending-action:not(:disabled):hover {
+    background: rgba(255, 255, 255, 0.24);
+  }
+
+  .pending-action-interrupt:not(:disabled):hover {
+    background: rgba(255, 145, 145, 0.32);
+  }
 }
 
 .pending-remove {

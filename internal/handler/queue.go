@@ -17,6 +17,10 @@ import (
 // POST   /api/ai/queue?session_id=xxx  — enqueue a message (unified send endpoint)
 // GET    /api/ai/queue?session_id=xxx  — get current queued messages
 // DELETE /api/ai/queue?session_id=xxx[&queueId=xxx] — cancel a queued message or clear all
+//
+// The "insert into the running turn" action lives on its own route
+// (QueueInjectHandler, registered at /api/ai/queue/inject) so it gets the same
+// auth/ownership middleware as the rest of the queue API.
 func QueueHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -28,6 +32,151 @@ func QueueHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// QueueInjectHandler delivers an already-queued message into the turn that is
+// running right now, instead of waiting for the next one. It backs the queued
+// bubble's "insert into the current reply" action (shown only for backends that
+// can inject — see model.Agent.SupportsMidTurn).
+//
+// POST /api/ai/queue/inject?session_id=xxx&queueId=xxx
+//
+// A decline is not an error: the message stays queued and the drain loop will
+// still deliver it. The response distinguishes the two so the UI can say
+// "couldn't insert" without implying the message was lost.
+func QueueInjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+	queueID := r.URL.Query().Get("queueId")
+	if queueID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "QueueIdRequired")
+		return
+	}
+
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	inserted, msgID := service.InjectQueuedMessage(sessionID, queueID)
+	if !inserted {
+		// The message is still queued (or already drained) — nothing was lost.
+		// 409 rather than 500: the request was well-formed, the session simply
+		// was not in an injectable state.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"inserted": false,
+			"queued":   true,
+		})
+		return
+	}
+
+	// Announce the message as a normal user message so every subscribed device
+	// (including the sender) drops its pending bubble and shows it inline. The
+	// DB id is preserved from the original enqueue, so ordering is already
+	// correct — no re-sort needed.
+	//
+	// No SenderClientID: the message was queued earlier, possibly by another
+	// device, so the acting device must also update. A duplicate user_message
+	// for an id it already holds is idempotent on the client.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: msgID,
+			QueueID:   queueID,
+			Queued:    false,
+		},
+	})
+	// Tell clients the bubble is no longer waiting in the queue. This is NOT
+	// queue_drain: a drain means "this message starts its OWN turn" and makes
+	// clients open a new assistant placeholder. An inserted message joins the
+	// turn already running, so clients must only clear its pending state and
+	// leave the current reply alone (the steer boundary handles the split).
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "queue_inject",
+		QueueEvent: &ai.QueueEventData{
+			SessionID: sessionID,
+			QueueID:   queueID,
+			MessageID: msgID,
+		},
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"inserted": true,
+		"msgId":    msgID,
+	})
+}
+
+// QueueInterruptHandler stops the turn that is running right now so the next
+// queued message can run, WITHOUT ending the session or dropping the queue.
+// It backs the queued bubble's "interrupt and send" action (shown for backends
+// that cannot inject into a running turn — see model.Agent.SupportsMidTurn).
+//
+// POST /api/ai/queue/interrupt?session_id=xxx[&queueId=xxx]
+//
+// The message is already queued (the user queued it by sending, then chose this
+// action on its bubble), so nothing is persisted here — this only stops the
+// current turn. The session's drain loop then picks the queue up in order and
+// runs it, so the reply that was interrupted is replaced by the new message.
+//
+// Unlike POST /api/ai/chat/cancel this is NOT a user cancel: it keeps the
+// queue, does not mark the session stopped, and does not stamp the interrupted
+// reply as "cancelled".
+func QueueInterruptHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	// A queued message must exist, otherwise "interrupt and send" would stop the
+	// turn and then have nothing to run — a net loss for the user. Report it as
+	// a conflict so the UI can explain instead of silently killing the reply.
+	queued, err := service.GetQueuedMessages(sessionID)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueReadFailed")
+		return
+	}
+	if len(queued) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{"interrupted": false, "reason": "empty_queue"})
+		return
+	}
+
+	if !service.InterruptSessionTurn(sessionID) {
+		// No turn registered: it finished between the check and now, and the
+		// drain loop will pick the queue up on its own. Not an error.
+		writeJSON(w, http.StatusOK, map[string]any{"interrupted": false, "reason": "idle"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"interrupted": true})
 }
 
 func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +247,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	// msgID is the persisted DB id of the message, used to broadcast a
 	// user_message event so other devices see it before it drains
 	// (cross-device sync).
-	started, injected, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
@@ -125,14 +274,15 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 			Files:          validatedFiles,
 			SenderClientID: req.ClientID,
 			QueueID:        req.QueueID,
-			Queued:         !injected, // injected = joined the running turn, not queued
+			// Always queued: sending never joins the running turn, that is an
+			// explicit action on the queued bubble (see QueueInjectHandler).
+			Queued: true,
 		},
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"started":  started,
-		"injected": injected,
+		"ok":      true,
+		"started": started,
 	})
 }
 

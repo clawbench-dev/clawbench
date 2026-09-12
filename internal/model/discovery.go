@@ -76,6 +76,23 @@ func BackendSupportsCLI(backendID string) bool {
 	return BackendSupportsCLIFn(backendID)
 }
 
+// BackendSupportsMidTurnFn is set by the backends package at init time to report
+// whether a backend can inject a message into an ALREADY RUNNING turn (rather
+// than queueing it for the next one). Uses function-variable injection to avoid
+// an import cycle (model cannot import ai).
+var BackendSupportsMidTurnFn func(backendID string) bool
+
+// BackendSupportsMidTurn reports whether the given backend can join a running
+// turn. Falls back to false when the function variable is not wired (isolated
+// tests, or a build without the backends package) — callers then use the
+// "interrupt and send" affordance instead.
+func BackendSupportsMidTurn(backendID string) bool {
+	if BackendSupportsMidTurnFn == nil {
+		return false
+	}
+	return BackendSupportsMidTurnFn(backendID)
+}
+
 // BackendRegistry lists all known AI backends for auto-discovery.
 // Populated lazily from backend plugins via GetBackendRegistry().
 // Direct reads should use GetBackendRegistry() to ensure initialization.
@@ -593,6 +610,7 @@ func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]Agent
 		}
 		// Set SupportsCLI from the ai backend factory registry (runtime only)
 		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
+		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
 	}
 
 	// Build common prompt and compose SystemPrompt from commonPrompt + CustomSystemPrompt.

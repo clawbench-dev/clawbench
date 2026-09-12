@@ -122,14 +122,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (!resp.ok) {
         throw new Error(`enqueue failed: ${resp.status}`)
       }
-      // The backend reports whether the message joined the RUNNING turn instead
-      // of being queued. An injected message gets no queue_drain, so the
-      // optimistic bubble must shed pending now rather than waiting for a drain
-      // that will never come. Backend-driven, so this stays backend-agnostic.
-      const data = await resp.json().catch(() => null)
-      if (data?.injected && queueId) {
-        dispatch({ type: 'clear_queued_pending', queueId })
-      }
+      // Sending always queues while a turn is running, for every backend — the
+      // bubble stays pending until its own turn drains. Joining the running
+      // turn is a separate, explicit action on that bubble (handlePendingAction).
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added.
@@ -164,6 +159,52 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       dispatch({ type: 'remove_pending', queueId })
     } catch {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
+    }
+  }
+
+  /**
+   * Act on a queued message: insert it into the running turn, or interrupt the
+   * turn so it runs next. Which one the backend supports is decided by
+   * `mode` — the caller passes 'insert' only when the agent reports
+   * supportsMidTurn, so the endpoint and the button label always agree.
+   *
+   * Returns true when the action took effect. On a decline (turn already
+   * finished, backend refused) the message stays queued and the caller simply
+   * reports it — nothing is lost either way.
+   */
+  async function handlePendingAction(queueId: string, mode: 'insert' | 'interrupt'): Promise<boolean> {
+    if (!queueId) return false
+    const sessionId = identity.currentSessionId.value
+    const path = mode === 'insert' ? '/api/ai/queue/inject' : '/api/ai/queue/interrupt'
+
+    try {
+      const resp = await fetch(
+        `${path}?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
+        { method: 'POST' },
+      )
+      const data = await resp.json().catch(() => null) as { inserted?: boolean; interrupted?: boolean } | null
+
+      if (mode === 'insert') {
+        if (data?.inserted) {
+          // The bubble stays in the list (it is part of the conversation now) —
+          // only its pending state goes. The backend also broadcasts
+          // queue_inject for other devices; this clears it locally right away.
+          dispatch({ type: 'clear_queued_pending', queueId })
+          return true
+        }
+        toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
+        return false
+      }
+
+      // interrupt: the turn is stopping and the drain loop will pick this
+      // message up. The bubble stays pending until its own turn starts.
+      if (data?.interrupted) return true
+      // Nothing to interrupt (turn already ended) — the drain loop will run the
+      // queue anyway, so this is not a failure worth alarming about.
+      return false
+    } catch {
+      toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
+      return false
     }
   }
 
@@ -326,6 +367,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // Queue operations
     enqueueMessage,
     handleRemovePending,
+    handlePendingAction,
     // Unified session operations
     switchSession,
     createSession,

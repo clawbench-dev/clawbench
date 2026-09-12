@@ -694,6 +694,21 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'queue_inject': {
+        // A queued message joined the RUNNING turn. Unlike queue_drain this must
+        // NOT open a new assistant placeholder — the reply in flight continues
+        // (the steer boundary splits it if the backend supports that). Only the
+        // bubble's pending state goes.
+        const injectData = payload as unknown as QueueEventData
+        const injectSessionId = injectData.sessionId || sessionId
+        if (injectSessionId !== currentSessionId.value) break
+        if (injectData.queueId) {
+          dispatch({ type: 'clear_queued_pending', queueId: injectData.queueId })
+          onRenderNeeded()
+        }
+        break
+      }
+
       case 'queue_cancel': {
         const cancelData = payload as { sessionId?: string; queueIds?: string[] }
         const eventSessionId = cancelData.sessionId || sessionId

@@ -219,6 +219,7 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clone.SupportsCLI = model.BackendSupportsCLI(clone.Backend)
+	clone.SupportsMidTurn = model.BackendSupportsMidTurn(clone.Backend)
 
 	writeJSON(w, http.StatusOK, clone)
 }

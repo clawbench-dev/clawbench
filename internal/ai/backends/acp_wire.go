@@ -24,4 +24,12 @@ func init() {
 	// Wire up the CLI capability reporter so model can tell whether a backend
 	// has a CLI implementation (grok and other ACP-only backends return false).
 	model.BackendSupportsCLIFn = ai.BackendSupportsCLI
+
+	// Wire up the mid-turn capability reporter so model can tell whether a
+	// backend can inject a message into the running turn (CodeBuddy's
+	// session/steer). Drives the queued-bubble action label: "insert into the
+	// current reply" when true, "interrupt and send" when false.
+	model.BackendSupportsMidTurnFn = func(backendID string) bool {
+		return LookupMidTurnInjector(backendID) != nil
+	}
 }

@@ -614,6 +614,16 @@ P4c *** SPLIT IS FEASIBLE ***
 | 切分 | `internal/service/session_executor.go` `splitAtSteerBoundary` | 定稿前段 + 建新流式行（锚定注入问题） |
 | 前端 | `chatStreamUtils.ts` `ws_stream_split` | 前段去 streaming、push 后段气泡 |
 
+**触发方式（重要）**：发送消息**永远只排队**，任何后端都一样。并入当前轮是用户在
+**排队气泡上显式点按钮**才发生的，不是发送的副作用——否则支持 steer 的后端会把消息
+悄悄吞进正在生成的回复里，用户既看不到排队气泡也无从操作。所以全后端流程统一，**只有
+按钮标签不同**：
+
+| 后端 | 按钮 | 行为 |
+|------|------|------|
+| 支持 steer（`model.Agent.SupportsMidTurn`） | 「插入当前回复」 | `POST /api/ai/queue/inject` — 认领原排队行（保留 DB id）→ `session/steer` |
+| 不支持 | 「中断并发送」 | `POST /api/ai/queue/interrupt` — 停当前轮，drain loop 接着跑队列 |
+
 **关键设计**：
 
 1. **gating 是必需的**。`user_message_chunk` 同时用于 LoadSession 回放与多页广播，
@@ -628,6 +638,11 @@ P4c *** SPLIT IS FEASIBLE ***
 4. **`ws_stream_start` 加了一道保护**：不再无条件覆写流式气泡的 id，只在气泡**尚无
    数字 id** 时采纳。否则一条针对前段的迟到/重复 `stream_start` 会把后段气泡改名，
    两条消息塌回一条。
+5. **中断需要每轮独立 context**。drain loop 原本所有轮次共用一个长生命周期 ctx，直接
+   取消它会连带杀掉后续排队消息。因此每轮派生自己的 `turnCtx`（`sessionTurnCancels`
+   注册表），中断只停这一轮，队列照常继续。
+6. **中断 ≠ 取消**：中断**保留队列**、**不打「已取消」角标**、会话继续运行；用户取消则
+   清空队列、标记 cancelled、结束会话。`drainHandleTerminal` 里两条分支刻意分开。
 
 **端到端验证**（`TestCodebuddyACP_SteerSplitE2E_BoundaryReachesStream`，驱动生产
 `ACPConn` 与真实 agent）：

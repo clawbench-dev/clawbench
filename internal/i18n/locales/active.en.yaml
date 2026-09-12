@@ -3,6 +3,7 @@ SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
+QueueIdRequired: queueId required
 NewSession: New Session
 NewSessionN: New Session {{.N}}
 FileMessage: File Message

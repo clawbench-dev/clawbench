@@ -12,14 +12,15 @@ import (
 // Mid-turn injection — core-flow side of the seam
 // ---------------------------------------------------------------------------
 //
-// When a message arrives for a session that is already running, the normal path
-// queues it and runs it as its own turn afterwards. A backend may instead be
-// able to inject it into the turn that is running right now (CodeBuddy's
-// session/steer). Which backends can do that, and how, is decided entirely by
-// the backend's ai.MidTurnInjector policy — nothing here names a backend.
+// When a message arrives for a session that is already running, it is ALWAYS
+// queued and runs as its own turn afterwards — for every backend. Joining the
+// turn that is running right now is a separate, explicit action the user takes
+// on the queued message (CodeBuddy's session/steer, via InjectQueuedMessage).
+// Which backends can do that, and how, is decided entirely by the backend's
+// ai.MidTurnInjector policy — nothing here names a backend.
 //
-// If injection is declined for any reason, callers fall back to the ordinary
-// queue path, so a missing capability changes nothing.
+// If the action is declined for any reason the message stays queued, so a
+// missing capability changes nothing about the normal flow.
 
 // injectMidTurn is an indirection over ai.InjectMidTurn so tests can substitute
 // the backend seam without a live ACP connection.
@@ -38,34 +39,64 @@ func SetInjectMidTurnForTest(fn func(context.Context, string, string, string, st
 	return prev
 }
 
-// TryInjectMidTurn attempts to deliver cfg.Message into the session's running
-// turn through the backend's mid-turn policy.
+// InjectQueuedMessage delivers an ALREADY QUEUED message into the running turn.
 //
-// On success it persists the message as a normal user message (queued=0, so it
-// is not picked up by the drain loop) and returns (true, msgID).
+// This backs the queued-bubble "insert into the current reply" action: the user
+// queued a message (the default), then explicitly asked for it to join the turn
+// that is running right now instead of waiting for the next one.
 //
-// On any decline it returns (false, 0) and the caller queues the message as
-// usual. The only subtle case is "injected but the DB write failed": the message
-// has already reached the model, so re-queueing it would deliver it twice. In
-// that case it returns (true, 0) — success without a DB row.
-func TryInjectMidTurn(cfg EnqueueStartConfig, clientID string) (bool, int64) {
-	res := injectMidTurn(context.Background(), cfg.BackendName, cfg.SessionID,
-		cfg.AgentID, cfg.Message, cfg.Files, cfg.QueueID)
-	if !res.Injected {
+// Ordering is free here. The queued row was persisted when it was enqueued, so
+// it already holds a DB id between the running turn's assistant row and any
+// later rows. Claiming it (queued=1 → 0) rather than deleting and re-inserting
+// keeps that id, so the conversation order stays
+//
+//	Q1(1) → assistant·before(2) → Q2 inserted(3) → assistant·after(4)
+//
+// with no re-sorting — the same property that makes the steer split work.
+//
+// Returns:
+//   - (true,  msgID)  the message joined the running turn; the caller should
+//     announce it (user_message) so every device drops the pending bubble.
+//   - (false, 0)      declined (turn ended, backend can't inject, DB error).
+//     The row is restored to queued=1, so the caller simply reports "could not
+//     insert" and the normal drain delivers it later. Never loses the message.
+func InjectQueuedMessage(sessionID, queueID string) (bool, int64) {
+	// Claim atomically: the row must still be queued (a concurrent drain may
+	// have picked it up already, in which case there is nothing to insert).
+	msg, ok, err := DequeueQueuedMessageByQueueID(sessionID, queueID)
+	if err != nil {
+		slog.Warn("midturn: failed to claim queued message for injection",
+			"session", sessionID, "queue_id", queueID, "err", err)
+		return false, 0
+	}
+	if !ok {
+		// Already drained (or cancelled) — the message is either running as its
+		// own turn or gone. Either way there is nothing to insert.
+		slog.Info("midturn: queued message no longer claimable for injection",
+			"session", sessionID, "queue_id", queueID)
 		return false, 0
 	}
 
-	msgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID,
-		"user", cfg.Message, cfg.Files, false, "", cfg.QueueID)
-	if err != nil {
-		slog.Warn("midturn: injected into running turn but persisting the message failed; "+
-			"not re-queueing to avoid double delivery",
-			"session", cfg.SessionID, "backend", cfg.BackendName, "err", err)
-		return true, 0
+	res := injectMidTurn(context.Background(), msg.Backend, sessionID,
+		"", msg.Content, msg.Files, queueID)
+	if !res.Injected {
+		// Put it back so the drain loop still delivers it. Restoring (rather
+		// than leaving it claimed) is what keeps a decline harmless.
+		if rerr := RequeueMessage(msg.ID); rerr != nil {
+			// The row is now neither queued nor delivered. Surface it as a
+			// failure so the caller can tell the user; the drain loop cannot
+			// recover a row it cannot see.
+			slog.Error("midturn: injection declined AND requeue failed; message is stranded",
+				"session", sessionID, "queue_id", queueID, "msg_id", msg.ID, "err", rerr)
+			return false, 0
+		}
+		slog.Info("midturn: injection declined, message restored to the queue",
+			"session", sessionID, "queue_id", queueID, "reason", res.Reason)
+		return false, 0
 	}
 
-	slog.Info("midturn: injected message into running turn",
-		"session", cfg.SessionID, "backend", cfg.BackendName,
-		"owner_request_id", res.OwnerRequestID, "msg_id", msgID)
-	return true, msgID
+	slog.Info("midturn: inserted queued message into running turn",
+		"session", sessionID, "backend", msg.Backend,
+		"owner_request_id", res.OwnerRequestID, "msg_id", msg.ID)
+	return true, msg.ID
 }

@@ -42,6 +42,14 @@ const (
 	contentKeyMetadata = "metadata"
 	// cancelReasonUser is the cancel reason when the user explicitly cancels.
 	cancelReasonUser = "user"
+	// cancelReasonInterrupt stops the CURRENT turn so the next queued message can
+	// run, without ending the session or dropping the queue. Set by
+	// InterruptSessionTurn (the "interrupt and send" action on a queued message).
+	//
+	// It is deliberately distinct from cancelReasonUser: the user did not
+	// abandon the reply, they redirected it, so the interrupted turn must NOT be
+	// stamped "cancelled" and the queue must survive.
+	cancelReasonInterrupt = "interrupt"
 	// cancelReasonRestart is set during graceful server shutdown before the
 	// session context is cancelled — the executor persists a restart warning so
 	// the frontend shows the interrupted-response banner after reload.
@@ -1173,6 +1181,17 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 // buildContentJSON serializes blocks and metadata into the DB content format,
 // handling empty-response warnings and cancellation markers.
 func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result RunResult, meta *ai.Metadata) (string, []model.ContentBlock) {
+	// Interrupt: the user redirected the turn ("interrupt and send"), they did
+	// not abandon it. Persist whatever was produced WITHOUT the cancelled badge —
+	// stamping "cancelled" would tell the user their reply was thrown away when
+	// in fact it was cut short on purpose and the next message is already
+	// running. The queue survives (see drainHandleTerminal).
+	if result.CancelReason == cancelReasonInterrupt {
+		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta}
+		blocksJSON, _ := json.Marshal(contentMap)
+		return string(blocksJSON), blocks
+	}
+
 	// User-initiated cancel: just mark cancelled, never add a warning block.
 	// The frontend renders a clean "cancelled" badge — no alarming warning needed.
 	if result.CancelReason == cancelReasonUser {
@@ -1199,6 +1218,11 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 		var errMsg string
 		var reason string
 		switch {
+		// An interrupted turn that produced nothing is not a cancellation: the
+		// user asked to move on. Report it as empty so the UI says "no content"
+		// rather than implying the user stopped it.
+		case result.CancelReason == cancelReasonInterrupt:
+			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		case e.ctx.Err() == context.Canceled:
 			errMsg, reason = "AI response cancelled", ai.ReasonContextCancel
 		case e.ctx.Err() == context.DeadlineExceeded:

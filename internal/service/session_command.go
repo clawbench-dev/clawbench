@@ -296,16 +296,19 @@ type EnqueueStartConfig struct {
 // session was idle), plus the persisted DB message id (msgID, >0) so callers
 // can emit a user_message event carrying the real id for cross-device sync.
 func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, msgID int64, err error) {
-	// Mid-turn injection: while a turn is running, a backend may be able to put
-	// this message into that very turn rather than queueing it for the next one.
-	// The policy is backend-owned (see service/midturn.go); a decline — including
-	// the benign race where the turn ends between the check and the attempt —
-	// falls through to the normal queue path below.
-	if IsSessionRunning(cfg.SessionID) {
-		if ok, id := TryInjectMidTurn(cfg, ""); ok {
-			return false, true, id, nil
-		}
-	}
+	// Sending always queues while a turn is running — for every backend.
+	//
+	// Mid-turn injection is NOT attempted here on purpose. It used to be, which
+	// meant a steer-capable backend silently swallowed the message into the
+	// running turn: no queue bubble appeared, so the user got no feedback and no
+	// way to act on it. Now the message is always queued (visible, cancelable)
+	// and joining the current reply is an explicit action on its bubble
+	// (POST /api/ai/queue/inject) — so the flow is uniform across backends and
+	// only the action's LABEL differs.
+	//
+	// `injected` is kept in the signature for the HTTP response shape; it is now
+	// always false on this path (see InjectQueuedMessage for the real one).
+	_ = injected
 
 	// Persist model/transport selection so the drain loop uses the user's
 	// choices (parity with the POST /api/ai/chat handler).
@@ -720,6 +723,16 @@ type streamRunResultShared struct {
 // executeStreamRunShared runs one AI backend execution.
 // Uses the correct SessionExecutor API: NewSessionExecutor(ctx, RunConfig) -> RunWithChannel(eventCh) -> Finalize(result, eventCh)
 func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResultShared {
+	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
+	// drain loop's shared context stays alive for the next queued message. The
+	// outer ctx still governs everything (user cancel / shutdown propagate here).
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	RegisterSessionTurnCancel(cfg.SessionID, turnCancel)
+	defer func() {
+		UnregisterSessionTurnCancel(cfg.SessionID)
+		turnCancel()
+	}()
+
 	sessionTransport := GetSessionTransport(cfg.SessionID)
 
 	backend, err := ai.NewBackendForAgentWithTransport(cfg.BackendName, cfg.AgentID, sessionTransport)
@@ -749,7 +762,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 
 	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
 
-	eventCh, err := backend.ExecuteStream(ctx, chatReq)
+	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("start stream: %v", err)
@@ -786,20 +799,25 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		StreamingMessageID: streamingMsgID,
 		LocalizeError:      nil,
 	}
-	executor := NewSessionExecutor(ctx, execCfg)
+	executor := NewSessionExecutor(turnCtx, execCfg)
 	runResult := executor.RunWithChannel(eventCh)
 	runResult = executor.Finalize(runResult, eventCh)
 
 	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: runResult.Metadata})
 
 	result := streamRunResultShared{}
-	if runResult.CancelReason == cancelReasonUser {
+	switch {
+	case runResult.CancelReason == cancelReasonUser:
 		result.cancelReason = runResult.CancelReason
-	} else if ctx.Err() == context.Canceled {
+	case runResult.CancelReason == cancelReasonInterrupt:
+		// "interrupt and send": the drain loop must KEEP the queue and move on
+		// to the next message (see drainHandleTerminal).
+		result.cancelReason = runResult.CancelReason
+	case turnCtx.Err() == context.Canceled:
 		result.cancelReason = "cancel"
-	} else if ctx.Err() == context.DeadlineExceeded {
+	case turnCtx.Err() == context.DeadlineExceeded:
 		result.err = "AI response timed out (30 min)"
-	} else if runResult.Empty {
+	case runResult.Empty:
 		result.empty = true
 	}
 

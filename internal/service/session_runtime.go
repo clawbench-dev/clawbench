@@ -499,6 +499,56 @@ func UnregisterSessionCancel(sessionID string) {
 	sessionCancels.Delete(sessionID)
 }
 
+// sessionTurnCancels holds the cancel func for the CURRENT turn of a session,
+// as opposed to sessionCancels which stops the whole execution goroutine.
+//
+// The drain loop runs many turns on one goroutine, all sharing a single
+// long-lived context. That is correct for "stop everything" (user cancel,
+// shutdown) but useless for "stop just this turn" — cancelling the shared
+// context would abort every subsequent queued turn too. The interrupt action
+// ("interrupt and send") needs exactly the narrower scope, so each turn
+// registers its own derived context here for the duration of that turn.
+var sessionTurnCancels sync.Map // map[string]context.CancelFunc
+
+// RegisterSessionTurnCancel records the cancel func for the turn about to run.
+// Overwrites any previous turn's entry (only one turn runs at a time).
+func RegisterSessionTurnCancel(sessionID string, cancel context.CancelFunc) {
+	sessionTurnCancels.Store(sessionID, cancel)
+}
+
+// UnregisterSessionTurnCancel clears the current turn's cancel func. Called
+// when the turn ends, so a later interrupt cannot cancel a finished turn.
+func UnregisterSessionTurnCancel(sessionID string) {
+	sessionTurnCancels.Delete(sessionID)
+}
+
+// InterruptSessionTurn stops the turn that is running right now, leaving the
+// session's execution goroutine alive so its drain loop still delivers queued
+// messages afterwards.
+//
+// This is what "interrupt and send" does: unlike CancelSession it does NOT mark
+// the session not-running, does NOT clear the queue and does NOT emit a terminal
+// "cancelled" event — the session simply moves on to the next queued message.
+// The cancel reason is recorded so the executor finalizes the interrupted turn
+// without stamping it "cancelled" (the user did not abandon the reply; they
+// redirected it).
+//
+// Returns false when no turn is currently registered (already finished, or the
+// session is idle) — the caller then just queues the message normally.
+func InterruptSessionTurn(sessionID string) bool {
+	val, ok := sessionTurnCancels.LoadAndDelete(sessionID)
+	if !ok {
+		return false
+	}
+	cancel, ok := val.(context.CancelFunc)
+	if !ok {
+		return false
+	}
+	sessionCancelReasons.Store(sessionID, cancelReasonInterrupt)
+	cancel()
+	return true
+}
+
 // CancelAllSessions cancels every registered session context without clearing
 // the running state or finalizing anything. Called by the graceful-shutdown
 // path so every active executor's event loop exits on ctx.Done() and runs

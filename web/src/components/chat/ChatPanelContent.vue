@@ -15,6 +15,8 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
+      :midTurnSupported="midTurnSupported"
+      :pendingActionBusy="pendingActionBusy"
       @touchstart="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -25,6 +27,7 @@
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
       @remove-pending="handleRemovePending"
+      @pending-action="handlePendingAction"
       @render-flush="handleRenderFlush"
       @toggle-summary="handleToggleSummary"
       @ensure-content="(msg) => ensureMessageContent(msg)"
@@ -228,6 +231,15 @@ const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-se
 const identity = useSessionIdentity()
 const agentsComposable = useAgents()
 const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
+
+/** Whether the current agent's backend can join a running turn. Drives the
+ *  queued bubble's single action: "insert into the current reply" vs
+ *  "interrupt and send". */
+const midTurnSupported = computed(() =>
+  agentsComposable.supportsMidTurn(identity.currentAgentId.value || ''),
+)
+/** queueId (or id) of the queued bubble whose action request is in flight. */
+const pendingActionBusy = ref('')
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -948,17 +960,13 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
-            // The message either joined the running turn (data.steered) or was
-            // queued for the next one. Only a QUEUED message stays pending — it
-            // is waiting for the drain loop. An injected one has no drain
-            // coming, so marking it pending would leave it spinning forever.
-            if (!data.steered) {
-                const localIdx = messages.value.findLastIndex(
-                    (m) => m.role === 'user' && m.id === pendingId
-                )
-                if (localIdx !== -1) {
-                    messages.value[localIdx].pending = true
-                }
+            // The message was queued for the next turn (sending never joins the
+            // running turn), so mark it pending: it waits for its own drain.
+            const localIdx = messages.value.findLastIndex(
+                (m) => m.role === 'user' && m.id === pendingId
+            )
+            if (localIdx !== -1) {
+                messages.value[localIdx].pending = true
             }
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session
@@ -1095,6 +1103,22 @@ async function handleLoadMore() {
  *  Passes it directly to the manager for backend DELETE. */
 function handleRemovePending(queueId) {
     manager.handleRemovePending(queueId)
+}
+
+/** Single adaptive action on a queued bubble. The backend capability decides
+ *  what it does; the button label already told the user which, so here we only
+ *  route to the matching endpoint. */
+async function handlePendingAction(queueId) {
+    if (!queueId || pendingActionBusy.value) return
+    pendingActionBusy.value = String(queueId)
+    try {
+        await manager.handlePendingAction(
+            String(queueId),
+            midTurnSupported.value ? 'insert' : 'interrupt',
+        )
+    } finally {
+        pendingActionBusy.value = ''
+    }
 }
 
 function showMetadata(msg) {

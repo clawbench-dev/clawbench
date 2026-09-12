@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"sync/atomic"
 	"testing"
@@ -554,4 +555,108 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 	// the loop finishes with a normal done.
 	assert.Equal(t, int32(1), atomic.LoadInt32(&executeCount))
 	assert.Equal(t, "done", finalEvent.Type)
+}
+
+// TestDrainHandleTerminal_InterruptKeepsQueue is the core guard for the
+// "interrupt and send" action: an interrupted turn must NOT drop the queue and
+// must NOT emit a terminal event, because the queued message is exactly what
+// should run next. Contrast with the user-cancel branch, which clears the queue.
+func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-test-interrupt"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "next message", nil, "q-interrupt", "")
+
+	var finalEvents []ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:            sessionID,
+		MarkDoneAndSendFinal: func(e ai.StreamEvent) { finalEvents = append(finalEvents, e) },
+	}
+
+	done := drainHandleTerminal(cfg, DrainResult{CancelReason: cancelReasonInterrupt})
+
+	if done {
+		t.Fatal("interrupt must NOT end the drain loop — the next queued message still has to run")
+	}
+	if len(finalEvents) != 0 {
+		t.Errorf("interrupt must not emit a terminal event, got %+v", finalEvents)
+	}
+
+	// The queue must survive: this is what separates interrupt from cancel.
+	queued, err := GetQueuedMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetQueuedMessages failed: %v", err)
+	}
+	if len(queued) != 1 || queued[0].Content != "next message" {
+		t.Fatalf("the queued message must survive an interrupt, got %+v", queued)
+	}
+}
+
+// TestDrainHandleTerminal_UserCancelStillClearsQueue pins the contrast: the
+// existing cancel semantics must be unchanged by the interrupt branch above.
+func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-test-cancel-contrast"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "dropped", nil, "q-cancel", "")
+
+	var finalEvents []ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:            sessionID,
+		MarkDoneAndSendFinal: func(e ai.StreamEvent) { finalEvents = append(finalEvents, e) },
+	}
+
+	done := drainHandleTerminal(cfg, DrainResult{CancelReason: cancelReasonUser})
+
+	if !done {
+		t.Fatal("user cancel must end the drain loop")
+	}
+	if len(finalEvents) != 1 || finalEvents[0].Type != statusCancelled {
+		t.Errorf("user cancel must emit exactly one cancelled event, got %+v", finalEvents)
+	}
+	queued, _ := GetQueuedMessages(sessionID)
+	if len(queued) != 0 {
+		t.Errorf("user cancel must clear the queue, got %d rows", len(queued))
+	}
+}
+
+// TestInterruptSessionTurn verifies the turn-scoped cancel registry: it must
+// report whether a turn was actually stopped, and record the interrupt reason
+// so the executor finalizes the turn without stamping it "cancelled".
+func TestInterruptSessionTurn(t *testing.T) {
+	sessionID := "interrupt-turn-test"
+
+	// No turn registered → nothing to interrupt.
+	if InterruptSessionTurn(sessionID) {
+		t.Fatal("interrupting with no registered turn must report false")
+	}
+
+	// Register a turn and interrupt it.
+	ctx, cancel := context.WithCancel(context.Background())
+	RegisterSessionTurnCancel(sessionID, cancel)
+	t.Cleanup(func() { UnregisterSessionTurnCancel(sessionID) })
+
+	if !InterruptSessionTurn(sessionID) {
+		t.Fatal("interrupting a registered turn must report true")
+	}
+	select {
+	case <-ctx.Done():
+		// expected: the turn's context was cancelled
+	default:
+		t.Fatal("the turn's context must be cancelled")
+	}
+
+	// The reason must be recorded for the executor to read.
+	if reason := GetAndClearCancelReason(sessionID); reason != cancelReasonInterrupt {
+		t.Errorf("cancel reason = %q, want %q", reason, cancelReasonInterrupt)
+	}
+
+	// The registry entry is consumed — a second interrupt is a no-op.
+	if InterruptSessionTurn(sessionID) {
+		t.Error("a consumed turn must not be interruptible twice")
+	}
 }

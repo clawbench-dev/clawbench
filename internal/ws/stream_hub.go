@@ -206,6 +206,8 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return streamSplitPayload(event)
 	case "queue_drain":
 		return queueDrainPayload(event)
+	case "queue_inject":
+		return queueInjectPayload(event)
 	case "queue_cancel":
 		return queueCancelPayload(event)
 	default:
@@ -418,6 +420,20 @@ func queueDrainPayload(event ai.StreamEvent) any {
 		"filePaths": event.QueueEvent.FilePaths,
 		"files":     event.QueueEvent.Files,
 		"queue":     event.QueueEvent.Queue,
+	}
+}
+
+// queueInjectPayload carries a message that joined the RUNNING turn (the queued
+// bubble's "insert" action). Clients clear that bubble's pending state but must
+// NOT open a new assistant placeholder — the reply already in flight continues.
+func queueInjectPayload(event ai.StreamEvent) any {
+	if event.QueueEvent == nil {
+		return nil
+	}
+	return map[string]any{
+		"sessionId": event.QueueEvent.SessionID,
+		"queueId":   event.QueueEvent.QueueID,
+		"messageId": event.QueueEvent.MessageID,
 	}
 }
 

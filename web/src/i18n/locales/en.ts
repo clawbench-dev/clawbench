@@ -708,6 +708,12 @@ export default {
       uploadedAttachment: 'Upload',
       fileReference: 'File ref',
       queuing: 'Queued',
+      insert: 'Insert into reply',
+      insertHint: 'Join the reply being written now; its current work continues',
+      interrupt: 'Interrupt and send',
+      interruptHint: 'Stop the reply being written and do this message instead',
+      insertFailed: 'Could not insert right now — the message is still queued',
+      actionFailed: 'Action failed — the message is still queued',
     },
     contentBlocks: {
       scheduledTaskCreated: 'Scheduled task created',
