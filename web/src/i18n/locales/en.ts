@@ -105,7 +105,7 @@ export default {
     detail: {
       back: 'Back',
       openBrowser: 'Open in browser',
-      analyze: 'Analyze with AI',
+      quote: 'Quote in chat',
       loadOlder: 'Load older comments',
     },
     error: {

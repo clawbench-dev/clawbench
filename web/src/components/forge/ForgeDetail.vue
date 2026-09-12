@@ -8,6 +8,16 @@
         <span>{{ t('forge.detail.back') }}</span>
       </button>
       <div class="forge-detail-actions">
+        <button
+          v-if="detail.item.value"
+          class="forge-icon-btn"
+          :title="t('forge.detail.quote')"
+          :aria-label="t('forge.detail.quote')"
+          @mousedown.prevent
+          @click="onQuote"
+        >
+          <MessageSquarePlus :size="15" />
+        </button>
         <a
           v-if="detail.item.value"
           class="forge-icon-btn"
@@ -34,7 +44,18 @@
     </div>
 
     <template v-else-if="detail.item.value">
-      <div ref="bodyRef" class="forge-detail-body" @click="handleContentClick">
+      <!-- `data-quote-source` labels text selected inside this region so the
+           quote pipeline can tag the fence with the issue/PR identity. It is
+           deliberately NOT `data-file-path`: that attribute marks a markdown
+           body as an attachable file and would grow "add to chat" buttons on
+           every code block in the issue body. -->
+      <div
+        ref="bodyRef"
+        class="forge-detail-body"
+        :data-quote-source="quoteSourceLabel"
+        :data-quote-language="detail.item.value.type"
+        @click="handleContentClick"
+      >
         <!-- Title + meta -->
         <div class="forge-detail-title-row">
           <span class="forge-state-dot" :class="`state-${detail.item.value.state}`"></span>
@@ -84,13 +105,6 @@
         </div>
       </div>
 
-      <!-- Primary action pinned to the bottom bar -->
-      <div class="forge-detail-footer">
-        <button class="fbtn fbtn-primary forge-analyze-btn" @click="onAnalyze">
-          <Sparkles :size="15" />
-          <span>{{ t('forge.detail.analyze') }}</span>
-        </button>
-      </div>
     </template>
 
     <!-- Floating code preview for annotated file paths (same card as chat/task). -->
@@ -101,7 +115,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronLeft, ExternalLink, Sparkles, MessageSquare, AlertCircle } from 'lucide-vue-next'
+import { ChevronLeft, ExternalLink, MessageSquare, MessageSquarePlus, AlertCircle } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgeDetail } from '@/composables/useForge'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
@@ -120,7 +134,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'back'): void
-  (e: 'analyze', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string; body: string } }): void
+  (e: 'quote', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }): void
 }>()
 
 const { t } = useI18n()
@@ -225,11 +239,22 @@ function renderComment(body: string): string {
   }
 }
 
-function onAnalyze() {
+/**
+ * Label quoted text with the issue/PR it came from, e.g. "acme/widgets#123".
+ * Empty when no item is loaded, which makes getQuoteSource() treat the region
+ * as unlabelled and fall back to normal file handling.
+ */
+const quoteSourceLabel = computed(() => {
+  const it = detail.item.value
+  if (!it) return ''
+  return `${it.slug}#${it.number}`
+})
+
+function onQuote() {
   const it = detail.item.value
   if (!it) return
-  emit('analyze', {
-    item: { type: it.type, number: it.number, title: it.title, url: it.url, slug: it.slug, body: it.body ?? '' },
+  emit('quote', {
+    item: { type: it.type, number: it.number, title: it.title, url: it.url, slug: it.slug },
   })
 }
 
@@ -444,20 +469,6 @@ function formatTime(iso: string): string {
 .forge-comment-body {
   padding: 10px 12px;
   background: var(--bg-primary);
-}
-
-/* ── Footer action ── */
-.forge-detail-footer {
-  flex-shrink: 0;
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-primary);
-}
-.forge-analyze-btn {
-  width: 100%;
-  height: 36px;
-  border-radius: 18px;
-  font-size: 14px;
 }
 
 /* Status dot — baseline-aligned with the title's first line. */

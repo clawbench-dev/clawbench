@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils'
+import { closestElement, getFileInfo, getLineInfo, buildQuoteMessage, relativizeProjectPath, buildMultiQuoteMessage, buildQuoteBlock, buildQuoteFirstMessage, getQuoteSource } from '@/utils/quoteQuestionUtils'
 
 // --- closestElement ---
 
@@ -401,5 +401,94 @@ describe('buildMultiQuoteMessage', () => {
     expect(result.indexOf('first')).toBeLessThan(result.indexOf('second'))
     expect(result).toContain('```ts:/a.ts:10-12')
     expect(result).toContain('```ts:/a.ts:30-31')
+  })
+})
+
+// --- buildQuoteFirstMessage (quote first, then the user's input) ---
+
+describe('buildQuoteFirstMessage', () => {
+  const block = '```issue:acme/widgets#123\nbroken build\n```'
+
+  it('puts the quoted block before the user input, separated by one newline', () => {
+    // Deliberately different from buildMultiQuoteMessage, which puts the prompt
+    // first and joins with a blank line.
+    expect(buildQuoteFirstMessage(block, 'why does this fail?')).toBe(
+      '```issue:acme/widgets#123\nbroken build\n```\nwhy does this fail?',
+    )
+  })
+
+  it('never inserts a blank line between the block and the input', () => {
+    const out = buildQuoteFirstMessage(block, 'why?')
+    expect(out).not.toContain('\n\n')
+  })
+
+  it('leaves a trailing newline when the user typed nothing', () => {
+    // The caret then lands on the line after the block, ready for input.
+    expect(buildQuoteFirstMessage(block, '')).toBe('```issue:acme/widgets#123\nbroken build\n```\n')
+    expect(buildQuoteFirstMessage(block, '   ')).toBe('```issue:acme/widgets#123\nbroken build\n```\n')
+  })
+
+  it('returns just the input when there is no quote', () => {
+    expect(buildQuoteFirstMessage('', 'hello')).toBe('hello')
+    expect(buildQuoteFirstMessage('', '')).toBe('')
+  })
+
+  it('trims the input', () => {
+    expect(buildQuoteFirstMessage(block, '  why?  ')).toBe(
+      '```issue:acme/widgets#123\nbroken build\n```\nwhy?',
+    )
+  })
+})
+
+// --- buildQuoteBlock labelling for non-file sources ---
+
+describe('buildQuoteBlock', () => {
+  it('labels an issue quote as issue:<slug>#<number>', () => {
+    expect(buildQuoteBlock({
+      text: 'broken build', filePath: 'acme/widgets#123', language: 'issue', startLine: 0, endLine: 0,
+    })).toBe('```issue:acme/widgets#123\nbroken build\n```')
+  })
+
+  it('omits the line suffix when lines are zero (non-file source)', () => {
+    // Forge bodies have no meaningful file line numbers; a ":0" would be noise.
+    expect(buildQuoteBlock({
+      text: 'x', filePath: 'a/b#1', language: 'pr', startLine: 0, endLine: 0,
+    })).not.toContain(':0')
+  })
+})
+
+// --- getQuoteSource ---
+
+describe('getQuoteSource', () => {
+  it('reads the label and language from an ancestor', () => {
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-quote-source', 'acme/widgets#123')
+    wrap.setAttribute('data-quote-language', 'issue')
+    const inner = document.createElement('div')
+    wrap.appendChild(inner)
+
+    expect(getQuoteSource(inner)).toEqual({ label: 'acme/widgets#123', language: 'issue' })
+  })
+
+  it('returns null outside a labelled region so callers can fall back', () => {
+    const plain = document.createElement('div')
+    plain.className = 'markdown-body'
+    expect(getQuoteSource(plain)).toBeNull()
+  })
+
+  it('treats an empty label as absent', () => {
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-quote-source', '')
+    const inner = document.createElement('div')
+    wrap.appendChild(inner)
+    expect(getQuoteSource(inner)).toBeNull()
+  })
+
+  it('defaults the language to an empty string', () => {
+    const wrap = document.createElement('div')
+    wrap.setAttribute('data-quote-source', 'a/b#1')
+    const inner = document.createElement('div')
+    wrap.appendChild(inner)
+    expect(getQuoteSource(inner)).toEqual({ label: 'a/b#1', language: '' })
   })
 })

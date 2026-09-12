@@ -105,7 +105,7 @@ export default {
     detail: {
       back: '返回',
       openBrowser: '在浏览器打开',
-      analyze: '让 AI 分析',
+      quote: '引用对话',
       loadOlder: '加载更早的评论',
     },
     error: {

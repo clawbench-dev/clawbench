@@ -45,7 +45,7 @@
         :type="items.type.value"
         :number="detailNumber"
         @back="closeDetail"
-        @analyze="onAnalyze"
+        @quote="onQuote"
       />
 
       <template v-else>
@@ -270,7 +270,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'request-project'): void
-  (e: 'analyze', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string; body: string } }): void
+  (e: 'quote', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }): void
 }>()
 
 const { t } = useI18n()
@@ -390,8 +390,8 @@ async function submitBinding(input: { url?: string; platform?: string; host?: st
   }
 }
 
-function onAnalyze(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string; body: string } }) {
-  emit('analyze', payload)
+function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }) {
+  emit('quote', payload)
 }
 
 function errorTitle(code: string): string {
