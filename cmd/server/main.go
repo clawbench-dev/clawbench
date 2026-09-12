@@ -419,6 +419,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		startup.CheckLegacyLayout(model.BinDir, model.DataDir)
 	}
 
+	// Record the running binary's path under the data directory.
+	//
+	// Self-upgrade and restart need a path to this binary that survives a
+	// package manager replacing the package while the service runs (npm
+	// retires the old package directory and deletes it, after which
+	// os.Executable() points at a deleted inode). The data directory is never
+	// touched by npm, so this record stays valid. Best-effort: a failure only
+	// degrades the upgrade path, which is why startup continues.
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		if writeErr := service.WriteSelfPath(exe); writeErr != nil {
+			slog.Warn("failed to record self-path", "error", writeErr)
+		}
+	} else {
+		slog.Warn("failed to resolve executable path for self-path record", "error", exeErr)
+	}
+
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool
@@ -1088,6 +1104,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// The upgrade-replace subprocess handles restarting after replacing the binary.
 	service.SetUpgradeShutdownFunc(selfSignalInterrupt)
 	service.SetUpgradeIsSupervised(handler.IsRunningUnderSupervisor)
+
+	// upgradeRestartFunc: restart without replacing the binary. Used by the
+	// version short-circuit when the wanted binary is already on disk.
+	// Reuses the config-restart path (supervisor-aware sentinel).
+	service.SetUpgradeRestartFunc(makeRestartFunc(selfSignalInterrupt))
 
 	// Clean up stale temp directories from previous upgrade attempts
 	service.CleanStaleUpgradeTempDirs()

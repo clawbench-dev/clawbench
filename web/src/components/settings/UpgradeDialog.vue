@@ -90,6 +90,11 @@
             <p class="ug-error">{{ t('upgrade.installDirNotWritableBody', { dir: installDir || '—' }) }}</p>
             <p class="ug-error-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
           </template>
+          <template v-else-if="state.error_code === ERR_SELF_PATH_UNRESOLVED">
+            <p class="ug-error-title">{{ t('upgrade.selfPathUnresolvedTitle') }}</p>
+            <p class="ug-error">{{ t('upgrade.selfPathUnresolvedBody') }}</p>
+            <p class="ug-error-hint">{{ t('upgrade.selfPathUnresolvedHint') }}</p>
+          </template>
           <template v-else>
             <p>{{ t('upgrade.failed') }}</p>
             <p class="ug-error">{{ state.error }}</p>
@@ -115,7 +120,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE } from '@/composables/useUpgrade'
+import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE, ERR_SELF_PATH_UNRESOLVED } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import '@/assets/modal-footer-btn.css'
 

@@ -1454,18 +1454,22 @@ func TestCheckInstallDirWritable_Writable(t *testing.T) {
 	defer func() { upgradeExecutable = origExe }()
 
 	dir := t.TempDir()
+	// The binary must exist: resolveSelfBinary only accepts a live path.
+	exe := filepath.Join(dir, "clawbench")
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
 	upgradeExecutable = func() (string, error) {
-		return filepath.Join(dir, "clawbench"), nil
+		return exe, nil
 	}
 
 	gotDir, err := CheckInstallDirWritable()
 	require.NoError(t, err)
 	assert.Equal(t, dir, gotDir)
 
-	// The probe file must be cleaned up, leaving the directory empty.
+	// The probe file must be cleaned up, leaving only the binary behind.
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	assert.Empty(t, entries, "probe temp file should have been removed")
+	require.Len(t, entries, 1, "probe temp file should have been removed")
+	assert.Equal(t, "clawbench", entries[0].Name())
 }
 
 func TestCheckInstallDirWritable_NotWritable(t *testing.T) {
@@ -1480,11 +1484,14 @@ func TestCheckInstallDirWritable_NotWritable(t *testing.T) {
 	defer func() { upgradeExecutable = origExe }()
 
 	dir := t.TempDir()
+	// The binary must exist: resolveSelfBinary only accepts a live path.
+	exe := filepath.Join(dir, "clawbench")
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
 	require.NoError(t, os.Chmod(dir, 0o555))
 	defer func() { _ = os.Chmod(dir, 0o755) }() // allow TempDir cleanup
 
 	upgradeExecutable = func() (string, error) {
-		return filepath.Join(dir, "clawbench"), nil
+		return exe, nil
 	}
 
 	gotDir, err := CheckInstallDirWritable()
@@ -1513,6 +1520,8 @@ func TestCheckInstallDirWritable_PreservesExistingBackup(t *testing.T) {
 
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "clawbench")
+	// The binary must exist: resolveSelfBinary only accepts a live path.
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
 	backup := exe + ".bak"
 	require.NoError(t, os.WriteFile(backup, []byte("existing backup"), 0o600))
 
@@ -1543,6 +1552,8 @@ func TestCheckInstallDirWritable_BackupNotWritable(t *testing.T) {
 
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "clawbench")
+	// The binary must exist: resolveSelfBinary only accepts a live path.
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
 	backup := exe + ".bak"
 	require.NoError(t, os.WriteFile(backup, []byte("root backup"), 0o400))
 	defer func() { _ = os.Chmod(backup, 0o600) }() // allow TempDir cleanup
@@ -1586,12 +1597,16 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 	defer platform.ChinaMirrorChecked.Store(origChina)
 	platform.ChinaMirrorChecked.Store(2) // non-China → default base is npmjs
 
-	// Binary lives in a read-only directory.
+	// Binary lives in a read-only directory. It must exist so resolveSelfBinary
+	// accepts it; the version probe then fails (not a real executable) and the
+	// flow falls through to the install-dir preflight.
 	dir := t.TempDir()
+	exe := filepath.Join(dir, "clawbench")
+	require.NoError(t, os.WriteFile(exe, []byte("binary"), 0o755))
 	require.NoError(t, os.Chmod(dir, 0o555))
 	defer func() { _ = os.Chmod(dir, 0o755) }()
 	upgradeExecutable = func() (string, error) {
-		return filepath.Join(dir, "clawbench"), nil
+		return exe, nil
 	}
 
 	ResetUpgradeState()

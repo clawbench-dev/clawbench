@@ -31,6 +31,14 @@ export interface UpgradeState {
 /** Failure id emitted when the install directory is not writable. */
 export const ERR_INSTALL_DIR_NOT_WRITABLE = 'install_dir_not_writable'
 
+/**
+ * Failure id emitted when no usable path to the running binary could be found.
+ * Typical cause: a package manager replaced the package while the service was
+ * running, so the binary's recorded path no longer resolves. Restarting fixes
+ * it.
+ */
+export const ERR_SELF_PATH_UNRESOLVED = 'self_path_unresolved'
+
 const SKIP_KEY = 'clawbench-upgrade-skip'
 
 // Module-level singleton state (shared across all component instances)

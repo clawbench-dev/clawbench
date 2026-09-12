@@ -47,6 +47,20 @@ func SetUpgradeShutdownFunc(f func()) {
 	upgradeShutdownFunc = f
 }
 
+// upgradeRestartFunc triggers a restart without replacing the binary. Used by
+// the version short-circuit, where the wanted binary is already on disk and
+// only needs to be re-executed. Wired to the server's restart function.
+var upgradeRestartFunc func()
+
+// SetUpgradeRestartFunc sets the function called to restart without replacing.
+func SetUpgradeRestartFunc(f func()) {
+	upgradeRestartFunc = f
+}
+
+// selfBinaryVersion reports the version of the binary at the given path. It is
+// a variable so tests can avoid executing a real binary.
+var selfBinaryVersion = probeBinaryVersion
+
 // upgradeExecutable resolves the running binary path. Overridden in tests.
 var upgradeExecutable = os.Executable
 
@@ -366,9 +380,18 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	// 1b. Resolve the running binary and refuse environments where self-replace
 	// does not apply. Done before any network or disk work so a non-applicable
 	// deployment gets the clearest error without downloading the tarball.
-	currentBin, err := os.Executable()
+	//
+	// resolveSelfBinary prefers the path recorded at startup over
+	// os.Executable(): the latter reports where the binary is *now*, so an
+	// external package manager replacing the package mid-run (npm retires and
+	// deletes the old package directory) leaves it pointing at a deleted inode.
+	currentBin, err := ResolveSelfBinary()
 	if err != nil {
-		SetUpgradeError(fmt.Sprintf("Failed to get current binary path: %v", err))
+		slog.Warn("upgrade: cannot resolve running binary", "error", err)
+		SetUpgradeErrorCode(UpgradeErrSelfPathUnresolved,
+			fmt.Sprintf("Cannot locate the running ClawBench binary: %v. "+
+				"If it was replaced or removed by a package manager while the service "+
+				"was running, restart ClawBench and try again.", err))
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -386,7 +409,31 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 			"dockerLike", platform.IsDockerLike())
 	}
 
-	// 1c. Preflight: the install directory (and the backup path) must be
+	// 1c. Version short-circuit: when the binary already on disk is at (or
+	// ahead of) the target — the normal outcome of updating through the
+	// package manager instead of the UI — downloading the same version again
+	// would waste a full tarball transfer. Restarting is enough to load it.
+	//
+	// Placed before the install-directory preflight: this path writes nothing,
+	// so an unwritable install directory must not block it.
+	//
+	// The probe is best-effort: if it fails, fall through to the normal path.
+	// Likewise when no restart function is wired: short-circuiting without a
+	// way to restart would leave the upgrade reported as restarting forever.
+	if diskVer, verErr := selfBinaryVersion(currentBin); verErr == nil {
+		if shouldShortCircuit(diskVer, info.LatestVersion) && upgradeRestartFunc != nil {
+			slog.Info("upgrade: disk binary already at target version — restarting without download",
+				"disk", diskVer, "target", info.LatestVersion)
+			setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
+			upgradeRestartFunc()
+			return
+		}
+	} else {
+		slog.Warn("upgrade: version probe failed, proceeding with download",
+			"path", currentBin, "error", verErr)
+	}
+
+	// 1d. Preflight: the install directory (and the backup path) must be
 	// writable, otherwise the backup step would fail after downloading the whole
 	// tarball. Fail fast with an actionable code so the UI can tell the user
 	// what to do.
@@ -767,9 +814,9 @@ func performSupervisedUpgrade(newBinPath, currentBin string) error {
 // It returns the install directory (for user-facing messages) alongside the
 // error.
 func CheckInstallDirWritable() (string, error) {
-	exe, err := upgradeExecutable()
+	exe, err := ResolveSelfBinary()
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve executable path: %w", err)
+		return "", err
 	}
 	dir := filepath.Dir(exe)
 
