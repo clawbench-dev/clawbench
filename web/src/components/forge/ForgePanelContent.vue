@@ -5,10 +5,13 @@
          options. -->
     <div v-if="!projectPath" class="forge-state">
       <div class="forge-card">
+        <div class="forge-card-icon">
+          <FolderGit2 :size="30" :stroke-width="1.5" />
+        </div>
         <div class="forge-card-header">{{ t('forge.empty.noProjectHeader') }}</div>
         <div class="forge-card-body">{{ t('forge.empty.noProjectBody') }}</div>
         <div class="forge-card-options">
-          <button class="forge-option" @click="emit('request-project')">
+          <button class="fbtn fbtn-primary" @click="emit('request-project')">
             {{ t('forge.empty.chooseProject') }}
           </button>
         </div>
@@ -17,15 +20,18 @@
 
     <div v-else-if="!items.isBound.value && !items.loading.value" class="forge-state">
       <div class="forge-card">
+        <div class="forge-card-icon">
+          <GitPullRequest :size="30" :stroke-width="1.5" />
+        </div>
         <div class="forge-card-header">{{ t('forge.empty.noBindingHeader') }}</div>
         <div class="forge-card-body">{{ t('forge.empty.noBindingBody') }}</div>
         <div class="forge-card-options">
-          <button class="forge-option primary" @click="openBindDialog">
+          <button class="fbtn fbtn-primary" @click="openBindDialog">
             {{ t('forge.empty.bindRepo') }}
           </button>
           <button
             v-if="items.suggested.value"
-            class="forge-option"
+            class="fbtn"
             @click="acceptSuggestion"
           >
             {{ t('forge.empty.useSuggestion', { slug: items.suggested.value.slug }) }}
@@ -45,21 +51,47 @@
       />
 
       <template v-else>
-        <!-- Filter row 1: type + state -->
-        <div class="forge-filters">
-          <div class="forge-chips">
+        <!-- Standard panel header: matches every other list page
+             (var(--header-height), bg-primary, bottom border). -->
+        <div class="forge-header">
+          <span class="forge-header-title">
+            <GitPullRequest :size="14" />
+            <span>{{ t('nav.forge') }}</span>
+            <span v-if="items.items.value.length" class="forge-header-count">{{ items.items.value.length }}</span>
+          </span>
+          <RefreshButton
+            class="forge-header-btn"
+            :loading="items.loading.value"
+            :title="t('nav.refresh')"
+            @click="refresh"
+          />
+        </div>
+
+        <!-- Type is a mutually-exclusive segmented control (like the app's
+             summary toggle); state/mine are independent filters. -->
+        <div class="forge-toolbar">
+          <div class="forge-segment">
             <button
-              class="forge-chip"
+              class="forge-segment-btn"
               :class="{ active: items.type.value === 'issue' }"
               @click="items.setType('issue')"
-            >{{ t('forge.type.issues') }}</button>
+            >
+              <CircleDot :size="13" />
+              <span>{{ t('forge.type.issues') }}</span>
+            </button>
             <button
-              class="forge-chip"
+              class="forge-segment-btn"
               :class="{ active: items.type.value === 'pr' }"
               @click="items.setType('pr')"
-            >{{ t('forge.type.prs') }}</button>
+            >
+              <GitPullRequest :size="13" />
+              <span>{{ t('forge.type.prs') }}</span>
+            </button>
           </div>
-          <div class="forge-chips">
+        </div>
+
+        <div class="forge-toolbar">
+          <div class="forge-chips forge-chips-scroll">
             <button
               v-for="s in stateOptions"
               :key="s"
@@ -67,12 +99,7 @@
               :class="{ active: items.state.value === s }"
               @click="items.setState(s)"
             >{{ t(`forge.state.${s}`) }}</button>
-          </div>
-        </div>
-
-        <!-- Filter row 2: related-to-me -->
-        <div class="forge-filters forge-filters-second">
-          <div class="forge-chips forge-chips-scroll">
+            <span class="forge-chips-divider"></span>
             <button
               v-for="f in mineOptions"
               :key="f"
@@ -81,26 +108,26 @@
               @click="items.setMineFilter(f)"
             >{{ t(`forge.mine.${f}`) }}</button>
           </div>
-          <RefreshButton :loading="items.loading.value" :title="t('nav.refresh')" @click="refresh" />
         </div>
 
-        <!-- Search -->
+        <!-- Search: uses the shared search-pill affordance (icon + clear). -->
         <div class="forge-search">
-          <input
+          <SearchInput
             v-model="searchInput"
-            class="forge-search-input"
-            type="search"
             :placeholder="t('forge.searchPlaceholder')"
-            @keyup.enter="items.setQuery(searchInput)"
+            @enter="items.setQuery(searchInput)"
           />
         </div>
 
         <!-- Error card: distinguishes auth / rate-limit / network so the user
              knows what to do. -->
         <div v-if="items.error.value" class="forge-error-card">
-          <div class="forge-error-title">{{ errorTitle(items.error.value.code) }}</div>
-          <div class="forge-error-body">{{ items.error.value.message }}</div>
-          <button class="forge-option" @click="refresh">{{ t('forge.retry') }}</button>
+          <AlertCircle :size="18" class="forge-error-icon" />
+          <div class="forge-error-text">
+            <div class="forge-error-title">{{ errorTitle(items.error.value.code) }}</div>
+            <div class="forge-error-body">{{ items.error.value.message }}</div>
+          </div>
+          <button class="fbtn" @click="refresh">{{ t('forge.retry') }}</button>
         </div>
 
         <div v-else-if="items.loading.value" class="forge-loading">
@@ -108,7 +135,10 @@
         </div>
 
         <div v-else-if="items.items.value.length === 0" class="forge-state">
-          <div class="forge-empty-text">{{ t('forge.emptyList') }}</div>
+          <div class="forge-empty-card">
+            <Inbox :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+            <div class="forge-empty-title">{{ t('forge.emptyList') }}</div>
+          </div>
         </div>
 
         <div v-else class="forge-list" @scroll="onListScroll">
@@ -118,16 +148,22 @@
             class="forge-row"
             @click="openDetail(it)"
           >
-            <div class="forge-row-title">
-              <span class="forge-state-dot" :class="`state-${it.state}`"></span>
-              <span class="forge-row-number">#{{ it.number }}</span>
-              <span class="forge-row-text">{{ it.title }}</span>
+            <span class="forge-state-dot" :class="`state-${it.state}`"></span>
+            <div class="forge-row-main">
+              <div class="forge-row-title">
+                <span class="forge-row-number">#{{ it.number }}</span>
+                <span class="forge-row-text">{{ it.title }}</span>
+              </div>
+              <div class="forge-row-meta">
+                <span class="forge-row-author">{{ it.author }}</span>
+                <span class="forge-row-time">{{ formatTime(it.updatedAt) }}</span>
+                <span v-if="it.commentCount" class="forge-row-comments">
+                  <MessageSquare :size="11" />
+                  {{ it.commentCount }}
+                </span>
+              </div>
             </div>
-            <div class="forge-row-meta">
-              <span class="forge-row-author">{{ it.author }}</span>
-              <span class="forge-row-time">{{ formatTime(it.updatedAt) }}</span>
-              <span v-if="it.commentCount" class="forge-row-comments">{{ it.commentCount }}</span>
-            </div>
+            <ChevronRight :size="16" class="forge-row-chevron" />
           </div>
           <div v-if="items.loadingMore.value" class="forge-loading-more">
             <LoadingIndicator size="sm" />
@@ -154,13 +190,19 @@
         </div>
         <div class="forge-bind-manual">
           <div class="forge-bind-label">{{ t('forge.bind.manual') }}</div>
-          <input v-model="manualUrl" class="forge-search-input" :placeholder="t('forge.bind.urlPlaceholder')" />
-          <button class="forge-option primary" :disabled="!manualUrl" @click="bindFromUrl">
-            {{ t('forge.bind.submit') }}
-          </button>
+          <input v-model="manualUrl" class="forge-input" :placeholder="t('forge.bind.urlPlaceholder')" />
         </div>
-        <div v-if="bindError" class="forge-error-body">{{ bindError }}</div>
+        <div v-if="bindError" class="forge-bind-error">
+          <AlertCircle :size="14" />
+          <span>{{ bindError }}</span>
+        </div>
       </div>
+      <template #footer>
+        <button class="fbtn" @click="bindDialogOpen = false">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" :disabled="!manualUrl" @click="bindFromUrl">
+          {{ t('forge.bind.submit') }}
+        </button>
+      </template>
     </ModalDialog>
   </div>
 </template>
@@ -168,9 +210,14 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import {
+  GitPullRequest, CircleDot, Inbox, MessageSquare,
+  ChevronRight, AlertCircle, FolderGit2,
+} from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import { useForgeItems } from '@/composables/useForge'
 import { fetchForgeRemotes, setForgeBinding, type ForgeRemote, ForgeApiError } from '@/utils/forgeApi'
@@ -307,7 +354,62 @@ function formatTime(iso: string): string {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: var(--bg-primary);
 }
+
+/* ── Panel header — matches every other list page header ── */
+.forge-header {
+  display: flex;
+  align-items: center;
+  height: var(--header-height);
+  padding: 0 4px 0 12px;
+  flex-shrink: 0;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+  gap: 6px;
+}
+.forge-header-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.forge-header-count {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  padding: 1px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+/* Header icon button — same 28px round treatment as .header-btn elsewhere */
+.forge-header-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+@media (hover: hover) {
+  .forge-header-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
+}
+
+/* ── Empty / unbound state cards ── */
 .forge-state {
   display: flex;
   align-items: center;
@@ -316,66 +418,100 @@ function formatTime(iso: string): string {
   flex: 1;
 }
 .forge-card {
-  max-width: 420px;
+  max-width: 340px;
   width: 100%;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background: var(--bg-secondary);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+}
+.forge-card-icon {
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-bottom: 2px;
 }
 .forge-card-header {
-  padding: 14px 16px;
+  font-size: 15px;
   font-weight: 600;
-  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
 }
 .forge-card-body {
-  padding: 14px 16px;
-  color: var(--text-secondary);
-  font-size: 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 .forge-card-options {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 0 16px 16px;
+  margin-top: 10px;
+  width: 100%;
+  align-items: center;
 }
-.forge-option {
-  padding: 10px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  text-align: left;
+
+/* ── Type segmented control ── */
+.forge-toolbar {
+  padding: 8px 12px 0;
+  flex-shrink: 0;
 }
-.forge-option.primary {
-  border-color: var(--accent-color);
-  color: var(--accent-color);
+.forge-toolbar + .forge-toolbar {
+  padding-top: 6px;
 }
-.forge-option:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.forge-segment {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  padding: 3px;
 }
-.forge-filters {
+.forge-segment-btn {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px 0;
-  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
 }
-.forge-filters-second {
-  padding-top: 4px;
+.forge-segment-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
 }
+@media (hover: hover) {
+  .forge-segment-btn:not(.active):hover {
+    color: var(--text-primary);
+  }
+}
+
+/* ── Filter chips ── */
 .forge-chips {
   display: flex;
   gap: 6px;
+  align-items: center;
 }
 .forge-chips-scroll {
   overflow-x: auto;
-  flex: 1;
   scrollbar-width: none;
+  padding-bottom: 2px;
 }
 .forge-chips-scroll::-webkit-scrollbar { display: none; }
+/* Separates the state group from the mine group without a second row. */
+.forge-chips-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border-color);
+  flex-shrink: 0;
+  margin: 0 2px;
+}
 .forge-chip {
   padding: 4px 12px;
   border-radius: 999px;
@@ -383,106 +519,173 @@ function formatTime(iso: string): string {
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
+  line-height: 18px;
   white-space: nowrap;
   cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+@media (hover: hover) {
+  .forge-chip:not(.active):hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+  }
 }
 .forge-chip.active {
   background: var(--accent-color);
   border-color: var(--accent-color);
   color: #fff;
 }
+
+/* ── Search ── */
 .forge-search {
   padding: 8px 12px;
+  flex-shrink: 0;
 }
-.forge-search-input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-}
+
+/* ── Error card ── */
 .forge-error-card {
-  margin: 12px;
-  padding: 14px;
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  background: var(--bg-secondary);
+  margin: 8px 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
 }
+.forge-error-icon {
+  color: var(--color-red);
+  flex-shrink: 0;
+}
+.forge-error-text { flex: 1; min-width: 0; }
 .forge-error-title {
+  font-size: 13px;
   font-weight: 600;
-  margin-bottom: 6px;
+  color: var(--text-primary);
+  margin-bottom: 2px;
 }
 .forge-error-body {
   color: var(--text-secondary);
-  font-size: 13px;
-  margin-bottom: 10px;
+  font-size: 12px;
 }
+
+/* ── Loading / empty ── */
 .forge-loading {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.forge-empty-text {
+.forge-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 24px;
+}
+.forge-empty-icon {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.forge-empty-title {
+  font-size: 14px;
   color: var(--text-muted);
 }
+
+/* ── List ── */
 .forge-list {
   flex: 1;
   overflow-y: auto;
+  border-top: 1px solid var(--border-color);
 }
 .forge-row {
-  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--border-color);
   cursor: pointer;
+  transition: background 0.15s ease;
+}
+@media (hover: hover) {
+  .forge-row:hover {
+    background: var(--bg-secondary);
+  }
 }
 .forge-row:active {
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
+}
+.forge-row-main {
+  flex: 1;
+  min-width: 0;
 }
 .forge-row-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.forge-row-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 .forge-row-number {
   color: var(--text-muted);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.forge-row-text {
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .forge-row-meta {
   display: flex;
+  align-items: center;
   gap: 10px;
   margin-top: 4px;
-  padding-left: 16px;
   color: var(--text-muted);
   font-size: 12px;
 }
+.forge-row-comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.forge-row-chevron {
+  color: var(--text-hint);
+  flex-shrink: 0;
+  align-self: center;
+}
+/* Status dot sits on the title's first-line baseline, not the row's vertical
+   centre (the row is two lines tall). */
 .forge-state-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  margin-top: 6px;
 }
-.forge-state-dot.state-open { background: #2da44e; }
-.forge-state-dot.state-closed { background: #cf222e; }
-.forge-state-dot.state-merged { background: #8250df; }
+.forge-state-dot.state-open { background: var(--color-success); }
+.forge-state-dot.state-closed { background: var(--color-red); }
+.forge-state-dot.state-merged { background: var(--color-purple); }
 .forge-loading-more {
   padding: 12px;
   display: flex;
   justify-content: center;
 }
+
+/* ── Bind dialog ── */
 .forge-bind-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px;
+  gap: 14px;
 }
 .forge-bind-label {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 6px;
 }
@@ -490,17 +693,55 @@ function formatTime(iso: string): string {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  gap: 2px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 9px 12px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
   margin-bottom: 6px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  text-align: left;
+}
+@media (hover: hover) {
+  .forge-remote-row:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    background: var(--bg-secondary);
+  }
 }
 .forge-remote-row:disabled { opacity: 0.5; cursor: not-allowed; }
-.forge-remote-name { font-weight: 600; }
-.forge-remote-url { font-size: 12px; color: var(--text-muted); }
-.forge-bind-manual { display: flex; flex-direction: column; gap: 8px; }
+.forge-remote-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.forge-remote-url {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.forge-bind-manual { display: flex; flex-direction: column; }
+.forge-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.forge-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+.forge-bind-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-red);
+  font-size: 13px;
+}
 </style>

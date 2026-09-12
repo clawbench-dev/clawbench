@@ -141,7 +141,7 @@ describe('ForgePanelContent', () => {
       props: { active: true, projectPath: '' },
       global: globalOpts,
     })
-    await wrapper.find('.forge-option').trigger('click')
+    await wrapper.find('.forge-card-options .fbtn').trigger('click')
     expect(wrapper.emitted('request-project')).toBeTruthy()
   })
 
