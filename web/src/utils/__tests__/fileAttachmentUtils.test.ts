@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, folderRelPath, isDirUploadFile, isUrlEntry } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -241,5 +241,44 @@ describe('URL attachments', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0].kind).toBe('url')
     expect(entries[0].url).toBe('https://github.com/acme/widgets/pull/9')
+  })
+})
+
+describe('buildSendPayload', () => {
+  it('preserves kind/url on a URL attachment end-to-end', () => {
+    // Regression: the send path used to rebuild entries as
+    // {path,isDir,startLine,endLine}, dropping kind/url. The backend then
+    // treated the URL as a local path and rejected the send with 404.
+    const url = { path: 'acme/widgets#9', kind: 'url' as const, url: 'https://github.com/acme/widgets/pull/9' }
+    const { allFiles, filePaths } = buildSendPayload([], [url])
+
+    const urlEntry = allFiles.find(f => f.url === 'https://github.com/acme/widgets/pull/9')
+    expect(urlEntry).toBeDefined()
+    expect(urlEntry?.kind).toBe('url')
+    // A URL must never be sent as a filesystem path.
+    expect(filePaths).not.toContain('acme/widgets#9')
+    expect(filePaths).toHaveLength(0)
+  })
+
+  it('keeps a line-range attachment on the entries channel only', () => {
+    const ranged = { path: '/src/main.go', startLine: 10, endLine: 20 }
+    const { allFiles, filePaths } = buildSendPayload([], [ranged])
+
+    expect(filePaths).not.toContain('/src/main.go')
+    expect(allFiles.some(f => f.path === '/src/main.go' && f.startLine === 10)).toBe(true)
+  })
+
+  it('sends a plain project file through filePaths', () => {
+    const plain = { path: '/src/app.go' }
+    const { filePaths } = buildSendPayload([], [plain])
+    expect(filePaths).toEqual(['/src/app.go'])
+  })
+
+  it('merges uploads and attachments, deduping by entry key', () => {
+    const uploaded = [{ path: '/src/dup.go' }]
+    const attached = [{ path: '/src/dup.go' }]
+    const { allFiles, filePaths } = buildSendPayload(uploaded, attached)
+    expect(filePaths).toEqual(['/src/dup.go'])
+    expect(allFiles).toHaveLength(1)
   })
 })

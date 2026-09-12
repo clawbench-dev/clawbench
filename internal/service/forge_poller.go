@@ -162,6 +162,36 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 			continue
 		}
 		p.limiter.ObserveSuccess(pf.Host)
+
+		// Drop snapshot rows for items this repo no longer returns. Without
+		// this the forge_items table grows forever, since nothing else deletes
+		// from it. Only prune on a comment-inclusive (full) pass, which has
+		// just refreshed every live item's seen_at.
+		if opts.IncludeComments {
+			p.pruneRepo(pf, key)
+		}
+	}
+}
+
+// forgeSnapshotRetention is how long a snapshot row may go unseen before it is
+// pruned. It must comfortably exceed the slowest poll interval so a repo that
+// is briefly unreachable is not mistaken for one whose items were deleted.
+const forgeSnapshotRetention = 30 * 24 * time.Hour
+
+// pruneRepo deletes snapshots for items no longer present upstream. A failure is
+// logged, never fatal: the next cycle retries.
+func (p *ForgePoller) pruneRepo(pf ProjectForge, key string) {
+	repoKey := ForgeRepoKey{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
+	cutoff := p.now().Add(-forgeSnapshotRetention)
+	removed, err := PruneForgeItems(repoKey, cutoff)
+	if err != nil {
+		slog.Warn("forge poller: prune snapshots failed",
+			slog.String("repo", key), slog.String("err", err.Error()))
+		return
+	}
+	if removed > 0 {
+		slog.Info("forge poller: pruned stale snapshots",
+			slog.String("repo", key), slog.Int64("removed", removed))
 	}
 }
 

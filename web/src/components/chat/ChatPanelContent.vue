@@ -193,7 +193,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { dedupeFiles, buildSendChannels } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -852,13 +852,10 @@ async function sendMessage(text) {
      }
 
     // Build file paths and entries from attachedFiles (unified channel).
-    // Paths carrying a line-range reference must go through the entries
-    // channel ONLY (never filePaths) or the backend would strip their ranges.
-    // Uploaded files always travel through the entries channel.
-    const uploadedFiles = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
-    const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
-    const allFiles = dedupeFiles([...uploadedFiles, ...projectFiles])
-    const { filePaths } = buildSendChannels(projectFiles)
+    // buildSendPayload preserves kind/url on URL attachments and routes
+    // line-range entries through the entries channel only (never filePaths) or
+    // the backend would strip their ranges.
+    const { allFiles, filePaths } = buildSendPayload(pendingFiles.value, attachedFiles.value)
 
     // Clear input state before async request
     clearAll()

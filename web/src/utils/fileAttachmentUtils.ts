@@ -77,6 +77,28 @@ export function dedupeFiles(files: FileEntry[]): FileEntry[] {
 }
 
 /**
+ * Build the attachment payload for a send from the two attachment sources.
+ *
+ * `uploaded` are in-flight uploads (path only); `attached` are context
+ * attachments, which may carry line ranges OR be URL entries (kind='url').
+ * Entries must be spread through unchanged — rebuilding them field-by-field
+ * drops kind/url and turns a URL into a bogus local path that the backend
+ * rejects with 404.
+ *
+ * Returns the deduped entry list plus the legacy filePaths channel.
+ */
+export function buildSendPayload(
+  uploaded: FileEntry[],
+  attached: FileEntry[],
+): { allFiles: FileEntry[]; filePaths: string[] } {
+  const uploadedEntries = uploaded.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
+  const attachedEntries = attached.map(f => ({ ...f, isDir: f.isDir ?? false }))
+  const allFiles = dedupeFiles([...uploadedEntries, ...attachedEntries])
+  const { filePaths } = buildSendChannels(attachedEntries)
+  return { allFiles, filePaths }
+}
+
+/**
  * Split attachments into the two backend channels.
  *
  * The backend cross-deduplicates: a `Files` entry whose path is also in

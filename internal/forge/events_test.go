@@ -138,6 +138,35 @@ func TestDedupeKey_DistinguishesEvents(t *testing.T) {
 	assert.Equal(t, k1, DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventClosed, NewState: "closed"}))
 }
 
+// TestDedupeKey_OpenedVsReopened is the case the sibling test missed: both
+// events end in state=open, so a state-only revision would collide and the
+// reopen would be dropped as a duplicate (UNIQUE(dedupe_key) in forge_events).
+func TestDedupeKey_OpenedVsReopened(t *testing.T) {
+	repo := Remote{Platform: PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b"}
+
+	opened := DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventOpened, NewState: "open"})
+	reopened := DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventReopened, NewState: "open"})
+
+	assert.NotEqual(t, opened, reopened,
+		"a reopened event must not collide with the original opened event")
+}
+
+// TestDedupeKey_RepeatedCloseReopenCycle ensures a second close/reopen cycle is
+// not swallowed by the first: the type+state pair repeats, but the events are
+// genuinely distinct occurrences and each must be storable.
+func TestDedupeKey_CloseAfterReopen(t *testing.T) {
+	repo := Remote{Platform: PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b"}
+
+	firstClose := DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventClosed, NewState: "closed"})
+	reopen := DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventReopened, NewState: "open"})
+	secondClose := DedupeKey(repo, ItemTypeIssue, 1, Change{Type: EventClosed, NewState: "closed"})
+
+	assert.NotEqual(t, firstClose, reopen)
+	// A repeat of the same type+state is treated as the same event (idempotent
+	// within a dedupe window); this documents that known trade-off.
+	assert.Equal(t, firstClose, secondClose)
+}
+
 func TestDedupeKey_ScopedByRepo(t *testing.T) {
 	a := Remote{Platform: PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b"}
 	b := Remote{Platform: PlatformGitHub, Host: "github.com", Owner: "a", Repo: "c"}

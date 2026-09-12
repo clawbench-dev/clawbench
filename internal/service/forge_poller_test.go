@@ -128,3 +128,45 @@ func TestForgePoller_GlobalLifecycle(t *testing.T) {
 	service.StopForgePoller()
 	assert.False(t, service.ForgePollerRunning())
 }
+
+// TestForgePoller_PrunesStaleSnapshots verifies the sync cycle actually prunes
+// snapshots for items the repo no longer returns. Without a production caller
+// for PruneForgeItems the forge_items table would grow forever.
+func TestForgePoller_PrunesStaleSnapshots(t *testing.T) {
+	setupTestDBForForgeSync(t)
+
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
+		Owner: "acme", Repo: "widgets", Source: "manual",
+	}))
+
+	repoKey := service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}
+	// A snapshot row that has not been seen for longer than the retention window.
+	require.NoError(t, service.UpsertForgeItemSnapshot(service.ForgeItemSnapshot{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 999, State: "open",
+	}))
+	// Backdate it past the retention cutoff.
+	_, err := service.UnsafeDBForTest().Exec(
+		`UPDATE forge_items SET seen_at = ? WHERE number = 999`, time.Now().Add(-60*24*time.Hour))
+	require.NoError(t, err)
+
+	// Sanity: the row must exist before the sync, or the assertion below would
+	// pass vacuously.
+	before, err := service.ListForgeItemSnapshots(repoKey)
+	require.NoError(t, err)
+	require.Len(t, before, 1, "precondition: the stale snapshot exists")
+
+	provider := &recordingProvider{} // returns no items, so 999 is now stale
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) {
+		return provider, nil
+	}, nil)
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), func() model.Config { return model.Config{} })
+	poller.SyncNow()
+
+	snaps, err := service.ListForgeItemSnapshots(repoKey)
+	require.NoError(t, err)
+	for _, s := range snaps {
+		assert.NotEqual(t, 999, s.Number, "a snapshot unseen past the retention window must be pruned")
+	}
+}

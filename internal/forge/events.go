@@ -164,19 +164,23 @@ func deriveCommentChange(prev *Snapshot, cur ItemState) bool {
 }
 
 // DedupeKey builds a stable identity for an event so the same event is never
-// dispatched twice. It combines the item identity, the event type, and a
-// revision discriminator (state or comment id) rather than relying on
-// timestamps, which can collide at second granularity.
+// dispatched twice. It combines the item identity, the event TYPE, and a
+// revision discriminator rather than relying on timestamps, which can collide
+// at second granularity.
+//
+// The event type must be part of the key: `opened` and `reopened` both end in
+// state=open, so a state-only revision would make a later reopen collide with
+// the original open and be dropped as a duplicate.
 func DedupeKey(repo Remote, itemType ItemType, number int, ev Change) string {
-	revision := string(ev.Type)
+	revision := ""
 	switch ev.Type {
 	case EventCommented:
 		revision = fmt.Sprintf("comment:%d", ev.CommentID)
-	case EventOpened, EventClosed, EventMerged, EventReopened:
+	default:
 		revision = fmt.Sprintf("state:%s", ev.NewState)
 	}
-	return fmt.Sprintf("%s|%s|%s|%s|%d|%s|%s",
-		repo.Platform, repo.Host, repo.Owner, repo.Repo, number, itemType, revision)
+	return fmt.Sprintf("%s|%s|%s|%s|%d|%s|%s|%s",
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, number, itemType, string(ev.Type), revision)
 }
 
 // StateRank orders terminal states so a multi-transition interval can pick the

@@ -182,3 +182,65 @@ func TestPerPageClamped(t *testing.T) {
 	assert.Equal(t, 100, perPageOrDefault(500))
 	assert.Equal(t, 50, perPageOrDefault(50))
 }
+
+// TestListItems_SearchUsesSearchAPI guards that a text query is actually sent:
+// the repo-scoped list endpoints have no text parameter, so search must go
+// through /search/issues. Silently ignoring the query made the search box look
+// broken (it returned the unfiltered list).
+func TestListItems_SearchUsesSearchAPI(t *testing.T) {
+	var gotQuery string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/search/issues")
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":1,"items":[{"number":7,"title":"Fix crash","state":"open","html_url":"https://github.com/acme/widgets/issues/7","user":{"login":"alice"}}]}`))
+	}))
+
+	res, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: "open", Query: "crash",
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.Equal(t, 7, res.Items[0].Number)
+	assert.Equal(t, "Fix crash", res.Items[0].Title)
+
+	// The query must be scoped to this repo and to issues only.
+	assert.Contains(t, gotQuery, "crash")
+	assert.Contains(t, gotQuery, "repo:acme/widgets")
+	assert.Contains(t, gotQuery, "is:issue")
+	assert.NotContains(t, gotQuery, "is:pr")
+}
+
+// TestListItems_SearchPullsScopesToPRs verifies the PR tab's search is scoped to
+// PRs so the two tabs stay disjoint.
+func TestListItems_SearchPullsScopesToPRs(t *testing.T) {
+	var gotQuery string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"total_count":0,"items":[]}`))
+	}))
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeChangeRequest, State: "open", Query: "fix",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, gotQuery, "is:pr")
+	assert.NotContains(t, gotQuery, "is:issue")
+}
+
+// TestListItems_NoQueryUsesListEndpoint ensures the normal (unsearched) path is
+// unchanged.
+func TestListItems_NoQueryUsesListEndpoint(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NotContains(t, r.URL.Path, "/search/")
+		assert.Contains(t, r.URL.Path, "/repos/acme/widgets/issues")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: "open",
+	})
+	require.NoError(t, err)
+}

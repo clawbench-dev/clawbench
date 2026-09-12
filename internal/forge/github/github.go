@@ -75,6 +75,9 @@ func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge
 }
 
 func (p *Provider) listIssues(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	if opts.Query != "" {
+		return p.searchItems(ctx, opts, false)
+	}
 	lo := &gogithub.IssueListByRepoOptions{
 		State:     stateParam(opts.State),
 		Sort:      opts.Sort,
@@ -103,7 +106,59 @@ func (p *Provider) listIssues(ctx context.Context, opts forge.ListOptions) (forg
 	return listResult(items, resp), nil
 }
 
+// searchItems runs a text search scoped to this repo via GitHub's search API.
+// The repo-scoped list endpoints have no text parameter, so search must go
+// through /search/issues. `isPR` selects which half of the result to keep.
+func (p *Provider) searchItems(ctx context.Context, opts forge.ListOptions, isPR bool) (forge.ListResult, error) {
+	// Scope the query to this repository and to the requested half (issues vs
+	// PRs) so the two tabs stay disjoint, mirroring the list endpoints.
+	kind := "is:issue"
+	if isPR {
+		kind = "is:pr"
+	}
+	q := fmt.Sprintf("%s repo:%s/%s %s", kind, p.owner, p.repo, opts.Query)
+	if s := stateParam(opts.State); s != "" && s != "all" {
+		q += " state:" + s
+	}
+
+	so := &gogithub.SearchOptions{
+		Sort:  searchSortParam(opts.Sort),
+		Order: opts.Direction,
+		ListOptions: gogithub.ListOptions{
+			Page:    pageOrDefault(opts.Page),
+			PerPage: perPageOrDefault(opts.PerPage),
+		},
+	}
+	res, resp, err := p.client.Search.Issues(ctx, q, so)
+	if err != nil {
+		return forge.ListResult{}, wrapErr(err)
+	}
+	items := make([]forge.Item, 0, len(res.Issues))
+	for _, iss := range res.Issues {
+		if isPR {
+			items = append(items, convertIssueAsPull(iss))
+		} else {
+			items = append(items, convertIssue(iss))
+		}
+	}
+	return listResult(items, resp), nil
+}
+
+// searchSortParam maps the generic sort field to the search API's accepted
+// values (best-match is the default and is expressed as an empty string).
+func searchSortParam(sort string) string {
+	switch sort {
+	case "updated", "created", "comments":
+		return sort
+	default:
+		return ""
+	}
+}
+
 func (p *Provider) listPulls(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
+	if opts.Query != "" {
+		return p.searchItems(ctx, opts, true)
+	}
 	lo := &gogithub.PullRequestListOptions{
 		State:     stateParam(opts.State),
 		Sort:      pullSortParam(opts.Sort),
@@ -227,6 +282,16 @@ func convertPull(pr *gogithub.PullRequest) forge.Item {
 			item.MergedAt = &tt
 		}
 	}
+	return item
+}
+
+// convertIssueAsPull adapts a search-result Issue that is actually a PR. The
+// search API returns both under the issue shape, which omits the merged flag,
+// so a merged PR surfaces as "closed" here — acceptable for list rendering,
+// and the detail view re-fetches via GetItem for exact state.
+func convertIssueAsPull(iss *gogithub.Issue) forge.Item {
+	item := convertIssue(iss)
+	item.Type = forge.ItemTypeChangeRequest
 	return item
 }
 
