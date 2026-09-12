@@ -198,23 +198,39 @@
          bare v-if would leave the dialog permanently unrendered. -->
     <ModalDialog :open="bindDialogOpen" :title="t('forge.bind.title')" @close="bindDialogOpen = false">
       <div class="forge-bind-form">
-        <div v-if="remotes.length" class="forge-bind-remotes">
+        <div v-if="remotes.length" class="forge-bind-section">
           <div class="forge-bind-label">{{ t('forge.bind.fromRemote') }}</div>
-          <button
-            v-for="r in remotes"
-            :key="r.name + r.url"
-            class="forge-remote-row"
-            :disabled="!r.slug"
-            @click="bindFromRemote(r)"
-          >
-            <span class="forge-remote-name">{{ r.name }}</span>
-            <span class="forge-remote-url">{{ r.slug || r.url }}</span>
-          </button>
+          <div class="forge-bind-remotes">
+            <button
+              v-for="r in remotes"
+              :key="r.name + r.url"
+              class="forge-remote-row"
+              :disabled="!r.slug"
+              :title="r.slug || r.url"
+              @click="bindFromRemote(r)"
+            >
+              <Github :size="15" class="forge-remote-icon" />
+              <span class="forge-remote-text">
+                <span class="forge-remote-name">{{ r.name }}</span>
+                <span class="forge-remote-url">{{ r.slug || r.url }}</span>
+              </span>
+              <ChevronRight :size="15" class="forge-remote-chevron" />
+            </button>
+          </div>
         </div>
-        <div class="forge-bind-manual">
+
+        <div v-if="remotes.length" class="forge-bind-divider" />
+
+        <div class="forge-bind-section">
           <div class="forge-bind-label">{{ t('forge.bind.manual') }}</div>
-          <input v-model="manualUrl" class="forge-input" :placeholder="t('forge.bind.urlPlaceholder')" />
+          <input
+            v-model="manualUrl"
+            class="forge-input"
+            :placeholder="t('forge.bind.urlPlaceholder')"
+            @keyup.enter="manualUrl && bindFromUrl()"
+          />
         </div>
+
         <div v-if="bindError" class="forge-bind-error">
           <AlertCircle :size="14" />
           <span>{{ bindError }}</span>
@@ -793,25 +809,38 @@ function formatTime(iso: string): string {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* ModalDialog's .modal-body ships with no padding of its own, so the content
+     supplies it — without this the form sits flush against the card edges. */
+  padding: 14px 16px 16px;
+}
+.forge-bind-section {
+  display: flex;
+  flex-direction: column;
 }
 .forge-bind-label {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-muted);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
-.forge-remote-row {
+.forge-bind-remotes {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  gap: 6px;
+}
+/* A remote row reads as one tappable object: brand mark, a two-line
+   name/url stack, and a chevron signalling it commits a choice. */
+.forge-remote-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--bg-primary);
   color: var(--text-primary);
   cursor: pointer;
-  margin-bottom: 6px;
   transition: border-color 0.15s ease, background 0.15s ease;
   text-align: left;
 }
@@ -820,27 +849,65 @@ function formatTime(iso: string): string {
     border-color: var(--accent-color);
     background: var(--bg-secondary);
   }
+  .forge-remote-row:hover:not(:disabled) .forge-remote-chevron {
+    color: var(--accent-color);
+  }
 }
-.forge-remote-row:disabled { opacity: 0.5; cursor: not-allowed; }
+.forge-remote-row:active:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+.forge-remote-row:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.forge-remote-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.forge-remote-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
 .forge-remote-name {
   font-size: 13px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 .forge-remote-url {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.forge-bind-manual { display: flex; flex-direction: column; }
+.forge-remote-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+/* Separates the "pick a remote" shortcut from the manual URL fallback without
+   another full-weight heading. */
+.forge-bind-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: -2px 0;
+}
 .forge-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 12px;
+  padding: 9px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 13px;
+}
+.forge-input::placeholder {
+  color: var(--text-muted);
 }
 .forge-input:focus {
   outline: none;
@@ -851,7 +918,11 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-red) 8%, transparent);
   color: var(--color-red);
-  font-size: 13px;
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 </style>
