@@ -67,27 +67,26 @@
           />
         </div>
 
-        <!-- Type is a mutually-exclusive segmented control (like the app's
-             summary toggle); state/mine are independent filters. -->
-        <div class="forge-toolbar">
-          <div class="forge-segment">
-            <button
-              class="forge-segment-btn"
-              :class="{ active: items.type.value === 'issue' }"
-              @click="items.setType('issue')"
-            >
-              <CircleDot :size="13" />
-              <span>{{ t('forge.type.issues') }}</span>
-            </button>
-            <button
-              class="forge-segment-btn"
-              :class="{ active: items.type.value === 'pr' }"
-              @click="items.setType('pr')"
-            >
-              <GitPullRequest :size="13" />
-              <span>{{ t('forge.type.prs') }}</span>
-            </button>
-          </div>
+        <!-- Type switch: page tabs, matching the stats panel tab bar
+             (connected rectangular tabs with a bottom accent underline).
+             State/mine below are independent filters, so they stay as chips. -->
+        <div class="forge-tabs">
+          <button
+            class="forge-tab"
+            :class="{ active: items.type.value === 'issue' }"
+            @click="items.setType('issue')"
+          >
+            <CircleDot :size="13" />
+            <span>{{ t('forge.type.issues') }}</span>
+          </button>
+          <button
+            class="forge-tab"
+            :class="{ active: items.type.value === 'pr' }"
+            @click="items.setType('pr')"
+          >
+            <GitPullRequest :size="13" />
+            <span>{{ t('forge.type.prs') }}</span>
+          </button>
         </div>
 
         <div class="forge-toolbar">
@@ -450,46 +449,58 @@ function formatTime(iso: string): string {
   align-items: center;
 }
 
-/* ── Type segmented control ── */
-.forge-toolbar {
-  padding: 8px 12px 0;
-  flex-shrink: 0;
-}
-.forge-toolbar + .forge-toolbar {
-  padding-top: 6px;
-}
-.forge-segment {
+/* ── Type tabs — same treatment as the stats panel tab bar (connected
+   rectangular tabs, active gets a tinted background + bottom accent line) ── */
+.forge-tabs {
   display: flex;
-  gap: 2px;
+  align-items: stretch;
+  height: 34px;
+  flex-shrink: 0;
   background: var(--bg-secondary);
-  border-radius: var(--radius-sm);
-  padding: 3px;
+  border-bottom: 1px solid var(--border-color);
 }
-.forge-segment-btn {
-  flex: 1;
+.forge-tab {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 0 16px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
-}
-.forge-segment-btn.active {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
 @media (hover: hover) {
-  .forge-segment-btn:not(.active):hover {
+  .forge-tab:hover {
+    background: var(--bg-tertiary);
     color: var(--text-primary);
   }
+}
+.forge-tab.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.forge-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent-color);
+}
+
+/* Filter rows sit under the tab bar. */
+.forge-toolbar {
+  padding: 8px 12px 0;
+  flex-shrink: 0;
 }
 
 /* ── Filter chips ── */

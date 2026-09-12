@@ -6,7 +6,7 @@ vi.mock('@/utils/forgeApi', () => ({
   fetchForgeBinding: (...a: unknown[]) => mockFetchBinding(...a),
 }))
 
-import { useForgeBinding, setForgeBindingState } from '@/composables/useForgeBinding'
+import { useForgeBinding, setForgeBindingState, forgeDockIconKind } from '@/composables/useForgeBinding'
 
 describe('useForgeBinding', () => {
   beforeEach(() => {
@@ -48,5 +48,23 @@ describe('useForgeBinding', () => {
     expect(platform.value).toBe('gitlab')
     setForgeBindingState(null)
     expect(platform.value).toBe('')
+  })
+})
+
+describe('forgeDockIconKind', () => {
+  it('defaults to GitHub when nothing is bound', () => {
+    expect(forgeDockIconKind('')).toBe('github')
+  })
+
+  it('uses GitHub for a bound GitHub repository', () => {
+    expect(forgeDockIconKind('github')).toBe('github')
+  })
+
+  it('switches to GitLab only for a bound GitLab repository', () => {
+    expect(forgeDockIconKind('gitlab')).toBe('gitlab')
+  })
+
+  it('treats an unrecognized platform as GitHub rather than blank', () => {
+    expect(forgeDockIconKind('bitbucket')).toBe('github')
   })
 })

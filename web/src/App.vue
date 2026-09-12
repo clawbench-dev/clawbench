@@ -553,7 +553,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
-import { useForgeBinding } from './composables/useForgeBinding.ts'
+import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
@@ -1938,13 +1938,11 @@ watch(() => localConfig.uiScale, () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
-  // The forge tab serves both GitHub and GitLab, so its icon follows the bound
-  // platform instead of always showing one brand. Falls back to the neutral
-  // pull-request glyph when nothing is bound.
+  // The forge tab serves both GitHub and GitLab. GitHub is the default brand
+  // (including before a repository is bound); the icon only switches to GitLab
+  // once a GitLab repository is actually bound.
   if (tab === 'forge') {
-    if (forgePlatform.value === 'github') return Github
-    if (forgePlatform.value === 'gitlab') return Gitlab
-    return GitPullRequest
+    return forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github
   }
   return overflowTabMeta[tab]?.icon ?? Clock
 }
@@ -2123,6 +2121,9 @@ const wideScreenTabMeta = {
 }
 
 function wideDockTabIcon(tab) {
+  // Route forge through the same platform-aware logic as the compact dock, so
+  // the wide-screen dock shows the GitHub/GitLab brand too.
+  if (tab === 'forge') return dockTabIcon('forge')
   return wideScreenTabMeta[tab]?.icon ?? FolderOpen
 }
 function wideDockTabTitle(tab) {

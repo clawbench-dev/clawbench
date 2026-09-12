@@ -171,6 +171,44 @@ describe('ForgePanelContent', () => {
     expect(wrapper.find('.forge-row').exists()).toBe(true)
   })
 
+  it('renders the type switch as page tabs (stats-style), not a segmented control', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    // Two connected page tabs, matching the stats panel tab bar.
+    expect(wrapper.find('.forge-tabs').exists()).toBe(true)
+    const tabs = wrapper.findAll('.forge-tab')
+    expect(tabs).toHaveLength(2)
+    // The retired segmented-control markup must be gone.
+    expect(wrapper.find('.forge-segment').exists()).toBe(false)
+    expect(wrapper.find('.forge-segment-btn').exists()).toBe(false)
+  })
+
+  it('marks only the active type tab', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    state.type.value = 'issue'
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    let tabs = wrapper.findAll('.forge-tab')
+    expect(tabs[0].classes()).toContain('active')
+    expect(tabs[1].classes()).not.toContain('active')
+
+    // setType is a spy in this harness (it does not mutate state), so assert
+    // the click is routed to the right setter rather than the resulting state.
+    await tabs[1].trigger('click')
+    expect(mockSetType).toHaveBeenCalledWith('pr')
+  })
+
   it('shows the error card with a retry action on failure', async () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
     state.isBound.value = true

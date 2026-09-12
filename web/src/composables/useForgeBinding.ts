@@ -23,6 +23,17 @@ export function setForgeBindingState(binding: { platform?: string; host?: string
 }
 
 /**
+ * forgeDockIconKind decides which brand icon the forge dock tab shows.
+ *
+ * GitHub is the default — including before any repository is bound, since the
+ * tab exists regardless of binding. Only an actually-bound GitLab repository
+ * switches it to the GitLab mark.
+ */
+export function forgeDockIconKind(currentPlatform: string): 'github' | 'gitlab' {
+    return currentPlatform === 'gitlab' ? 'gitlab' : 'github'
+}
+
+/**
  * useForgeBinding exposes which forge the current project is bound to.
  *
  * The dock icon uses this to show the GitHub logo for github.com and the
