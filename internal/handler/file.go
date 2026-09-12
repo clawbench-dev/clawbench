@@ -117,51 +117,6 @@ func ListDir(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListFiles returns all files in the project directory recursively.
-func ListFiles(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
-	var files []FileInfo
-	err := filepath.Walk(projectPath, func(fullPath string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // skip inaccessible files
-		}
-		if info.IsDir() {
-			return nil
-		}
-		relPath, err := filepath.Rel(projectPath, fullPath)
-		if err != nil {
-			return nil //nolint:nilerr // skip files with invalid relative paths
-		}
-		entryType := "file"
-		if model.IsImageFile(info.Name()) {
-			entryType = "image"
-		}
-		files = append(files, FileInfo{
-			Name:      info.Name(),
-			Path:      filepath.ToSlash(relPath),
-			Modified:  info.ModTime().Format("2006-01-02T15:04:05Z07:00"),
-			Size:      info.Size(),
-			Type:      entryType,
-			Supported: model.IsSupportedFile(info.Name()),
-		})
-		return nil
-	})
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Cannot access directory"})
-		return
-	}
-
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Name < files[j].Name
-	})
-
-	writeJSON(w, http.StatusOK, files)
-}
-
 // FileTreeEntry is a single file in a directory-tree listing, with a path
 // relative to the queried directory (for tree reconstruction on download).
 type FileTreeEntry struct {
@@ -877,16 +832,6 @@ type DirEntry struct {
 	Supported bool   `json:"supported"`
 	Symlink   bool   `json:"symlink,omitempty"`
 	Broken    bool   `json:"broken,omitempty"`
-}
-
-// FileInfo represents file information in API responses
-type FileInfo struct {
-	Name      string `json:"name"`
-	Path      string `json:"path"`
-	Modified  string `json:"modified"`
-	Size      int64  `json:"size"`
-	Type      string `json:"type"`
-	Supported bool   `json:"supported"`
 }
 
 // FileContent represents file content in API responses

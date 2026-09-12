@@ -195,9 +195,6 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Appearance.Bing.Mkt != "zh-CN" {
 		t.Errorf("Appearance.Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
 	}
-	if cfg.Appearance.WallpaperFile != "" {
-		t.Errorf("Appearance.WallpaperFile = %q, want empty (no legacy wallpaper)", cfg.Appearance.WallpaperFile)
-	}
 }
 
 // seedExistingInstall marks the current DataDir as a pre-existing installation
@@ -209,19 +206,6 @@ func seedExistingInstall(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(DataDir, "ClawBench.db"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("seed db marker: %v", err)
-	}
-}
-
-// seedThemeFile writes a file into <DataDir>/theme so legacy-wallpaper adoption
-// (which now verifies the file still exists) has something to find.
-func seedThemeFile(t *testing.T, name string) {
-	t.Helper()
-	themeDir := filepath.Join(DataDir, "theme")
-	if err := os.MkdirAll(themeDir, 0o755); err != nil {
-		t.Fatalf("create theme dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(themeDir, name), []byte("png"), 0o644); err != nil {
-		t.Fatalf("seed theme file: %v", err)
 	}
 }
 
@@ -327,105 +311,6 @@ func TestApplyDefaultsExistingInstallWithoutConfigFile(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultsMigratesLegacyWallpaperFileToGallery ensures the pre-gallery
-// single-file wallpaper stays selectable after the upgrade.
-func TestApplyDefaultsMigratesLegacyWallpaperFileToGallery(t *testing.T) {
-	setupTestBinDir(t)
-	seedExistingInstall(t)
-	seedThemeFile(t, "background.png")
-
-	cfg := Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
-
-	if cfg.Appearance.WallpaperMode != "local" {
-		t.Errorf("WallpaperMode = %q, want local", cfg.Appearance.WallpaperMode)
-	}
-	if !cfg.Appearance.WallpaperEnabled {
-		t.Error("WallpaperEnabled = false, want true (an existing wallpaper stays visible)")
-	}
-	if cfg.Appearance.Local.Selected != "background.png" {
-		t.Errorf("Local.Selected = %q, want background.png", cfg.Appearance.Local.Selected)
-	}
-	if len(cfg.Appearance.Local.Items) != 1 {
-		t.Fatalf("Local.Items length = %d, want 1", len(cfg.Appearance.Local.Items))
-	}
-	if cfg.Appearance.Local.Items[0].File != "background.png" {
-		t.Errorf("Local.Items[0].File = %q, want background.png", cfg.Appearance.Local.Items[0].File)
-	}
-	// The legacy field is retained so the old endpoint keeps working.
-	if cfg.Appearance.WallpaperFile != "background.png" {
-		t.Errorf("WallpaperFile = %q, want it retained", cfg.Appearance.WallpaperFile)
-	}
-}
-
-// TestApplyDefaultsMigrationIsIdempotent guards against duplicating the gallery
-// entry when the migrated config is loaded again.
-func TestApplyDefaultsMigrationIsIdempotent(t *testing.T) {
-	setupTestBinDir(t)
-	seedExistingInstall(t)
-	seedThemeFile(t, "background.png")
-
-	cfg := Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
-
-	if len(cfg.Appearance.Local.Items) != 1 {
-		t.Errorf("Local.Items length = %d, want 1 after a second pass", len(cfg.Appearance.Local.Items))
-	}
-}
-
-// TestApplyDefaultsDoesNotResurrectDeletedLegacyWallpaper covers the upgrade
-// path after the user deleted the migrated image: the file is gone from disk,
-// so re-adopting it would leave the config pointing at a missing file (a
-// permanently broken wallpaper that the client still tries to display).
-func TestApplyDefaultsDoesNotResurrectDeletedLegacyWallpaper(t *testing.T) {
-	setupTestBinDir(t)
-	seedExistingInstall(t)
-
-	// Note: no theme/background.png on disk.
-	cfg := Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
-
-	if len(cfg.Appearance.Local.Items) != 0 {
-		t.Errorf("Local.Items = %v, want empty (file is gone)", cfg.Appearance.Local.Items)
-	}
-	if cfg.Appearance.WallpaperMode == "local" {
-		t.Error("WallpaperMode = local, want unchanged when the legacy file no longer exists")
-	}
-}
-
-// TestApplyDefaultsAdoptsLegacyWallpaperThatStillExists is the counterpart: a
-// legacy wallpaper whose file is present must still be adopted.
-func TestApplyDefaultsAdoptsLegacyWallpaperThatStillExists(t *testing.T) {
-	setupTestBinDir(t)
-	seedExistingInstall(t)
-
-	themeDir := filepath.Join(DataDir, "theme")
-	if err := os.MkdirAll(themeDir, 0o755); err != nil {
-		t.Fatalf("mkdir theme: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(themeDir, "background.png"), []byte("png"), 0o644); err != nil {
-		t.Fatalf("seed legacy wallpaper: %v", err)
-	}
-
-	cfg := Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_file": true})
-
-	if len(cfg.Appearance.Local.Items) != 1 {
-		t.Fatalf("Local.Items = %v, want the legacy wallpaper adopted", cfg.Appearance.Local.Items)
-	}
-	if cfg.Appearance.Local.Selected != "background.png" {
-		t.Errorf("Selected = %q, want background.png", cfg.Appearance.Local.Selected)
-	}
-	if cfg.Appearance.WallpaperMode != "local" {
-		t.Errorf("WallpaperMode = %q, want local", cfg.Appearance.WallpaperMode)
-	}
-}
-
 func TestIsFreshInstall(t *testing.T) {
 	setupTestBinDir(t)
 
@@ -483,19 +368,14 @@ func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
 
 	cfg := Config{}
 	cfg.Appearance.PanelOpacity = 0.7
-	cfg.Appearance.WallpaperFile = "background.png"
 
 	ApplyDefaults(&cfg, map[string]bool{
-		"appearance":                true,
-		"appearance.panel_opacity":  true,
-		"appearance.wallpaper_file": true,
+		"appearance":               true,
+		"appearance.panel_opacity": true,
 	})
 
 	if cfg.Appearance.PanelOpacity != 0.7 {
 		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
-	}
-	if cfg.Appearance.WallpaperFile != "background.png" {
-		t.Errorf("Appearance.WallpaperFile = %q, want %q (explicitly set)", cfg.Appearance.WallpaperFile, "background.png")
 	}
 }
 

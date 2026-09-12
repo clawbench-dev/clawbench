@@ -21,6 +21,7 @@
  */
 
 import { appLog } from '@/utils/appLog'
+import { buildLocalFileUrl } from '@/utils/download'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
 
 export type WallpaperState = 'unknown' | 'set' | 'unset'
@@ -37,20 +38,18 @@ let lastImageUrl: string | null = null
 let imageUrlNonce = 0
 
 /**
- * Build the wallpaper image URL. Only meaningful when a wallpaper file is set;
- * otherwise returns an empty string.
+ * Build the wallpaper image URL for a bare file name (the server-resolved
+ * `active_file`). Only meaningful when a wallpaper file is set; otherwise
+ * returns an empty string.
+ *
+ * Served from the gallery/Bing image endpoint, which resolves the name to its
+ * theme subdirectory (local/ or bing/) — the same endpoint gallery thumbnails
+ * use, so unprefixed legacy names are no longer a special case.
  */
-function buildImageUrl(): string {
+function buildImageUrl(file: string): string {
+  if (!file) return ''
   imageUrlNonce += 1
-  return `/api/file/theme-background?v=${Date.now()}-${imageUrlNonce}`
-}
-
-/**
- * URL of the served wallpaper image, including a version query for cache busting.
- * Served from the active-wallpaper endpoint, which follows the current mode.
- */
-export function wallpaperImageUrl(): string {
-  return buildImageUrl()
+  return `/api/file/theme-wallpaper?name=${encodeURIComponent(file)}&v=${Date.now()}-${imageUrlNonce}`
 }
 
 /**
@@ -131,10 +130,10 @@ export function wallpaperScrim(dark: boolean): string {
 export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): string {
   const active = !!wallpaperFile
   if (wallpaperFile !== lastAppliedFile) {
-    lastImageUrl = active ? buildImageUrl() : null
+    lastImageUrl = active ? buildImageUrl(wallpaperFile) : null
     lastAppliedFile = wallpaperFile
   } else if (forceBust && active) {
-    lastImageUrl = buildImageUrl()
+    lastImageUrl = buildImageUrl(wallpaperFile)
   }
   return lastImageUrl ?? ''
 }
@@ -189,17 +188,15 @@ export function applyWallpaperScrim(dark: boolean): void {
  * Resolve the wallpaper tri-state against the current server config.
  * The `appearance` section exists only after GET /api/config completes.
  *
- * The server resolves which image is active (mode + enabled + selection), so
- * the client reads `active_file` rather than reimplementing that precedence.
- * `wallpaper_file` is the legacy single-file field, still honoured for configs
- * served by an older backend.
+ * The server resolves which image is active (mode + enabled + selection) and
+ * exposes it as `active_file`, so the client reads that rather than
+ * reimplementing the precedence.
  */
 export function resolveWallpaperState(appearance: Record<string, unknown> | undefined): WallpaperState {
   if (!appearance) return 'unknown'
-  // `active_file` is authoritative, but an older backend only sends the legacy
-  // `wallpaper_file`. Treat "neither key present" as unknown rather than
-  // "no wallpaper", so the UI does not briefly show an empty state.
-  if (appearance.active_file === undefined && appearance.wallpaper_file === undefined) return 'unknown'
+  // Treat "key absent" as unknown rather than "no wallpaper", so the UI does
+  // not briefly show an empty state while config is still loading.
+  if (appearance.active_file === undefined) return 'unknown'
   return resolveActiveFile(appearance) ? 'set' : 'unset'
 }
 
@@ -222,16 +219,13 @@ export function resolveWallpaperEnabled(appearance: Record<string, unknown> | un
 /**
  * Bare name of the wallpaper currently displayed, or '' when none is active.
  *
- * `active_file` is authoritative whenever the server sends it — including an
- * empty string, which is how the server reports "no wallpaper" (globally
- * disabled, nothing selected, or nothing cached yet). Only a genuinely older
- * backend, which omits the key entirely, falls back to the legacy field.
+ * `active_file` is authoritative, including an empty string, which is how the
+ * server reports "no wallpaper" (globally disabled, nothing selected, or
+ * nothing cached yet).
  */
 export function resolveActiveFile(appearance: Record<string, unknown> | undefined): string {
   const active = appearance?.active_file
-  if (typeof active === 'string') return active
-  const legacy = appearance?.wallpaper_file
-  return typeof legacy === 'string' ? legacy : ''
+  return typeof active === 'string' ? active : ''
 }
 
 /** One entry in the local wallpaper gallery, as returned by GET /api/config. */
@@ -317,41 +311,22 @@ export function isBingFirstImagePending(appearance: Record<string, unknown> | un
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-/** Result of a successful set operation. */
-export interface ThemeBackgroundSetResult {
-  file: string
-}
-
 /**
- * Set the wallpaper from a server-side file (path-copy mode) via
- * POST /api/theme-background.
+ * Set the wallpaper from a server-side image file: read its bytes via
+ * /api/local-file/, upload them into the local gallery, then select the new
+ * entry as the active wallpaper.
+ *
+ * The gallery is the only wallpaper store — a file picked in the file viewer
+ * becomes a normal gallery entry the user can manage alongside uploads.
  */
-export async function setWallpaperFromPath(path: string): Promise<ThemeBackgroundSetResult> {
-  const resp = await fetch('/api/theme-background', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path }),
-  })
-  if (!resp.ok) throw new Error(`set wallpaper failed: HTTP ${resp.status}`)
-  return (await resp.json()) as ThemeBackgroundSetResult
-}
-
-/**
- * Upload a local image file as the wallpaper (multipart mode) via
- * POST /api/theme-background.
- */
-export async function uploadWallpaper(file: File): Promise<ThemeBackgroundSetResult> {
-  const form = new FormData()
-  form.append('file', file)
-  const resp = await fetch('/api/theme-background', { method: 'POST', body: form })
-  if (!resp.ok) throw new Error(`upload wallpaper failed: HTTP ${resp.status}`)
-  return (await resp.json()) as ThemeBackgroundSetResult
-}
-
-/** Clear the active wallpaper via DELETE /api/theme-background. */
-export async function clearWallpaper(): Promise<void> {
-  const resp = await fetch('/api/theme-background', { method: 'DELETE' })
-  if (!resp.ok) throw new Error(`clear wallpaper failed: HTTP ${resp.status}`)
+export async function setWallpaperFromPath(path: string): Promise<WallpaperStateResult> {
+  const resp = await fetch(buildLocalFileUrl(path))
+  if (!resp.ok) throw new Error(`read wallpaper source failed: HTTP ${resp.status}`)
+  const blob = await resp.blob()
+  const name = path.split('/').pop() || 'wallpaper'
+  const { items, errors } = await uploadGalleryImages([new File([blob], name, { type: blob.type })])
+  if (!items.length) throw new Error(errors[0]?.error || 'upload wallpaper failed')
+  return selectGalleryItem(items[0].file)
 }
 
 // ── Gallery API ───────────────────────────────────────────────────────────────

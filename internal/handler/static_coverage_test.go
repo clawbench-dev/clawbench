@@ -11,30 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// --- ServeProjectDialog: non-GET method ---
-
-func TestServeProjectDialog_NonGET_Returns405(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/dialog/project", http.NoBody)
-	w := httptest.NewRecorder()
-	ServeProjectDialog(w, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestServeProjectDialog_DELETE_Returns405(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete, "/dialog/project", http.NoBody)
-	w := httptest.NewRecorder()
-	ServeProjectDialog(w, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestServeProjectDialog_GET_DoesNotCrash(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/dialog/project", http.NoBody)
-	w := httptest.NewRecorder()
-	ServeProjectDialog(w, req)
-	// May be 200 or 404 depending on whether web/project-dialog.html exists
-	assert.Contains(t, []int{http.StatusOK, http.StatusNotFound}, w.Code)
-}
-
 // --- ServeIndex: HEAD method ---
 
 func TestServeIndex_HEAD_DoesNotCrash(t *testing.T) {

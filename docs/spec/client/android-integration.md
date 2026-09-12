@@ -77,18 +77,17 @@ flowchart LR
 |------|------|------|
 | `/api/apk` | GET | APK 下载（从 `go:embed` 读取，路径 `assets/clawbench-android.apk`） |
 | `/api/client-log` | POST | 客户端统一日志（200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
-| `/api/android-log` | POST | Android 端日志（legacy alias，旧 APK 兼容，同 handler 汇入 `client.log`） |
 | `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） |
 | `/api/ai/events/pending` | GET | 离线期间漏发事件 |
 
-> Web 前端使用 `/api/client-log`；Android `AppLog` POST 到 `/api/android-log`（legacy alias）。服务端把两条路由都交给 `ServeClientLog`，统一写入 `{data-dir}/logs/client.log` 单文件，每条行内带 `[js]`/`[android]` 来源标记，因此旧 APK 与新 Web 客户端可以同时工作。
+> Web 前端与 Android `AppLog` 均 POST 到 `/api/client-log`，服务端 `ServeClientLog` 统一写入 `{data-dir}/logs/client.log` 单文件，每条行内带 `[js]`/`[android]` 来源标记。
 >
 > 服务端日志落盘带 50MB 轮转——每次 append 前检查文件大小，超限即轮转为 `.1` 并重开新文件，`client.log` 不再无限增长。
 
 ### 功能清单
 
 - **WebView 容器**：Android WebView 承载前端 Vue App，通过 `AndroidNative` JS Bridge 暴露原生能力。Web 和原生之间通过 Bridge 双向通信
-- **统一日志 AppLog**：所有 Android Java/Kotlin 代码**必须**使用 `AppLog.d/i/w/e()` 替代原始 `android.util.Log`（仅 `AppLog.java` 自身和测试代码允许裸 `android.util.Log`）。`AppLog` 同时写入 logcat 并 POST `/api/android-log`，服务端汇入统一 `client.log`（`[android]` 标记）；Web 前端使用 `/api/client-log`（`[js]` 标记）
+- **统一日志 AppLog**：所有 Android Java/Kotlin 代码**必须**使用 `AppLog.d/i/w/e()` 替代原始 `android.util.Log`（仅 `AppLog.java` 自身和测试代码允许裸 `android.util.Log`）。`AppLog` 同时写入 logcat 并 POST `/api/client-log`，服务端汇入统一 `client.log`（`[android]` 标记）；Web 前端同样使用 `/api/client-log`（`[js]` 标记）
 - **BackgroundService（后台服务）**：管理 SSH 端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
 - **PendingEventsWorker**：WS 不可达时由 WorkManager 周期调度，通过 HTTP `GET /api/ai/events/pending?after=...` 拉取漏发事件，作为离线通知回退
@@ -135,7 +134,7 @@ flowchart LR
 | `BackgroundService` | 后台保活 + SSH 隧道 + WS 心跳 + 调度 PendingEventsWorker |
 | `PendingEventsWorker` | WorkManager fallback，HTTP 拉 `/api/ai/events/pending` |
 | `BootCompletedReceiver` | 开机自启恢复 |
-| `AppLog` | `d/i/w/e()` 统一日志（logcat + `/api/android-log`，服务端汇入 `client.log` 标 `[android]`） |
+| `AppLog` | `d/i/w/e()` 统一日志（logcat + `/api/client-log`，服务端汇入 `client.log` 标 `[android]`） |
 | `OemUtils` | 厂商 ROM 适配 |
 | `SharedCacheUtils` | 跨进程缓存 |
 | `ClawBenchApp` | Application 初始化 |
@@ -152,8 +151,8 @@ flowchart LR
 - **空闲状态常驻而非隐藏**：悬浮窗无任务、无未读时显示"空闲"胶囊而不是消失——隐藏会让用户以为悬浮窗失效，常驻空闲状态明确告知"后台守护中"，点击可回 App。Live Updates 则相反，无会话时移除状态栏通知保持系统通知栏干净（状态栏不常驻，与锁屏卡片体验一致）
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知
 - **WS 优先 + Worker 回退**：常驻 WS 链路是主路径（实时通知），PendingEventsWorker 是 WS 不可达时的兜底（轮询拉取）。两条路径相互独立，BackgroundService 监控 WS 健康度触发 Worker
-- **AppLog 双写 + Anti-Recursion**：`AppLog` 写入 logcat，同时 POST 到 `/api/android-log` 实现集中持久化。`AppLog.java` 自身是允许调用裸 `android.util.Log` 的唯一生产代码位置，以避免日志封装递归；通过 `OemUtils` 和 `SharedCacheUtils` 共享多进程状态
+- **AppLog 双写 + Anti-Recursion**：`AppLog` 写入 logcat，同时 POST 到 `/api/client-log` 实现集中持久化。`AppLog.java` 自身是允许调用裸 `android.util.Log` 的唯一生产代码位置，以避免日志封装递归；通过 `OemUtils` 和 `SharedCacheUtils` 共享多进程状态
 - **单二进制包含 APK**：`//go:embed all:dist` 把 APK 嵌入 Go 二进制，无需外部 APK 文件即可部署。`internal/frontend/embed.go::GetFS()` 优先读磁盘 `public/`（热替换），否则从 embed 读取
-- **日志处理器统一、客户端端点兼容**：Web 的 `appLog.ts` 使用 `/api/client-log`，Android 的 `AppLog.java` 使用兼容路由 `/api/android-log`；两者都由服务端 `ServeClientLog` 处理，汇入单一 `client.log`，行内 `[js]`/`[android]` 源标记区分来源
+- **日志处理器统一、单一端点**：Web 的 `appLog.ts` 与 Android 的 `AppLog.java` 都 POST `/api/client-log`，由服务端 `ServeClientLog` 处理，汇入单一 `client.log`，行内 `[js]`/`[android]` 源标记区分来源
 - **屏幕常亮双通道**：`useWakeLock` 优先申请标准 Web Wake Lock，并同时调用 Android `setKeepScreenOn`。页面隐藏时浏览器可能释放锁，重新可见且业务仍需要常亮时自动申请；显式释放会同时关闭两条通道
 - **服务器列表由客户端持有**：Android Bridge 保存多个实例地址和密码，使当前服务器不可达时仍可切换到其他实例，完整流程见[多服务器管理](multi-server.md)

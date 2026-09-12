@@ -18,47 +18,12 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/ws"
 )
 
 const maxChatBodySize = 10 << 20 // 10MB
-
-// ServeAISession handles DELETE for Claude CLI internal session files.
-func ServeAISession(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
-	if !requireMethod(w, r, http.MethodDelete) {
-		return
-	}
-
-	// Get Claude session directory using cross-platform path mangling
-	sessionDir := platform.ClaudeProjectDir(projectPath)
-
-	// Delete all .jsonl session files
-	entries, err := os.ReadDir(sessionDir)
-	if err != nil {
-		// Session dir doesn't exist — nothing to delete, treat as success
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted": 0})
-		return
-	}
-
-	deleted := 0
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
-			if err := os.Remove(filepath.Join(sessionDir, entry.Name())); err == nil {
-				deleted++
-			}
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted": deleted})
-}
 
 // AIChat handles GET (status/history) and POST (send message) for AI chat.
 func AIChat(w http.ResponseWriter, r *http.Request) {

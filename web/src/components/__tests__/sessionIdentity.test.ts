@@ -15,7 +15,6 @@ import {
   clearUsageState,
   toggleAutoApprove,
   resetIdentity,
-  prefetchCommands,
   currentAgentId,
 } from '@/composables/useSessionIdentity.ts'
 
@@ -678,10 +677,3 @@ describe('resetIdentity', () => {
   })
 })
 
-// ── prefetchCommands (deprecated no-op) ──
-
-describe('prefetchCommands', () => {
-  it('is a no-op and does not throw', async () => {
-    await expect(prefetchCommands('agent-1')).resolves.toBeUndefined()
-  })
-})

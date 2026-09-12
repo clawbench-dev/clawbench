@@ -866,38 +866,6 @@ func ServeGitDiff(w http.ResponseWriter, r *http.Request) {
 	writeDiffResponse(w, output, err)
 }
 
-// ServeGitStatus returns whether there are uncommitted changes for the file.
-func ServeGitStatus(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
-		return
-	}
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-	if !isGitRepo(projectPath) {
-		writeJSON(w, http.StatusOK, map[string]bool{"isGit": false, "hasUncommitted": false})
-		return
-	}
-
-	relPath := r.URL.Query().Get("path")
-	if relPath == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MissingPath")
-		return
-	}
-
-	if _, ok := validateAndResolvePath(w, r, projectPath, relPath); !ok {
-		return
-	}
-
-	cmd := exec.Command("git", "diff", "--stat", "HEAD", "--", relPath)
-	cmd.Dir = projectPath
-	output, err := cmd.CombinedOutput()
-
-	hasUncommitted := err == nil && strings.TrimSpace(string(output)) != ""
-	writeJSON(w, http.StatusOK, map[string]interface{}{"isGit": true, "hasUncommitted": hasUncommitted})
-}
-
 // wtFileInfo extends commitInfo with a staged flag for working tree files.
 type wtFileInfo struct {
 	Path   string `json:"path"`
@@ -1357,70 +1325,6 @@ func ServeGitBranches(w http.ResponseWriter, r *http.Request) {
 		"currentBranch": currentBranch,
 		"stashCount":    stashCount,
 	})
-}
-
-// ServeGitVerifyWorktrees checks which paths are valid git worktree directories.
-// Accepts POST with JSON body {"paths": ["/abs/path/1", "/abs/path/2"]}.
-// Returns {"results": {"/abs/path/1": {"branch":"feature-x","displayPath":"./.worktrees/feature-x","isCurrent":false,"path":"/abs/path/1"}, "/abs/path/2": null}}
-// where null means the path is not a valid worktree.
-func ServeGitVerifyWorktrees(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-	if !isGitRepo(projectPath) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"results": map[string]interface{}{}})
-		return
-	}
-
-	var body struct {
-		Paths []string `json:"paths"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Paths) == 0 {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"results": map[string]interface{}{}})
-		return
-	}
-
-	// Cap path count to prevent abuse.
-	const maxPaths = 100
-	if len(body.Paths) > maxPaths {
-		body.Paths = body.Paths[:maxPaths]
-	}
-
-	// Run git worktree list --porcelain once to get all worktrees
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = projectPath
-	output, _ := cmd.CombinedOutput()
-	trees := parseWorktreePorcelain(string(output), projectPath)
-
-	// Build lookup map: resolved worktree path → worktreeInfo
-	lookup := make(map[string]*worktreeInfo, len(trees))
-	for i := range trees {
-		lookup[trees[i].Path] = &trees[i]
-	}
-
-	results := make(map[string]interface{}, len(body.Paths))
-	for _, p := range body.Paths {
-		// Handle relative paths by joining with projectPath
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(projectPath, p)
-		}
-		// Resolve symlinks for consistent matching
-		resolved := p
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			resolved = r
-		}
-		if info, ok := lookup[resolved]; ok {
-			results[p] = info
-		} else {
-			results[p] = nil
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"results": results})
 }
 
 // ServeGitWorktrees returns all git worktrees for the project.

@@ -146,8 +146,8 @@ func BingDir() string {
 }
 
 // dirForName selects the directory a bare wallpaper file name lives in based on
-// its prefix. Unprefixed names are the legacy single-file wallpaper, which lives
-// directly in the theme root.
+// its prefix. Unprefixed names resolve to the theme root, which is where the
+// gallery/Bing subdirectories live.
 func dirForName(name string) string {
 	switch {
 	case strings.HasPrefix(name, bingPrefix):
@@ -185,17 +185,6 @@ func FilePath(name string) (string, bool) {
 // displayed, and whether one is active. A globally disabled wallpaper resolves
 // to none even though the gallery and its selection are retained.
 func ResolveActive(cfg *model.Config) (string, bool) {
-	// A config with no mode predates the enabled switch and the gallery: back
-	// then wallpaper_file was the only way to set a wallpaper, so its presence
-	// alone means the user wants it shown. Gating this on WallpaperEnabled would
-	// hide wallpapers that were set before the switch existed.
-	if cfg.Appearance.WallpaperMode == "" {
-		if cfg.Appearance.WallpaperFile != "" {
-			return cfg.Appearance.WallpaperFile, true
-		}
-		return "", false
-	}
-
 	if !cfg.Appearance.WallpaperEnabled {
 		return "", false
 	}

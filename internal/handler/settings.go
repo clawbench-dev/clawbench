@@ -131,10 +131,8 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
-	// Appearance — wallpaper file name (managed by the theme-background handler;
-	// only PATCHable as "" to clear) and panel opacity multiplier
-	"appearance.wallpaper_file": true,
-	"appearance.panel_opacity":  true,
+	// Appearance — panel opacity multiplier
+	"appearance.panel_opacity": true,
 	// Wallpaper source selection — plain scalars, no path component. File names
 	// (local.selected / local.items / bing.file) are deliberately absent: they
 	// are written only by the dedicated theme endpoints, which validate and
@@ -406,10 +404,9 @@ type configFonts struct {
 
 // configAppearance exposes custom wallpaper settings to the settings panel.
 type configAppearance struct {
-	WallpaperFile string  `json:"wallpaper_file"` // Legacy single-file wallpaper name ("" = none)
-	PanelOpacity  float64 `json:"panel_opacity"`  // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
+	PanelOpacity float64 `json:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
 
-	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "" (none/legacy), "local", or "bing"
+	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "local" or "bing"
 	WallpaperEnabled bool   `json:"wallpaper_enabled"` // Global wallpaper on/off switch
 	ActiveFile       string `json:"active_file"`       // Bare name of the wallpaper currently displayed ("" = none)
 
@@ -470,7 +467,6 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 	}
 
 	return configAppearance{
-		WallpaperFile:    cfg.Appearance.WallpaperFile,
 		PanelOpacity:     cfg.Appearance.PanelOpacity,
 		WallpaperMode:    cfg.Appearance.WallpaperMode,
 		WallpaperEnabled: cfg.Appearance.WallpaperEnabled,
@@ -624,7 +620,6 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
-	"appearance.wallpaper_file":         true,
 	"appearance.panel_opacity":          true,
 	"appearance.wallpaper_mode":         true,
 	"appearance.wallpaper_enabled":      true,
@@ -1219,11 +1214,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	// appearance — custom wallpaper. panel_opacity must be in the valid range.
-	// wallpaper_file is owned by the theme-background handler (it writes the
-	// file into <DataDir>/theme before recording the name); PATCH is only
-	// allowed to CLEAR it (empty string). A non-empty value patched directly
-	// would be a path-traversal entry point — the GET/serve endpoint joins the
-	// stored value onto <DataDir>/theme.
+	// File names (local.selected / local.items / bing.file) are deliberately
+	// absent: they are written only by the dedicated theme endpoints, which
+	// validate and persist the file alongside the name.
 	if appearance, ok := patch["appearance"].(map[string]any); ok {
 		// Strict type checks: a wrong-typed value would be silently ignored by
 		// applyConfigPatch's assertions yet still written to config.yaml by
@@ -1268,15 +1261,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				}
 			}
 		}
-		if raw, present := appearance["wallpaper_file"]; present {
-			v, ok := raw.(string)
-			if !ok {
-				return fmt.Errorf("appearance.wallpaper_file must be a string")
-			}
-			if v != "" {
-				return fmt.Errorf("appearance.wallpaper_file can only be cleared via PATCH (set to empty); use the theme-background endpoint to set a wallpaper")
-			}
-		}
 	}
 
 	return nil
@@ -1312,9 +1296,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if appearance, ok := patch["appearance"].(map[string]any); ok {
 		if v, ok := appearance["panel_opacity"].(float64); ok {
 			cfg.Appearance.PanelOpacity = v
-		}
-		if v, ok := appearance["wallpaper_file"].(string); ok {
-			cfg.Appearance.WallpaperFile = v
 		}
 		if v, ok := appearance["wallpaper_mode"].(string); ok {
 			cfg.Appearance.WallpaperMode = v

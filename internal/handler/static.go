@@ -67,16 +67,6 @@ func isValidViteHash(hash string) bool {
 	return true
 }
 
-// ServeProjectDialog serves the project dialog HTML template.
-func ServeProjectDialog(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
-		return
-	}
-	tmplPath := filepath.Join("web", "project-dialog.html")
-	http.ServeFile(w, r, tmplPath)
-}
-
 // ServeIndex serves the main index page and static assets.
 func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	// Only serve GET/HEAD requests; reject other methods

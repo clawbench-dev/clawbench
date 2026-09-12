@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"clawbench/internal/model"
@@ -44,104 +43,6 @@ func TestServeAgents_PostNotAllowed(t *testing.T) {
 	req := newRequest(t, http.MethodPost, "/api/agents", nil)
 	w := callHandler(ServeAgents, req)
 	assertStatus(t, w, http.StatusBadRequest)
-}
-
-// ---------- ServeChatCount ----------
-
-func TestServeChatCount(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sid := createTestSession(t, env.ProjectDir)
-
-	// Add messages
-	_, _ = service.AddChatMessage(env.ProjectDir, "claude", sid, "user", "Hello", nil, false, "NewSession")
-	_, _ = service.AddChatMessage(env.ProjectDir, "claude", sid, "assistant", "Hi", nil, false, "NewSession")
-
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/count?session_id="+sid, nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatCount, req)
-
-	assertOK(t, w)
-	var result map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &result)
-	assert.Equal(t, float64(2), result["count"])
-}
-
-func TestServeChatCount_NoSessionID(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/count", nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatCount, req)
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestServeChatCount_PostNotAllowed(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodPost, "/api/ai/chat/count", nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatCount, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
-
-// ---------- ServeChatMessageUpdate ----------
-
-func TestServeChatMessageUpdate(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sid := createTestSession(t, env.ProjectDir)
-	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sid, "user", "original", nil, false, "NewSession")
-	assert.NoError(t, err)
-
-	req := newRequest(t, http.MethodPut, "/api/ai/chat/message", map[string]any{
-		"messageId": msgID,
-		"content":   "updated content",
-	})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatMessageUpdate, req)
-
-	assertOK(t, w)
-	var result map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &result)
-	assert.Equal(t, true, result["ok"])
-}
-
-func TestServeChatMessageUpdate_NoMessageID(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodPut, "/api/ai/chat/message", map[string]any{
-		"content": "no id",
-	})
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatMessageUpdate, req)
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestServeChatMessageUpdate_InvalidBody(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := httptest.NewRequest(http.MethodPut, "/api/ai/chat/message", http.NoBody)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	ServeChatMessageUpdate(w, req)
-	assertStatus(t, w, http.StatusForbidden) // now requires project cookie
-}
-
-func TestServeChatMessageUpdate_GetNotAllowed(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/message", nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(ServeChatMessageUpdate, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
 // ---------- ServeTasks ----------
@@ -586,14 +487,6 @@ func TestServeTaskByID_NoTaskID(t *testing.T) {
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-// ---------- ServeProjectDialog ----------
-
-func TestServeProjectDialog_PostNotAllowed(t *testing.T) {
-	req := newRequest(t, http.MethodPost, "/dialog/project", nil)
-	w := callHandler(ServeProjectDialog, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
-
 // ---------- ServeIndex ----------
 
 func TestServeIndex_NotFound(t *testing.T) {
@@ -916,42 +809,6 @@ func TestServeTaskByID_NoProject(t *testing.T) {
 	// No project cookie at all → 403
 	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d", task.ID), nil)
 	w := callHandler(ServeTaskByID, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-// ---------- ISS-002: Cross-project chat ownership tests ----------
-
-func TestServeChatCount_WrongProject(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sid := createTestSession(t, env.ProjectDir)
-	_, _ = service.AddChatMessage(env.ProjectDir, "claude", sid, "user", "Hello", nil, false, "NewSession")
-
-	// Try to count messages from another project's session
-	otherProject := t.TempDir()
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/count?session_id="+sid, nil)
-	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeChatCount, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestServeChatMessageUpdate_WrongProject(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sid := createTestSession(t, env.ProjectDir)
-	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sid, "user", "original", nil, false, "NewSession")
-	assert.NoError(t, err)
-
-	// Try to update message from another project
-	otherProject := t.TempDir()
-	req := newRequest(t, http.MethodPut, "/api/ai/chat/message", map[string]any{
-		"messageId": msgID,
-		"content":   "hacked content",
-	})
-	req = withProjectCookie(req, otherProject)
-	w := callHandler(ServeChatMessageUpdate, req)
 	assertStatus(t, w, http.StatusForbidden)
 }
 

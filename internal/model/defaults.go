@@ -135,37 +135,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		if cfg.Appearance.Bing.Mkt == "" {
 			cfg.Appearance.Bing.Mkt = "zh-CN"
 		}
-	} else if cfg.Appearance.WallpaperFile != "" && cfg.Appearance.Local.Selected == "" {
-		// Upgrade path: adopt the legacy single-file wallpaper into the gallery
-		// so it stays selectable alongside new uploads. The file itself is not
-		// moved — unprefixed names keep resolving in the theme root — so an
-		// in-flight serve request never 404s.
-		//
-		// Skip adoption when the gallery already lists this file (the user may
-		// have deleted it, or a previous run already migrated it), and when the
-		// file is gone from disk: re-adding a deleted image would resurrect a
-		// wallpaper whose bytes no longer exist, leaving a permanently broken
-		// serve. wallpaper.FilePath would introduce an import cycle here, so the
-		// theme-root path is derived directly.
-		legacyPath := filepath.Join(DataDir, "theme", cfg.Appearance.WallpaperFile)
-		alreadyInGallery := false
-		for _, it := range cfg.Appearance.Local.Items {
-			if it.File == cfg.Appearance.WallpaperFile {
-				alreadyInGallery = true
-				break
-			}
-		}
-		if _, statErr := os.Stat(legacyPath); statErr == nil && !alreadyInGallery {
-			cfg.Appearance.Local.Selected = cfg.Appearance.WallpaperFile
-			cfg.Appearance.Local.Items = append(cfg.Appearance.Local.Items, LocalWallpaperItem{
-				File: cfg.Appearance.WallpaperFile,
-				Name: cfg.Appearance.WallpaperFile,
-			})
-			if cfg.Appearance.WallpaperMode == "" {
-				cfg.Appearance.WallpaperMode = "local"
-			}
-			cfg.Appearance.WallpaperEnabled = true
-		}
 	}
 
 	// Bing is the selected source, so its fetch switch must be on. This is

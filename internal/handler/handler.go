@@ -223,7 +223,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	register("/", ServeIndex)
 	register("/login", ServeLogin)
-	register("/dialog/project", middleware.Auth(ServeProjectDialog))
 	register("/api/health", ServeHealth)
 	register("/api/me", ServeAuthCheck)
 	register("/api/system/resources", middleware.Auth(ServeSystemResources))
@@ -234,8 +233,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/config/password", middleware.Auth(ServeConfigPassword))
 	register("/api/fonts/list", middleware.Auth(ServeFontsList))
 	register("/api/fonts/file", middleware.Auth(ServeFontFile))
-	register("/api/theme-background", middleware.Auth(ServeThemeBackground))
-	register("/api/file/theme-background", middleware.Auth(ServeThemeBackgroundGet))
 	register("/api/theme/local/upload", middleware.Auth(ServeThemeLocalUpload))
 	register("/api/theme/local/item", middleware.Auth(ServeThemeLocalUpload))
 	register("/api/theme/local/select", middleware.Auth(ServeThemeLocalSelect))
@@ -251,8 +248,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue", middleware.Auth(QueueHandler))
 	register("/api/ai/queue/inject", middleware.Auth(QueueInjectHandler))
 	register("/api/ai/queue/interrupt", middleware.Auth(QueueInterruptHandler))
-	register("/api/ai/history", middleware.Auth(ServeChatHistory))
-	register("/api/ai/session", middleware.Auth(ServeAISession))
 	register("/api/ai/session/update", middleware.Auth(ServeAISessionUpdate))
 	register("/api/ai/sessions", middleware.Auth(ServeSessions))
 	register("/api/ai/sessions/overview", middleware.Auth(ServeSessionsOverview))
@@ -264,10 +259,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/fork", middleware.Auth(ServeForkSession))
 	register("/api/ai/session/reset", middleware.Auth(ServeSessionReset))
 	register("/api/ai/session/rewind", middleware.Auth(ServeSessionRewind))
-	register("/api/ai/commands", middleware.Auth(ServeAICommands))
-	register("/api/ai/chat/count", middleware.Auth(ServeChatCount))
 	register("/api/ai/chat/user-messages", middleware.Auth(ServeUserMessageIndex))
-	register("/api/ai/chat/message", middleware.Auth(ServeChatMessageUpdate))
 	register("/api/ai/chat/tool-call", middleware.Auth(ServeToolCallDetail))
 	register("/api/ai/chat/thinking", middleware.Auth(ServeThinkingDetail))
 	register("/api/usage/stats", middleware.Auth(ServeUsageStats))
@@ -300,7 +292,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/share/", ServeSharePublic)
 	register("/share/", ServeSharePage)
 	register("/api/dir", middleware.Auth(ListDir))
-	register("/api/files", middleware.Auth(ListFiles))
 	register("/api/file/list-tree", middleware.Auth(ServeListTree))
 	register("/api/file/thumb", middleware.Auth(FileThumb))
 	register("/api/file/", middleware.Auth(GetFile))
@@ -311,17 +302,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/commit-files", middleware.Auth(ServeGitCommitFiles))
 	register("/api/git/history", middleware.Auth(ServeGitHistory))
 	register("/api/git/diff", middleware.Auth(ServeGitDiff))
-	register("/api/git/status", middleware.Auth(ServeGitStatus))
 	register("/api/git/working-tree", middleware.Auth(ServeGitWorkingTreeFiles))
 	register("/api/git/verify-commits", middleware.Auth(ServeGitVerifyCommits))
-	register("/api/git/verify-worktrees", middleware.Auth(ServeGitVerifyWorktrees))
 	register("/api/git/worktrees", middleware.Auth(ServeGitWorktrees))
 	register("/api/git/checkout", middleware.Auth(ServeGitCheckout))
 	register("/api/git/tags", middleware.Auth(ServeGitTags))
 	register("/api/file/rename", middleware.Auth(ServeFileRename))
 	register("/api/file/write", middleware.Auth(ServeFileWrite))
 	register("/api/file/delete", middleware.Auth(ServeFileDelete))
-	register("/api/file/batch-delete", middleware.Auth(ServeFileBatchDelete))
 	register("/api/file/batch-exists", middleware.Auth(ServeFileBatchExists))
 	register("/api/file/batch-base64", middleware.Auth(ServeFileBatchBase64))
 	register("/api/file/create", middleware.Auth(ServeFileCreate))
@@ -348,7 +336,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/message-index-status", middleware.Auth(ServeRAGMessageIndexStatus))
 	register("/api/rag/session", middleware.Auth(ServeRAGSession))
 	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
-	register("/api/rag/reset", middleware.Auth(ServeRAGReset))
 	register("/api/rag/reset-vector", middleware.Auth(ServeRAGResetVector))
 	register("/api/rag/rebuild-fts", middleware.Auth(ServeRAGRebuildFTS))
 	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
@@ -359,10 +346,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// JS frontend sends logs via fetch (no auth required for debug logs).
 	// This endpoint only accepts log entries (write-only, no read); the data is
 	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
-	// Both routes land in the unified {LogDir}/logs/client.log ([js]/[android] markers).
+	// Android native and JS frontend both land in the unified
+	// {LogDir}/logs/client.log ([js]/[android] markers).
 	register("/api/client-log", ServeClientLog)
-	// Legacy: keep /api/android-log for old APKs that hardcode this URL.
-	register("/api/android-log", ServeClientLog)
 
 	// Android APK download — intentionally unauthenticated:
 	// APK is a public resource; users need to download it before they can even log in.
@@ -395,19 +381,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/frp/info", middleware.Auth(ServeFRPInfo)) // Full status, requires auth (exposes public IP)
 	register("/api/frp/status", ServeFRPStatus)              // Minimal status, no auth (only enabled+running)
 
-	// DingTalk push notification subscribers
-	register("/api/dingtalk/subscribers", middleware.Auth(ServeDingTalkSubscribers))
-	register("/api/dingtalk/subscribers/", middleware.Auth(ServeDingTalkSubscribers))
-
-	// Feishu push notification subscribers
-	register("/api/feishu/subscribers", middleware.Auth(ServeFeishuSubscribers))
-	register("/api/feishu/subscribers/", middleware.Auth(ServeFeishuSubscribers))
-
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", middleware.Auth(TerminalWebSocket))
 	register("/api/terminal/status", middleware.Auth(TerminalStatus))
 	register("/api/terminal/close", middleware.Auth(TerminalClose))
-	register("/api/terminal/config", middleware.Auth(TerminalConfigHandler))
 	register("/api/terminal/quick-commands", middleware.Auth(ServeQuickCommands))
 	register("/api/terminal/quick-commands/", middleware.Auth(ServeQuickCommandByID))
 	register("/api/terminal/key-config", middleware.Auth(ServeKeyConfig))

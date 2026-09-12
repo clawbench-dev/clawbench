@@ -15,15 +15,16 @@ import { ChatPage } from '../pages/chat.page'
  * 3. Slash command badge renders in user messages
  * 4. ClawBench built-in badge renders for /cb-* messages
  * 5. Mode chip is visible for ACP sessions
- * 6. GET /api/ai/commands returns discovered commands
- * 7. Slash commands are pre-fetched via REST API on page load/session switch
- *    (no need to send a message first if ACP connection already cached commands)
+ * 6. GET /api/agents exposes discovered commands via acpStates
+ * 7. Slash commands are pre-loaded from GET /api/agents on page load/session
+ *    switch (no need to send a message first if ACP connection already cached
+ *    commands)
  *
  * IMPORTANT: ACP connections are lazy — established on first message.
  * The first test in each "cold" group must still send a message to warm up
  * the ACP connection pool. After that, subsequent tests can rely on
- * prefetchCommands (GET /api/ai/commands) to load slash commands without
- * requiring an active SSE stream.
+ * GET /api/agents (acpStates) to load slash commands without requiring an
+ * active SSE stream.
  *
  * SERIAL: Tests must run serially because the ACP mock agent is a single
  * subprocess. Concurrent Prompt requests on the same agent process can
@@ -135,8 +136,8 @@ test.describe.serial('ACP Slash Commands', () => {
 
   test('should show slash command autocomplete after page reload via prefetch', async ({ page }) => {
     // Previous test already established ACP connection and cached commands.
-    // Reload the page — prefetchCommands should load slash commands via
-    // GET /api/ai/commands without needing to send a message first.
+    // Reload the page — slash commands reload from GET /api/agents
+    // (acpStates[].commands) without needing to send a message first.
     await page.reload()
     await page.waitForLoadState('networkidle')
     await page.waitForTimeout(500)
@@ -279,10 +280,13 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.waitForACPCommands()
 
     const result = await page.evaluate(async () => {
-      const resp = await fetch('/api/ai/commands')
-      if (!resp.ok) return { ok: false, status: resp.status }
+      const resp = await fetch('/api/agents')
+      if (!resp.ok) return { ok: false, status: resp.status, count: 0, firstCommand: undefined }
       const data = await resp.json()
-      return { ok: true, count: data.commands?.length || 0, firstCommand: data.commands?.[0]?.name }
+      const all = Object.values(data.acpStates || {}).flatMap(
+        (s) => (s as { commands?: { name: string }[] }).commands || [],
+      )
+      return { ok: true, count: all.length, firstCommand: all[0]?.name }
     })
 
     expect(result.ok).toBe(true)

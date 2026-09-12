@@ -95,31 +95,6 @@ func TestShareCleanup_OnMove(t *testing.T) {
 	assert.False(t, shareExistsByToken(t, token), "share must be revoked after move")
 }
 
-// TestShareCleanup_OnBatchDelete revokes shares for each deleted file.
-func TestShareCleanup_OnBatchDelete(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	a := createShareTestFile(t, env, "clean/a.txt", "a")
-	b := createShareTestFile(t, env, "clean/b.txt", "b")
-	tokA := createShareViaAPI(t, a)
-	tokB := createShareViaAPI(t, b)
-
-	// A surviving file keeps its share.
-	c := createShareTestFile(t, env, "clean/c.txt", "c")
-	tokC := createShareViaAPI(t, c)
-
-	req := newRequest(t, http.MethodPost, "/api/file/batch-delete", map[string][]string{
-		"paths": {a, b},
-	})
-	w := callHandler(ServeFileBatchDelete, req)
-	assertOK(t, w)
-
-	assert.False(t, shareExistsByToken(t, tokA))
-	assert.False(t, shareExistsByToken(t, tokB))
-	assert.True(t, shareExistsByToken(t, tokC), "unrelated file's share must survive")
-}
-
 // TestShareCleanup_WriteDoesNotRevoke verifies editing a shared file keeps the link live.
 func TestShareCleanup_WriteDoesNotRevoke(t *testing.T) {
 	env, teardown := setupTestEnv(t)

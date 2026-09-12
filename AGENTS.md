@@ -65,7 +65,7 @@ npm test                             # Vitest 前端测试
   - **网页模式**：console 照常输出 + HTTP 上报；
   - 关闭时日志只在本地可见（logcat / console），不发服务器。
 - **JS（`web/src/utils/appLog.ts`）**：批量 POST `/api/client-log`（2s / 200 条缓冲 / 200 条每请求），`source="js"` → `[js]` 行。
-- **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/android-log`（legacy alias，旧 APK 兼容），`source="android"` → `[android]` 行。
+- **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/client-log`，`source="android"` → `[android]` 行。
 - **服务端（`internal/handler/android_log.go`）**：`ServeClientLog` 统一写 `{LogDir}/logs/client.log`，行格式 `2006-01-02T15:04:05.000 [js] I/ChatStream: msg`（换行转义为 `\n`），50MiB 轮转到 `client.log.1`。端点无鉴权（仅写日志、不入库）。
 - **查看**：`tail -f {data-dir}/logs/client.log`、`grep '\[js\]' {data-dir}/logs/client.log`（例：`tail -f /opt/clawbench-green-data/logs/client.log`）。
 
@@ -79,7 +79,7 @@ npm test                             # Vitest 前端测试
 
 | 包 | 职责 |
 |---|------|
-| `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输；含用量统计（`/api/usage/stats`）、主题壁纸（`/api/theme-background` legacy 单文件、`/api/theme/local/*` 多图图库、`/api/theme/bing/*` 每日壁纸）等端点 |
+| `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输；含用量统计（`/api/usage/stats`）、主题壁纸（`/api/theme/local/*` 多图图库、`/api/theme/bing/*` 每日壁纸）等端点 |
 | `internal/wallpaper/` | 壁纸图片处理与磁盘布局：`Process`/`ProcessWithMaxEdge`（白名单校验/缩放/编码，PNG 保透明、JPEG 重编码、GIF/WebP/SVG 原样 + `SVGLooksSafe`；缩放上限按调用方指定——上传用 `MaxLongEdge`=2048，Bing 用 `BingMaxLongEdge`=3840 保留原生 4K，因为从 4K 缩到 2048 比直接编码更费 CPU/内存且更糊）、`FilePath`（裸名 + 扩展白名单 + symlink 安全 containment）、`ResolveActive`（mode/enabled/选中项 → 生效文件）、`BingMktForLocale`。handler 与 service worker 共用，避免 service→handler 反向依赖 |
 | `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker）、Bing 每日壁纸抓取（BingWallpaperWorker，常驻 + Trigger 立即同步，Trigger 可绕过启动延迟；抓取失败沿用上次缓存且**不剪枝**，剪枝保留集含配置仍引用的文件）、用量聚合（`usage_stats.go`：按维度 GROUP BY `chat_metadata`）、会话截断（Rewind/TruncateSessionAfterMessage + RAG 范围清理） |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。14 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发）与 `~/.codebuddy/skills/` 技能扫描（YAML frontmatter 解析 → 斜杠命令 + 系统提示词注入）。ACP 子智能体内容经 `_meta` 父工具调用 id 归属（`acp_parent_link.go`，CodeBuddy 扁平键 / Claude·Qoder 嵌套键），子块按父边界隔离（累加不跨父合并），随 `ParentToolCallID` 贯穿到前端分组渲染 |

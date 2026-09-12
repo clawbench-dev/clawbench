@@ -7,7 +7,6 @@ import {
   resolveWallpaperUrl,
   resetWallpaperUrlCache,
   currentThemeIsDark,
-  wallpaperImageUrl,
   galleryImageUrl,
   THUMB_WIDTH,
   invalidateGalleryImageUrls,
@@ -23,6 +22,7 @@ import {
   deleteGalleryItem,
   selectGalleryItem,
   setWallpaperMode,
+  setWallpaperFromPath,
   syncBingNow,
   fetchBingStatus,
 } from '../themeBackground'
@@ -61,20 +61,6 @@ describe('themeBackground', () => {
       // retained without the wallpaper being shown.
       expect(resolveWallpaperState({ active_file: '', wallpaper_enabled: false })).toBe('unset')
     })
-
-    it('falls back to the legacy wallpaper_file for older backends', () => {
-      expect(resolveWallpaperState({ wallpaper_file: 'background.png' })).toBe('set')
-      expect(resolveWallpaperState({ wallpaper_file: '' })).toBe('unset')
-    })
-
-    it('treats an empty active_file as authoritative even when wallpaper_file is set', () => {
-      // This is the shape the server sends after the user disables the
-      // wallpaper on an upgraded install: active_file is cleared while the
-      // legacy field is retained. Falling back to wallpaper_file would keep
-      // showing a wallpaper the user just turned off.
-      expect(resolveWallpaperState({ active_file: '', wallpaper_file: 'background.png' })).toBe('unset')
-      expect(resolveWallpaperState({ active_file: '', wallpaper_file: 'background.png', wallpaper_enabled: false })).toBe('unset')
-    })
   })
 
   describe('resolveWallpaperMode', () => {
@@ -103,24 +89,14 @@ describe('themeBackground', () => {
   })
 
   describe('resolveActiveFile', () => {
-    it('prefers the server-resolved active_file', () => {
-      expect(resolveActiveFile({ active_file: 'local-1-a.png', wallpaper_file: 'old.png' })).toBe('local-1-a.png')
-    })
-
-    it('falls back to the legacy field', () => {
-      expect(resolveActiveFile({ wallpaper_file: 'background.png' })).toBe('background.png')
+    it('returns the server-resolved active_file', () => {
+      expect(resolveActiveFile({ active_file: 'local-1-a.png' })).toBe('local-1-a.png')
     })
 
     it('is empty when nothing is active', () => {
       expect(resolveActiveFile(undefined)).toBe('')
       expect(resolveActiveFile({})).toBe('')
       expect(resolveActiveFile({ active_file: '' })).toBe('')
-    })
-
-    it('prefers an empty active_file over the legacy field', () => {
-      // The server clears active_file to mean "no wallpaper"; the legacy field
-      // must not override that.
-      expect(resolveActiveFile({ active_file: '', wallpaper_file: 'background.png' })).toBe('')
     })
   })
 
@@ -236,7 +212,7 @@ describe('themeBackground', () => {
       const html = document.documentElement
       expect(html.classList.contains('wallpaper-active')).toBe(true)
       expect(html.style.getPropertyValue('--wallpaper-url')).toContain('url("')
-      expect(html.style.getPropertyValue('--wallpaper-url')).toContain('/api/file/theme-background')
+      expect(html.style.getPropertyValue('--wallpaper-url')).toContain('/api/file/theme-wallpaper?name=background.png')
       expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.12)')
       expect(html.style.getPropertyValue('--panel-alpha')).toBe('90%')
     })
@@ -265,7 +241,7 @@ describe('themeBackground', () => {
     it('does not regenerate the image URL on alpha-only updates (slider drag)', () => {
       applyWallpaper('background.png', 0.9, false)
       const urlBefore = document.documentElement.style.getPropertyValue('--wallpaper-url')
-      expect(urlBefore).toContain('/api/file/theme-background')
+      expect(urlBefore).toContain('/api/file/theme-wallpaper?name=background.png')
 
       // Alpha/scrim-only refresh (simulates an opacity-slider tick) must keep
       // the SAME URL — a fresh one would re-download the wallpaper every tick.
@@ -306,11 +282,6 @@ describe('themeBackground', () => {
     })
   })
 
-  describe('wallpaperImageUrl', () => {
-    it('points at the theme-background endpoint', () => {
-      expect(wallpaperImageUrl()).toContain('/api/file/theme-background?v=')
-    })
-  })
 
   describe('galleryImageUrl', () => {
     it('points at the by-name wallpaper endpoint', () => {
@@ -440,6 +411,44 @@ describe('themeBackground', () => {
       }
     })
 
+    it('sets a wallpaper from a server file by reading bytes then uploading+selecting', async () => {
+      const blob = new Blob(['png-bytes'], { type: 'image/png' })
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, blob: async () => blob })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ file: 'local-9-z.png' }], errors: [] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ active_file: 'local-9-z.png' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const out = await setWallpaperFromPath('assets/wall.png')
+
+        // 1. Read the source file bytes through the local-file endpoint.
+        expect(fetchMock.mock.calls[0][0]).toContain('/api/local-file/assets/wall.png')
+        // 2. Upload the bytes into the gallery.
+        expect(fetchMock.mock.calls[1][0]).toBe('/api/theme/local/upload')
+        const form = fetchMock.mock.calls[1][1].body as FormData
+        expect((form.getAll('files')[0] as File).name).toBe('wall.png')
+        // 3. Select the new gallery entry as the active wallpaper.
+        expect(fetchMock.mock.calls[2][0]).toBe('/api/theme/local/select')
+        expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({ name: 'local-9-z.png' })
+        expect(out.active_file).toBe('local-9-z.png')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('throws when the gallery upload rejects the source image', async () => {
+      const blob = new Blob(['x'], { type: 'image/png' })
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, blob: async () => blob })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [], errors: [{ name: 'wall.png', error: 'unsupported image' }] }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await expect(setWallpaperFromPath('assets/wall.png')).rejects.toThrow('unsupported image')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
     it('sets the mode via the wallpaper endpoint', async () => {
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ mode: 'bing' }) })
       vi.stubGlobal('fetch', fetchMock)
@@ -488,7 +497,7 @@ describe('themeBackground', () => {
     it('reuses the cached URL for the same file', () => {
       const a = resolveWallpaperUrl('background.png')
       const b = resolveWallpaperUrl('background.png')
-      expect(a).toContain('/api/file/theme-background?v=')
+      expect(a).toContain('/api/file/theme-wallpaper?name=background.png&v=')
       expect(b).toBe(a)
     })
 

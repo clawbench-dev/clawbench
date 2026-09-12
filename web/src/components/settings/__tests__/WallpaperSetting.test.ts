@@ -123,7 +123,6 @@ function localConfigWith(items: { file: string; name: string }[], selected: stri
   return {
     appearance: {
       active_file: selected,
-      wallpaper_file: '',
       panel_opacity: 0.85,
       wallpaper_mode: 'local',
       wallpaper_enabled: true,
@@ -141,7 +140,6 @@ function bingConfigWith(overrides: Record<string, unknown> = {}) {
   return {
     appearance: {
       active_file: 'bing-20260910.jpg',
-      wallpaper_file: '',
       panel_opacity: 0.85,
       wallpaper_mode: 'bing',
       wallpaper_enabled: true,
@@ -167,7 +165,7 @@ describe('WallpaperSetting', () => {
     vi.unstubAllGlobals()
     stubMatchMedia()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })))
-    serverConfig.value = { appearance: { active_file: '', wallpaper_file: '', panel_opacity: 0.85 } }
+    serverConfig.value = { appearance: { active_file: '', panel_opacity: 0.85 } }
     localConfig.wallpaperBlur = 0
     localConfig.wallpaperEdgeFade = false
     localConfig.theme = 'auto'

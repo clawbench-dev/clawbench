@@ -8,9 +8,6 @@ import (
 	"runtime"
 	"testing"
 
-	"clawbench/internal/middleware"
-	"clawbench/internal/service"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -114,95 +111,4 @@ func TestServeIndex_PathTraversalDoesNotLeakSecret(t *testing.T) {
 
 	// The secret content should NOT be in the response
 	assert.NotContains(t, w.Body.String(), "SECRET_CONTENT", "path traversal should not expose secret file")
-}
-
-// --- ISS-077: Missing project ownership check in ServeChatHistory ---
-
-func TestServeChatHistory_OwnershipCheck_GET(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Create a session in one project
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "Test", "codebuddy", "", "default", "chat")
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
-
-	// Create another project directory
-	otherProject := filepath.Join(env.WatchDir, "other-project")
-	if err = os.MkdirAll(otherProject, 0o755); err != nil {
-		t.Fatalf("failed to create other project dir: %v", err)
-	}
-
-	// Request the session from the wrong project
-	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
-	withProjectCookie(req, otherProject)
-	withAuthCookie(req, "")
-
-	w := httptest.NewRecorder()
-	middleware.Auth(http.HandlerFunc(ServeChatHistory))(w, req)
-
-	// Should be forbidden (403) because the session doesn't belong to otherProject
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 Forbidden for cross-project access, got %d; body: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestServeChatHistory_OwnershipCheck_SameProject(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Create a session
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "Test", "codebuddy", "", "default", "chat")
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
-
-	// Request from the correct project
-	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
-	withProjectCookie(req, env.ProjectDir)
-	withAuthCookie(req, "")
-
-	w := httptest.NewRecorder()
-	middleware.Auth(http.HandlerFunc(ServeChatHistory))(w, req)
-
-	// Should succeed (200)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for same-project access, got %d; body: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestServeChatHistory_OwnershipCheck_POST(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Create a session in one project
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "Test", "codebuddy", "", "default", "chat")
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
-
-	// Create another project directory
-	otherProject := filepath.Join(env.WatchDir, "other-project")
-	if err = os.MkdirAll(otherProject, 0o755); err != nil {
-		t.Fatalf("failed to create other project dir: %v", err)
-	}
-
-	// POST to the session from the wrong project
-	body := map[string]interface{}{
-		"role":       "user",
-		"content":    "test",
-		"session_id": sessionID,
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/chat", body)
-	withProjectCookie(req, otherProject)
-	withAuthCookie(req, "")
-
-	w := httptest.NewRecorder()
-	middleware.Auth(http.HandlerFunc(ServeChatHistory))(w, req)
-
-	// Should be forbidden (403) because the session doesn't belong to otherProject
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 Forbidden for cross-project POST, got %d; body: %s", w.Code, w.Body.String())
-	}
 }

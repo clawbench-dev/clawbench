@@ -45,10 +45,10 @@ func effectiveSource(s string) string {
 	return s
 }
 
-// ServeClientLog handles POST /api/client-log (and legacy POST /api/android-log).
-// It receives batched log entries from clients and appends them to a single
-// unified log file ({LogDir}/logs/client.log); each line carries an inline
-// [js] / [android] marker for its origin.
+// ServeClientLog handles POST /api/client-log. It receives batched log entries
+// from clients and appends them to a single unified log file
+// ({LogDir}/logs/client.log); each line carries an inline [js] / [android]
+// marker for its origin.
 func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")

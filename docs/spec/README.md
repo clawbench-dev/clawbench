@@ -54,6 +54,12 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [CLI 子命令](infra/cli-reference.md) | HTTP API 路由架构、task/rag/upgrade-replace 子命令、@path 文件语法、防递归守卫、Cookie Token 认证 |
 | [Bugfix 工作流](infra/bugfix-workflow.md) | 自动化 bugfix 生命周期：扫描分类→worktree 隔离修复→测试验证→PR+CI→合并关闭 |
 
+### api/ — API 规格
+
+| 模块 | 说明 |
+|------|------|
+| [OpenAPI 规格](api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（约 145 路由 / 180 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录（详见 [API 文档说明](api/README.md)） |
+
 ### client/ — 客户端
 
 | 模块 | 说明 |

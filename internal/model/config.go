@@ -136,13 +136,9 @@ type ForgeNotifyConfig struct {
 // WallpaperMode. WallpaperEnabled is a global switch: turning it off hides the
 // wallpaper while retaining the gallery and its selection.
 type AppearanceConfig struct {
-	// WallpaperFile is the legacy single-file wallpaper. It is retained for
-	// backward compatibility (migrated into the local gallery on load) and is
-	// only still written by the legacy /api/theme-background endpoint.
-	WallpaperFile string  `yaml:"wallpaper_file"`
-	PanelOpacity  float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
+	PanelOpacity float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
 
-	// WallpaperMode selects the active source: "" (none/legacy), "local", or "bing".
+	// WallpaperMode selects the active source: "local" or "bing".
 	WallpaperMode string `yaml:"wallpaper_mode"`
 	// WallpaperEnabled is the global on/off switch for the wallpaper layer.
 	WallpaperEnabled bool `yaml:"wallpaper_enabled"`

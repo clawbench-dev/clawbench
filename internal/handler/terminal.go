@@ -143,22 +143,6 @@ func TerminalClose(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// TerminalConfigHandler returns the terminal configuration for the frontend.
-func TerminalConfigHandler(w http.ResponseWriter, r *http.Request) {
-	mgr := GetTerminalManager()
-	if mgr == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": false,
-		})
-		return
-	}
-
-	cfg := mgr.Config()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": cfg.Enabled,
-	})
-}
-
 // ServeQuickCommands handles GET (list) and POST (create) for quick commands,
 // and PUT /reorder for batch reordering.
 func ServeQuickCommands(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-method quick command handler

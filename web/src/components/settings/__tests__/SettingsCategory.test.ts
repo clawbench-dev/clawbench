@@ -536,7 +536,6 @@ describe('SettingsCategory', () => {
         ...serverConfig.value,
         appearance: {
           active_file: 'local-1-a.png',
-          wallpaper_file: '',
           panel_opacity: 0.85,
           wallpaper_mode: 'local',
           wallpaper_enabled: true,

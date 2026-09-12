@@ -302,17 +302,6 @@ export function clearCommandState() {
   availableCommands.value = []
 }
 
-/**
- * Slash commands are now populated from GET /api/agents (acpStates.commands)
- * and SSE commands_update events — no separate prefetch HTTP request needed.
- * This function is kept as a no-op for backward compatibility with call sites
- * that haven't been updated yet.
- * @deprecated Use acpStates from /api/agents instead.
- */
-export async function prefetchCommands(_agentId: string) {
-  // No-op: commands are now pre-populated from /api/agents acpStates
-}
-
 /** Update thinking effort state from SSE thinking_effort_update event. */
 /** Update thinking effort state from REST API or user action (full state). */
 export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {

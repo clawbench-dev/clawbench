@@ -9,7 +9,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"clawbench/internal/model"
@@ -326,12 +328,6 @@ func serveThemeLocalDelete(w http.ResponseWriter, r *http.Request) {
 			app.Local.Selected = app.Local.Items[next].File
 		}
 	}
-	// The legacy single-file field may still name this image (it is retained
-	// through the upgrade migration). Clear it too, otherwise the client's
-	// legacy fallback would keep showing a wallpaper the user just deleted.
-	if app.WallpaperFile == name {
-		app.WallpaperFile = ""
-	}
 	err := persistAppearanceLocked(snapshot)
 	configMutex.Unlock()
 
@@ -451,6 +447,63 @@ func ServeThemeWallpaperGet(w http.ResponseWriter, r *http.Request) {
 	serveWallpaperByName(w, r, name)
 }
 
+// serveWallpaperByName streams a wallpaper file identified by a bare name,
+// applying strict containment and per-format cache/security headers. A name
+// that is malformed, escapes its directory, or does not exist yields 404.
+func serveWallpaperByName(w http.ResponseWriter, r *http.Request, name string) {
+	absPath, ok := wallpaper.FilePath(name)
+	if !ok {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(name))
+	mime := wallpaper.MimeFor(ext)
+	if mime == "" {
+		mime = mimeOctetStream
+	}
+	w.Header().Set("Content-Type", mime)
+	// nosniff: never let a browser content-sniff a wallpaper into HTML/SVG.
+	// The wallpaper is stored on the authenticated server origin, so sniffed
+	// active content would be a session-level XSS vector.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	if ext == ".svg" {
+		// SVG is re-validated on every serve against the FULL file content
+		// (SVG is capped at 1MB at write time, so a full scan is cheap) and
+		// served under a sandbox CSP that disables scripts and external fetches.
+		svgBytes, readErr := os.ReadFile(absPath)
+		if readErr != nil || !wallpaper.SVGLooksSafe(svgBytes) {
+			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+			return
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+		// Do not cache SVG wallpapers — content checks are cheap and the
+		// response is not safe for shared caches.
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		// Raster wallpapers are immutable (a new upload replaces the file under
+		// a versioned query string), so they can be cached aggressively.
+		etag := fmt.Sprintf(`"%x-%x"`, info.ModTime().UnixNano(), info.Size())
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
+
+	f, err := os.Open(absPath)
+	if err != nil {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return
+	}
+	defer func() { _ = f.Close() }()
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
 // ── Bing endpoints ───────────────────────────────────────────────────────────
 
 // ServeThemeBingSync handles POST /api/theme/bing/sync — triggers an immediate
@@ -506,6 +559,52 @@ var triggerBingSync = func() {}
 // SetTriggerBingSyncFunc wires the immediate-sync hook. Called from main.go.
 func SetTriggerBingSyncFunc(fn func()) {
 	triggerBingSync = fn
+}
+
+// PersistBingWallpaperState records the Bing fetch worker's outcome in config.
+// It is injected into the worker via service.SetPersistBingStateFn so the
+// service package never has to import this one.
+//
+// On a disk-write failure the in-memory config is restored, so the worker's
+// view of what is cached never diverges from disk.
+func PersistBingWallpaperState(s wallpaper.BingState) error {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	snapshot := model.ConfigInstance
+	bing := &model.ConfigInstance.Appearance.Bing
+	// A failure reports no File; only the error/attempt fields should change, so
+	// the cached image and its attribution stay intact.
+	if s.File != "" {
+		bing.File = s.File
+		bing.LastSuccessDate = s.LastSuccessDate
+		bing.Copyright = s.Copyright
+		bing.Title = s.Title
+	}
+	if s.Mkt != "" {
+		bing.Mkt = s.Mkt
+	}
+	bing.LastError = s.LastError
+	bing.LastAttemptAt = s.LastAttemptAt
+
+	patch := map[string]any{
+		"appearance": map[string]any{
+			"bing": map[string]any{
+				"file":              bing.File,
+				"last_success_date": bing.LastSuccessDate,
+				"copyright":         bing.Copyright,
+				"title":             bing.Title,
+				"mkt":               bing.Mkt,
+				"last_error":        bing.LastError,
+				"last_attempt_at":   bing.LastAttemptAt,
+			},
+		},
+	}
+	if err := writeConfigYAML(patch); err != nil {
+		model.ConfigInstance = snapshot
+		return err
+	}
+	return nil
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -584,10 +683,6 @@ func persistAppearanceLocked(snapshot model.Config) error {
 		"appearance": map[string]any{
 			"wallpaper_mode":    app.WallpaperMode,
 			"wallpaper_enabled": app.WallpaperEnabled,
-			// Written so clearing the legacy field (when its image is deleted)
-			// is persisted; writeConfigYAML is not subject to the PATCH
-			// whitelist that restricts this key to empty values.
-			"wallpaper_file": app.WallpaperFile,
 			"local": map[string]any{
 				"selected": app.Local.Selected,
 				"items":    galleryItemsToMaps(app.Local.Items),

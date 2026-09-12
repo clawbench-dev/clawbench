@@ -15,6 +15,9 @@ import (
 	"clawbench/internal/service"
 )
 
+// transportACP is the transport value recorded for ACP stdio sessions.
+const transportACP = "acp-stdio"
+
 // replayMessage 是一条从 LoadSession 回放重建的消息。
 type replayMessage struct {
 	role      string // strUser or strAssistant
