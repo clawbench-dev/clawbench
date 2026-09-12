@@ -42,17 +42,13 @@ func NewForgeEventDispatcher(cfgFn func() model.Config, broadcaster ForgeBroadca
 }
 
 // HandleChange is invoked once per freshly derived event.
+//
+// The WS broadcast is NOT gated by the notification toggles: the unread badge
+// answers "are there new changes", not "did we notify", so it must keep working
+// with every toggle off. Gating the broadcast here would also strand the badge,
+// since the frontend learns about new events from this message.
 func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef, item forge.Item, change forge.Change) {
 	cfg := d.cfgFn()
-
-	// The event has already been persisted by the syncer, so the unread count is
-	// correct regardless of the notification decision below.
-	if !d.notifyEnabled(cfg, change.Type) {
-		slog.Debug("forge event suppressed by notification toggle",
-			slog.String("repo", repo.Key()),
-			slog.String("event", string(change.Type)))
-		return
-	}
 
 	event := ForgeEvent{
 		Platform:  repo.Platform,
@@ -65,6 +61,9 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 		Payload:   item.URL,
 	}
 
+	// Always broadcast: this is what keeps the unread badge live. The event has
+	// already been persisted by the syncer, so the stored count is authoritative
+	// regardless of the notification decision below.
 	if d.broadcaster != nil {
 		d.broadcaster(map[string]any{
 			contentKeyType: "forge_event",
@@ -78,6 +77,15 @@ func (d *ForgeEventDispatcher) HandleChange(_ context.Context, repo ForgeRepoRef
 				"author":       item.Author.Login,
 			},
 		})
+	}
+
+	// IM push is what the toggles control — a user who muted "commented" still
+	// wants the badge, just not a robot message.
+	if !d.notifyEnabled(cfg, change.Type) {
+		slog.Debug("forge event IM push suppressed by notification toggle",
+			slog.String("repo", repo.Key()),
+			slog.String("event", string(change.Type)))
+		return
 	}
 
 	if d.notifier != nil {

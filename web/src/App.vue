@@ -383,7 +383,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
-              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -393,6 +393,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
+              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -421,6 +422,11 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
+          <button v-if="popupOverflowTabs.includes('forge')" class="dock-overflow-item" :class="{ active: activeTab === 'forge' }" @click.stop="handleOverflowSelect('forge')">
+            <component :is="dockTabIcon('forge')" :size="16" />
+            <span>{{ t('nav.forge') }}</span>
+            <span v-if="forgeUnreadCount > 0" class="dock-overflow-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+          </button>
           <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
             <Clock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
@@ -2156,6 +2162,7 @@ function wideDockBadgeVisible(tab) {
 function wideDockBadgeAnim(tab) {
   switch (tab) {
     case 'history': return historyBadgeAnim.value
+    case 'forge': return forgeBadgeAnim.value
     case 'tasks': return taskBadgeAnim.value
     case 'terminal': return terminalBadgeAnim.value
     case 'proxy': return proxyBadgeAnim.value
@@ -2165,6 +2172,7 @@ function wideDockBadgeAnim(tab) {
 function wideDockBadgeAnimEnd(tab) {
   switch (tab) {
     case 'history': historyBadgeAnim.value = false; break
+    case 'forge': forgeBadgeAnim.value = false; break
     case 'tasks': taskBadgeAnim.value = false; break
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
@@ -2207,6 +2215,7 @@ const overflowButtonIcon = computed(() => {
 // Dock badge change animations
 const chatBadgeAnim = ref(false)
 const historyBadgeAnim = ref(false)
+const forgeBadgeAnim = ref(false)
 const taskBadgeAnim = ref(false)
 const terminalBadgeAnim = ref(false)
 const proxyBadgeAnim = ref(false)
@@ -2239,12 +2248,14 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
 })
 
 const overflowBadgeCount = computed(() => {
-  let count = store.state.taskUnreadCount
+  let count = forgeUnreadCount.value + store.state.taskUnreadCount
   if (!isSSHDisabled.value) count += store.state.portForwardEnabledCount
   if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
-  // Subtract counts for ALL inline overflow tabs
+  // Subtract counts for ALL inline overflow tabs, so the aggregate badge only
+  // reflects what is hidden behind the overflow button.
   for (const tab of allInlineOverflowTabs.value) {
-    if (tab === 'tasks') count -= store.state.taskUnreadCount
+    if (tab === 'forge') count -= forgeUnreadCount.value
+    else if (tab === 'tasks') count -= store.state.taskUnreadCount
     else if (tab === 'proxy') count -= store.state.portForwardEnabledCount
     else if (tab === 'terminal') count -= store.state.terminalSessionCount
   }

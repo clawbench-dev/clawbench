@@ -36,11 +36,59 @@ describe('useForgeUnread', () => {
     expect(forgeUnreadCount.value).toBe(3)
   })
 
-  it('bump increments locally for a live event', () => {
-    const { forgeUnreadCount, bump } = useForgeUnread()
-    bump()
-    bump()
+  it('onForgeEvent refetches the authoritative count (debounced)', async () => {
+    vi.useFakeTimers()
+    try {
+      mockFetchUnread.mockResolvedValue({ count: 7 })
+      const { forgeUnreadCount, onForgeEvent } = useForgeUnread()
+      onForgeEvent()
+      // Not fetched yet — the call is debounced to coalesce bursts.
+      expect(mockFetchUnread).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(250)
+      expect(mockFetchUnread).toHaveBeenCalledTimes(1)
+      expect(forgeUnreadCount.value).toBe(7)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('onForgeEvent coalesces a burst into one fetch', async () => {
+    vi.useFakeTimers()
+    try {
+      mockFetchUnread.mockResolvedValue({ count: 3 })
+      const { onForgeEvent } = useForgeUnread()
+      onForgeEvent()
+      onForgeEvent()
+      onForgeEvent()
+      await vi.advanceTimersByTimeAsync(250)
+      expect(mockFetchUnread).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a refetch restores the badge after the tab was opened', async () => {
+    // The reported bug: opening the tab clears the badge, and nothing brought
+    // it back. A live event must re-derive the server count.
+    mockFetchUnread.mockResolvedValue({ count: 2 })
+    mockMarkRead.mockResolvedValue({ count: 0 })
+    const { forgeUnreadCount, refresh, markRead, onForgeEvent } = useForgeUnread()
+    await refresh()
     expect(forgeUnreadCount.value).toBe(2)
+
+    await markRead()
+    expect(forgeUnreadCount.value).toBe(0)
+
+    // A new event arrives while the user is on another tab.
+    mockFetchUnread.mockResolvedValue({ count: 1 })
+    vi.useFakeTimers()
+    try {
+      onForgeEvent()
+      await vi.advanceTimersByTimeAsync(250)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(forgeUnreadCount.value).toBe(1)
   })
 
   it('markRead clears optimistically and persists', async () => {

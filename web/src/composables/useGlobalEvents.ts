@@ -334,11 +334,13 @@ function connect() {
                     window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: msg.data }))
                 }
 
-                // Forge (GitHub/GitLab) change events: bump the unread badge on
-                // LIVE events only. Replayed events are caught-up history, so
-                // they must not inflate the badge after a reconnect.
+                // Forge (GitHub/GitLab) change events: re-derive the unread
+                // badge on LIVE events only. Replayed events are caught-up
+                // history, so they must not inflate the badge after a reconnect.
+                // The count is refetched (debounced) rather than incremented
+                // locally so it stays correct after the tab has been opened.
                 if (msg.event === 'forge_event' && !msg.replayed) {
-                    useForgeUnread().bump()
+                    useForgeUnread().onForgeEvent()
                 }
 
                 // Browser notification: when page is not focused, show browser

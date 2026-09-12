@@ -50,7 +50,26 @@ func TestForgeDispatcher_NotifiesWhenEnabled(t *testing.T) {
 	assert.Equal(t, 1, notifier.calls, "an enabled event must push to IM")
 }
 
-func TestForgeDispatcher_SuppressedWhenToggleOff(t *testing.T) {
+// TestForgeDispatcher_ToggleOffStillBroadcasts is the regression guard for the
+// unread badge going stale.
+//
+// The notification toggles govern IM push, NOT the WS broadcast. The frontend
+// learns about new events from the broadcast and re-derives the badge from the
+// server, so suppressing it here would freeze the badge for any user who muted
+// a category — even though the event was still recorded as unread.
+// recordingNotifier captures which events were pushed, for independence tests.
+type recordingNotifier struct {
+	onPush func(service.ForgeEvent)
+}
+
+func (n *recordingNotifier) PushForgeEvent(e service.ForgeEvent, _ forge.Item) bool {
+	if n.onPush != nil {
+		n.onPush(e)
+	}
+	return true
+}
+
+func TestForgeDispatcher_ToggleOffStillBroadcasts(t *testing.T) {
 	cfg := fullNotifyConfig()
 	cfg.Forge.Notify.Commented = false
 
@@ -61,27 +80,28 @@ func TestForgeDispatcher_SuppressedWhenToggleOff(t *testing.T) {
 	d.HandleChange(context.Background(), service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"},
 		testItem(), forge.Change{Type: forge.EventCommented, Number: 1})
 
-	assert.Zero(t, broadcasts, "a disabled event must not broadcast")
-	assert.Zero(t, notifier.calls, "a disabled event must not push")
+	assert.Equal(t, 1, broadcasts, "a muted event must still broadcast so the badge stays live")
+	assert.Zero(t, notifier.calls, "a disabled event must not push to IM")
 }
 
 func TestForgeDispatcher_EachToggleIsIndependent(t *testing.T) {
-	// Turning off "merged" must not silence "closed".
+	// Turning off "merged" must not silence "closed". Asserted against IM push,
+	// which is what the toggles actually govern (the broadcast always fires).
 	cfg := fullNotifyConfig()
 	cfg.Forge.Notify.Merged = false
 
-	var got []string
-	d := service.NewForgeEventDispatcher(func() model.Config { return cfg }, func(msg any) {
-		m := msg.(map[string]any)
-		got = append(got, m["event"].(service.ForgeEvent).EventType)
-	}, nil)
+	var pushed []string
+	notifier := &recordingNotifier{onPush: func(e service.ForgeEvent) {
+		pushed = append(pushed, e.EventType)
+	}}
+	d := service.NewForgeEventDispatcher(func() model.Config { return cfg }, func(any) {}, notifier)
 
 	ref := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"}
 	d.HandleChange(context.Background(), ref, testItem(), forge.Change{Type: forge.EventMerged, Number: 1})
 	d.HandleChange(context.Background(), ref, testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
 
-	require.Len(t, got, 1)
-	assert.Equal(t, "closed", got[0])
+	require.Len(t, pushed, 1)
+	assert.Equal(t, "closed", pushed[0])
 }
 
 // TestForgeDispatcher_UnreadIndependentOfToggles is the core R12 guard: with all
@@ -121,12 +141,16 @@ func TestForgeDispatcher_NilDependenciesAreSafe(t *testing.T) {
 		testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
 }
 
-func TestForgeDispatcher_UnknownEventTypeIsNotNotified(t *testing.T) {
+func TestForgeDispatcher_UnknownEventTypeIsNotPushed(t *testing.T) {
 	var broadcasts int
-	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(any) { broadcasts++ }, nil)
+	notifier := &fakeNotifier{}
+	d := service.NewForgeEventDispatcher(fullNotifyConfig, func(any) { broadcasts++ }, notifier)
 	d.HandleChange(context.Background(), service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"},
 		testItem(), forge.Change{Type: forge.EventType("bogus"), Number: 1})
-	assert.Zero(t, broadcasts, "an unrecognized event type must not notify")
+	// Unknown types have no toggle, so notifyEnabled returns false -> no IM push.
+	// The broadcast still happens so the badge never silently misses an event.
+	assert.Zero(t, notifier.calls, "an unrecognized event type must not push to IM")
+	assert.Equal(t, 1, broadcasts, "the badge must still learn about the event")
 }
 
 // TestForgeDispatcher_PayloadCarriesItemIdentity ensures the broadcast carries
