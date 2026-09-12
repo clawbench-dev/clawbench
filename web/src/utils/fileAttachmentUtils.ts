@@ -21,6 +21,24 @@ export function isUrlEntry(f: FileEntry): boolean {
   return f.kind === 'url' && !!f.url
 }
 
+/**
+ * Whether a URL is safe to bind to an anchor href.
+ *
+ * URL entries are persisted and re-rendered after a reload, so the address is
+ * data rather than something the user just typed. Only http(s) is allowed:
+ * `javascript:`/`data:` in an href would execute on click. Anything else is
+ * rendered as inert text instead of a link.
+ */
+export function isSafeExternalUrl(url: string | undefined): boolean {
+  if (!url) return false
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 /** Normalize a file entry to FileEntry format.
  *  Backend returns FileEntry[] (new) or string[] (legacy), local push uses [{path: "..."}]. */
 export function normalizeFileEntry(f: string | FileEntry): FileEntry {

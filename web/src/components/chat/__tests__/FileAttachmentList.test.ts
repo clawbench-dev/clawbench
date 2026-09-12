@@ -23,6 +23,8 @@ vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
   normalizeFileEntry: (f: any) => typeof f === 'string' ? { path: f } : f,
   isUploadPath: (p: string) => p.startsWith('/upload/'),
   isImageFile: (p: string) => /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(p),
+  isUrlEntry: (f: any) => f?.kind === 'url' && !!f?.url,
+  isSafeExternalUrl: (u: string | undefined) => !!u && /^https?:\/\//.test(u),
 }))
 
 vi.mock('@/utils/fileManager.ts', () => ({
@@ -100,5 +102,55 @@ describe('FileAttachmentList', () => {
     const wrapper = mountList(['src/main.ts' as any])
     expect(wrapper.findAll('.chat-file-attachment').length).toBe(1)
     expect(wrapper.text()).toContain('main.ts')
+  })
+
+  // ── URL attachments (forge issue/PR references from "Analyze with AI") ──
+
+  it('renders a URL attachment as a real link with its label', () => {
+    // Regression: the reloaded message showed an empty chip with a generic file
+    // icon and no href, because this component had no URL branch and the chip
+    // fell through to the file-card path (path is a label, not a filesystem
+    // path, so the filename resolved to '').
+    const wrapper = mountList([
+      { path: 'acme/widgets#451', kind: 'url', url: 'https://github.com/acme/widgets/issues/451' },
+    ])
+    const link = wrapper.find('a.chat-file-attachment')
+    expect(link.exists(), 'a URL entry must render as an anchor').toBe(true)
+    expect(link.attributes('href')).toBe('https://github.com/acme/widgets/issues/451')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(link.attributes('rel')).toContain('noopener')
+    // The label is shown, not a blank filename.
+    expect(wrapper.text()).toContain('acme/widgets#451')
+  })
+
+  it('falls back to the address when a URL entry has no label', () => {
+    const wrapper = mountList([{ path: '', kind: 'url', url: 'https://example.com/x' }])
+    expect(wrapper.text()).toContain('https://example.com/x')
+  })
+
+  it('does not emit file-tag-click for a URL entry', async () => {
+    // A URL is not a file: clicking must navigate, never open a file preview.
+    const wrapper = mountList([{ path: 'a#1', kind: 'url', url: 'https://example.com/a' }])
+    await wrapper.find('a.chat-file-attachment').trigger('click')
+    expect(wrapper.emitted('file-tag-click')).toBeFalsy()
+  })
+
+  it('renders a non-http(s) URL inert rather than as a live link', () => {
+    // The href is data restored from the DB, so a javascript: address must not
+    // become a clickable link.
+    const wrapper = mountList([{ path: 'evil', kind: 'url', url: 'javascript:alert(1)' }])
+    const link = wrapper.find('a.chat-file-attachment')
+    expect(link.attributes('href')).toBeUndefined()
+    expect(link.classes()).toContain('attachment-url-inert')
+  })
+
+  it('renders URL and file attachments side by side', () => {
+    const wrapper = mountList([
+      { path: 'acme/widgets#451', kind: 'url', url: 'https://github.com/acme/widgets/issues/451' },
+      { path: 'src/main.ts' },
+    ])
+    expect(wrapper.findAll('.chat-file-attachment').length).toBe(2)
+    expect(wrapper.find('a.chat-file-attachment').exists()).toBe(true)
+    expect(wrapper.find('span.chat-file-attachment').exists()).toBe(true)
   })
 })

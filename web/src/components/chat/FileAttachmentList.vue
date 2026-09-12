@@ -1,6 +1,20 @@
 <template>
   <div v-if="files.length > 0" class="chat-files">
-    <span v-for="(raw, idx) in files" :key="idx"
+    <!-- External URL attachment (a forge issue/PR reference from "Analyze with
+         AI"). Rendered as a real link so it stays clickable after a reload;
+         the label comes from path (owner/repo#123), the target from url. -->
+    <a v-for="(raw, idx) in urlFiles" :key="'url-' + idx"
+      class="chat-file-attachment attachment-ref attachment-url"
+      :href="safeHref(raw)"
+      :class="{ 'attachment-url-inert': !isSafeExternalUrl(normalizeFileEntry(raw).url) }"
+      target="_blank"
+      rel="noopener noreferrer"
+      :title="urlLabel(raw)">
+      <LinkIcon :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+      <span class="attachment-filename">{{ urlLabel(raw) }}</span>
+    </a>
+
+    <span v-for="(raw, idx) in fileFiles" :key="idx"
       class="chat-file-attachment"
       :class="[isUploadPath(normalizeFileEntry(raw).path) ? 'attachment-upload' : 'attachment-ref', { 'attachment-image-only': showsThumb(raw) }]"
       @click="$emit('file-tag-click', normalizeFileEntry(raw))"
@@ -25,14 +39,14 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { baseName } from '@/utils/path.ts'
-import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, isUrlEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import FileIcon from '@/components/common/FileIcon.vue'
-import { Code2 } from 'lucide-vue-next'
+import { Code2, Link as LinkIcon } from 'lucide-vue-next'
 
 const { t } = useI18n()
 
@@ -40,6 +54,23 @@ const props = defineProps({
   files: { type: Array, required: true },
 })
 defineEmits(['file-tag-click'])
+
+// URL entries must not go through the file-card branch: their path is a label,
+// not a filesystem path, so a thumbnail/preview click would be meaningless.
+const urlFiles = computed(() => (props.files ?? []).filter(f => isUrlEntry(normalizeFileEntry(f))))
+const fileFiles = computed(() => (props.files ?? []).filter(f => !isUrlEntry(normalizeFileEntry(f))))
+
+/** Chip text: the stored label, falling back to the address itself. */
+function urlLabel(raw) {
+  const e = normalizeFileEntry(raw)
+  return e.path || e.url || ''
+}
+
+/** href for a URL entry, or undefined when the scheme is not http(s). */
+function safeHref(raw) {
+  const url = normalizeFileEntry(raw).url
+  return isSafeExternalUrl(url) ? url : undefined
+}
 
 function getFileName(path) {
   return baseName(path)
@@ -144,5 +175,23 @@ watch(() => props.files.length, (len) => {
 .attachment-ref {
   background: rgba(255, 255, 255, 0.15);
   border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+/* External URL chip: reads as a link (accent text + underline on hover). */
+.attachment-url {
+  color: var(--accent-color, #0066cc);
+}
+.attachment-url .attachment-filename {
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .attachment-url:hover .attachment-filename {
+    text-decoration: underline;
+  }
+}
+/* A URL with a non-http(s) scheme renders inert rather than as a live link. */
+.attachment-url-inert {
+  color: var(--text-muted, #8b8b8b);
+  cursor: default;
 }
 </style>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry } from '@/utils/fileAttachmentUtils.ts'
+import { normalizeFileEntry, isUploadPath, isImageFile, dedupeFiles, buildSendChannels, buildSendPayload, folderRelPath, isDirUploadFile, isUrlEntry, isSafeExternalUrl } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
   it('normalizes string to { path, isDir: false } object', () => {
@@ -216,6 +216,18 @@ describe('URL attachments', () => {
     expect(isUrlEntry({ path: 'x', kind: 'url', url: 'https://x' })).toBe(true)
     expect(isUrlEntry({ path: 'x', kind: 'url' })).toBe(false)
     expect(isUrlEntry({ path: '/local/file.ts' })).toBe(false)
+  })
+
+  it('isSafeExternalUrl allows only http(s) and rejects executable schemes', () => {
+    // URL entries are persisted then re-rendered into an anchor href, so the
+    // address is data: a javascript:/data: URL must never become a live link.
+    expect(isSafeExternalUrl('https://github.com/o/r/issues/1')).toBe(true)
+    expect(isSafeExternalUrl('http://example.com/x')).toBe(true)
+    expect(isSafeExternalUrl('javascript:alert(1)')).toBe(false)
+    expect(isSafeExternalUrl('data:text/html,<script>alert(1)</script>')).toBe(false)
+    expect(isSafeExternalUrl('file:///etc/passwd')).toBe(false)
+    expect(isSafeExternalUrl('')).toBe(false)
+    expect(isSafeExternalUrl(undefined)).toBe(false)
   })
 
   it('dedupeFiles dedupes URLs by address, not label', () => {

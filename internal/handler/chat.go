@@ -372,7 +372,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
 	for _, fEntry := range req.Files {
 		if fEntry.IsURL() {
+			// Path carries the human-readable label (e.g. "owner/repo#123") and
+			// must be preserved: it is the chip text shown after a reload. Only
+			// the filesystem resolution is skipped for URL entries.
 			validatedFileEntries = append(validatedFileEntries, model.FileEntry{
+				Path: fEntry.Path,
 				Kind: "url",
 				URL:  fEntry.URL,
 			})
@@ -735,6 +739,18 @@ func executeStreamRun(
 	queueID string,
 ) streamRunResult {
 	runStart := time.Now()
+
+	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
+	// drain loop's shared context stays alive for the next queued message. The
+	// outer ctx still governs everything (user cancel / shutdown cancel it, and
+	// that propagates here).
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	service.RegisterSessionTurnCancel(sessionID, turnCancel)
+	defer func() {
+		service.UnregisterSessionTurnCancel(sessionID)
+		turnCancel()
+	}()
+
 	sessionTransport := service.GetSessionTransport(sessionID)
 	slog.Info("acp perf: executeStreamRun.start", "session_id", sessionID, "backend", backendName, "agent_id", agentID, "transport", sessionTransport, "resume", chatReq.Resume)
 
@@ -756,7 +772,7 @@ func executeStreamRun(
 	}
 
 	slog.Info("acp perf: executeStreamRun.ExecuteStream_start", "session_id", sessionID, "transport", sessionTransport, "after_backend_create", time.Since(runStart))
-	eventCh, err := backend.ExecuteStream(ctx, chatReq)
+	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
@@ -808,7 +824,7 @@ func executeStreamRun(
 			return T(r, key, args)
 		},
 	}
-	executor := service.NewSessionExecutor(ctx, cfg)
+	executor := service.NewSessionExecutor(turnCtx, cfg)
 	runResult := executor.RunWithChannel(eventCh)
 
 	// Finalize: persist to DB, drain channel, save metadata
@@ -819,13 +835,19 @@ func executeStreamRun(
 
 	// Convert RunResult to streamRunResult
 	result := streamRunResult{}
-	if runResult.CancelReason == "user" {
+	switch {
+	case runResult.CancelReason == "user":
 		result.cancelReason = runResult.CancelReason
-	} else if ctx.Err() == context.Canceled {
+	case runResult.CancelReason == "interrupt":
+		// "interrupt and send": the drain loop must KEEP the queue and move on
+		// to the next message. Passing the reason through (instead of folding it
+		// into the generic "cancel" below) is what tells it to do that.
+		result.cancelReason = runResult.CancelReason
+	case turnCtx.Err() == context.Canceled:
 		result.cancelReason = "cancel"
-	} else if ctx.Err() == context.DeadlineExceeded {
+	case turnCtx.Err() == context.DeadlineExceeded:
 		result.err = "AI response timed out (30 min)"
-	} else if runResult.Empty {
+	case runResult.Empty:
 		result.empty = true
 	}
 

@@ -1410,6 +1410,80 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 // running and a message is enqueued via POST /api/ai/chat, the user message
 // IS persisted to the database (queued-message-persistence plan). The row is
 // queued=1 and discovered via the queued-message query.
+// TestAIChat_URLAttachment_PreservesLabel verifies that a URL attachment keeps
+// its human-readable label (Path) through validation and persistence.
+//
+// Regression: the URL branch rebuilt the entry as {Kind, URL} only, dropping
+// Path. After a reload the chip had no text, because the renderer uses Path as
+// the label for URL entries.
+func TestAIChat_URLAttachment_PreservesLabel(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-attach", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "analyze this issue",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#451",
+			Kind: "url",
+			URL:  "https://github.com/acme/widgets/issues/451",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1, "the URL entry must survive validation")
+
+	got := messages[0].Files[0]
+	assert.Equal(t, "url", got.Kind)
+	assert.Equal(t, "https://github.com/acme/widgets/issues/451", got.URL)
+	assert.Equal(t, "acme/widgets#451", got.Path,
+		"the URL label must be preserved so the chip is not blank after a reload")
+}
+
+// TestAIChat_URLAttachment_NotResolvedAsPath verifies a URL entry is never
+// treated as a filesystem path (which would 404 since it does not exist).
+func TestAIChat_URLAttachment_NotResolvedAsPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-nopath", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "check",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#9",
+			Kind: "url",
+			URL:  "https://github.com/acme/widgets/issues/9",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	// A non-existent path would fail validation with 404; a URL must not.
+	assertOK(t, w)
+}
+
 func TestAIChat_EnqueuePath_PersistsToDB(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
