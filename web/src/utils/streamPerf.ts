@@ -52,14 +52,13 @@ export function stripScheduledTaskTags(text: string): string {
 // ────────────────────────────────────────────────────────────
 
 /**
- * Validate that <ask-question> content looks like a real structured payload.
- * Supports both XML format (with <item> child elements) and JSON format
- * (with "questions" array containing objects with "question" and "options").
+ * Validate that <ask-question> content looks like a real structured XML payload
+ * (with <item> child elements carrying <question> and <option>).
  * Only called post-streaming.
  */
 export function isValidAskContent(raw: string): boolean {
   const probe = raw.trim()
-  // XML format: check for <item> child elements with <question> and <option> inside
+  // Check for <item> child elements with <question> and <option> inside
   const itemMatches = probe.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/g)
   if (itemMatches) {
     // At least one <item> must contain both <question> and <option> inside it
@@ -73,16 +72,6 @@ export function isValidAskContent(raw: string): boolean {
     return openItemMatches.some(m =>
       m[1].includes('<question>') && m[1].includes('<option>')
     )
-  }
-  // JSON format: check for "questions" key with array
-  if (probe.startsWith('{') && probe.includes('"questions"')) {
-    try {
-      const data = JSON.parse(probe)
-      return Array.isArray(data.questions) && data.questions.length > 0
-        && data.questions.some((q: Record<string, unknown>) => q.question && Array.isArray(q.options) && q.options.length > 0)
-    } catch {
-      return false
-    }
   }
   return false
 }

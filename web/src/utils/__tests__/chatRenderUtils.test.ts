@@ -672,23 +672,9 @@ describe('parseAskQuestionContent', () => {
     expect(parseAskQuestionContent(input)).toBeNull()
   })
 
-  it('parses JSON format', () => {
-    const input = '{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}'
-    const result = parseAskQuestionContent(input)
-    expect(result).not.toBeNull()
-    expect(result!.questions).toHaveLength(1)
-    expect(result!.questions[0].header).toBe('Approach')
-    expect(result!.questions[0].multiSelect).toBe(false)
-    expect(result!.questions[0].question).toBe('Which approach?')
-    expect(result!.questions[0].options).toHaveLength(2)
-  })
-
-  it('returns null for invalid JSON', () => {
-    expect(parseAskQuestionContent('{invalid}')).toBeNull()
-  })
-
-  it('returns null for JSON without questions', () => {
-    expect(parseAskQuestionContent('{"other":"data"}')).toBeNull()
+  it('returns null for JSON content (only XML is supported)', () => {
+    const input = '{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}'
+    expect(parseAskQuestionContent(input)).toBeNull()
   })
 })
 

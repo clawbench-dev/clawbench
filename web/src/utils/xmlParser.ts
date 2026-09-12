@@ -1,11 +1,10 @@
 /**
- * XML/JSON parsing utilities for structured AI output.
+ * XML parsing utilities for structured AI output.
  *
- * Handles <ask-question> XML tag format (with JSON content support).
+ * Handles the <ask-question> XML tag format.
  * Uses DOMParser for robust parsing of nested XML structures.
  * All data is in child element text nodes (no attributes) so that
  * if parsing fails, content remains human-readable.
- * JSON format is also supported as a fallback inside <ask-question> tags.
  */
 
 // ────────────────────────────────────────────────────────────
@@ -29,65 +28,10 @@ export interface AskQuestionData {
 }
 
 /**
- * Parse JSON-format ask-question content into structured data.
- * JSON format: { "questions": [{ "question", "header", "multiSelect", "options": [{ "label", "description" }] }] }
- * Returns null if JSON is invalid or doesn't match the expected schema.
- */
-export function parseAskQuestionJSON(rawContent: string): AskQuestionData | null {
-  try {
-    const data = JSON.parse(rawContent.trim())
-    if (!data || !Array.isArray(data.questions) || data.questions.length === 0) {
-      return null
-    }
-
-    const questions: AskItem[] = []
-    for (const item of data.questions) {
-      if (!item.question || !Array.isArray(item.options) || item.options.length === 0) {
-        continue
-      }
-
-      const options: AskOption[] = []
-      for (const opt of item.options) {
-        if (opt.label) {
-          options.push(opt.description ? { label: opt.label, description: opt.description } : { label: opt.label })
-        }
-      }
-
-      if (options.length > 0) {
-        questions.push({
-          header: item.header || '',
-          multiSelect: item.multiSelect === true,
-          question: item.question,
-          options,
-        })
-      }
-    }
-
-    return questions.length > 0 ? { questions } : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Parse <ask-question> XML or JSON content into structured data.
- * Tries XML parsing first, falls back to JSON if XML fails.
- * Returns null if neither format produces valid data.
+ * Parse <ask-question> XML content into structured data.
+ * Returns null if the XML is invalid or contains no <item> elements.
  */
 export function parseAskQuestionXML(rawContent: string): AskQuestionData | null {
-  // Try XML first
-  const xmlResult = parseAskQuestionXMLOnly(rawContent)
-  if (xmlResult) return xmlResult
-
-  // Fall back to JSON
-  return parseAskQuestionJSON(rawContent)
-}
-
-/**
- * XML-only parsing of <ask-question> content.
- * Returns null if XML is invalid or contains no <item> elements.
- */
-function parseAskQuestionXMLOnly(rawContent: string): AskQuestionData | null {
   try {
     const xmlStr = rawContent.trim()
     const parser = new DOMParser()
