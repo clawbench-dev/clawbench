@@ -1,11 +1,13 @@
 <template>
   <Transition name="quote-bar">
-    <div v-if="visible && quoteData" ref="barRef" class="quote-question-bar">
+    <div v-if="visible && (quoteData || composerMode)" ref="barRef" class="quote-question-bar">
 
       <!-- Collapsed row (mobile): quoted snippet (single-line) + add action.
            Clicking the quote area expands the input box and the quote together.
-           Copy button floats absolutely at the snippet's top-right. -->
-      <div v-if="!expanded" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
+           Copy button floats absolutely at the snippet's top-right.
+           Only shown when there IS a quote: with none (composer mode) there is
+           nothing to preview, so we go straight to the input below. -->
+      <div v-if="!expanded && quoteData" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
           <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
@@ -18,11 +20,12 @@
         </button>
       </div>
 
-      <!-- Expanded: quoted snippet (full) + input.
-           Copy button floats absolutely at the snippet's top-right. -->
+      <!-- Expanded: quoted snippet (full, when there is one) + input. -->
       <div v-else class="quote-bar-expanded">
-        <!-- Quoted snippet — fully shown when expanded -->
-        <div class="qq-quoted-snippet">
+        <!-- Quoted snippet — fully shown when expanded. Absent when the user has
+             not selected anything yet (composer mode): the bar then asks for a
+             message directly. -->
+        <div v-if="quoteData" class="qq-quoted-snippet">
           <span class="qq-quoted-text qq-quoted-text--expanded">{{ displayQuoteText }}</span>
           <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
             <span v-if="copied" class="qq-copied-text">{{ t('common.copied') }}</span>
@@ -68,6 +71,10 @@ const { t } = useI18n()
 const props = defineProps({
   visible: Boolean,
   quoteData: Object,
+  // Opened from an entry point (e.g. the issue/PR detail header) rather than by
+  // a text selection. The bar is then useful with no quote at all, so it skips
+  // the collapsed preview and goes straight to the input.
+  composerMode: Boolean,
 })
 const emit = defineEmits(['add', 'send', 'close', 'pin', 'unpin'])
 
@@ -100,6 +107,22 @@ function onVisibleChange(val) {
 }
 
 watch(() => props.visible, onVisibleChange)
+
+// Composer mode opens with no quote, so there is no snippet to preview and
+// nothing to click to expand. Go straight to the input and focus it, so the
+// user can type their message immediately. Runs on open and whenever a quote is
+// (re)captured while the bar stays open, keeping the input visible throughout.
+watch(
+  () => [props.visible, props.composerMode],
+  async ([vis, composer]) => {
+    if (!vis || !composer) return
+    emit('pin')
+    expanded.value = true
+    await nextTick()
+    focusInput()
+  },
+  { immediate: true },
+)
 
 // Click outside to close
 function onPointerDown(e) {

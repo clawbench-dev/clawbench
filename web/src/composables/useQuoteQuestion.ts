@@ -1,10 +1,25 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { closestElement, getLineInfo, getFileInfo, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { closestElement, getLineInfo, getFileInfo, getQuoteSource, buildQuoteBlock, buildQuoteFirstMessage, buildMultiQuoteMessage } from '@/utils/quoteQuestionUtils.ts'
+import { injectChatInput } from '@/utils/chatInputInjection.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
+
+/**
+ * Context for the "composer" flow: an entry point (e.g. the forge issue/PR
+ * detail header) opens the quote bar with NO quote and only an attachment, so
+ * the user can type immediately and optionally select text to quote.
+ *
+ * `onAdd` lets the caller navigate (e.g. switch to the chat tab) without this
+ * composable knowing about tabs.
+ */
+export interface QuoteComposerContext {
+  url: string
+  label: string
+  onAdd?: () => void
+}
 
 // Module-level singleton: bar visibility state shared across all consumers.
 // The active selection stays separate from staged quotes so dismissing a
@@ -15,12 +30,17 @@ const {
   setQuoteData,
   addStagedQuote,
   addAttachedFile,
+  addUrlAttachment,
   clearQuotes,
   clearAll,
 } = useChatContext()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
+// Non-null while the bar was opened by an entry point rather than by a text
+// selection. In this mode the bar is useful even with no quote.
+const composerContext = ref<QuoteComposerContext | null>(null)
+const composerMode = computed(() => composerContext.value !== null)
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let pointerReleaseTimer: ReturnType<typeof setTimeout> | null = null
@@ -35,6 +55,10 @@ let pointerCount = 0
 function evaluateSelection() {
   const sel = window.getSelection()
   if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    // In composer mode the bar stays open (it was opened deliberately, not by a
+    // selection) and an already-captured quote survives — otherwise deselecting
+    // would silently discard the snippet the user picked.
+    if (composerContext.value) return
     // Drop only the active selection. Staged quotes remain in the chat draft.
     if (!barPinned.value) {
       barVisible.value = false
@@ -55,7 +79,7 @@ function evaluateSelection() {
   // Check if selection is within a code, markdown, or office preview area
   const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
   if (!container) {
-    if (!barPinned.value) {
+    if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
     }
     return
@@ -63,9 +87,19 @@ function evaluateSelection() {
 
   const text = sel.toString().trim()
   if (!text) {
-    if (!barPinned.value) {
+    if (!barPinned.value && !composerContext.value) {
       barVisible.value = false
     }
+    return
+  }
+
+  // A labelled non-file source (an issue/PR body) supplies the quote's identity.
+  // It has no meaningful file line numbers, so those stay 0 — appending ":0"
+  // would be noise in the fence header.
+  const source = getQuoteSource(container)
+  if (source) {
+    setQuoteData({ text, filePath: source.label, language: source.language, startLine: 0, endLine: 0 })
+    barVisible.value = true
     return
   }
 
@@ -176,6 +210,36 @@ export function useQuoteQuestion() {
     if (sel) sel.removeAllRanges()
     barVisible.value = false
     barPinned.value = false
+    composerContext.value = null
+    setQuoteData(null)
+  }
+
+  /**
+   * Open the bar from an entry point with NO quote (e.g. the issue/PR detail
+   * header). Only the URL attachment is added; the user can type straight away
+   * and optionally select text to quote.
+   */
+  function openComposer(ctx: QuoteComposerContext) {
+    if (!ctx?.url) return
+    composerContext.value = ctx
+    // Deduped by URL inside addUrlAttachment, so opening twice adds one chip.
+    addUrlAttachment(ctx.url, ctx.label)
+    // A live selection carries over (select-then-click); otherwise start empty
+    // so the full body is never quoted by default.
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      setQuoteData(null)
+    }
+    barVisible.value = true
+    barPinned.value = true
+  }
+
+  /** Close the composer without touching unrelated staged quotes. */
+  function hideComposer() {
+    if (!composerContext.value) return
+    composerContext.value = null
+    barVisible.value = false
+    barPinned.value = false
     setQuoteData(null)
   }
 
@@ -195,6 +259,7 @@ export function useQuoteQuestion() {
   function hideBar() {
     barVisible.value = false
     barPinned.value = false
+    composerContext.value = null
     setQuoteData(null)
   }
 
@@ -211,7 +276,31 @@ export function useQuoteQuestion() {
     }, opts.delay ?? 400)
   }
 
+  /**
+   * Draft text for the composer's "add" action: the quoted block (when the user
+   * selected something) followed by a newline and their typed note, so the
+   * caret lands on the line after the block.
+   */
+  function buildComposerDraft(note: string): string {
+    const q = quoteData.value
+    return buildQuoteFirstMessage(q ? buildQuoteBlock(q) : '', note)
+  }
+
   function addToConversation(note = '') {
+    if (composerContext.value) {
+      const draft = buildComposerDraft(note)
+      const onAdd = composerContext.value.onAdd
+      composerContext.value = null
+      setQuoteData(null)
+      barVisible.value = false
+      barPinned.value = false
+      // An empty draft (no selection, no input) still keeps the URL attachment
+      // and still navigates, so the user can type in the chat input directly.
+      if (draft.trim()) injectChatInput(draft)
+      onAdd?.()
+      return
+    }
+
     if (!quoteData.value) return
     addStagedQuote(quoteData.value, note)
     const sel = window.getSelection()
@@ -222,7 +311,52 @@ export function useQuoteQuestion() {
     toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
   }
 
+  /**
+   * Send from composer mode. Unlike the file-quote flow this works with NO
+   * quote: the message is then just the user's input, carrying the URL
+   * attachment that openComposer added.
+   */
+  async function sendComposerMessage(userMessage: string) {
+    const q = quoteData.value
+    const input = userMessage.trim()
+    if (!q && !input) return
+
+    const message = q ? buildQuoteFirstMessage(buildQuoteBlock(q), input) : input
+
+    // Capture animation coordinates BEFORE any await — the bar's handleSend()
+    // collapses synchronously right after emit('send').
+    const sendBtn = document.querySelector('.qq-send-btn')
+    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
+    const animFrom = sendBtn?.getBoundingClientRect() ?? null
+    const animTo = dockChatBtn?.getBoundingClientRect() ?? null
+
+    composerContext.value = null
+    clearQuotes()
+    barVisible.value = false
+    barPinned.value = false
+
+    try {
+      const sendPromise = sessionIdentity.sendMessage(message)
+      // The registered ChatPanel handler captures attachedFiles synchronously
+      // before its first await, so the URL attachment rides along; clear after.
+      clearAll()
+      await sendPromise
+      toast.show(gt('quoteBar.sentToSession'), { icon: '✅', type: 'success', duration: 2000 })
+      if (animFrom && animTo) {
+        window.dispatchEvent(new CustomEvent('quote-sent', {
+          detail: {
+            from: { x: animFrom.left + animFrom.width / 2, y: animFrom.top + animFrom.height / 2 },
+            to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
+          }
+        }))
+      }
+    } catch (err: unknown) {
+      toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
+    }
+  }
+
   async function sendMessage(userMessage: string) {
+    if (composerContext.value) return sendComposerMessage(userMessage)
     if (!quoteData.value || !userMessage.trim()) return
 
     const q = quoteData.value
@@ -281,8 +415,11 @@ export function useQuoteQuestion() {
     visible: barVisible,
     quoteData,
     sheetOpen,
+    composerMode,
     openSheet: () => { sheetOpen.value = true },
     closeSheet,
+    openComposer,
+    hideComposer,
     pinBar,
     unpinBar,
     showBar,

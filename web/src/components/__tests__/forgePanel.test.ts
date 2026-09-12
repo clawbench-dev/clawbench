@@ -487,19 +487,35 @@ describe('ForgePanelContent', () => {
     expect(wrapper.text()).toContain('Retry')
   })
 
-  it('emits analyze when the detail view requests it', async () => {
-    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+  it('re-emits the detail view\'s quote request', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
     state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
+    ]
     const wrapper = mount(ForgePanelContent, {
       props: { active: true, projectPath: '/proj' },
-      global: globalOpts,
+      global: {
+        ...globalOpts,
+        // A named stub, so findComponent can locate it. The previous
+        // `ForgeDetail: true` produced an anonymous stub that findComponent
+        // never matched, which silently made this test a no-op.
+        stubs: { ...globalOpts.stubs, ForgeDetail: { name: 'ForgeDetail', template: '<div />' } },
+      },
     })
     await new Promise(r => setTimeout(r, 0))
-    // Simulate the detail child emitting analyze.
+
+    // The detail only mounts once a row is opened.
+    await wrapper.find('.forge-row').trigger('click')
+    await wrapper.vm.$nextTick()
+
     const detail = wrapper.findComponent({ name: 'ForgeDetail' })
-    if (detail.exists()) {
-      detail.vm.$emit('analyze', { item: { type: 'issue', number: 1, title: 't', url: 'u', slug: 'a/b', body: 'b' } })
-      expect(wrapper.emitted('analyze')).toBeTruthy()
-    }
+    expect(detail.exists(), 'the detail child must be mounted to test the passthrough').toBe(true)
+
+    detail.vm.$emit('quote', { item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
+
+    const emitted = wrapper.emitted('quote')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual({ item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
   })
 })

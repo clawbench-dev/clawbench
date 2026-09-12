@@ -27,8 +27,8 @@ vi.mock('lucide-vue-next', () => {
   return {
     ChevronLeft: stub('ChevronLeft'),
     ExternalLink: stub('ExternalLink'),
-    Sparkles: stub('Sparkles'),
     MessageSquare: stub('MessageSquare'),
+    MessageSquarePlus: stub('MessageSquarePlus'),
     AlertCircle: stub('AlertCircle'),
   }
 })
@@ -218,5 +218,64 @@ describe('ForgeDetail file-path annotations', () => {
     await new Promise(r => setTimeout(r, 0))
     // Nothing annotated → nothing to check.
     expect(mockVerifyFilePaths).not.toHaveBeenCalled()
+  })
+})
+
+describe('ForgeDetail quote action (header)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    bodyHtml.value = DEFAULT_BODY_HTML
+    mockDetail.item.value = {
+      type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice',
+      url: 'https://example.com/7', slug: 'a/b', body: 'see src/real.ts',
+      createdAt: '2026-09-10T00:00:00Z', updatedAt: '2026-09-10T00:00:00Z',
+      commentCount: 0, platform: 'github', host: 'github.com', owner: 'a', repo: 'b',
+    }
+    mockDetail.comments.value = []
+    mockDetail.loading.value = false
+    mockDetail.error.value = null
+  })
+
+  function quoteButton(wrapper: ReturnType<typeof mountDetail>) {
+    return wrapper.findAll('.forge-detail-header button')
+      .find(b => b.attributes('aria-label') === 'forge.detail.quote')
+  }
+
+  it('offers a quote button in the detail header', () => {
+    const wrapper = mountDetail()
+    expect(quoteButton(wrapper), 'the header must expose a quote action').toBeTruthy()
+  })
+
+  it('emits quote without the full body, so nothing is quoted by default', () => {
+    // The old flow forwarded `body` and injected the entire issue text. The
+    // quote must now come from the user's selection instead.
+    const wrapper = mountDetail()
+    quoteButton(wrapper)!.trigger('click')
+
+    const emitted = wrapper.emitted('quote')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0][0]).toEqual({
+      item: { type: 'issue', number: 7, title: 'A bug', url: 'https://example.com/7', slug: 'a/b' },
+    })
+    expect(JSON.stringify(emitted![0][0])).not.toContain('see src/real.ts')
+  })
+
+  it('no longer renders the bottom analyze button', () => {
+    const wrapper = mountDetail()
+    expect(wrapper.find('.forge-analyze-btn').exists()).toBe(false)
+  })
+
+  it('labels the body region so selected text is tagged with the issue', () => {
+    const wrapper = mountDetail()
+    const body = wrapper.find('.forge-detail-body')
+    expect(body.attributes('data-quote-source')).toBe('a/b#7')
+    expect(body.attributes('data-quote-language')).toBe('issue')
+  })
+
+  it('does not mark the body as a file, which would grow attach buttons', () => {
+    // `data-file-path` on a .markdown-body is what mdBlockAttach/mdMermaidAttach
+    // key off; setting it would add "add to chat" buttons to every code block.
+    const wrapper = mountDetail()
+    expect(wrapper.find('.forge-detail-body').attributes('data-file-path')).toBeUndefined()
   })
 })

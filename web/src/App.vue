@@ -217,7 +217,7 @@
                     :active="panelIsActive('forge')"
                     :project-path="store.state.projectRoot"
                     @request-project="switchTab('chat')"
-                    @analyze="handleForgeAnalyze"
+                    @quote="handleForgeQuote"
                   />
                 </TabPanel>
 
@@ -313,6 +313,7 @@
       <QuoteQuestionBar
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
+        :composerMode="quoteQuestion.composerMode.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -560,7 +561,6 @@ import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
-import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -2039,21 +2039,24 @@ function handleWideDockTabClick(tab) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile, addUrlAttachment } = useChatContext()
+const { addAttachedFile } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
-// "Analyze with AI" from the Issues & PRs tab. Reuses the quote-input flow: the
-// issue/PR URL becomes a URL attachment chip, and the body is injected into the
-// input as a fenced markdown block so the user can add their own instruction.
-function handleForgeAnalyze(payload) {
+// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
+// composer mode: the issue/PR URL is attached, and NO body text is quoted by
+// default — the user selects the part they care about, then types their message.
+// The bar is global (position: fixed), so no tab switch is needed on open; the
+// add path switches to chat via onAdd.
+function handleForgeQuote(payload) {
   const it = payload?.item
   if (!it) return
-  addUrlAttachment(it.url, `${it.slug}#${it.number}`)
-  switchTab('chat')
-  const fence = '```' + (it.type === 'pr' ? 'pr' : 'issue') + ' ' + it.slug + '#' + it.number + '\n' + (it.body || '') + '\n```'
-  injectChatInput(fence)
+  quoteQuestion.openComposer({
+    url: it.url,
+    label: `${it.slug}#${it.number}`,
+    onAdd: () => switchTab('chat'),
+  })
 }
 const { uploadAndAttach } = useFileUpload()
 const chatDropActive = ref(false)
