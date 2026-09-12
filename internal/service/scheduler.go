@@ -546,10 +546,11 @@ var validForgeEventTypes = map[string]bool{
 	"reopened": true, "commented": true, "pipeline_done": true,
 }
 
-// validateEventTask checks an event-triggered task's configuration. It replaces
-// cron-expression validation for event tasks.
-func validateEventTask(task *model.ScheduledTask) error {
-	types := task.EventTypeList()
+// ValidateEventSubscription checks a comma-separated event subscription. It is
+// exported so the HTTP layer can reject a bad configuration as a 400 before
+// AddTask/UpdateTask would turn it into a 500.
+func ValidateEventSubscription(eventTypes string) error {
+	types := model.SplitEventTypes(eventTypes)
 	if len(types) == 0 {
 		return fmt.Errorf("event task must subscribe to at least one event type")
 	}
@@ -559,6 +560,12 @@ func validateEventTask(task *model.ScheduledTask) error {
 		}
 	}
 	return nil
+}
+
+// validateEventTask checks an event-triggered task's configuration. It replaces
+// cron-expression validation for event tasks.
+func validateEventTask(task *model.ScheduledTask) error {
+	return ValidateEventSubscription(task.EventTypes)
 }
 
 // registerTask adds a task's cron job to the scheduler.

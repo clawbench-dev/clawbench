@@ -26,17 +26,27 @@ type EventContext struct {
 }
 
 // EventContextFromChange builds the context for a derived event. item supplies
-// the human-readable fields; change supplies the transition.
+// the human-readable fields; change supplies the transition and the acting user.
 func EventContextFromChange(repo ForgeRepoRef, item forge.Item, change forge.Change) EventContext {
+	// The event author is the acting user when known (the commenter, or the
+	// opener), falling back to the item creator for state transitions where the
+	// platform does not report who performed them.
+	author := change.Actor
+	if author == "" {
+		author = item.Author.Login
+	}
 	return EventContext{
-		EventType:  string(change.Type),
-		Repo:       repo.Owner + "/" + repo.Repo,
-		ItemNumber: item.Number,
-		ItemType:   string(item.Type),
-		Title:      item.Title,
-		URL:        item.URL,
-		Author:     item.Author.Login,
-		State:      string(item.State),
+		EventType:      string(change.Type),
+		Repo:           repo.Owner + "/" + repo.Repo,
+		ItemNumber:     item.Number,
+		ItemType:       string(item.Type),
+		Title:          item.Title,
+		URL:            item.URL,
+		Author:         author,
+		State:          string(item.State),
+		CommentBody:    change.CommentBody,
+		PipelineStatus: change.PipelineStatus,
+		PipelineURL:    change.PipelineURL,
 	}
 }
 

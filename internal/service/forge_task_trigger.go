@@ -34,11 +34,14 @@ type ForgeTaskTrigger struct {
 	mu       sync.Mutex
 	queues   map[int64][]ForgeQueuedEvent // task ID -> pending events
 	running  map[int64]bool               // task ID -> currently draining
-	lastFire map[string]time.Time         // repo key -> last fire time (debounce)
-	identity map[string]string            // repo key -> resolved login
+	lastFire map[string]time.Time         // repo key+type -> last fire time (debounce)
+	identity map[string]identityEntry     // repo key -> resolved login + expiry
 
 	// debounceWindow collapses bursts on the same repo into one fire.
 	debounceWindow time.Duration
+	// identityTTL bounds how long a resolved credential login is trusted, so a
+	// credential change is picked up without a restart.
+	identityTTL time.Duration
 	// maxQueue caps pending events per task so a runaway repo cannot grow
 	// memory without bound. Oldest events are dropped first.
 	maxQueue int
@@ -58,6 +61,12 @@ type ForgeQueuedEvent struct {
 	change forge.Change
 }
 
+// identityEntry is a cached credential login with its expiry.
+type identityEntry struct {
+	login   string
+	expires time.Time
+}
+
 // NewForgeTaskTrigger builds a trigger bound to the given scheduler. A nil
 // scheduler disables firing (used by tests that only exercise matching).
 func NewForgeTaskTrigger(scheduler *Scheduler, cfgFn func() model.Config, identityFn func(ForgeRepoRef) string) *ForgeTaskTrigger {
@@ -71,8 +80,9 @@ func NewForgeTaskTrigger(scheduler *Scheduler, cfgFn func() model.Config, identi
 		queues:          make(map[int64][]ForgeQueuedEvent),
 		running:         make(map[int64]bool),
 		lastFire:        make(map[string]time.Time),
-		identity:        make(map[string]string),
+		identity:        make(map[string]identityEntry),
 		debounceWindow:  30 * time.Second,
+		identityTTL:     10 * time.Minute,
 		maxQueue:        100,
 		maxFireAttempts: 30,
 		retryBackoff:    10 * time.Second,
@@ -102,6 +112,9 @@ func (t *ForgeTaskTrigger) SetDebounceWindowForTest(d time.Duration) { t.debounc
 // SetRetryBackoffForTest overrides the busy-retry backoff (test helper).
 func (t *ForgeTaskTrigger) SetRetryBackoffForTest(d time.Duration) { t.retryBackoff = d }
 
+// EventTypeForTest exposes the queued event's type to tests.
+func (e ForgeQueuedEvent) EventTypeForTest() string { return string(e.change.Type) }
+
 // HandleChange matches an event against the event-triggered tasks and fires the
 // matching ones. It implements ForgeChangeSink alongside the notifier, so both
 // run off the same derived event.
@@ -118,11 +131,11 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 	// Anti-recursion: an event authored by the credential's own account is
 	// almost certainly a side effect of a previous AI action. Firing on it would
 	// let the AI's own write re-trigger itself indefinitely.
-	if t.isSelfAuthored(repo, item) {
+	if t.isSelfAuthored(repo, item, change) {
 		slog.Info("forge event suppressed as self-authored",
 			slog.String("repo", repo.Key()),
 			slog.Int("number", item.Number),
-			slog.String("author", item.Author.Login))
+			slog.String("actor", change.Actor))
 		return
 	}
 
@@ -131,17 +144,18 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 		return
 	}
 
-	// Per-repo debounce: a burst (e.g. five comments in a row) fires the task
-	// once, not five times.
-	repoKey := repo.Key()
+	// Per-repo, per-type debounce: a burst of the same event (e.g. five comments
+	// in a row) fires the task once, not five times. The event type is part of
+	// the key so a comment arriving right after a close is not swallowed.
+	debounceKey := repo.Key() + "\x00" + string(change.Type)
 	t.mu.Lock()
-	if last, ok := t.lastFire[repoKey]; ok && t.now().Sub(last) < t.debounceWindow {
+	if last, ok := t.lastFire[debounceKey]; ok && t.now().Sub(last) < t.debounceWindow {
 		t.mu.Unlock()
 		slog.Debug("forge event task debounced",
-			slog.String("repo", repoKey), slog.String("event", string(change.Type)))
+			slog.String("repo", repo.Key()), slog.String("event", string(change.Type)))
 		return
 	}
-	t.lastFire[repoKey] = t.now()
+	t.lastFire[debounceKey] = t.now()
 	t.mu.Unlock()
 
 	ev := ForgeQueuedEvent{repo: repo, item: item, change: change}
@@ -154,27 +168,42 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 // account. Resolving the identity is best-effort: if it cannot be determined,
 // the event is treated as external (firing is the safer default for usefulness,
 // and the kill-switch remains available).
-func (t *ForgeTaskTrigger) isSelfAuthored(repo ForgeRepoRef, item forge.Item) bool {
+//
+// The comparison must use the *acting* user, not the item creator: for a
+// comment the author is the commenter, and for close/merge it is whoever
+// performed the transition. Comparing the item creator would miss exactly the
+// case this guard exists for — the AI commenting on someone else's issue.
+func (t *ForgeTaskTrigger) isSelfAuthored(repo ForgeRepoRef, item forge.Item, change forge.Change) bool {
 	if t.identityFn == nil {
 		return false
 	}
 	login := t.identityFor(repo)
-	return login != "" && item.Author.Login != "" && item.Author.Login == login
+	if login == "" {
+		return false
+	}
+	// Prefer the actor that caused this specific event; fall back to the item
+	// creator only for events where the creator is the actor (e.g. opened).
+	actor := change.Actor
+	if actor == "" && change.Type == forge.EventOpened {
+		actor = item.Author.Login
+	}
+	return actor != "" && actor == login
 }
 
 func (t *ForgeTaskTrigger) identityFor(repo ForgeRepoRef) string {
 	key := repo.Key()
+	now := t.now()
 	t.mu.Lock()
-	if v, ok := t.identity[key]; ok {
+	if v, ok := t.identity[key]; ok && now.Before(v.expires) {
 		t.mu.Unlock()
-		return v
+		return v.login
 	}
 	t.mu.Unlock()
 
 	login := t.identityFn(repo)
 
 	t.mu.Lock()
-	t.identity[key] = login
+	t.identity[key] = identityEntry{login: login, expires: now.Add(t.identityTTL)}
 	t.mu.Unlock()
 	return login
 }

@@ -77,6 +77,14 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
 			return
 		}
+		// Validate the event subscription up front so a bad configuration is a
+		// 400 (a client error) rather than the 500 AddTask would produce.
+		if req.TriggerMode == "event" {
+			if err := service.ValidateEventSubscription(req.EventTypes); err != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskEventTypesInvalid")
+				return
+			}
+		}
 		if req.RepeatMode == "" {
 			req.RepeatMode = "unlimited"
 		}
@@ -192,9 +200,10 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			MaxRuns     *int   `json:"max_runs"` // pointer to distinguish "not provided" (nil) from "set to 0" (ISS-043)
 			// TriggerMode is "cron" or "event"; empty means "leave unchanged".
 			TriggerMode string `json:"trigger_mode"`
-			// EventTypes / EventRepo configure an event-triggered task.
-			EventTypes string `json:"event_types"`
-			EventRepo  string `json:"event_repo"`
+			// EventTypes / EventRepo configure an event-triggered task. EventRepo
+			// is a pointer so an explicit "" can clear the repo scope.
+			EventTypes string  `json:"event_types"`
+			EventRepo  *string `json:"event_repo"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -320,23 +329,42 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		if req.RepeatMode != "" {
 			task.RepeatMode = req.RepeatMode
 		}
-		// Trigger configuration. Switching to event clears the cron schedule;
-		// switching back to cron leaves the stored cron expression in place so
-		// the user can reuse it.
+		// Trigger configuration. Event fields are only meaningful in event mode;
+		// switching modes leaves the other mode's fields untouched so a user can
+		// switch back without retyping (validated below).
 		if req.TriggerMode != "" {
 			task.TriggerMode = req.TriggerMode
 		}
 		if req.EventTypes != "" {
 			task.EventTypes = req.EventTypes
 		}
-		if req.EventRepo != "" {
-			task.EventRepo = req.EventRepo
+		// EventRepo: a pointer distinguishes "absent" (leave unchanged) from an
+		// explicit empty string (clear the scope back to "any repo").
+		if req.EventRepo != nil {
+			task.EventRepo = *req.EventRepo
 		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).
 		// Go's JSON decoder leaves pointer fields nil when the key is absent,
 		// so we can distinguish "not provided" from "set to 0".
 		if req.MaxRuns != nil {
 			task.MaxRuns = *req.MaxRuns
+		}
+
+		// Validate the resulting configuration before persisting. A task created
+		// in event mode has no cron expression stored, so switching it back to
+		// cron without supplying one must be a 400 — otherwise UpdateTask would
+		// fail on cron.ParseStandard("") and surface as a 500.
+		switch task.TriggerMode {
+		case "event":
+			if err := service.ValidateEventSubscription(task.EventTypes); err != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskEventTypesInvalid")
+				return
+			}
+		default:
+			if task.CronExpr == "" {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskCronRequired")
+				return
+			}
 		}
 
 		// Editing a completed task implies reactivation — the user wants it to run again.

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"clawbench/internal/forge"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRenderEventContext_OmitsInapplicableVariables(t *testing.T) {
@@ -123,4 +125,27 @@ func TestEventContextFromChange_MapsFields(t *testing.T) {
 	if ec.Author != "alice" {
 		t.Fatalf("author = %q, want alice", ec.Author)
 	}
+}
+
+// TestEventContextFromChange_PopulatesCommentBody guards that a commented event
+// carries the comment text into the prompt. Without it the AI runs blind on the
+// one thing the event is about.
+func TestEventContextFromChange_PopulatesCommentBody(t *testing.T) {
+	repo := ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}
+	item := forge.Item{Type: forge.ItemTypeIssue, Number: 7, Title: "Bug", Author: forge.Author{Login: "alice"}}
+	change := forge.Change{
+		Type: forge.EventCommented, Number: 7,
+		Actor: "bob", CommentBody: "please fix the nil deref",
+	}
+
+	ec := EventContextFromChange(repo, item, change)
+	assert.Equal(t, "please fix the nil deref", ec.CommentBody)
+	// The author is the commenter, not the issue creator.
+	assert.Equal(t, "bob", ec.Author)
+
+	rendered := RenderEventContext(ec)
+	assert.Contains(t, rendered, "please fix the nil deref")
+	assert.Contains(t, rendered, "bob")
+	// A comment event must not render pipeline lines.
+	assert.NotContains(t, rendered, "流水线")
 }

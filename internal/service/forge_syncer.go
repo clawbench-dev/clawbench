@@ -207,9 +207,10 @@ func (s *ForgeSyncer) processItem(
 	// comments per item is the only option on GitLab (no repo-level endpoint),
 	// and it is the expensive part, so it is skipped on state-only passes.
 	latestID, latestUpdated := int64(0), time.Time{}
+	latestAuthor, latestBody := "", ""
 	var commentErr error
 	if opts.IncludeComments {
-		latestID, latestUpdated, commentErr = s.latestComment(ctx, provider, typ, item.Number)
+		latestID, latestUpdated, latestAuthor, latestBody, commentErr = s.latestComment(ctx, provider, typ, item.Number)
 	} else if prev != nil {
 		// Preserve the last known comment state so a state-only pass does not
 		// look like "comments were removed".
@@ -223,18 +224,9 @@ func (s *ForgeSyncer) processItem(
 			slog.Int("number", item.Number),
 			slog.String("err", commentErr.Error()))
 		latestID, latestUpdated = 0, time.Time{}
+		latestAuthor, latestBody = "", ""
 		if prev != nil {
 			latestID, latestUpdated = prev.LastCommentID, prev.LastCommentUpdatedAt
-		}
-	}
-
-	var snapshot forge.Snapshot
-	if prev != nil {
-		snapshot = forge.Snapshot{
-			State:                prev.State,
-			Merged:               prev.Merged,
-			LastCommentID:        prev.LastCommentID,
-			LastCommentUpdatedAt: prev.LastCommentUpdatedAt,
 		}
 	}
 
@@ -243,12 +235,17 @@ func (s *ForgeSyncer) processItem(
 		Merged:                 item.State == forge.StateMerged,
 		LatestCommentID:        latestID,
 		LatestCommentUpdatedAt: latestUpdated,
+		LatestCommentAuthor:    latestAuthor,
+		LatestCommentBody:      latestBody,
+		Author:                 item.Author.Login,
 	}
 
-	// Derive events only when we have a baseline and this is not the first sync.
+	// Derive events only when this is not the first sync. A nil prev on a later
+	// sync is a genuinely new item (opened/merged/closed since the baseline);
+	// on the first sync it would replay the whole history, so it is skipped.
 	var changes []forge.Change
-	if !firstSync && prev != nil {
-		changes = forge.DeriveChanges(&snapshot, cur, item.Number)
+	if !firstSync {
+		changes = forge.DeriveChanges(prevSnapshotOrNil(prev), cur, item.Number)
 	}
 
 	// Persist the new snapshot BEFORE dispatching, so a dispatch failure does
@@ -300,18 +297,21 @@ func (s *ForgeSyncer) processItem(
 
 // latestComment returns the highest comment id and newest updated_at for an
 // item, paging to the end. Only the last page matters, so we walk forward.
-func (s *ForgeSyncer) latestComment(ctx context.Context, provider forge.Provider, typ forge.ItemType, number int) (int64, time.Time, error) {
+func (s *ForgeSyncer) latestComment(ctx context.Context, provider forge.Provider, typ forge.ItemType, number int) (int64, time.Time, string, string, error) {
 	var maxID int64
 	var maxUpdated time.Time
+	var author, body string
 	page := 1
 	for {
 		comments, err := provider.ListComments(ctx, typ, number, page, 100)
 		if err != nil {
-			return 0, time.Time{}, err
+			return 0, time.Time{}, "", "", err
 		}
 		for _, c := range comments {
 			if c.ID > maxID {
 				maxID = c.ID
+				// The newest comment by id is the one an event should describe.
+				author, body = c.Author.Login, c.Body
 			}
 			if c.UpdatedAt.After(maxUpdated) {
 				maxUpdated = c.UpdatedAt
@@ -326,7 +326,21 @@ func (s *ForgeSyncer) latestComment(ctx context.Context, provider forge.Provider
 			break
 		}
 	}
-	return maxID, maxUpdated, nil
+	return maxID, maxUpdated, author, body, nil
+}
+
+// prevSnapshotOrNil adapts a persisted snapshot row to the forge.Snapshot the
+// derivation expects, returning nil when there is no row.
+func prevSnapshotOrNil(prev *ForgeItemSnapshot) *forge.Snapshot {
+	if prev == nil {
+		return nil
+	}
+	return &forge.Snapshot{
+		State:                prev.State,
+		Merged:               prev.Merged,
+		LastCommentID:        prev.LastCommentID,
+		LastCommentUpdatedAt: prev.LastCommentUpdatedAt,
+	}
 }
 
 // pfPlatform returns the platform string for a repo key.

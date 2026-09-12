@@ -8,12 +8,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeriveChanges_FirstSightingEmitsNothing(t *testing.T) {
-	// Binding a repo must not replay its history as notifications.
-	changes := DeriveChanges(nil, ItemState{
-		State: "open", LatestCommentID: 99,
-	}, 1)
-	assert.Empty(t, changes, "a first sighting must establish a baseline without emitting")
+func TestDeriveChanges_NilPrevEmitsOpened(t *testing.T) {
+	// A nil prev on a later sync is a genuinely new item, so it must emit
+	// `opened`. (The caller suppresses this on a repo's first-ever sync, which
+	// is what prevents replaying history — DeriveChanges itself must not, or
+	// items created after the baseline would never be reported.)
+	changes := DeriveChanges(nil, ItemState{State: "open", Author: "alice"}, 1)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventOpened, changes[0].Type)
+	assert.Equal(t, 1, changes[0].Number)
+	assert.Equal(t, "alice", changes[0].Actor)
+}
+
+func TestDeriveChanges_NilPrevMergedItemReportsMerged(t *testing.T) {
+	// A PR already merged when first seen reports the terminal state, not opened.
+	changes := DeriveChanges(nil, ItemState{State: "merged", Merged: true}, 2)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventMerged, changes[0].Type)
+}
+
+func TestDeriveChanges_NilPrevClosedItemReportsClosed(t *testing.T) {
+	changes := DeriveChanges(nil, ItemState{State: "closed"}, 3)
+	require.Len(t, changes, 1)
+	assert.Equal(t, EventClosed, changes[0].Type)
 }
 
 func TestDeriveChanges_Closed(t *testing.T) {

@@ -45,10 +45,16 @@ func (t *ScheduledTask) IsEventTriggered() bool {
 
 // EventTypeList splits the stored comma-separated event types.
 func (t *ScheduledTask) EventTypeList() []string {
-	if t.EventTypes == "" {
+	return SplitEventTypes(t.EventTypes)
+}
+
+// SplitEventTypes parses a comma-separated event subscription into a clean list,
+// dropping empty entries so "a,, b" yields ["a", "b"].
+func SplitEventTypes(eventTypes string) []string {
+	if eventTypes == "" {
 		return nil
 	}
-	parts := strings.Split(t.EventTypes, ",")
+	parts := strings.Split(eventTypes, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
 		if p = strings.TrimSpace(p); p != "" {

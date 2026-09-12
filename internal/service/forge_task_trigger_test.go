@@ -100,11 +100,36 @@ func TestForgeTaskTrigger_SelfAuthoredSuppressed(t *testing.T) {
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
+	// The acting user is the commenter (change.Actor), not the item creator.
 	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
-		forge.Change{Type: forge.EventCommented, Number: 1})
+		forge.Change{Type: forge.EventCommented, Number: 1, Actor: "alice"})
 
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, fired, "an event authored by our own account must not fire a task")
+}
+
+// TestForgeTaskTrigger_SelfAuthoredCommentOnOthersItemSuppressed guards the
+// anti-recursion fix: the AI commenting on someone else's issue must be
+// suppressed even though the item creator is a different user. Comparing the
+// item creator (the old behavior) would miss exactly this loop.
+func TestForgeTaskTrigger_SelfAuthoredCommentOnOthersItemSuppressed(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
+		func(service.ForgeRepoRef) string { return "ai-bot" })
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	// triggerItem's creator is "alice"; our credential is "ai-bot" and the
+	// comment we are reacting to was written by "ai-bot".
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1, Actor: "ai-bot"})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, fired, "the AI's own comment on another user's issue must be suppressed")
 }
 
 func TestForgeTaskTrigger_ExternalAuthorFires(t *testing.T) {
@@ -119,7 +144,7 @@ func TestForgeTaskTrigger_ExternalAuthorFires(t *testing.T) {
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
 	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
-		forge.Change{Type: forge.EventCommented, Number: 1})
+		forge.Change{Type: forge.EventCommented, Number: 1, Actor: "alice"})
 
 	require.Eventually(t, func() bool {
 		return fired == 1
@@ -291,4 +316,40 @@ func TestForgeTaskTrigger_RetriesWhileTaskBusy(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, 3, attempts, "two failed attempts then one success")
+}
+
+// TestForgeTaskTrigger_DebounceIsPerEventType guards the fix that the debounce
+// key includes the event type: a comment arriving right after a close must not
+// be swallowed by the close's debounce window.
+func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	var firedTypes []string
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(time.Hour) // only the first of each type fires
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{
+			forgeTriggerTask(1, "closed", triggerRepo().Key()),
+			forgeTriggerTask(2, "commented", triggerRepo().Key()),
+		}, nil
+	})
+	tr.SetFireForTest(func(_ int64, ev service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		firedTypes = append(firedTypes, ev.EventTypeForTest())
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventClosed, Number: 1})
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1, Actor: "bob"})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(firedTypes) == 2
+	}, 2*time.Second, 10*time.Millisecond,
+		"a different event type must not be debounced away by the previous one")
 }

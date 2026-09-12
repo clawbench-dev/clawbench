@@ -37,6 +37,12 @@ type ItemState struct {
 	Merged                 bool
 	LatestCommentID        int64
 	LatestCommentUpdatedAt time.Time
+	// LatestCommentAuthor / LatestCommentBody describe the newest comment and
+	// are only populated on passes that fetch comments.
+	LatestCommentAuthor string
+	LatestCommentBody   string
+	// Author is the item creator, used to attribute an `opened` event.
+	Author string
 }
 
 // Change is a derived event ready to be persisted and dispatched.
@@ -49,24 +55,46 @@ type Change struct {
 	NewState  string
 	// CommentID is set for comment events.
 	CommentID int64
+	// CommentAuthor is the login of the commenter for comment events. It is the
+	// acting user, which differs from the item author — anti-recursion must
+	// compare against this, not Item.Author.
+	CommentAuthor string
+	// CommentBody is the raw Markdown of the newest comment (comment events).
+	CommentBody string
+	// Actor is the login that caused this event, when the provider exposes it.
+	// For comment events it is the commenter; for `opened` it is the creator.
+	// It is empty when the provider gives no actor (e.g. closed/merged, where
+	// ListItems does not report who performed the transition).
+	Actor string
+	// PipelineStatus / PipelineURL describe a finished CI run (pipeline_done).
+	PipelineStatus string
+	PipelineURL    string
 }
 
-// DeriveChanges compares a stored snapshot (nil on first sighting) with the
-// freshly fetched item state and returns the events to dispatch. The item
-// number is stamped onto each returned change.
+// DeriveChanges compares a stored snapshot with the freshly fetched item state
+// and returns the events to dispatch. The item number is stamped onto each
+// returned change.
+//
+// A nil prev means the item was not in the snapshot. The caller is responsible
+// for not calling this on a repo's first-ever sync (which would replay the whole
+// history); on any later sync a nil prev is a genuinely new item.
 //
 // The derivation is deliberately conservative:
-//   - A first sighting (nil snapshot) emits nothing: binding a repo must not
-//     replay its entire history as notifications.
 //   - When several transitions occur within one polling interval, only the most
-//     informative terminal state is emitted (merged > reopened > closed), so a
+//     informative terminal state is emitted (merged > closed > reopened), so a
 //     closed→reopened→merged sequence yields one "merged" rather than noise.
 //   - A comment is detected when either its id increases OR an existing
 //     comment's updated_at moves forward (an edit keeps the id).
 func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 	if prev == nil {
-		// First sighting: establish the baseline without emitting.
-		return nil
+		// New item since the baseline. Emit the terminal state so a freshly
+		// opened (or already-merged) item is reported exactly once.
+		c, ok := deriveNewItemChange(cur)
+		if !ok {
+			return nil
+		}
+		c.Number = number
+		return []Change{c}
 	}
 
 	var changes []Change
@@ -76,7 +104,10 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 	if deriveCommentChange(prev, cur) {
 		changes = append(changes, Change{
 			Type: EventCommented, CommentID: cur.LatestCommentID,
-			PrevState: prev.State, NewState: cur.State,
+			CommentAuthor: cur.LatestCommentAuthor,
+			CommentBody:   cur.LatestCommentBody,
+			Actor:         cur.LatestCommentAuthor,
+			PrevState:     prev.State, NewState: cur.State,
 		})
 	}
 
@@ -84,6 +115,22 @@ func DeriveChanges(prev *Snapshot, cur ItemState, number int) []Change {
 		changes[i].Number = number
 	}
 	return changes
+}
+
+// deriveNewItemChange classifies an item seen for the first time since the
+// baseline. A PR that is already merged at first sighting reports merged, not
+// opened, so the more informative terminal state wins.
+func deriveNewItemChange(cur ItemState) (Change, bool) {
+	switch {
+	case cur.Merged:
+		return Change{Type: EventMerged, NewState: string(StateMerged)}, true
+	case cur.State == string(StateClosed):
+		return Change{Type: EventClosed, NewState: cur.State}, true
+	case cur.State == string(StateOpen):
+		return Change{Type: EventOpened, NewState: cur.State, Actor: cur.Author}, true
+	default:
+		return Change{}, false
+	}
 }
 
 // deriveStateChange picks the most informative state transition, if any.
