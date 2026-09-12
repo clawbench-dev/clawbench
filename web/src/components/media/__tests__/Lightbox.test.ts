@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Lightbox from '@/components/media/Lightbox.vue'
@@ -82,6 +82,13 @@ vi.mock('@/composables/useBackHandler', () => ({
 }))
 
 describe('Lightbox', () => {
+  // Track every mounted wrapper so each test unmounts on teardown. Lightbox
+  // attaches document-level mousemove/mouseup/click listeners and removes them
+  // only in onUnmounted; without an explicit unmount the leaked listeners keep
+  // the vitest fork worker's event loop alive and it never exits
+  // (vitest-dev/vitest#8766).
+  const mountedWrappers: ReturnType<typeof mount>[] = []
+
   beforeEach(() => {
     mockSelectFile.mockClear()
     mockRegisterBackHandler.mockClear()
@@ -94,10 +101,18 @@ describe('Lightbox', () => {
     ]
   })
 
+  afterEach(() => {
+    while (mountedWrappers.length > 0) {
+      mountedWrappers.pop()?.unmount()
+    }
+  })
+
   function mountLightbox() {
-    return mount(Lightbox, {
+    const wrapper = mount(Lightbox, {
       attachTo: document.body,
     })
+    mountedWrappers.push(wrapper)
+    return wrapper
   }
 
   // ── calcFitScale ──
@@ -1039,6 +1054,43 @@ describe('Lightbox', () => {
       const result = vm.collectMdImages(container, container.querySelectorAll('img')[0], null)
       expect(result.list).toHaveLength(1)
       expect(result.list[0].src).toBeTruthy()
+
+      document.body.removeChild(container)
+    })
+
+    // Regression: an <img> whose src cannot be resolved (no src / no
+    // data-full-src) used to `continue` without advancing the TreeWalker,
+    // re-visiting the same node forever at 100% CPU and hanging the worker.
+    it('terminates on an img with no resolvable src', () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML = '<img alt="no-src">'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, null, null)
+      expect(result.list).toHaveLength(0)
+
+      document.body.removeChild(container)
+    })
+
+    it('terminates when a src-less img precedes valid images', () => {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+
+      const container = document.createElement('div')
+      container.innerHTML =
+        '<img alt="no-src">' +
+        '<img src="a.png" alt="A">' +
+        '<img alt="also-no-src">' +
+        '<img src="b.png" alt="B">'
+      document.body.appendChild(container)
+
+      const result = vm.collectMdImages(container, container.querySelectorAll('img')[3], null)
+      expect(result.list).toHaveLength(2)
+      expect(result.list.map((i: { name: string }) => i.name)).toEqual(['A', 'B'])
+      expect(result.startIdx).toBe(1)
 
       document.body.removeChild(container)
     })

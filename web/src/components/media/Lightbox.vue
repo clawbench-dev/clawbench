@@ -687,26 +687,29 @@ function collectMdImages(container, clickedImg, clickedMermaid, clickedSvg) {
 
     let node = walker.nextNode()
     while (node) {
-        if (node.tagName === 'IMG') {
-            const src = fullImgSrc(node)
+        // Advance the walker before any branch can `continue`; otherwise an
+        // IMG with no resolvable src would re-visit the same node forever.
+        const current = node
+        node = walker.nextNode()
+        if (current.tagName === 'IMG') {
+            const src = fullImgSrc(current)
             if (!src) continue
-            const alt = node.alt || ''
+            const alt = current.alt || ''
             const name = alt || extractImageName(src)
             list.push({ src, name })
-            if (node === clickedImg) startIdx = list.length - 1
-        } else if (node.classList.contains('mermaid')) {
-            const svg = node.querySelector('svg')
+            if (current === clickedImg) startIdx = list.length - 1
+        } else if (current.classList.contains('mermaid')) {
+            const svg = current.querySelector('svg')
             if (!svg) continue
-            const name = deriveMermaidName(node)
+            const name = deriveMermaidName(current)
             list.push({ src: '', name, svg: svg.outerHTML })
-            if (node === clickedMermaid) startIdx = list.length - 1
-        } else if (node.classList.contains('lightbox-svg')) {
+            if (current === clickedMermaid) startIdx = list.length - 1
+        } else if (current.classList.contains('lightbox-svg')) {
             // Inline SVG (non-mermaid) returned directly by the AI
-            const name = node.getAttribute('data-name') || 'diagram.svg'
-            list.push({ src: '', name, svg: node.outerHTML })
-            if (node === clickedSvg) startIdx = list.length - 1
+            const name = current.getAttribute('data-name') || 'diagram.svg'
+            list.push({ src: '', name, svg: current.outerHTML })
+            if (current === clickedSvg) startIdx = list.length - 1
         }
-        node = walker.nextNode()
     }
     return { list, startIdx }
 }
