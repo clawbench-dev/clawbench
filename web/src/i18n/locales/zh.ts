@@ -1299,6 +1299,7 @@ export default {
       backToChat: '返回对话',
       backToTask: '返回任务',
       backToFile: '返回 {name}',
+      backToForge: '返回议题与合并请求',
       back: '返回',
     },
     recent: {

@@ -1299,6 +1299,7 @@ export default {
       backToChat: 'Back to Chat',
       backToTask: 'Back to Task',
       backToFile: 'Back to {name}',
+      backToForge: 'Back to Issues & PRs',
       back: 'Back',
     },
     recent: {

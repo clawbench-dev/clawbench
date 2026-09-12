@@ -1,7 +1,7 @@
 import { ref, computed, type ComputedRef } from 'vue'
 import type { FileScrollEntry } from '@/utils/fileScrollCache'
 
-export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history'
+export type NavigationSurface = 'chat' | 'task' | 'file' | 'browse' | 'history' | 'forge'
 
 export interface NavigationOrigin {
   surface: NavigationSurface
@@ -89,6 +89,7 @@ const SURFACE_TAB = new Map<NavigationSurface, string>([
   ['file', 'view'],
   ['browse', 'browse'],
   ['history', 'history'],
+  ['forge', 'forge'],
 ])
 
 /** Tab ids that are already panel identifiers, so they map to themselves. */

@@ -34,7 +34,7 @@
     </div>
 
     <template v-else-if="detail.item.value">
-      <div class="forge-detail-body">
+      <div ref="bodyRef" class="forge-detail-body" @click="handleContentClick">
         <!-- Title + meta -->
         <div class="forge-detail-title-row">
           <span class="forge-state-dot" :class="`state-${detail.item.value.state}`"></span>
@@ -92,16 +92,25 @@
         </button>
       </div>
     </template>
+
+    <!-- Floating code preview for annotated file paths (same card as chat/task). -->
+    <CodeLinkPreview v-if="codeLinkPreview.enabled.value" :preview="codeLinkPreview" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronLeft, ExternalLink, Sparkles, MessageSquare, AlertCircle } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgeDetail } from '@/composables/useForge'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation'
+import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
+import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgeDetail'
@@ -116,16 +125,97 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const detail = useForgeDetail()
+const { verifyFilePaths, openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
+const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
+
+// The detail body renders outside every container that runs path verification
+// (chat verifies against #aiChatMessages, tasks against their own refs), so
+// annotations produced by the shared markdown pipeline were never checked
+// against disk — an issue body mentioning a path that does not exist (an
+// example, or a file in another repository) kept a live-looking but dead chip,
+// and there was no click handler to open even a real one. This component now
+// owns both halves: verifyAnnotations() below, and handleContentClick().
+const bodyRef = ref<HTMLElement | null>(null)
+const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef, source: 'forge' })
 
 onMounted(() => {
   void detail.open(props.type, props.number)
 })
+
+// Re-render and re-verify whenever the loaded item or its comments change.
+// renderId guards against a slow verification pass from a previous item
+// mutating the container after the user has moved on.
+let renderId = 0
+watch(
+  () => [detail.item.value, detail.comments.value] as const,
+  async () => {
+    const id = ++renderId
+    await nextTick()
+    if (id !== renderId) return
+    verifyAnnotations()
+  },
+  { immediate: true },
+)
+
+function verifyAnnotations() {
+  const el = bodyRef.value
+  if (!el) return
+  // Collect what the pipeline actually annotated rather than re-deriving from
+  // the body text: the annotation step resolves paths (baseDir, ~, Windows
+  // separators) in ways a second parse here would have to duplicate.
+  const paths = [...el.querySelectorAll('.chat-file-open-btn[data-file-path]')]
+    .map(btn => btn.getAttribute('data-file-path'))
+    .filter((p): p is string => !!p)
+  if (paths.length > 0) void verifyFilePaths([...new Set(paths)], el)
+
+  const shas = [...el.querySelectorAll('.chat-commit-open-btn[data-commit-sha], .chat-commit-hash-pending[data-commit-sha]')]
+    .map(node => node.getAttribute('data-commit-sha'))
+    .filter((s): s is string => !!s)
+  if (shas.length > 0) void verifyCommitHashes([...new Set(shas)], el)
+}
+
+function handleContentClick(event: MouseEvent) {
+  // Code / table block header buttons (copy, wrap).
+  if (handleCodeBlockClick(event)) return
+  if (handleTableBlockClick(event)) return
+
+  // localhost URLs are App-mode only; a no-op on the web.
+  if (handleLocalhostUrlClick(event)) return
+
+  // Verified file paths open the code link preview, matching chat/task.
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
+  const target = event.target as HTMLElement | null
+
+  const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
+  if (commitEl) {
+    event.preventDefault()
+    event.stopPropagation()
+    const sha = commitEl.getAttribute('data-commit-sha')
+    if (sha) window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha } }))
+    return
+  }
+
+  const btn = target?.closest<HTMLElement>('.chat-file-open-btn[data-file-path]')
+  const dirEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path][data-path-type="dir"]')
+  const linkOrBtn = btn || dirEl
+  if (!linkOrBtn) return
+  event.preventDefault()
+  event.stopPropagation()
+  codeLinkPreview.close()
+  const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
+  if (!filePath) return
+  if (lineRanges) void openFilePath(filePath, lineStart, lineEnd, 'forge', lineRanges)
+  else void openFilePath(filePath, lineStart, lineEnd, 'forge')
+}
 
 const renderedBody = computed(() => {
   const body = detail.item.value?.body ?? ''
   return body ? renderMarkdownHtml(body) : ''
 })
 
+// Comments carry the same annotations, so they render through the pipeline too;
+// verification runs once per comment render via the shared watcher above.
 function renderComment(body: string): string {
   try {
     return renderMarkdownHtml(body || '')

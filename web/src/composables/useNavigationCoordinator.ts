@@ -140,6 +140,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'task' || surface === 'tasks') return t('file.nav.backToTask')
     if (surface === 'history') return t('git.history.projectHistory')
     if (surface === 'browse') return t('file.nav.back')
+    if (surface === 'forge') return t('file.nav.backToForge')
     return t('common.back')
   }
 
@@ -444,7 +445,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
       beginExternalJump(normSurface, surfaceLabel(normSurface), normSurface === 'chat' ? { tab: 'chat' } : {})
     }
@@ -613,18 +614,21 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
 
     const isCurrentFileView = panelIsActive('view') && fileNav.overlayOpen.value
     const isExplicitFileSource = source === 'file'
-    const isFromCurrentFile = isExplicitFileSource || (isCurrentFileView && source !== 'chat' && source !== 'task' && source !== 'history' && (!isWideScreen.value || activePane.value !== PANE_RIGHT))
+    const isFromCurrentFile = isExplicitFileSource || (isCurrentFileView && source !== 'chat' && source !== 'task' && source !== 'history' && source !== 'forge' && (!isWideScreen.value || activePane.value !== PANE_RIGHT))
 
     if (!isFromCurrentFile) {
       const fromChat = source === 'chat' || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
       const fromTask = source === 'task' || panelIsActive('tasks')
       const fromHistory = source === 'history' || panelIsActive('history')
+      const fromForge = source === 'forge' || panelIsActive('forge')
       if (fromChat) {
         beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
       } else if (fromTask) {
         beginExternalJump('task', surfaceLabel('task'))
       } else if (fromHistory) {
         beginExternalJump('history', surfaceLabel('history'))
+      } else if (fromForge) {
+        beginExternalJump('forge', surfaceLabel('forge'))
       }
     } else {
       const prevPath = fileNav.currentFilePath.value

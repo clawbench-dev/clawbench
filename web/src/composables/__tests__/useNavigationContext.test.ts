@@ -257,6 +257,12 @@ describe('useNavigationContext', () => {
       expect(surfaceToTab('chat')).toBe('chat')
     })
 
+    it('映射 forge 为 forge', () => {
+      // The Issues & PRs detail renders annotated file paths, so opening one
+      // jumps away from the forge panel and must be able to come back to it.
+      expect(surfaceToTab('forge')).toBe('forge')
+    })
+
     it('未知 surface 返回 null 而不是静默回退到 chat', () => {
       expect(surfaceToTab('unknown')).toBeNull()
       expect(surfaceToTab('')).toBeNull()
