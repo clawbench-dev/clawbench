@@ -7,6 +7,8 @@
 // reactivity. Without this handler, vitest exits non-zero and the coverage gate
 // reports "Frontend tests failed" even though all test cases pass.
 
+import { createUnhandledRejectionHandler } from '@/utils/unhandledRejectionGuard'
+
 // ── ResizeObserver polyfill for jsdom ──
 // jsdom does not implement ResizeObserver, but components like FileHeader and
 // FileManagerContent use useToolbarOverflow which creates one on mount.
@@ -70,26 +72,17 @@ try {
 // take the synchronous deferred-setup path and keeps tests deterministic.
 delete (globalThis as { __VUE_DEVTOOLS_GLOBAL_HOOK__?: unknown }).__VUE_DEVTOOLS_GLOBAL_HOOK__
 
-function isRecursiveUpdateError(reason: unknown): boolean {
-  if (reason instanceof Error) {
-    return reason.message.includes('Maximum recursive updates')
-  }
-  if (typeof reason === 'string') {
-    return reason.includes('Maximum recursive updates')
-  }
-  return false
-}
-
 // Catch unhandled rejections from Vue's scheduler.
 // Store the handler reference so vitest's own cleanup can remove it —
 // a permanent process.on() listener keeps the worker's event loop alive
 // and prevents clean exit, contributing to the zombie worker problem
 // (vitest-dev/vitest#8766, #9494).
-const unhandledRejectionHandler = (reason: unknown) => {
-  if (isRecursiveUpdateError(reason)) return
-  // Re-throw as async to preserve default behavior
-  Promise.reject(reason)
-}
+//
+// The handler forwards each distinct reason exactly once: re-throwing via
+// Promise.reject() re-enters this same handler (the new rejection is unhandled
+// too), which spins forever at 100% CPU whenever a non-recursive rejection
+// occurs. See createUnhandledRejectionHandler for details.
+const unhandledRejectionHandler = createUnhandledRejectionHandler()
 process.on('unhandledRejection', unhandledRejectionHandler)
 
 // Remove the listener when vitest teardown runs, so the worker process
