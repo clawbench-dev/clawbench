@@ -894,11 +894,25 @@ func DequeueQueuedMessageByQueueID(sessionID, queueID string) (model.ChatMessage
 // Only flips a row that is still unqueued and un-run; a row already picked up by
 // the drain loop (streaming or finalized) is left alone.
 func RequeueMessage(msgID int64) error {
-	_, err := WriteExec(
+	res, err := WriteExec(
 		"UPDATE chat_history SET queued = 1, indexed = 1 WHERE id = ? AND queued = 0 AND streaming = 0",
 		msgID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Zero rows means the row is gone (or was already claimed by the drain loop).
+	// Report that as an error rather than success: the caller's whole point in
+	// calling this is to guarantee the message is back in the queue, and a
+	// silent no-op would let a stranded message look restored.
+	n, aerr := res.RowsAffected()
+	if aerr != nil {
+		return aerr
+	}
+	if n == 0 {
+		return fmt.Errorf("requeue message %d: no row updated (deleted or already claimed)", msgID)
+	}
+	return nil
 }
 
 // ClearQueuedMessages deletes every queued message of a session. Used by

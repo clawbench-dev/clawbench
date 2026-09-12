@@ -715,6 +715,8 @@ export default {
       interruptHint: 'Stop the reply being written and do this message instead',
       insertFailed: 'Could not insert right now — the message is still queued',
       actionFailed: 'Action failed — the message is still queued',
+      insertStranded: 'Insert failed and the message could not be re-queued — please resend it',
+      interruptNotQueued: 'That message is no longer queued — the current reply was left running',
     },
     contentBlocks: {
       scheduledTaskCreated: 'Scheduled task created',

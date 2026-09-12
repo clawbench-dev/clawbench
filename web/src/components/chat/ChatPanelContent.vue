@@ -234,10 +234,21 @@ const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsCo
 
 /** Whether the current agent's backend can join a running turn. Drives the
  *  queued bubble's single action: "insert into the current reply" vs
- *  "interrupt and send". */
-const midTurnSupported = computed(() =>
-  agentsComposable.supportsMidTurn(identity.currentAgentId.value || ''),
-)
+ *  "interrupt and send".
+ *
+ *  Two conditions, because the capability is per-backend but the ability is
+ *  per-transport: injection goes through the agent's live ACP connection
+ *  (ai.InjectMidTurn returns a decline when there is none), so a CLI session of
+ *  a steer-capable backend cannot actually insert. Showing "insert" there would
+ *  make the label lie about what the button does — the one thing it must not
+ *  do — so fall back to "interrupt and send" for CLI sessions. */
+const midTurnSupported = computed(() => {
+  if (!agentsComposable.supportsMidTurn(identity.currentAgentId.value || '')) return false
+  const transport = identity.currentTransport.value
+  // Unknown transport: assume ACP, since a steer-capable backend defaults to it
+  // (the button still fails safe — the backend declines and the UI reports it).
+  return transport !== 'cli'
+})
 /** queueId (or id) of the queued bubble whose action request is in flight. */
 const pendingActionBusy = ref('')
 const messages = ref([])

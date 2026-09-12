@@ -322,7 +322,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
@@ -331,7 +331,7 @@ type StreamEvent struct {
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)
-	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain)
+	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain, queue_inject, queue_cancel)
 	Mode           *ModeState             // Mode state (Type=mode_update)
 	Config         *ConfigOptionState     // Config option state (Type=config_update)
 	Commands       []AvailableCommandInfo // Slash commands (Type=commands_update)
@@ -437,15 +437,19 @@ func truncateToolOutput(output string) string {
 	return output[:maxToolOutputBytes] + fmt.Sprintf("\n[truncated: original %d bytes]", len(output))
 }
 
-// QueueEventData carries data for queue_drain and queue_cancel WS events.
-// queue_drain: atomically finalizes current streaming, starts next queued message.
-// queue_cancel: emitted when user cancels while messages are queued.
+// QueueEventData carries data for the queue_* WS events.
+//
+//   - queue_drain:  the message starts its OWN turn — finalize the current
+//     streaming reply and open a new assistant placeholder.
+//   - queue_inject: the message joined the RUNNING turn — clear its pending
+//     state but do NOT open a new placeholder (the reply in flight continues).
+//   - queue_cancel: emitted when the user cancels while messages are queued.
 type QueueEventData struct {
 	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
-	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain)
+	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain, queue_inject)
 	QueueIDs  []string              `json:"queueIds"`            // IDs of cancelled queued messages (queue_cancel) — may be empty
 	Text      string                `json:"text,omitempty"`
-	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
+	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained/inserted user message (queue_drain, queue_inject)
 	FilePaths []string              `json:"filePaths,omitempty"`
 	Files     []model.FileEntry     `json:"files,omitempty"`
 	Queue     []model.QueuedMessage `json:"queue,omitempty"`

@@ -2789,3 +2789,81 @@ func TestSessionExecutor_SteerBoundary_NoDBIsNoop(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildContentJSON_Interrupt_NoCancelledBadge pins the interrupt contract:
+// the reply was cut short on purpose (the user redirected the turn), so it must
+// NOT carry the cancelled badge — that would say the user abandoned the reply.
+func TestBuildContentJSON_Interrupt_NoCancelledBadge(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	// The turn ctx IS cancelled on an interrupt, so this also proves the
+	// interrupt branch wins over the generic ctx.Err()==Canceled check.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	})
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "partial answer"}}
+	contentJSON, outBlocks := executor.buildContentJSON(blocks, RunResult{CancelReason: cancelReasonInterrupt}, &ai.Metadata{})
+
+	if strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Fatalf("interrupt must not be stamped cancelled, got: %s", contentJSON)
+	}
+	if len(outBlocks) != 1 {
+		t.Fatalf("the partial content must be preserved, got %d blocks", len(outBlocks))
+	}
+	if !strings.Contains(contentJSON, "partial answer") {
+		t.Fatalf("the partial content must be persisted, got: %s", contentJSON)
+	}
+}
+
+// TestBuildContentJSON_Interrupt_EmptyGetsExplanation verifies an interrupt that
+// produced nothing still persists an explanatory block. Without this the reply
+// row is a blank bubble the user cannot interpret.
+func TestBuildContentJSON_Interrupt_EmptyGetsExplanation(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	})
+
+	contentJSON, outBlocks := executor.buildContentJSON(nil, RunResult{CancelReason: cancelReasonInterrupt}, &ai.Metadata{})
+
+	if len(outBlocks) == 0 {
+		t.Fatal("an empty interrupt must still persist an explanatory block")
+	}
+	if outBlocks[0].Type != blockTypeWarning {
+		t.Errorf("expected a warning block, got type %q", outBlocks[0].Type)
+	}
+	if outBlocks[0].Reason != ai.ReasonEmpty {
+		t.Errorf("expected reason %q, got %q", ai.ReasonEmpty, outBlocks[0].Reason)
+	}
+	if strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Error("an interrupt is not a cancellation")
+	}
+}

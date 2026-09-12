@@ -1297,7 +1297,15 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // loadHistory reconciles its authoritative position.
       for (const m of state) {
         if (m.role !== 'user') continue
-        if (String(m.id) !== action.queueId && m.queueId !== action.queueId) continue
+        // Three identity channels, same as remove_pending: an optimistic bubble
+        // (id === queueId), one that already adopted its DB id (queueId field),
+        // and a cross-device bubble (only _remoteQueueId — it has a numeric id
+        // and no queueId, so without this channel it would spin forever).
+        const matches =
+          String(m.id) === action.queueId ||
+          m.queueId === action.queueId ||
+          (m as Record<string, unknown>)['_remoteQueueId'] === action.queueId
+        if (!matches) continue
         delete m.pending
         delete m.queued
       }

@@ -728,10 +728,12 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	// outer ctx still governs everything (user cancel / shutdown propagate here).
 	turnCtx, turnCancel := context.WithCancel(ctx)
 	RegisterSessionTurnCancel(cfg.SessionID, turnCancel)
-	defer func() {
-		UnregisterSessionTurnCancel(cfg.SessionID)
-		turnCancel()
-	}()
+	// Unregister as soon as the turn's outcome has been read (RunWithChannel
+	// returns after buildResult consumed the cancel reason), NOT when this
+	// function exits. Finalize below can take a while (DB writes), and leaving
+	// the turn registered through it would let a late interrupt claim success
+	// and leave its reason behind for the NEXT turn to misread.
+	defer turnCancel()
 
 	sessionTransport := GetSessionTransport(cfg.SessionID)
 
@@ -801,6 +803,9 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	}
 	executor := NewSessionExecutor(turnCtx, execCfg)
 	runResult := executor.RunWithChannel(eventCh)
+	// The turn is over: its cancel reason has been read, so stop advertising it
+	// as interruptible. Anything arriving now belongs to the next turn.
+	UnregisterSessionTurnCancel(cfg.SessionID)
 	runResult = executor.Finalize(runResult, eventCh)
 
 	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: runResult.Metadata})

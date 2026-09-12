@@ -685,10 +685,12 @@ func executeStreamRun(
 	// that propagates here).
 	turnCtx, turnCancel := context.WithCancel(ctx)
 	service.RegisterSessionTurnCancel(sessionID, turnCancel)
-	defer func() {
-		service.UnregisterSessionTurnCancel(sessionID)
-		turnCancel()
-	}()
+	// Unregister as soon as the turn's outcome has been read (RunWithChannel
+	// returns after buildResult consumed the cancel reason), NOT when this
+	// function exits. Finalize below can take a while (DB writes), and leaving
+	// the turn registered through it would let a late interrupt claim success
+	// and leave its reason behind for the NEXT turn to misread.
+	defer turnCancel()
 
 	sessionTransport := service.GetSessionTransport(sessionID)
 	slog.Info("acp perf: executeStreamRun.start", "session_id", sessionID, "backend", backendName, "agent_id", agentID, "transport", sessionTransport, "resume", chatReq.Resume)
@@ -765,6 +767,9 @@ func executeStreamRun(
 	}
 	executor := service.NewSessionExecutor(turnCtx, cfg)
 	runResult := executor.RunWithChannel(eventCh)
+	// The turn is over: its cancel reason has been read, so stop advertising it
+	// as interruptible. Anything arriving now belongs to the next turn.
+	service.UnregisterSessionTurnCancel(sessionID)
 
 	// Finalize: persist to DB, drain channel, save metadata
 	runResult = executor.Finalize(runResult, eventCh)

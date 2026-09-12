@@ -87,7 +87,8 @@ func TestInjectQueuedMessage_Success(t *testing.T) {
 
 	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true, OwnerRequestID: "req-9"})
 
-	inserted, msgID := service.InjectQueuedMessage(sid, "q-insert")
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-insert")
+	require.NoError(t, err)
 
 	require.True(t, inserted, "the insertion must report success")
 	assert.Equal(t, queuedID, msgID, "the row must keep its original DB id — no delete+reinsert")
@@ -122,7 +123,8 @@ func TestInjectQueuedMessage_DeclinedRestoresQueue(t *testing.T) {
 
 	stubInjector(t, ai.MidTurnInjectResult{Reason: "idle"}) // decline
 
-	inserted, msgID := service.InjectQueuedMessage(sid, "q-decline")
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-decline")
+	require.NoError(t, err)
 
 	assert.False(t, inserted, "a decline must report false")
 	assert.Zero(t, msgID)
@@ -145,17 +147,22 @@ func TestInjectQueuedMessage_NotQueuedIsNoop(t *testing.T) {
 
 	calls := stubInjector(t, ai.MidTurnInjectResult{Injected: true})
 
-	inserted, msgID := service.InjectQueuedMessage(sid, "q-never-existed")
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-never-existed")
+	require.NoError(t, err)
 
 	assert.False(t, inserted)
 	assert.Zero(t, msgID)
 	assert.Empty(t, *calls, "the backend must not be called when there is nothing to insert")
 }
 
-// TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced documents the one
-// genuinely bad outcome: if the restore fails the row is neither queued nor
-// delivered, so the call must report failure (the caller surfaces it) instead
-// of pretending the message is safely queued.
+// TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced verifies the ONE
+// genuinely bad outcome: the row was claimed but the restore failed, so it is
+// neither queued nor delivered. This MUST come back as an error — returning a
+// benign decline would make the handler tell the user "still queued" about a
+// message the drain loop can no longer see.
+//
+// The failure is produced for real (the row is deleted between claim and
+// restore) rather than asserted around a healthy DB.
 func TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced(t *testing.T) {
 	db := setupDB(t)
 	_ = db
@@ -164,16 +171,54 @@ func TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced(t *testing.T) {
 	_, err := service.AddQueuedMessage("/project", "claude", sid, "at risk", nil, "q-requeue-fail", "")
 	require.NoError(t, err)
 
+	// Decline the injection, and delete the row before the restore runs. The
+	// injector stub is the last thing to happen before RequeueMessage, so
+	// deleting there lands exactly in the window we need to exercise.
+	orig := service.SetInjectMidTurnForTest(nil)
+	t.Cleanup(func() { service.SetInjectMidTurnForTest(orig) })
+	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content string, files []model.FileEntry, clientUserMessageID string) ai.MidTurnInjectResult {
+		// Simulate the row vanishing (e.g. a concurrent cancel) after the claim.
+		_, delErr := service.WriteExec("DELETE FROM chat_history WHERE session_id = ? AND queue_id = ?", sessionID, clientUserMessageID)
+		require.NoError(t, delErr)
+		return ai.MidTurnInjectResult{Reason: "idle"} // decline
+	})
+
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-requeue-fail")
+
+	assert.False(t, inserted)
+	assert.Zero(t, msgID)
+	require.Error(t, err, "a failed restore must be surfaced as an error, not a benign decline")
+	assert.ErrorIs(t, err, service.ErrMessageStranded,
+		"the error must be identifiable so the handler can tell the user to resend")
+
+	// Nothing is queued: the message really is stranded, which is exactly why
+	// the caller must not claim otherwise.
+	queued, qerr := service.GetQueuedMessages(sid)
+	require.NoError(t, qerr)
+	assert.Empty(t, queued)
+}
+
+// TestInjectQueuedMessage_DeclinedRequeueSucceeds is the contrast: a decline
+// whose restore WORKS must report a benign decline (no error) and leave the
+// message queued for the drain loop.
+func TestInjectQueuedMessage_DeclinedRequeueSucceeds(t *testing.T) {
+	db := setupDB(t)
+	_ = db
+	sid := helperCreateSession(t, "/project", "claude", "Insert Decline OK")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "still queued", nil, "q-decline-ok", "")
+	require.NoError(t, err)
+
 	stubInjector(t, ai.MidTurnInjectResult{Reason: "idle"})
 
-	// Simulate the restore failing by deleting the row between claim and
-	// restore: RequeueMessage only flips a row that exists and is still unqueued.
-	inserted, _ := service.InjectQueuedMessage(sid, "q-requeue-fail")
-	// With a healthy DB the restore succeeds, so this is the happy-decline case;
-	// the assertion pins that a decline never reports success.
-	assert.False(t, inserted)
+	inserted, msgID, err := service.InjectQueuedMessage(sid, "q-decline-ok")
 
-	queued, err := service.GetQueuedMessages(sid)
-	require.NoError(t, err)
-	assert.Len(t, queued, 1, "the message must end up queued exactly once")
+	assert.False(t, inserted)
+	assert.Zero(t, msgID)
+	assert.NoError(t, err, "a decline that restored the row is benign, not an error")
+
+	queued, qerr := service.GetQueuedMessages(sid)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1, "the message must be back in the queue")
+	assert.Equal(t, "still queued", queued[0].Content)
 }

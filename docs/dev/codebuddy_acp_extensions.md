@@ -621,8 +621,16 @@ P4c *** SPLIT IS FEASIBLE ***
 
 | 后端 | 按钮 | 行为 |
 |------|------|------|
-| 支持 steer（`model.Agent.SupportsMidTurn`） | 「插入当前回复」 | `POST /api/ai/queue/inject` — 认领原排队行（保留 DB id）→ `session/steer` |
-| 不支持 | 「中断并发送」 | `POST /api/ai/queue/interrupt` — 停当前轮，drain loop 接着跑队列 |
+| 支持 steer 且当前是 ACP（`model.Agent.SupportsMidTurn` + transport） | 「插入当前回复」 | `POST /api/ai/queue/inject` — 认领原排队行（保留 DB id）→ `session/steer` |
+| 其余 | 「中断并发送」 | `POST /api/ai/queue/interrupt` — 停当前轮，drain loop 按序接着跑队列 |
+
+按钮能力位是**后端 × transport** 两个条件：注入走 agent 的活 ACP 连接，所以同一个
+支持 steer 的后端在 CLI 会话下无法插入，此时标签必须回退成「中断并发送」，否则
+标签就与实际行为不符。
+
+「中断并发送」的语义是**「停当前回复，队列按序继续」**，不是把这条消息提到队首
+—— 队列顺序即 DB id 顺序，重排会破坏「插入保留原行 id」所依赖的整套性质。因此
+`queueId` 在中断端点里是**新鲜度校验**（该消息必须仍在排队），而非提权参数。
 
 **关键设计**：
 
@@ -638,9 +646,12 @@ P4c *** SPLIT IS FEASIBLE ***
 4. **`ws_stream_start` 加了一道保护**：不再无条件覆写流式气泡的 id，只在气泡**尚无
    数字 id** 时采纳。否则一条针对前段的迟到/重复 `stream_start` 会把后段气泡改名，
    两条消息塌回一条。
-5. **中断需要每轮独立 context**。drain loop 原本所有轮次共用一个长生命周期 ctx，直接
-   取消它会连带杀掉后续排队消息。因此每轮派生自己的 `turnCtx`（`sessionTurnCancels`
-   注册表），中断只停这一轮，队列照常继续。
+5. **中断需要每轮独立 context，且必须按轮次 id 定位**。drain loop 原本所有轮次共用一个
+   长生命周期 ctx，直接取消它会连带杀掉后续排队消息。因此每轮派生自己的 `turnCtx`
+   并登记一个单调递增的 turnID（`sessionTurnCancels`），中断只停这一轮，队列照常继续。
+   带 id 是必需的：调用方读到「当前轮」后，旧轮可能已结束、drain loop 已启动下一条
+   排队消息，无 id 校验就会砍掉用户并未要求停止的那一轮（check-then-act 竞态）。
+   `InterruptSessionTurnIfCurrent` 只在 id 仍然匹配时生效。
 6. **中断 ≠ 取消**：中断**保留队列**、**不打「已取消」角标**、会话继续运行；用户取消则
    清空队列、标记 cancelled、结束会话。`drainHandleTerminal` 里两条分支刻意分开。
 

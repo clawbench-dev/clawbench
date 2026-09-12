@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -643,4 +644,238 @@ func TestQueueHandler_Enqueue_EmitsUserMessageWithRealMsgID(t *testing.T) {
 	assert.Equal(t, "queue emit me", payload["content"])
 
 	service.CancelSession(sessionID)
+}
+
+// ── QueueInjectHandler ──────────────────────────────────────────────────────
+
+// TestQueueInjectHandler_MethodNotAllowed pins the method guard.
+func TestQueueInjectHandler_MethodNotAllowed(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/ai/queue/inject?session_id=s&queueId=q", nil)
+	w := callHandler(QueueInjectHandler, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestQueueInjectHandler_RequiresQueueID verifies the queueId is mandatory: it
+// is the identity of the bubble being acted on.
+func TestQueueInjectHandler_RequiresQueueID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?session_id=s1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInjectHandler, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, "QueueIdRequired", body["msgKey"])
+}
+
+// TestQueueInjectHandler_DeclinedIsConflictNotError verifies the benign path:
+// the backend cannot inject (no live ACP conn), the message stays queued, and
+// the response is a 409 decline — NOT a 500 and NOT a claim of success.
+func TestQueueInjectHandler_DeclinedIsConflictNotError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-inject-decline"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-inj-1", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?session_id="+sessionID+"&queueId=q-inj-1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInjectHandler, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, false, body["inserted"])
+	assert.Equal(t, true, body["queued"], "a decline must report the message is still queued")
+
+	// The message must still be deliverable.
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+}
+
+// TestQueueInjectHandler_StaleQueueIDIsConflict verifies a queueId that is no
+// longer queued (its turn already ran, or it was cancelled) is reported as a
+// decline rather than injecting an unrelated row.
+func TestQueueInjectHandler_StaleQueueIDIsConflict(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-inject-stale"
+	createQueueSession(t, env, sessionID)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/inject?session_id="+sessionID+"&queueId=does-not-exist", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInjectHandler, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+// ── QueueInterruptHandler ───────────────────────────────────────────────────
+
+// TestQueueInterruptHandler_MethodNotAllowed pins the method guard.
+func TestQueueInterruptHandler_MethodNotAllowed(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/ai/queue/interrupt?session_id=s&queueId=q", nil)
+	w := callHandler(QueueInterruptHandler, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestQueueInterruptHandler_RequiresQueueID verifies queueId is mandatory — it
+// is the freshness check that stops a stale click from killing an unrelated
+// turn.
+func TestQueueInterruptHandler_RequiresQueueID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id=s1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, "QueueIdRequired", body["msgKey"])
+}
+
+// TestQueueInterruptHandler_NotQueuedRefuses verifies the guard: interrupting
+// with a message that is not queued would stop the current reply and have
+// nothing to run, so it must be refused (409, reason=not_queued) and the turn
+// must be left alone.
+func TestQueueInterruptHandler_NotQueuedRefuses(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-not-queued"
+	createQueueSession(t, env, sessionID)
+
+	// A turn IS running, so the only thing stopping the interrupt is the
+	// freshness check — that is what this test isolates.
+	service.SetSessionRunning(sessionID, true, true)
+	t.Cleanup(func() { service.SetSessionRunning(sessionID, false, true) })
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id="+sessionID+"&queueId=stale", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, false, body["interrupted"])
+	assert.Equal(t, "not_queued", body["reason"])
+	assert.True(t, service.IsSessionRunning(sessionID),
+		"a refused interrupt must not stop the session")
+}
+
+// TestQueueInterruptHandler_NoTurnIsIdle verifies that a queued message with no
+// running turn reports idle (200) rather than an error: the drain loop will run
+// the queue on its own, so nothing is wrong.
+func TestQueueInterruptHandler_NoTurnIsIdle(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-idle"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-int-idle", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id="+sessionID+"&queueId=q-int-idle", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, false, body["interrupted"])
+	assert.Equal(t, "idle", body["reason"])
+
+	// The message must survive — an interrupt never drops the queue.
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+}
+
+// TestQueueInterruptHandler_StopsRegisteredTurn verifies the happy path: with a
+// queued message and a registered turn, the turn is cancelled and the queue is
+// left intact for the drain loop.
+func TestQueueInterruptHandler_StopsRegisteredTurn(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-happy"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-int-happy", "")
+	require.NoError(t, err)
+
+	// Register a turn so CurrentTurnID finds one.
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	t.Cleanup(turnCancel)
+	turnID := service.RegisterSessionTurnCancel(sessionID, turnCancel)
+	t.Cleanup(func() { service.UnregisterSessionTurnCancel(sessionID) })
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/interrupt?session_id="+sessionID+"&queueId=q-int-happy", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueInterruptHandler, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, true, body["interrupted"])
+
+	// The turn was stopped...
+	select {
+	case <-turnCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("the registered turn must be cancelled")
+	}
+	// ...but the queue survived, which is what separates interrupt from cancel.
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1, "interrupt must keep the queue")
+	assert.NotZero(t, turnID)
+}
+
+// TestQueueInterruptHandler_StaleTurnIDDoesNotKillReplacement is the handler-level
+// guard for the check-then-act race: the turn read at check time is replaced
+// before the interrupt lands, so nothing must be interrupted.
+func TestQueueInterruptHandler_StaleTurnIDDoesNotKillReplacement(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-interrupt-race"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-int-race", "")
+	require.NoError(t, err)
+
+	// T1 is registered, then replaced by T2 before the handler's interrupt runs.
+	_, t1Cancel := context.WithCancel(context.Background())
+	t.Cleanup(t1Cancel)
+	t1 := service.RegisterSessionTurnCancel(sessionID, t1Cancel)
+
+	t2Ctx, t2Cancel := context.WithCancel(context.Background())
+	t.Cleanup(t2Cancel)
+	service.RegisterSessionTurnCancel(sessionID, t2Cancel) // replaces T1
+	t.Cleanup(func() { service.UnregisterSessionTurnCancel(sessionID) })
+
+	// A stale id must be refused at the service level.
+	if service.InterruptSessionTurnIfCurrent(sessionID, t1) {
+		t.Fatal("a stale turn id must not interrupt the replacement turn")
+	}
+	select {
+	case <-t2Ctx.Done():
+		t.Fatal("the replacement turn must be left running")
+	default:
+	}
 }

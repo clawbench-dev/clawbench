@@ -4,6 +4,7 @@ SessionStreamBusy: Session stream is being viewed on another device
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
 QueueIdRequired: queueId required
+QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 NewSession: New Session
 NewSessionN: New Session {{.N}}
 FileMessage: File Message

@@ -3206,6 +3206,20 @@ describe('queued message action (insert / interrupt)', () => {
     expect(next.find((m: any) => m.queueId === 'q-2')!.pending).toBe(true)
   })
 
+  it('clear_queued_pending clears a cross-device bubble via _remoteQueueId', () => {
+    // A bubble created from another device's queued user_message has a numeric
+    // id and NO queueId — only _remoteQueueId carries the queue identity. If the
+    // reducer only matched id/queueId, this bubble would spin forever after an
+    // insert (until some later loadHistory happened to drop it).
+    const messages: any[] = [
+      { role: 'user', id: 12345, content: 'from device B', blocks: [], pending: true, queued: true, _remote: true, _remoteQueueId: 'q-remote-1' },
+    ]
+    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-remote-1' })
+    expect(next).toHaveLength(1)
+    expect(next[0].pending).toBeUndefined()
+    expect(next[0].queued).toBeUndefined()
+  })
+
   it('ws_queue_drain opens a new reply; clear_queued_pending does not', () => {
     // The distinction that matters: a drained message starts its OWN turn (new
     // assistant placeholder), an inserted one joins the running turn (none).

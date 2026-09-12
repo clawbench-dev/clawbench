@@ -715,6 +715,8 @@ export default {
       interruptHint: '停止正在生成的回复，立即改做这条消息',
       insertFailed: '当前无法插入，消息仍在队列中',
       actionFailed: '操作失败，消息仍在队列中',
+      insertStranded: '插入失败且消息无法回到队列，请重新发送',
+      interruptNotQueued: '这条消息已不在队列中，未中断当前回复',
     },
     contentBlocks: {
       scheduledTaskCreated: '定时任务已创建',

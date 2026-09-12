@@ -1495,6 +1495,71 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('WS event handling — queue_inject', () => {
+    it('should clear pending on the matching bubble without opening a new reply', () => {
+      // Insert joins the RUNNING turn, so unlike queue_drain it must not create
+      // a new assistant placeholder — the reply in flight continues.
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', id: 2, content: '', streaming: true,
+        blocks: [], createdAt: new Date().toISOString(),
+      })
+      options.messages.value.push({
+        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
+        blocks: [{ type: 'text', text: 'A' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_inject', { sessionId: 'test-session-1', queueId: 'pending-inj', messageId: 99 })
+
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(0)
+      // The bubble itself must stay (it is part of the conversation now).
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      // No second assistant bubble was opened.
+      const assistantMsgs = options.messages.value.filter((m: any) => m.role === 'assistant')
+      expect(assistantMsgs).toHaveLength(1)
+    })
+
+    it('should ignore event for a different session', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
+        blocks: [{ type: 'text', text: 'A' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('queue_inject', { sessionId: 'other-session', queueId: 'pending-inj', messageId: 99 })
+
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(1)
+    })
+
+    it('should call onRenderNeeded after clearing pending', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 'pending-inj', queueId: 'pending-inj', content: 'A', pending: true,
+        blocks: [{ type: 'text', text: 'A' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      options.onRenderNeeded.mockClear()
+
+      simulateWsEvent('queue_inject', { sessionId: 'test-session-1', queueId: 'pending-inj', messageId: 99 })
+
+      expect(options.onRenderNeeded).toHaveBeenCalled()
+    })
+  })
+
   describe('WS event handling — user_message', () => {
     it('should insert user message from another device', () => {
       const options = createOptions()

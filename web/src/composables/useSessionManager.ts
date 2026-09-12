@@ -182,7 +182,25 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         `${path}?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
         { method: 'POST' },
       )
-      const data = await resp.json().catch(() => null) as { inserted?: boolean; interrupted?: boolean } | null
+      const data = await resp.json().catch(() => null) as {
+        inserted?: boolean
+        interrupted?: boolean
+        reason?: string
+        msgKey?: string
+      } | null
+
+      // A 500 means the message may be stranded (claimed but not restored to
+      // the queue), so it must NOT be reported as "still queued" — the user has
+      // to resend. Distinguish it from the benign 409 decline.
+      if (!resp.ok && mode === 'insert') {
+        toast.show(
+          data?.msgKey === 'QueueInjectStranded'
+            ? gt('chat.pending.insertStranded')
+            : gt('chat.pending.actionFailed'),
+          { icon: '⚠️', type: 'error' },
+        )
+        return false
+      }
 
       if (mode === 'insert') {
         if (data?.inserted) {
@@ -192,6 +210,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           dispatch({ type: 'clear_queued_pending', queueId })
           return true
         }
+        // 409 decline: the message is still queued, so it will run on its own.
         toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
         return false
       }
@@ -199,6 +218,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // interrupt: the turn is stopping and the drain loop will pick this
       // message up. The bubble stays pending until its own turn starts.
       if (data?.interrupted) return true
+      if (data?.reason === 'not_queued') {
+        // The bubble's turn already ran (or it was cancelled): stopping the
+        // current reply would achieve nothing, so the backend refused. Say so
+        // rather than leaving the click with no feedback.
+        toast.show(gt('chat.pending.interruptNotQueued'), { icon: '⚠️', type: 'info' })
+        return false
+      }
       // Nothing to interrupt (turn already ended) — the drain loop will run the
       // queue anyway, so this is not a failure worth alarming about.
       return false

@@ -1187,6 +1187,16 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	// in fact it was cut short on purpose and the next message is already
 	// running. The queue survives (see drainHandleTerminal).
 	if result.CancelReason == cancelReasonInterrupt {
+		// An interrupt that produced nothing must still say something: an empty
+		// blocks array renders as a blank bubble with no explanation. Report it
+		// as an empty result (not a cancellation — the user asked to move on).
+		if len(blocks) == 0 {
+			blocks = append(blocks, model.ContentBlock{
+				Type:   blockTypeWarning,
+				Text:   "AI returned no content",
+				Reason: ai.ReasonEmpty,
+			})
+		}
 		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta}
 		blocksJSON, _ := json.Marshal(contentMap)
 		return string(blocksJSON), blocks
@@ -1218,11 +1228,6 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 		var errMsg string
 		var reason string
 		switch {
-		// An interrupted turn that produced nothing is not a cancellation: the
-		// user asked to move on. Report it as empty so the UI says "no content"
-		// rather than implying the user stopped it.
-		case result.CancelReason == cancelReasonInterrupt:
-			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		case e.ctx.Err() == context.Canceled:
 			errMsg, reason = "AI response cancelled", ai.ReasonContextCancel
 		case e.ctx.Err() == context.DeadlineExceeded:

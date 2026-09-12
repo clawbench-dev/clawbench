@@ -3,6 +3,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -71,11 +72,23 @@ func QueueInjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inserted, msgID := service.InjectQueuedMessage(sessionID, queueID)
+	inserted, msgID, err := service.InjectQueuedMessage(sessionID, queueID)
+	if err != nil {
+		// The claim succeeded but the row could not be restored to the queue, so
+		// it is now invisible to the drain loop. Do NOT claim "queued" here —
+		// that would tell the user their message is safe when it is stranded.
+		// Tell them to resend instead.
+		slog.Error("queue: inject left the message stranded",
+			slog.String("session", sessionID),
+			slog.String("queue_id", queueID),
+			slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueInjectStranded")
+		return
+	}
 	if !inserted {
-		// The message is still queued (or already drained) — nothing was lost.
-		// 409 rather than 500: the request was well-formed, the session simply
-		// was not in an injectable state.
+		// Benign decline: the message is still queued (or was already drained by
+		// its own turn). Nothing was lost. 409 rather than 500 — the request was
+		// well-formed, the session simply was not in an injectable state.
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"inserted": false,
 			"queued":   true,
@@ -124,12 +137,14 @@ func QueueInjectHandler(w http.ResponseWriter, r *http.Request) {
 // It backs the queued bubble's "interrupt and send" action (shown for backends
 // that cannot inject into a running turn — see model.Agent.SupportsMidTurn).
 //
-// POST /api/ai/queue/interrupt?session_id=xxx[&queueId=xxx]
+// POST /api/ai/queue/interrupt?session_id=xxx&queueId=xxx
 //
-// The message is already queued (the user queued it by sending, then chose this
-// action on its bubble), so nothing is persisted here — this only stops the
-// current turn. The session's drain loop then picks the queue up in order and
-// runs it, so the reply that was interrupted is replaced by the new message.
+// Semantics: "stop the current reply; the queue continues in order." It does
+// NOT jump the given message to the front — queue order is DB id order, and
+// re-ordering would break the "insert preserves the original row id" property
+// the whole design relies on. queueId is therefore a freshness check: it must
+// still be a queued message, so a stale click on an already-drained bubble
+// cannot silently kill an unrelated turn.
 //
 // Unlike POST /api/ai/chat/cancel this is NOT a user cancel: it keeps the
 // queue, does not mark the session stopped, and does not stamp the interrupted
@@ -150,28 +165,50 @@ func QueueInterruptHandler(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
 		return
 	}
+	queueID := r.URL.Query().Get("queueId")
+	if queueID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "QueueIdRequired")
+		return
+	}
 
 	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
 
-	// A queued message must exist, otherwise "interrupt and send" would stop the
-	// turn and then have nothing to run — a net loss for the user. Report it as
-	// a conflict so the UI can explain instead of silently killing the reply.
+	// The acting message must still be queued. Two reasons: a stale bubble (its
+	// turn already ran) should not kill the current turn, and interrupting with
+	// nothing queued would stop the reply and have nothing to run — a net loss.
 	queued, err := service.GetQueuedMessages(sessionID)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueReadFailed")
 		return
 	}
-	if len(queued) == 0 {
-		writeJSON(w, http.StatusConflict, map[string]any{"interrupted": false, "reason": "empty_queue"})
+	found := false
+	for _, q := range queued {
+		if q.QueueID == queueID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeJSON(w, http.StatusConflict, map[string]any{"interrupted": false, "reason": "not_queued"})
 		return
 	}
 
-	if !service.InterruptSessionTurn(sessionID) {
-		// No turn registered: it finished between the check and now, and the
-		// drain loop will pick the queue up on its own. Not an error.
+	// Read the turn id BEFORE deciding, then interrupt only that exact turn. The
+	// old turn may finish and the drain loop start the next queued message in
+	// between; without the id check this would cut off a reply the user never
+	// asked to stop (the check-then-act race).
+	turnID, ok := service.CurrentTurnID(sessionID)
+	if !ok {
+		// No turn running: the drain loop will pick the queue up on its own.
+		writeJSON(w, http.StatusOK, map[string]any{"interrupted": false, "reason": "idle"})
+		return
+	}
+	if !service.InterruptSessionTurnIfCurrent(sessionID, turnID) {
+		// The turn was replaced (or consumed) between the read and the act. Same
+		// outcome as idle: nothing of the user's was stopped, and the queue runs.
 		writeJSON(w, http.StatusOK, map[string]any{"interrupted": false, "reason": "idle"})
 		return
 	}
