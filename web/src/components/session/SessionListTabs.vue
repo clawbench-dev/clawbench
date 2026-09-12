@@ -1,5 +1,8 @@
 <template>
-  <div class="session-tabs" role="tablist">
+  <!-- The bar exists only to surface OTHER projects' active sessions. With none
+       there is nothing to switch to, so hide it entirely (see the watcher below
+       for the stranded-tab fallback). -->
+  <div v-if="total > 0" class="session-tabs" role="tablist">
     <button
       class="session-tab"
       :class="{ active: activeTab === 'project' }"
@@ -17,22 +20,30 @@
       @click="$emit('update:activeTab', 'cross')"
     >
       {{ t('session.tabCross') }}
-      <span v-if="total > 0" class="session-tab-badge">{{ total }}</span>
+      <span class="session-tab-badge">{{ total }}</span>
     </button>
   </div>
 </template>
 
 <script setup>
+import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions'
 
-defineProps({
+const props = defineProps({
   activeTab: { type: String, default: 'project' },
 })
-defineEmits(['update:activeTab'])
+const emit = defineEmits(['update:activeTab'])
 
 const { t } = useI18n()
 const { total } = useCrossProjectSessions()
+
+// When the last other-project active session goes away the bar unmounts, but the
+// wrapper's activeTab may still be 'cross' — leaving the list stuck on a pane the
+// user can no longer switch away from. Snap back to the project pane.
+watch(total, (n) => {
+  if (n === 0 && props.activeTab !== 'project') emit('update:activeTab', 'project')
+}, { immediate: true })
 </script>
 
 <style scoped>
