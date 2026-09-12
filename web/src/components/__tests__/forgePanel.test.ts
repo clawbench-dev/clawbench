@@ -250,6 +250,45 @@ describe('ForgePanelContent', () => {
     expect(wrapper.html()).not.toContain('lucide-git-pull-request')
   })
 
+  it('renders the binding dialog from the 更换仓库 menu item too', async () => {
+    // Both entry points (the fallback card's button and the header badge's
+    // 更换仓库 item) funnel into the same single ModalDialog, so the same
+    // missing `:open` prop broke both. This pins the header path specifically.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: {
+          LoadingIndicator: true,
+          RefreshButton: true,
+          ForgeDetail: true,
+          // Keep the real PopupMenu: the menu is what we click through.
+        },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    // Open the badge menu. PopupMenu teleports to body, so query the document
+    // rather than the wrapper.
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await new Promise(r => setTimeout(r, 100))
+    const items = Array.from(document.body.querySelectorAll('.forge-repo-menu-item'))
+    expect(items.length, 'the switcher menu should list change + unbind').toBe(2)
+    ;(items[0] as HTMLElement).click()
+    await new Promise(r => setTimeout(r, 150))
+
+    expect(document.body.querySelector('.modal-overlay'), '更换仓库 must open the dialog').not.toBeNull()
+    expect(document.body.querySelector('.forge-bind-form')).not.toBeNull()
+
+    wrapper.unmount()
+    document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+    document.body.querySelectorAll('.popup-menu').forEach(el => el.remove())
+  })
+
   it('actually renders the binding dialog when the button is clicked', async () => {
     // Regression: the dialog was mounted with `v-if="bindDialogOpen"` but no
     // `:open` prop. ModalDialog gates rendering on its own everOpened latch,
