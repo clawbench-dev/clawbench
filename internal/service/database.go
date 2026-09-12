@@ -609,6 +609,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}
 	}
+	// forge_items.comments_baselined: distinguishes "comments fetched, none
+	// exist" from "comments never fetched". Without it, a first pass that
+	// skipped comments leaves a zero baseline and the next pass replays every
+	// historical comment as new. Existing rows are backfilled to 1 only when
+	// they already have a comment id, so genuinely unbaselined items stay
+	// unbaselined and are silently absorbed on their next comment pass.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_items') WHERE name='comments_baselined'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE forge_items ADD COLUMN comments_baselined INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add forge_items.comments_baselined column: %w", err)
+			}
+			if _, err := WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
+				return fmt.Errorf("failed to backfill forge_items.comments_baselined: %w", err)
+			}
+		}
+	}
 
 	// Create agent store tables.
 	// Defined in agent_store.go as AgentDDL constant.

@@ -241,3 +241,55 @@ func TestForgeSyncer_ProviderFactoryErrorSurfaces(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no credentials")
 }
+
+// TestForgeSyncer_StateOnlyFirstPassDoesNotReplayComments is the regression
+// guard for a real production bug: after binding a repository, every historical
+// comment on every issue/PR was pushed as if it had just been posted.
+//
+// Trigger: the poller runs state passes every 60s but comment passes only every
+// 5min. When a repository is bound, the next state tick (within a minute) wins,
+// so the FIRST pass for that repo is state-only. It correctly records state and
+// sets the watermark — so the following pass is no longer a "first sync" — but
+// it has no comment data, leaving last_comment_id at 0. The next comment pass
+// then compares 0 against every existing comment and reports them all as new.
+func TestForgeSyncer_StateOnlyFirstPassDoesNotReplayComments(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	provider := &fakeProvider{
+		pages: map[forge.ItemType]map[int]forge.ListResult{
+			forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("closed", t0)}}},
+		},
+		// The item already carries an old comment from before the install.
+		comments: map[int][]forge.Comment{
+			1: {{ID: 500, UpdatedAt: t0}},
+		},
+	}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+	binding := testBinding()
+
+	// Simulate the poller's startup ordering: a state-only pass runs first
+	// (IncludeComments=false) while the watermark is still zero.
+	require.NoError(t, syncer.SyncRepoWithOptions(
+		context.Background(), binding, service.SyncOptions{IncludeComments: false}))
+
+	// The first pass must establish the baseline silently, even without
+	// comment data.
+	assert.Empty(t, sink.events, "a first pass must never dispatch historical events")
+
+	// A subsequent comment-inclusive pass must not resurrect the old comment.
+	require.NoError(t, syncer.SyncRepoWithOptions(
+		context.Background(), binding, service.SyncOptions{IncludeComments: true}))
+	assert.Empty(t, sink.events,
+		"a pre-existing comment must not be reported as new after the baseline")
+
+	// And a genuinely new comment still fires.
+	t2 := t1.Add(time.Hour)
+	provider.comments[1] = []forge.Comment{{ID: 501, UpdatedAt: t2}}
+	require.NoError(t, syncer.SyncRepoWithOptions(
+		context.Background(), binding, service.SyncOptions{IncludeComments: true}))
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, forge.EventCommented, sink.events[0].Type)
+}

@@ -3405,3 +3405,63 @@ func TestSchema_ProjectForgesTableExists(t *testing.T) {
 		assert.True(t, columns[col], "project_forges should have %s column", col)
 	}
 }
+
+// TestSchema_ForgeItemsCommentsBaselinedMigration covers the migration that
+// fixes historical-comment replay.
+//
+// A database predating the column must gain it, and rows that already recorded
+// a comment id must be backfilled to baselined=1 — otherwise every already-seen
+// item would look like "comments never fetched" and would replay its history
+// once more after upgrade.
+func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Build a LEGACY forge_items table: no comments_baselined column, and one
+	// row that already knows a comment id (id 42) plus one that never had any.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`
+		CREATE TABLE forge_items (
+			platform TEXT NOT NULL, host TEXT NOT NULL, owner TEXT NOT NULL,
+			repo TEXT NOT NULL, item_type TEXT NOT NULL, number INTEGER NOT NULL,
+			state TEXT NOT NULL, merged INTEGER NOT NULL DEFAULT 0,
+			last_comment_id INTEGER NOT NULL DEFAULT 0,
+			last_comment_updated_at DATETIME, item_updated_at DATETIME,
+			seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (platform, host, owner, repo, item_type, number));`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`INSERT INTO forge_items
+		(platform,host,owner,repo,item_type,number,state,merged,last_comment_id)
+		VALUES ('github','github.com','a','b','issue',1,'open',0,42),
+		       ('github','github.com','a','b','issue',2,'open',0,0)`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	// Run the real migration.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "forge_items")
+	assert.Contains(t, columns, "comments_baselined",
+		"the migration must add comments_baselined to an existing database")
+
+	// The row that had already seen a comment is baselined; the comment-less
+	// row stays unbaselined so its first comment pass absorbs history silently.
+	var baselined1, baselined2 int
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT comments_baselined FROM forge_items WHERE number = 1`).Scan(&baselined1))
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT comments_baselined FROM forge_items WHERE number = 2`).Scan(&baselined2))
+	assert.Equal(t, 1, baselined1, "a row with a known comment id must be backfilled as baselined")
+	assert.Equal(t, 0, baselined2, "a row with no comment id must stay unbaselined")
+}

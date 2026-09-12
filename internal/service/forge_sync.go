@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS forge_items (
 	merged                  INTEGER NOT NULL DEFAULT 0,
 	last_comment_id         INTEGER NOT NULL DEFAULT 0,
 	last_comment_updated_at DATETIME,
+	comments_baselined      INTEGER NOT NULL DEFAULT 0,
 	item_updated_at         DATETIME,
 	seen_at                 DATETIME DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY (platform, host, owner, repo, item_type, number)
@@ -45,7 +46,16 @@ type ForgeItemSnapshot struct {
 	Merged               bool
 	LastCommentID        int64
 	LastCommentUpdatedAt time.Time
-	ItemUpdatedAt        time.Time
+	// CommentsBaselined records that this item's comment history has been
+	// recorded at least once. Until it is true, comment activity must never be
+	// reported: the item's "previous" comment state is unknown, not empty.
+	//
+	// This is separate from LastCommentID because an item can legitimately have
+	// zero comments. Without it, a zero baseline is indistinguishable from
+	// "never fetched comments", and every historical comment on an item whose
+	// baseline pass skipped comments would be replayed as new.
+	CommentsBaselined bool
+	ItemUpdatedAt     time.Time
 }
 
 // ForgeRepoKey identifies a repository for snapshot scoping.
@@ -64,7 +74,7 @@ func GetForgeItemSnapshot(repo ForgeRepoKey, itemType string, number int) (*Forg
 	}
 	row := dbRead.QueryRow(
 		`SELECT platform, host, owner, repo, item_type, number, state, merged,
-		        last_comment_id, last_comment_updated_at, item_updated_at
+		        last_comment_id, last_comment_updated_at, comments_baselined, item_updated_at
 		 FROM forge_items
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND item_type = ? AND number = ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, itemType, number,
@@ -72,7 +82,7 @@ func GetForgeItemSnapshot(repo ForgeRepoKey, itemType string, number int) (*Forg
 	var s ForgeItemSnapshot
 	var lastCommentUpdated, itemUpdated sql.NullTime
 	err := row.Scan(&s.Platform, &s.Host, &s.Owner, &s.Repo, &s.ItemType, &s.Number,
-		&s.State, &s.Merged, &s.LastCommentID, &lastCommentUpdated, &itemUpdated)
+		&s.State, &s.Merged, &s.LastCommentID, &lastCommentUpdated, &s.CommentsBaselined, &itemUpdated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -97,6 +107,10 @@ func UpsertForgeItemSnapshot(s ForgeItemSnapshot) error {
 	if s.Merged {
 		merged = 1
 	}
+	baselined := 0
+	if s.CommentsBaselined {
+		baselined = 1
+	}
 	var lastCommentUpdated, itemUpdated any
 	if !s.LastCommentUpdatedAt.IsZero() {
 		lastCommentUpdated = s.LastCommentUpdatedAt.UTC()
@@ -107,17 +121,18 @@ func UpsertForgeItemSnapshot(s ForgeItemSnapshot) error {
 	_, err := WriteExec(
 		`INSERT INTO forge_items
 		   (platform, host, owner, repo, item_type, number, state, merged,
-		    last_comment_id, last_comment_updated_at, item_updated_at, seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		    last_comment_id, last_comment_updated_at, comments_baselined, item_updated_at, seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(platform, host, owner, repo, item_type, number) DO UPDATE SET
 		   state = excluded.state,
 		   merged = excluded.merged,
 		   last_comment_id = excluded.last_comment_id,
 		   last_comment_updated_at = excluded.last_comment_updated_at,
+		   comments_baselined = excluded.comments_baselined,
 		   item_updated_at = excluded.item_updated_at,
 		   seen_at = CURRENT_TIMESTAMP`,
 		s.Platform, s.Host, s.Owner, s.Repo, s.ItemType, s.Number,
-		s.State, merged, s.LastCommentID, lastCommentUpdated, itemUpdated,
+		s.State, merged, s.LastCommentID, lastCommentUpdated, baselined, itemUpdated,
 	)
 	return err
 }

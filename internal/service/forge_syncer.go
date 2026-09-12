@@ -230,6 +230,27 @@ func (s *ForgeSyncer) processItem(
 		}
 	}
 
+	// Whether this item's comment history was already known BEFORE this pass.
+	//
+	// This is tracked per item, not per repo. The repo-level watermark says "we
+	// have seen this repo before", but the comment baseline is established by a
+	// comment-inclusive pass — which the poller's startup pass normally is, and
+	// which can fail independently (rate limit, timeout). Without this flag a
+	// zero baseline is ambiguous: "no comments exist" and "never fetched
+	// comments" look identical, so the first successful comment pass would
+	// replay every historical comment as new.
+	//
+	// The gate below uses the PRE-pass value: the pass that establishes the
+	// baseline must absorb history silently, and only later passes may report
+	// comment activity.
+	prevBaselined := prev != nil && prev.CommentsBaselined
+	commentsBaselined := prevBaselined
+	if opts.IncludeComments && commentErr == nil {
+		// This pass read comments, so the baseline is now established (for
+		// persistence on the snapshot written below).
+		commentsBaselined = true
+	}
+
 	cur := forge.ItemState{
 		State:                  string(item.State),
 		Merged:                 item.State == forge.StateMerged,
@@ -246,6 +267,13 @@ func (s *ForgeSyncer) processItem(
 	var changes []forge.Change
 	if !firstSync {
 		changes = forge.DeriveChanges(prevSnapshotOrNil(prev), cur, item.Number)
+		// Comment events additionally require a baseline from a PREVIOUS pass.
+		// A state transition is still reported without one — it is derived from
+		// data this pass actually fetched — but comment activity cannot be,
+		// because there is no "previous" comment to compare against.
+		if !prevBaselined {
+			changes = dropCommentChanges(changes)
+		}
 	}
 
 	// Persist the new snapshot BEFORE dispatching, so a dispatch failure does
@@ -261,6 +289,7 @@ func (s *ForgeSyncer) processItem(
 		Merged:               cur.Merged,
 		LastCommentID:        latestID,
 		LastCommentUpdatedAt: latestUpdated,
+		CommentsBaselined:    commentsBaselined,
 		ItemUpdatedAt:        item.UpdatedAt,
 	}); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
@@ -341,6 +370,27 @@ func prevSnapshotOrNil(prev *ForgeItemSnapshot) *forge.Snapshot {
 		LastCommentID:        prev.LastCommentID,
 		LastCommentUpdatedAt: prev.LastCommentUpdatedAt,
 	}
+}
+
+// dropCommentChanges removes comment events from a derived batch.
+//
+// Used when an item has no comment baseline yet: a state transition is still
+// trustworthy (it comes from data this pass fetched), but comment activity
+// cannot be distinguished from pre-existing history.
+func dropCommentChanges(changes []forge.Change) []forge.Change {
+	if len(changes) == 0 {
+		return changes
+	}
+	kept := changes[:0]
+	for _, ch := range changes {
+		if ch.Type != forge.EventCommented {
+			kept = append(kept, ch)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 // pfPlatform returns the platform string for a repo key.
