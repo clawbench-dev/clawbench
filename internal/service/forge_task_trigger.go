@@ -61,6 +61,16 @@ type ForgeQueuedEvent struct {
 	change forge.Change
 }
 
+// forgeEventKindForItem maps a forge item type to its subscription kind. It
+// lives here rather than in scheduler.go so the scheduler does not need to
+// import the forge package.
+func forgeEventKindForItem(t forge.ItemType) string {
+	if t == forge.ItemTypeChangeRequest {
+		return forgeEventKindPR
+	}
+	return forgeEventKindIssue
+}
+
 // identityEntry is a cached credential login with its expiry.
 type identityEntry struct {
 	login   string
@@ -139,15 +149,16 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 		return
 	}
 
-	tasks := t.matchingTasks(repo, change)
+	tasks := t.matchingTasks(repo, item, change)
 	if len(tasks) == 0 {
 		return
 	}
 
 	// Per-repo, per-type debounce: a burst of the same event (e.g. five comments
 	// in a row) fires the task once, not five times. The event type is part of
-	// the key so a comment arriving right after a close is not swallowed.
-	debounceKey := repo.Key() + "\x00" + string(change.Type)
+	// the key so a comment arriving right after a close is not swallowed, and
+	// the item kind is too so a new issue right after a new PR is not either.
+	debounceKey := repo.Key() + "\x00" + forgeEventKindForItem(item.Type) + "\x00" + string(change.Type)
 	t.mu.Lock()
 	if last, ok := t.lastFire[debounceKey]; ok && t.now().Sub(last) < t.debounceWindow {
 		t.mu.Unlock()
@@ -210,7 +221,7 @@ func (t *ForgeTaskTrigger) identityFor(repo ForgeRepoRef) string {
 
 // matchingTasks returns the active event tasks that subscribe to this event and
 // whose repo scope covers it.
-func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, change forge.Change) []model.ScheduledTask {
+func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, item forge.Item, change forge.Change) []model.ScheduledTask {
 	tasks, err := t.listTasks()
 	if err != nil {
 		slog.Warn("forge task trigger: list tasks failed", slog.String("err", err.Error()))
@@ -223,7 +234,7 @@ func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, change forge.Change)
 		if !task.IsEventTriggered() || task.Status != SessionArchiveFilterActive {
 			continue
 		}
-		if !eventTypeSubscribed(task, change.Type) {
+		if !eventTypeSubscribed(task, item.Type, change.Type) {
 			continue
 		}
 		// EventRepo, when set, scopes the task to one repository. Empty means
@@ -250,10 +261,20 @@ func (t *ForgeTaskTrigger) projectBindsRepo(projectPath string, repo ForgeRepoRe
 		pf.Owner == repo.Owner && pf.Repo == repo.Repo
 }
 
-// eventTypeSubscribed reports whether the task subscribes to the event type.
-func eventTypeSubscribed(task *model.ScheduledTask, typ forge.EventType) bool {
+// eventTypeSubscribed reports whether the task subscribes to this event.
+//
+// An event is identified by both the item kind (issue vs PR) and the
+// transition, so a task can subscribe to "a new issue" without also firing for
+// "a new PR". Two spellings match:
+//   - the kind-scoped key, e.g. "issue.opened" / "pr.opened";
+//   - the bare legacy key, e.g. "opened", which matches either kind. Tasks
+//     stored before the split used bare keys, so this keeps them working
+//     without a migration.
+func eventTypeSubscribed(task *model.ScheduledTask, itemType forge.ItemType, typ forge.EventType) bool {
+	kind := forgeEventKindForItem(itemType)
+	scoped := forgeEventKey(kind, string(typ))
 	for _, t := range task.EventTypeList() {
-		if t == string(typ) {
+		if t == scoped || t == string(typ) {
 			return true
 		}
 	}

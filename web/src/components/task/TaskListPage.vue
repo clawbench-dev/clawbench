@@ -52,7 +52,7 @@
             </div>
             <div class="task-item-next">
               <Clock class="meta-icon" :size="12" />
-              <span v-if="task.triggerMode === 'event'">{{ t('task.list.eventTriggered') }}</span>
+              <span v-if="task.triggerMode === 'event'">{{ t('task.eventTriggered') }}</span>
               <span v-else-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
@@ -104,7 +104,7 @@ interface TaskItem {
 function eventTriggerLabel(task: TaskItem): string {
   const types = (task.eventTypes || '').split(',').map(s => s.trim()).filter(Boolean)
   if (types.length === 0) return t('task.form.triggerEvent')
-  const labels: Record<string, string> = {
+  const transitionLabels: Record<string, string> = {
     opened: t('task.form.eventOpened'),
     closed: t('task.form.eventClosed'),
     merged: t('task.form.eventMerged'),
@@ -112,7 +112,20 @@ function eventTriggerLabel(task: TaskItem): string {
     commented: t('task.form.eventCommented'),
     pipeline_done: t('task.form.eventPipeline'),
   }
-  return types.map(x => labels[x] || x).join(' · ')
+  const kindLabels: Record<string, string> = {
+    issue: t('task.form.eventKindIssue'),
+    pr: t('task.form.eventKindPr'),
+  }
+  // Keys are kind-scoped ("issue.opened"); show the kind so two same-named
+  // transitions on different kinds are distinguishable. A bare legacy key
+  // renders without a prefix.
+  return types.map(x => {
+    const dot = x.indexOf('.')
+    if (dot <= 0) return transitionLabels[x] || x
+    const kind = kindLabels[x.slice(0, dot)] || x.slice(0, dot)
+    const transition = transitionLabels[x.slice(dot + 1)] || x.slice(dot + 1)
+    return `${kind} · ${transition}`
+  }).join(' · ')
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])

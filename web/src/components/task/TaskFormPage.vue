@@ -63,11 +63,17 @@
         <template v-if="form.triggerMode === 'event'">
           <div class="form-group">
             <label class="form-label">{{ t('task.form.eventTypes') }}</label>
-            <div class="event-type-checks">
-              <label v-for="et in eventTypeOptions" :key="et.value" class="checkbox-label">
-                <input type="checkbox" :value="et.value" v-model="selectedEventTypes" />
-                <span>{{ et.label }}</span>
-              </label>
+            <!-- Grouped by item kind: "a new issue" and "a new PR" are
+                 distinct triggers, so each kind lists its own applicable
+                 events. merged / pipeline only exist for PRs. -->
+            <div v-for="group in eventTypeGroups" :key="group.kind" class="event-type-group">
+              <div class="event-type-group-label">{{ group.label }}</div>
+              <div class="event-type-checks">
+                <label v-for="et in group.options" :key="et.value" class="checkbox-label">
+                  <input type="checkbox" :value="et.value" v-model="selectedEventTypes" />
+                  <span>{{ et.label }}</span>
+                </label>
+              </div>
             </div>
             <div v-if="errors.eventTypes" class="form-error">{{ errors.eventTypes }}</div>
           </div>
@@ -316,14 +322,29 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
 
 // ── Event trigger configuration ──
 // The event-type list mirrors the backend's validForgeEventTypes set.
-const eventTypeOptions = computed(() => [
-  { value: 'opened', label: t('task.form.eventOpened') },
-  { value: 'closed', label: t('task.form.eventClosed') },
-  { value: 'merged', label: t('task.form.eventMerged') },
-  { value: 'reopened', label: t('task.form.eventReopened') },
-  { value: 'commented', label: t('task.form.eventCommented') },
-  { value: 'pipeline_done', label: t('task.form.eventPipeline') },
-])
+// Event keys are kind-scoped ("issue.opened" / "pr.opened") so the two are
+// independent triggers. merged and pipeline_done are PR-only: an issue has no
+// merge and no CI, so offering them under Issues would create a subscription
+// that can never fire.
+const TRANSITIONS = {
+  issue: ['opened', 'closed', 'reopened', 'commented'],
+  pr: ['opened', 'closed', 'merged', 'reopened', 'commented', 'pipeline_done'],
+}
+const TRANSITION_LABELS = {
+  opened: 'task.form.eventOpened',
+  closed: 'task.form.eventClosed',
+  merged: 'task.form.eventMerged',
+  reopened: 'task.form.eventReopened',
+  commented: 'task.form.eventCommented',
+  pipeline_done: 'task.form.eventPipeline',
+}
+const eventTypeGroups = computed(() => [
+  { kind: 'issue', label: t('task.form.eventKindIssue') },
+  { kind: 'pr', label: t('task.form.eventKindPr') },
+].map(g => ({
+  ...g,
+  options: TRANSITIONS[g.kind].map(tr => ({ value: `${g.kind}.${tr}`, label: t(TRANSITION_LABELS[tr]) })),
+})))
 
 // selectedEventTypes is a view over form.eventTypes (comma-separated).
 const selectedEventTypes = computed({
@@ -356,7 +377,9 @@ async function loadBoundRepos() {
 const eventContextTemplate = computed(() => {
   const types = selectedEventTypes.value
   const showAll = types.length === 0
-  const show = (scoped) => showAll || !scoped || types.includes(scoped)
+  // Keys are kind-scoped ("pr.commented"), so match on the transition suffix
+  // (and on the bare legacy form, which a pre-split task may still carry).
+  const show = (transition) => showAll || types.some(x => x === transition || x.endsWith('.' + transition))
   const lines = [
     `- ${t('task.form.varEventType')}：{{EVENT_TYPE}}`,
     `- ${t('task.form.varRepo')}：{{REPO}}`,
@@ -794,6 +817,17 @@ onMounted(() => {
 }
 
 /* Event trigger configuration */
+.event-type-group + .event-type-group {
+  margin-top: 10px;
+}
+
+.event-type-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
 .event-type-checks {
   display: flex;
   flex-wrap: wrap;

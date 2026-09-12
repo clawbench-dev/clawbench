@@ -71,6 +71,157 @@ func TestForgeTaskTrigger_FiresMatchingTask(t *testing.T) {
 	assert.Equal(t, []int64{1}, fired, "only the subscribed task fires")
 }
 
+// TestForgeTaskTrigger_SplitsIssueAndPR verifies that "a new issue" and "a new
+// PR" are independent triggers: subscribing to issue.opened must NOT fire for a
+// PR, and vice versa. Before the split both collapsed onto the same "opened".
+func TestForgeTaskTrigger_SplitsIssueAndPR(t *testing.T) {
+	cfg := fullNotifyConfig()
+
+	prItem := triggerItem(2)
+	prItem.Type = forge.ItemTypeChangeRequest
+
+	cases := []struct {
+		name        string
+		subscribed  string
+		item        forge.Item
+		wantFired   bool
+	}{
+		{"issue.opened fires for an issue", "issue.opened", triggerItem(1), true},
+		{"issue.opened ignores a PR", "issue.opened", prItem, false},
+		{"pr.opened fires for a PR", "pr.opened", prItem, true},
+		{"pr.opened ignores an issue", "pr.opened", triggerItem(1), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var fired []int64
+			var mu sync.Mutex
+			tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+			tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+				return []model.ScheduledTask{forgeTriggerTask(1, tc.subscribed, triggerRepo().Key())}, nil
+			})
+			tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+				mu.Lock()
+				fired = append(fired, taskID)
+				mu.Unlock()
+				return true
+			})
+
+			tr.HandleChange(context.Background(), triggerRepo(), tc.item,
+				forge.Change{Type: forge.EventOpened, Number: tc.item.Number})
+
+			if tc.wantFired {
+				require.Eventually(t, func() bool {
+					mu.Lock()
+					defer mu.Unlock()
+					return len(fired) == 1
+				}, 2*time.Second, 10*time.Millisecond, "the subscribed task should fire")
+			} else {
+				// Give the async drain a chance to (wrongly) fire before asserting.
+				time.Sleep(120 * time.Millisecond)
+				mu.Lock()
+				defer mu.Unlock()
+				assert.Empty(t, fired, "a task subscribed to the other kind must not fire")
+			}
+		})
+	}
+}
+
+// TestForgeTaskTrigger_BareLegacyKeyMatchesBothKinds verifies backward
+// compatibility: a task stored before the split carries the bare key "opened",
+// which must keep matching both issues and PRs without a migration.
+func TestForgeTaskTrigger_BareLegacyKeyMatchesBothKinds(t *testing.T) {
+	cfg := fullNotifyConfig()
+	prItem := triggerItem(2)
+	prItem.Type = forge.ItemTypeChangeRequest
+
+	for _, tc := range []struct {
+		name string
+		item forge.Item
+	}{
+		{"bare key matches an issue", triggerItem(1)},
+		{"bare key matches a PR", prItem},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fired []int64
+			var mu sync.Mutex
+			tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+			tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+				return []model.ScheduledTask{forgeTriggerTask(1, "opened", triggerRepo().Key())}, nil
+			})
+			tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+				mu.Lock()
+				fired = append(fired, taskID)
+				mu.Unlock()
+				return true
+			})
+
+			tr.HandleChange(context.Background(), triggerRepo(), tc.item,
+				forge.Change{Type: forge.EventOpened, Number: tc.item.Number})
+
+			require.Eventually(t, func() bool {
+				mu.Lock()
+				defer mu.Unlock()
+				return len(fired) == 1
+			}, 2*time.Second, 10*time.Millisecond)
+		})
+	}
+}
+
+// TestForgeTaskTrigger_DebounceIsPerKind verifies the debounce key includes the
+// item kind: a new issue arriving right after a new PR must not be swallowed by
+// the PR's debounce window.
+func TestForgeTaskTrigger_DebounceIsPerKind(t *testing.T) {
+	cfg := fullNotifyConfig()
+	prItem := triggerItem(2)
+	prItem.Type = forge.ItemTypeChangeRequest
+
+	var fired []int64
+	var mu sync.Mutex
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(10 * time.Minute) // long, so only key separation can let the 2nd through
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "issue.opened,pr.opened", triggerRepo().Key())}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), prItem, forge.Change{Type: forge.EventOpened, Number: 2})
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1), forge.Change{Type: forge.EventOpened, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 2
+	}, 2*time.Second, 10*time.Millisecond, "the issue event must not be debounced away by the PR event")
+}
+
+// TestValidateEventSubscription_KindScopedKeys covers the accepted vocabulary.
+func TestValidateEventSubscription_KindScopedKeys(t *testing.T) {
+	valid := []string{
+		"issue.opened", "pr.opened", "pr.merged", "issue.commented", "pr.pipeline_done",
+		"issue.opened,pr.merged",
+		"opened", // bare legacy key still accepted
+	}
+	for _, v := range valid {
+		assert.NoError(t, service.ValidateEventSubscription(v), "expected %q to be valid", v)
+	}
+
+	invalid := []string{
+		"issue.merged",   // an issue can never be merged
+		"issue.pipeline_done", // issues have no CI
+		"bogus.opened",
+		"pr.bogus",
+	}
+	for _, v := range invalid {
+		assert.Error(t, service.ValidateEventSubscription(v), "expected %q to be rejected", v)
+	}
+}
+
 func TestForgeTaskTrigger_KillSwitchSuppresses(t *testing.T) {
 	cfg := fullNotifyConfig()
 	cfg.Forge.PauseEventTasks = true

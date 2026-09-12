@@ -540,11 +540,44 @@ func (s *Scheduler) UpdateTask(task *model.ScheduledTask) error {
 	return nil
 }
 
-// validForgeEventTypes is the set of event types an event task may subscribe to.
-var validForgeEventTypes = map[string]bool{
-	"opened": true, "closed": true, "merged": true,
-	"reopened": true, "commented": true, "pipeline_done": true,
+// Forge event subscription keys.
+//
+// An event is identified by BOTH the item kind and the transition, so "a new
+// issue" and "a new PR" are distinct triggers. Keys are "<kind>.<transition>",
+// e.g. "issue.opened", "pr.merged".
+//
+// A bare legacy key ("opened") is still accepted and matches EITHER kind, so
+// tasks stored before the split keep working without a migration.
+const (
+	forgeEventKindIssue = "issue"
+	forgeEventKindPR    = "pr"
+)
+
+// forgeEventTransitions lists the subscribable transitions per kind. merged and
+// pipeline_done are PR-only (an issue has no merge and no CI), so offering
+// issue.merged would create a trigger that can never fire.
+var forgeEventTransitions = map[string][]string{
+	forgeEventKindIssue: {"opened", "closed", "reopened", "commented"},
+	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented", "pipeline_done"},
 }
+
+// forgeEventKey builds the canonical kind-scoped subscription key.
+func forgeEventKey(kind, transition string) string { return kind + "." + transition }
+
+// validForgeEventTypes is the set of event types an event task may subscribe to:
+// every kind-scoped key, plus the bare legacy keys for backward compatibility.
+var validForgeEventTypes = func() map[string]bool {
+	out := make(map[string]bool)
+	for kind, transitions := range forgeEventTransitions {
+		for _, tr := range transitions {
+			out[forgeEventKey(kind, tr)] = true
+			// The bare form is the pre-split spelling; it stays valid so an
+			// existing task is not rejected on its next edit.
+			out[tr] = true
+		}
+	}
+	return out
+}()
 
 // ValidateEventSubscription checks a comma-separated event subscription. It is
 // exported so the HTTP layer can reject a bad configuration as a 400 before
