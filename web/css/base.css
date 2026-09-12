@@ -178,7 +178,10 @@ html.wallpaper-active .image-preview-body,
 html.wallpaper-active .audio-preview-body,
 html.wallpaper-active .pdf-preview-container,
 html.wallpaper-active .pdf-error,
-html.wallpaper-active .office-preview-container {
+html.wallpaper-active .office-preview-container,
+html.wallpaper-active .forge-panel,
+html.wallpaper-active .forge-detail,
+html.wallpaper-active .forge-comment-body {
     background: transparent;
 }
 
@@ -192,8 +195,14 @@ html.wallpaper-active .execution-item,
 html.wallpaper-active .overview-card,
 html.wallpaper-active .proxy-port-item,
 html.wallpaper-active .form-section,
-html.wallpaper-active .stats-card-panel {
+html.wallpaper-active .stats-card-panel,
+html.wallpaper-active .forge-comment {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+/* The forge error card keeps its red wash but must sit on the same translucent
+   base as other cards, or it reads as an opaque block over the wallpaper. */
+html.wallpaper-active .forge-error-card {
+    background: color-mix(in srgb, var(--color-red) 6%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
 }
 html.wallpaper-active .settings-card__body,
 html.wallpaper-active .group-panel__card,
@@ -216,14 +225,18 @@ html.wallpaper-active .form-header,
 html.wallpaper-active .proxy-header,
 html.wallpaper-active .detail-actions,
 html.wallpaper-active .form-footer,
-html.wallpaper-active .exec-detail-actions {
+html.wallpaper-active .exec-detail-actions,
+html.wallpaper-active .forge-header,
+html.wallpaper-active .forge-detail-header,
+html.wallpaper-active .forge-detail-footer {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
 html.wallpaper-active .terminal-tab-bar,
 html.wallpaper-active .stats-tab-bar,
 html.wallpaper-active .drilldown-header,
 html.wallpaper-active .manage-tabs,
-html.wallpaper-active .toc-dock {
+html.wallpaper-active .toc-dock,
+html.wallpaper-active .forge-tabs {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 html.wallpaper-active .dir-toolbar {

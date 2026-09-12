@@ -52,11 +52,24 @@
 
       <template v-else>
         <!-- Standard panel header: matches every other list page
-             (var(--header-height), bg-primary, bottom border). -->
+             (var(--header-height), bg-primary, bottom border). The repository
+             badge is clickable — same "context badge + dropdown" affordance as
+             the app header's project/branch switchers — and is the only place
+             to change or clear the binding once one exists. -->
         <div class="forge-header">
           <span class="forge-header-title">
             <GitPullRequest :size="14" />
-            <span>{{ t('nav.forge') }}</span>
+            <button
+              v-if="items.binding.value"
+              ref="repoBadgeRef"
+              class="forge-repo-badge"
+              :title="items.binding.value.slug"
+              @click.stop="repoMenuOpen = !repoMenuOpen"
+            >
+              <span class="forge-repo-name">{{ items.binding.value.slug }}</span>
+              <ChevronDown :size="12" />
+            </button>
+            <span v-else>{{ t('nav.forge') }}</span>
             <span v-if="items.items.value.length" class="forge-header-count">{{ items.items.value.length }}</span>
           </span>
           <RefreshButton
@@ -66,6 +79,17 @@
             @click="refresh"
           />
         </div>
+
+        <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="2">
+          <button class="forge-repo-menu-item" @click="openRebindDialog">
+            <FolderGit2 :size="14" />
+            <span>{{ t('forge.bind.change') }}</span>
+          </button>
+          <button class="forge-repo-menu-item danger" @click="unbindRepo">
+            <Unlink :size="14" />
+            <span>{{ t('forge.bind.unbind') }}</span>
+          </button>
+        </PopupMenu>
 
         <!-- Type switch: page tabs, matching the stats panel tab bar
              (connected rectangular tabs with a bottom accent underline).
@@ -211,15 +235,17 @@ import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   GitPullRequest, CircleDot, Inbox, MessageSquare,
-  ChevronRight, AlertCircle, FolderGit2,
+  ChevronRight, ChevronDown, AlertCircle, FolderGit2, Unlink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import { useForgeItems } from '@/composables/useForge'
-import { fetchForgeRemotes, setForgeBinding, type ForgeRemote, ForgeApiError } from '@/utils/forgeApi'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, ForgeApiError } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -245,6 +271,8 @@ const bindDialogOpen = ref(false)
 const remotes = ref<ForgeRemote[]>([])
 const manualUrl = ref('')
 const bindError = ref('')
+const repoMenuOpen = ref(false)
+const repoBadgeRef = ref<HTMLElement | null>(null)
 
 async function refresh() {
   await items.loadBinding()
@@ -274,6 +302,16 @@ function closeDetail() {
   detailNumber.value = 0
 }
 
+// Register the drill-down back handler so the edge-swipe gesture and the Android
+// hardware back button close the detail view (same contract as tasks/git).
+// Gated on `active` so an inactive tab never intercepts a back press.
+useFeatureBackHandler(
+  'forge',
+  () => props.active && detailOpen.value,
+  () => closeDetail(),
+  PRIORITY_PAGE,
+)
+
 function onListScroll(e: Event) {
   const el = e.target as HTMLElement
   if (!el) return
@@ -292,6 +330,24 @@ async function openBindDialog() {
     appLog.w(TAG, 'load remotes failed', err)
     remotes.value = []
   }
+}
+
+/** Header badge → "change repository": reopen the binding dialog. */
+function openRebindDialog() {
+  repoMenuOpen.value = false
+  void openBindDialog()
+}
+
+/** Header badge → "unbind": clear the binding, then fall back to the unbound card. */
+async function unbindRepo() {
+  repoMenuOpen.value = false
+  try {
+    await deleteForgeBinding()
+  } catch (err) {
+    appLog.w(TAG, 'unbind failed', err)
+  }
+  closeDetail()
+  await refresh()
 }
 
 async function bindFromRemote(r: ForgeRemote) {
@@ -376,6 +432,55 @@ function formatTime(iso: string): string {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+/* Clickable repository badge — the context switcher for the bound remote,
+   matching the app header's project/branch badges. */
+.forge-repo-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.forge-repo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .forge-repo-badge:hover {
+    background: var(--bg-tertiary);
+  }
+}
+.forge-repo-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .forge-repo-menu-item:hover {
+    background: var(--bg-secondary);
+  }
+}
+.forge-repo-menu-item.danger {
+  color: var(--color-red);
 }
 .forge-header-count {
   font-size: 10px;

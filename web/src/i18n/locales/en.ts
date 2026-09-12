@@ -94,6 +94,8 @@ export default {
       urlPlaceholder: 'https://github.com/owner/repo.git',
       submit: 'Bind',
       unsafeHost: 'This address is not allowed (internal or unresolvable host)',
+      change: 'Change repository',
+      unbind: 'Unbind',
     },
     detail: {
       back: 'Back',

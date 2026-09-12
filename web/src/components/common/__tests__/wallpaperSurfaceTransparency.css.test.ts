@@ -53,7 +53,7 @@ describe('wallpaper-active single-surface transparency', () => {
     // shows through — NOT a translucent color-mix layer that compounds alphas.
     const rule = ruleContaining('html.wallpaper-active .task-list-page')
     expect(rule).toContain('background: transparent;')
-    for (const sel of ['.task-detail-page', '.settings-page', '.proxy-panel-content', '.usage-stats-panel', '.pdf-error']) {
+    for (const sel of ['.task-detail-page', '.settings-page', '.proxy-panel-content', '.usage-stats-panel', '.pdf-error', '.forge-panel', '.forge-detail']) {
       expect(rule).toContain(`html.wallpaper-active ${sel}`)
     }
     // The whole-page roots group must not contain a translucent color-mix
@@ -66,7 +66,7 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(rule).toMatch(
       /background:\s*color-mix\(in srgb,\s*var\(--bg-secondary\)\s*var\(--panel-alpha\),\s*transparent\);/,
     )
-    for (const sel of ['.execution-item', '.overview-card', '.proxy-port-item', '.form-section', '.stats-card-panel']) {
+    for (const sel of ['.execution-item', '.overview-card', '.proxy-port-item', '.form-section', '.stats-card-panel', '.forge-comment']) {
       expect(rule).toContain(`html.wallpaper-active ${sel}`)
     }
   })
@@ -76,9 +76,27 @@ describe('wallpaper-active single-surface transparency', () => {
     expect(rule).toMatch(
       /background:\s*color-mix\(in srgb,\s*var\(--bg-primary\)\s*var\(--panel-alpha\),\s*transparent\);/,
     )
-    for (const sel of ['.stats-header', '.list-header', '.detail-header', '.proxy-header']) {
+    for (const sel of ['.stats-header', '.list-header', '.detail-header', '.proxy-header', '.forge-header', '.forge-detail-header', '.forge-detail-footer']) {
       expect(rule).toContain(`html.wallpaper-active ${sel}`)
     }
+  })
+
+  it('lets the wallpaper show through the forge panel and its tab bar', () => {
+    // The forge tab is a full-page surface: its root goes fully transparent
+    // (only .tab-panel shows through) while the type tab bar keeps the
+    // bg-secondary tint shared with the stats tab bar.
+    // Anchor on the group's first selector so the slice includes every member.
+    const tabs = ruleContaining('html.wallpaper-active .terminal-tab-bar')
+    expect(tabs).toMatch(
+      /background:\s*color-mix\(in srgb,\s*var\(--bg-secondary\)\s*var\(--panel-alpha\),\s*transparent\);/,
+    )
+    expect(tabs).toContain('html.wallpaper-active .stats-tab-bar')
+    expect(tabs).toContain('html.wallpaper-active .forge-tabs')
+
+    // The comment body is opaque bg-primary by default; inside a translucent
+    // comment card it must clear, or it would cover the card's own alpha.
+    const body = ruleContaining('html.wallpaper-active .forge-comment-body')
+    expect(body).toContain('background: transparent;')
   })
 
   it('re-tints interactive states over the translucent card base as feedback', () => {

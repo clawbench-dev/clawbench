@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import ForgePanelContent from '@/components/forge/ForgePanelContent.vue'
+import { canNavigateBack, handleBackNavigation, _resetHandlers } from '@/composables/useBackHandler'
 
 // ── Mocks ────────────────────────────────────────────────────
 const mockLoadBinding = vi.fn()
@@ -54,12 +55,14 @@ vi.mock('@/composables/useForge', () => ({
 
 const mockFetchRemotes = vi.fn(async () => ({ remotes: [] }))
 const mockSetBinding = vi.fn(async () => ({ binding: {} }))
+const mockDeleteBinding = vi.fn(async () => undefined)
 vi.mock('@/utils/forgeApi', async () => {
   const actual = await vi.importActual<typeof import('@/utils/forgeApi')>('@/utils/forgeApi')
   return {
     ...actual,
     fetchForgeRemotes: (...a: unknown[]) => mockFetchRemotes(...a),
     setForgeBinding: (...a: unknown[]) => mockSetBinding(...a),
+    deleteForgeBinding: (...a: unknown[]) => mockDeleteBinding(...a),
   }
 })
 
@@ -94,6 +97,8 @@ function makeI18n() {
             urlPlaceholder: 'https://...',
             submit: 'Bind',
             unsafeHost: 'unsafe',
+            change: 'Change repository',
+            unbind: 'Unbind',
           },
           detail: { back: 'Back', openBrowser: 'Open', analyze: 'Analyze', loadOlder: 'Load older' },
           error: { auth: 'Auth failed', rateLimit: 'Rate limited', network: 'Network', generic: 'Failed' },
@@ -110,11 +115,16 @@ const globalOpts = {
     RefreshButton: true,
     ModalDialog: true,
     ForgeDetail: true,
+    PopupMenu: {
+      props: ['show'],
+      template: '<div class="popup-menu-stub" v-if="show"><slot /></div>',
+    },
   },
 }
 
 describe('ForgePanelContent', () => {
   beforeEach(() => {
+    _resetHandlers()
     vi.clearAllMocks()
     state.items.value = []
     state.binding.value = null
@@ -207,6 +217,99 @@ describe('ForgePanelContent', () => {
     // the click is routed to the right setter rather than the resulting state.
     await tabs[1].trigger('click')
     expect(mockSetType).toHaveBeenCalledWith('pr')
+  })
+
+  it('registers a back handler that closes the open detail view', async () => {
+    // The edge-swipe gesture and the Android hardware back button both dispatch
+    // through this registry, so a registered handler is what makes them work.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    // On the list view there is nothing to go back to.
+    expect(canNavigateBack()).toBe(false)
+
+    await wrapper.find('.forge-row').trigger('click')
+    expect(canNavigateBack()).toBe(true)
+
+    expect(handleBackNavigation()).toBe(true)
+    await wrapper.vm.$nextTick()
+    // Detail closed -> the list header is visible again.
+    expect(wrapper.find('.forge-header').exists()).toBe(true)
+    expect(canNavigateBack()).toBe(false)
+  })
+
+  it('does not intercept back when the panel is inactive', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'acme/widgets' },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: false, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.find('.forge-row').trigger('click')
+    // Even with a detail open, an inactive tab must not swallow the back press.
+    expect(canNavigateBack()).toBe(false)
+  })
+
+  it('shows the bound repository slug as a clickable switcher', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    const badge = wrapper.find('.forge-repo-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toContain('acme/widgets')
+  })
+
+  it('opens the switcher menu with change and unbind actions', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    expect(wrapper.find('.forge-repo-menu-item').exists()).toBe(false)
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    const items = wrapper.findAll('.forge-repo-menu-item')
+    expect(items).toHaveLength(2)
+    expect(items[0].text()).toContain('Change repository')
+    expect(items[1].text()).toContain('Unbind')
+  })
+
+  it('unbind calls the delete endpoint and refreshes', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    mockLoadBinding.mockClear()
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await wrapper.findAll('.forge-repo-menu-item')[1].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    expect(mockDeleteBinding).toHaveBeenCalledTimes(1)
+    // refresh() re-reads the binding so the unbound card takes over.
+    expect(mockLoadBinding).toHaveBeenCalled()
   })
 
   it('shows the error card with a retry action on failure', async () => {
