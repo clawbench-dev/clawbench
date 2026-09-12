@@ -26,6 +26,14 @@ var (
 	discoverFuncsMu sync.RWMutex
 )
 
+// discoverDetailFuncs maps backend ID → a function reporting why the most
+// recent discovery attempt failed. Optional; populated by backends that can
+// explain a failure (e.g. which paths were probed).
+var (
+	discoverDetailFuncs   = make(map[string]func() string)
+	discoverDetailFuncsMu sync.RWMutex
+)
+
 // RegisterDiscoverModelsFunc registers a model discovery function for a backend.
 // Called by backend sub-packages in their init() functions.
 func RegisterDiscoverModelsFunc(backendID string, fn func() []AgentModel) {
@@ -34,11 +42,32 @@ func RegisterDiscoverModelsFunc(backendID string, fn func() []AgentModel) {
 	discoverFuncs[backendID] = fn
 }
 
+// RegisterDiscoverModelsDetailFunc registers an optional function that returns
+// a human-readable reason the last discovery attempt returned no models.
+func RegisterDiscoverModelsDetailFunc(backendID string, fn func() string) {
+	discoverDetailFuncsMu.Lock()
+	defer discoverDetailFuncsMu.Unlock()
+	discoverDetailFuncs[backendID] = fn
+}
+
 // lookupDiscoverFunc returns the registered discovery function for a backend, or nil.
 func lookupDiscoverFunc(backendID string) func() []AgentModel {
 	discoverFuncsMu.RLock()
 	defer discoverFuncsMu.RUnlock()
 	return discoverFuncs[backendID]
+}
+
+// DiscoveryFailureDetail returns a backend-specific explanation for the most
+// recent empty discovery result, or "" if the backend registers no detail
+// function. Best-effort: callers use it only to enrich error messages.
+func DiscoveryFailureDetail(spec BackendSpec) string {
+	discoverDetailFuncsMu.RLock()
+	fn := discoverDetailFuncs[spec.Backend]
+	discoverDetailFuncsMu.RUnlock()
+	if fn == nil {
+		return ""
+	}
+	return fn()
 }
 
 // BackendSpec defines a known AI backend for auto-discovery.
@@ -146,7 +175,10 @@ func CheckCLIExists(cmd string) bool {
 
 // CheckCLIExistsErr returns an error describing why the CLI is not available,
 // or nil if the CLI is available. This is used for more specific error reporting.
-func CheckCLIExistsErr(cmd string) error {
+// It is a variable so it can be overridden in tests.
+var CheckCLIExistsErr = checkCLIExistsErr
+
+func checkCLIExistsErr(cmd string) error {
 	if cmd == "" {
 		return fmt.Errorf("empty command")
 	}

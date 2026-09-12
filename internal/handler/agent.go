@@ -646,7 +646,13 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		slog.Warn("model refresh returned no models", "agent", agentID, "backend", agent.Backend)
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "ModelDiscoveryFailed")
+		detail := map[string]any(nil)
+		if spec != nil {
+			if d := model.DiscoveryFailureDetail(*spec); d != "" {
+				detail = map[string]any{"detail": d}
+			}
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "ModelDiscoveryFailed", detail)
 		return
 	}
 

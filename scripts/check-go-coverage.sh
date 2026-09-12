@@ -147,7 +147,6 @@ exempt_files = {
     "internal/ai/backends/codex/list_sessions.go",  # Codex on-disk session scan: rollout file-system error paths (UserHomeDir/entry.Info/readErr) require integration setup
     "internal/ai/backends/claude/discovery.go",  # Claude binary strings scanning: requires real claude binary
     "internal/ai/backends/deepseek/discovery.go",  # DeepSeek/CodeWhale CLI models: requires codewhale/deepseek binary
-    "internal/ai/backends/codebuddy/discovery.go",  # Codebuddy product JSON: requires installed codebuddy with product.cloudhosted.json
     "internal/ai/backends/pi/discovery.go",  # Pi --list-models: requires pi binary
     "internal/ai/backends/vecli/discovery.go",  # VeCLI JS bundle parsing: requires installed vecli with MODEL_REGISTRY
     "internal/ai/backends/qoder/discovery.go",  # Qoder dynamic-texts.json: requires ~/.qoder/.auth/dynamic-texts.json

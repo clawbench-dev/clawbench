@@ -152,6 +152,24 @@ func TestRegisterDiscoverModelsFunc(t *testing.T) {
 	assert.True(t, model.CanDiscoverModels(spec))
 }
 
+func TestRegisterDiscoverModelsDetailFunc(t *testing.T) {
+	model.RegisterDiscoverModelsDetailFunc("test-detail-backend", func() string {
+		return "no model list found; tried: /a, /b"
+	})
+	t.Cleanup(func() {
+		model.RegisterDiscoverModelsDetailFunc("test-detail-backend", func() string { return "" })
+	})
+
+	spec := model.BackendSpec{ID: "test-detail-backend", Backend: "test-detail-backend"}
+	assert.Equal(t, "no model list found; tried: /a, /b", model.DiscoveryFailureDetail(spec))
+}
+
+func TestDiscoveryFailureDetail_Unregistered(t *testing.T) {
+	spec := model.BackendSpec{ID: "no-detail", Backend: "no-detail"}
+	assert.Empty(t, model.DiscoveryFailureDetail(spec),
+		"backends without a detail function must report an empty detail")
+}
+
 // --- Test 5: DiscoverModels ---
 
 func TestDiscoverModels_NoSupport(t *testing.T) {

@@ -730,6 +730,77 @@ func TestAgentRefreshModels_DiscoveryFails(t *testing.T) {
 		"expected 500 or 404, got %d", w.Code)
 }
 
+// TestAgentRefreshModels_DiscoveryFailedIncludesDetail verifies that when a
+// backend reports a reason for an empty discovery result, the handler forwards
+// it in the response Detail so the frontend can show an actionable message
+// instead of the generic "refresh failed" toast.
+//
+// The CLI check is overridden so the 500 path is exercised on every machine,
+// including CI where codebuddy is not installed.
+func TestAgentRefreshModels_DiscoveryFailedIncludesDetail(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	origDiscover := model.DiscoverModels
+	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
+		return nil
+	}
+	defer func() { model.DiscoverModels = origDiscover }()
+
+	origCLICheck := model.CheckCLIExistsErr
+	model.CheckCLIExistsErr = func(string) error { return nil } // CLI present
+	defer func() { model.CheckCLIExistsErr = origCLICheck }()
+
+	const detail = "no CodeBuddy model list found; tried: /x/product.cloudhosted.json"
+	// Save and restore the previously registered func — overwriting it with an
+	// empty stub would leak into other tests in this package.
+	prevDetail := model.DiscoveryFailureDetail(model.BackendSpec{Backend: "codebuddy"})
+	model.RegisterDiscoverModelsDetailFunc("codebuddy", func() string { return detail })
+	defer model.RegisterDiscoverModelsDetailFunc("codebuddy", func() string { return prevDetail })
+
+	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var resp struct {
+		MsgKey string         `json:"msgKey"`
+		Detail map[string]any `json:"detail"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ModelDiscoveryFailed", resp.MsgKey)
+	require.NotNil(t, resp.Detail)
+	assert.Equal(t, detail, resp.Detail["detail"])
+}
+
+// TestAgentRefreshModels_DiscoveryFailedWithoutDetail verifies the 500 path
+// still works when a backend registers no detail function.
+func TestAgentRefreshModels_DiscoveryFailedWithoutDetail(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	origDiscover := model.DiscoverModels
+	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel { return nil }
+	defer func() { model.DiscoverModels = origDiscover }()
+
+	origCLICheck := model.CheckCLIExistsErr
+	model.CheckCLIExistsErr = func(string) error { return nil }
+	defer func() { model.CheckCLIExistsErr = origCLICheck }()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	var resp struct {
+		MsgKey string         `json:"msgKey"`
+		Detail map[string]any `json:"detail"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ModelDiscoveryFailed", resp.MsgKey)
+	assert.Nil(t, resp.Detail, "no detail func registered → no detail payload")
+}
+
 func TestServeAgentSubRoutes_RefreshModels(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

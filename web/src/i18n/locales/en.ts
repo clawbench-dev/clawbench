@@ -504,6 +504,8 @@ export default {
       refresh: 'Refresh models',
       refreshSuccess: 'Models refreshed',
       refreshFailed: 'Failed to refresh models',
+      discoveryFailed: 'Model discovery returned no results. Check your CLI installation.',
+      discoveryFailedWithDetail: 'Model discovery returned no results: {detail}',
       cliNotFound: 'CLI tool not found, please install it first',
       discoveryNotSupported: 'This agent does not support model discovery',
       defaultBadge: 'Default',

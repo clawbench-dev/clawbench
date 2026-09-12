@@ -425,6 +425,16 @@ async function handleRefresh() {
       toast.show(t('chat.sessionSetting.cliNotFound'), { icon: '⚠️', type: 'error', duration: 4000 })
     } else if (msgKey === 'ModelDiscoveryNotSupported') {
       toast.show(t('chat.sessionSetting.discoveryNotSupported'), { icon: '⚠️', type: 'error', duration: 4000 })
+    } else if (msgKey === 'ModelDiscoveryFailed') {
+      // Show the backend's reason (e.g. which paths were probed) when available,
+      // so users can tell an unsupported install layout from a transient failure.
+      const detail = err?.detail?.detail
+      toast.show(
+        detail
+          ? t('chat.sessionSetting.discoveryFailedWithDetail', { detail })
+          : t('chat.sessionSetting.discoveryFailed'),
+        { icon: '⚠️', type: 'error', duration: 6000 },
+      )
     } else {
       toast.show(t('chat.sessionSetting.refreshFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
     }
