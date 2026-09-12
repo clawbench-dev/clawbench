@@ -55,7 +55,6 @@ var hotReloadFields = map[string]bool{
 	"tts.voice":                         true,
 	"tts.speed":                         true,
 	"default_agent":                     true,
-	"localhost_auth_exempt":             true,
 	// Terminal — reconfigure Manager or toggle enabled
 	"terminal.enabled":      true,
 	"terminal.idle_timeout": true,
@@ -210,7 +209,6 @@ func applyHotReloadWarnings() []string {
 type configResponse struct {
 	Version             string               `json:"version"`
 	HasPassword         bool                 `json:"has_password"`          // true when a password is configured
-	LocalhostAuthExempt bool                 `json:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
 	DefaultAgent        string               `json:"default_agent"`
 	Chat                configChat           `json:"chat"`
 	Session             configSession        `json:"session"`
@@ -605,7 +603,6 @@ var PatchableConfigPaths = map[string]bool{
 	"ai_summary.format":                 true,
 	"ai_summary.api.base_url":           true,
 	"ai_summary.api.key":                true,
-	"localhost_auth_exempt":             true,
 	"dingtalk.enabled":                  true,
 	"dingtalk.app_key":                  true,
 	"dingtalk.app_secret":               true,
@@ -682,7 +679,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	resp := configResponse{
 		Version:             getBuildVersion(),
 		HasPassword:         model.SessionToken != "",
-		LocalhostAuthExempt: cfg.LocalhostAuthExempt,
 		DefaultAgent:        cfg.DefaultAgent,
 		FirstRun:            model.FirstRun,
 		Chat: configChat{
@@ -1301,10 +1297,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		cfg.Feishu.Enabled = (v == "feishu")
 	}
 
-	if v, ok := patch["localhost_auth_exempt"].(bool); ok {
-		cfg.LocalhostAuthExempt = v
-	}
-
 	if tlsMap, ok := patch["tls"].(map[string]any); ok {
 		if v, ok := tlsMap["cert_dir"].(string); ok {
 			cfg.TLS.CertDir = v
@@ -1661,7 +1653,6 @@ func applyHotReloadGlobals() {
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
 	model.DefaultAgentID = cfg.DefaultAgent
-	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 
 	// Hot-reload TTS voice and speed on the existing speech provider.
 	// This is a defensive fallback for when reconfigureOnHotReload is nil

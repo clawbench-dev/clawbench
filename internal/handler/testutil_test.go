@@ -56,13 +56,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	origAgents := model.Agents
 	origAgentList := model.AgentList
 	origDefaultAgentID := model.DefaultAgentID
-	origLocalhostAuthExempt := model.LocalhostAuthExempt
 
 	// Set test globals
 	model.SessionToken = ""
 	model.CookieToken = ""
 	model.RootPaths = []string{watchDir}
-	model.LocalhostAuthExempt = true // default: localhost bypasses auth
 
 	// Init in-memory SQLite
 	db, err := sql.Open("sqlite", ":memory:")
@@ -354,7 +352,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
-		model.LocalhostAuthExempt = origLocalhostAuthExempt
 		service.SetDBForTest(env.OrigDB, env.OrigDB)
 		_ = db.Close()
 	}

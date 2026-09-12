@@ -1947,43 +1947,6 @@ func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
 	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
 
-func TestServeConfig_Get_LocalhostAuthExempt(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = true
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Equal(t, true, resp["localhost_auth_exempt"])
-}
-
-func TestServeConfig_Patch_LocalhostAuthExempt(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = false
-
-	body := `{"localhost_auth_exempt":true}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.LocalhostAuthExempt)
-	assert.True(t, model.LocalhostAuthExempt)
-}
-
 // --- SetReconfigureFunc and reconfigureOnHotReload ---
 
 func TestSetReconfigureFunc(t *testing.T) {
@@ -2042,28 +2005,6 @@ func TestReconfigureOnHotReload_NilDoesNotPanic(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestServeConfig_Patch_LocalhostAuthExempt_IsHotField(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = false
-
-	// localhost_auth_exempt is a hot-reload field — no restart should be needed
-	body := `{"localhost_auth_exempt":true}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.False(t, resp["needs_restart"].(bool), "localhost_auth_exempt is hot-reloadable, should not need restart")
 }
 
 // --- FRP config validation tests ---

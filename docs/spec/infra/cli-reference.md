@@ -46,7 +46,7 @@ flowchart TD
 
 - **HTTP 路由而非直接 DB 访问**：CLI 是纯 HTTP 客户端，不直接操作 SQLite。业务逻辑集中在服务端，CLI 只负责参数解析和结果展示——避免多进程并发写入数据库
 - **Cookie Token 认证**：CLI 从 `<DataDir>/cookie-token` 读取服务端生成的随机令牌，设置为作用域 Cookie（含端口号以支持多实例）。令牌与密码哈希解耦，修改密码不影响 CLI 认证
-- **localhost 旁路 + 自签名 TLS**：CLI 连接 localhost，自动信任自签名证书。默认利用 localhost 认证旁路，但实际使用 Cookie Token 确保即使旁路关闭也能工作
+- **localhost 旁路 + 自签名 TLS**：CLI 连接 localhost，自动信任自签名证书。CLI 会主动携带 Cookie Token，因此不依赖 localhost 旁路也能工作
 - **参数重排绕过 Go flag 限制**：Go 标准库 `flag` 在首个位置参数后停止解析。CLI 自动将标志参数重排到位置参数前，使 `clawbench task update 1 --prompt "hello"` 正常工作
 - **@path 项目范围约束**：指定 `--project` 时，`@path` 只能读取项目目录内的文件，经过 symlink 解析后校验——防止 AI Agent 读取系统任意文件
 - **upgrade-replace 平台差异**：Unix 使用 SIGKILL 和进程组；Windows 使用 taskkill 和 OpenProcess。升级服务的跨平台复杂性隔离在子命令内部

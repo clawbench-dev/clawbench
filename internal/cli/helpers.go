@@ -127,7 +127,8 @@ func loadSessionCookie() string {
 }
 
 // setAuthCookie attaches the session cookie to req if a cookie token file exists.
-// This allows CLI tools to work when localhost_auth_exempt is disabled.
+// This lets CLI tools work independently of the localhost auth bypass, so they
+// keep functioning if that bypass is ever tightened.
 func setAuthCookie(req *http.Request) {
 	if token := loadSessionCookie(); token != "" {
 		req.AddCookie(&http.Cookie{
@@ -138,8 +139,8 @@ func setAuthCookie(req *http.Request) {
 }
 
 // httpDo performs an HTTP request to the server API.
-// If a cookie token file exists (localhost_auth_exempt is disabled),
-// the session cookie is attached automatically.
+// If a cookie token file exists, the session cookie is attached automatically
+// so the CLI does not rely on the localhost auth bypass.
 func httpDo(method, path string, body any) (map[string]any, int, error) {
 	var reqBody io.Reader
 	if body != nil {

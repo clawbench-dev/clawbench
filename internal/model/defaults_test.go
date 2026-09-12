@@ -860,25 +860,6 @@ func TestApplyDefaults_LogLevel(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults_LocalhostAuthExempt(t *testing.T) {
-	setupTestBinDir(t)
-
-	// Default: true when not in presence map
-	cfg := Config{}
-	ApplyDefaults(&cfg, nil)
-	if !cfg.LocalhostAuthExempt {
-		t.Error("LocalhostAuthExempt should default to true when absent from config")
-	}
-
-	// Explicitly set to false via presence map
-	cfg2 := Config{}
-	cfg2.LocalhostAuthExempt = false
-	ApplyDefaults(&cfg2, map[string]bool{"localhost_auth_exempt": true})
-	if cfg2.LocalhostAuthExempt {
-		t.Error("LocalhostAuthExempt should stay false when explicitly set")
-	}
-}
-
 func TestApplyDefaults_FRPDefaults(t *testing.T) {
 	setupTestBinDir(t)
 

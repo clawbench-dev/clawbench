@@ -369,13 +369,6 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
     if (!value) return
   }
 
-  if (item.key === 'localhost_auth_exempt' && value === false) {
-    const confirmed = await dialog.confirm(
-      t('settings.items.localhostAuthExemptConfirm'),
-      { title: t('settings.items.localhostAuthExempt'), dangerous: true }
-    )
-    if (!confirmed) return
-  }
   if (item.source === 'local') {
     setLocalConfig(item.key, value as string | number | boolean)
     if (item.key === 'logCapture') {

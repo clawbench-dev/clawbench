@@ -50,7 +50,6 @@ const serverConfig = ref<Record<string, any>>({
   rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
   summarize: { backend: 'simple', model: '' },
-  localhost_auth_exempt: false,
   tls: { cert_dir: '' },
 })
 
@@ -264,9 +263,6 @@ const i18n = createI18n({
           localeEn: 'English',
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
-          localhostAuthExempt: '本地免认证',
-          localhostAuthExemptDesc: '本地免认证',
-          localhostAuthExemptConfirm: '确定禁用？',
           addToHomeScreen: '添加到主屏幕',
           downloadAndroidApp: '下载APK',
           showWelcome: '打开欢迎界面',
@@ -876,28 +872,6 @@ describe('SettingsCategory', () => {
       }
       createElementSpy.mockRestore()
       vi.unmock('@/utils/download')
-    })
-  })
-
-  // ─── handleUpdate — localhost_auth_exempt ──────────
-  describe('handleUpdate — localhost_auth_exempt', () => {
-    it('shows confirm dialog when disabling localhost_auth_exempt and cancels', async () => {
-      mockDialogConfirm.mockResolvedValue(false)
-      const wrapper = mountCategory('security')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'localhost_auth_exempt', source: 'local' }, false)
-      expect(mockDialogConfirm).toHaveBeenCalled()
-      // Should NOT save since user cancelled
-      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('localhost_auth_exempt', false)
-    })
-
-    it('saves localhost_auth_exempt when confirmed', async () => {
-      mockDialogConfirm.mockResolvedValue(true)
-      const wrapper = mountCategory('security')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'localhost_auth_exempt', source: 'local' }, false)
-      expect(mockDialogConfirm).toHaveBeenCalled()
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('localhost_auth_exempt', false)
     })
   })
 
