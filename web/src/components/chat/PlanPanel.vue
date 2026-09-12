@@ -4,6 +4,7 @@
     <div v-if="collapsed" class="plan-chip" :class="{ 'plan-chip--updated': hasUpdate }" @click="$emit('toggle-collapse')">
       <span class="plan-chip__pulse"></span>
       <span class="plan-chip__text">{{ chipText }}</span>
+      <span class="plan-chip__count">{{ progressText }}</span>
       <ChevronDown :size="12" class="plan-chip__toggle" />
     </div>
 
@@ -11,6 +12,7 @@
     <div v-else class="plan-expanded">
       <div class="plan-expanded__header" @click="$emit('toggle-collapse')">
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
+        <span class="plan-expanded__count">{{ progressText }}</span>
         <ChevronUp :size="12" class="plan-expanded__toggle" />
       </div>
       <div ref="timelineRef" class="plan-expanded__timeline">
@@ -58,12 +60,13 @@ defineEmits<{
 
 const { t } = useI18n()
 
+const completedCount = computed(() => props.entries.filter(e => e.status === 'completed').length)
+const totalCount = computed(() => props.entries.length)
+const progressText = computed(() => `${completedCount.value}/${totalCount.value}`)
+
 const chipText = computed(() => {
   const inProgress = props.entries.find(e => e.status === 'in_progress')
-  if (inProgress) return inProgress.content
-  const completed = props.entries.filter(e => e.status === 'completed').length
-  const total = props.entries.length
-  return t('chat.plan.completedCount', { completed, total })
+  return inProgress ? inProgress.content : t('chat.plan.title')
 })
 
 // ── Active-entry centering ─────────────────────────────────
@@ -182,6 +185,13 @@ watch(
   text-overflow: ellipsis;
 }
 
+.plan-chip__count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted, #6c757d);
+  white-space: nowrap;
+}
+
 .plan-chip__toggle {
   color: var(--text-muted, #6c757d);
   flex-shrink: 0;
@@ -198,20 +208,28 @@ watch(
 .plan-expanded__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   margin-bottom: 6px;
   cursor: pointer;
 }
 
 .plan-expanded__title {
+  flex: 1;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary, #212529);
 }
 
+.plan-expanded__count {
+  font-size: 11px;
+  color: var(--text-muted, #6c757d);
+  white-space: nowrap;
+}
+
 .plan-expanded__toggle {
   color: var(--text-muted, #6c757d);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .plan-expanded__timeline {
