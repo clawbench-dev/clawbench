@@ -32,6 +32,15 @@ describe('SessionListTabs', () => {
     expect(wrapper.find('.session-tab-badge').text()).toBe('3')
   })
 
+  it('reactively hides the bar when the last active session disappears', async () => {
+    totalRef.value = 2
+    const wrapper = mount(SessionListTabs, { props: { activeTab: 'project' } })
+    expect(wrapper.find('.session-tabs').exists()).toBe(true)
+    totalRef.value = 0
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.session-tabs').exists()).toBe(false)
+  })
+
   it('switches to the project tab when the last active session disappears', async () => {
     totalRef.value = 1
     const wrapper = mount(SessionListTabs, { props: { activeTab: 'cross' } })
