@@ -10,6 +10,7 @@ import {
     ForgeApiError,
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
+import { setForgeBindingState } from '@/composables/useForgeBinding'
 
 const TAG = 'UseForge'
 
@@ -54,6 +55,9 @@ export function useForgeItems(getProjectPath: () => string) {
             appLog.w(TAG, 'loadBinding failed', err)
             binding.value = null
         }
+        // Keep the shared binding in sync so the dock icon follows the platform
+        // (the dock lives in App.vue, outside this composable's scope).
+        setForgeBindingState(binding.value)
     }
 
     /** Reload the list from page 1, honouring the current filters. */

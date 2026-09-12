@@ -70,12 +70,59 @@ func New(cfg Config, namespace, repo string) (*Provider, error) {
 
 // CurrentUser returns the authenticated account.
 func (p *Provider) CurrentUser(ctx context.Context) (forge.Author, error) {
+	return verifyUser(ctx, p.baseURL, p.token, p.client)
+}
+
+// VerifyToken checks that a credential authenticates against a GitLab host,
+// returning the account it belongs to.
+//
+// It is host-scoped, not project-scoped: verifying a token must not require a
+// bound repository. GET /user is the standard probe and fails with 401 for a
+// bad token.
+func VerifyToken(ctx context.Context, cfg Config) (forge.Author, error) {
+	if cfg.Host == "" {
+		return forge.Author{}, fmt.Errorf("gitlab: host is required")
+	}
+	scheme := cfg.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	return verifyUser(ctx, fmt.Sprintf("%s://%s/api/v4", scheme, cfg.Host), cfg.Token, client)
+}
+
+// verifyUser probes GET /user, the shared implementation behind both the
+// provider's CurrentUser and the host-scoped VerifyToken.
+func verifyUser(ctx context.Context, baseURL, token string, client *http.Client) (forge.Author, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/user", http.NoBody)
+	if err != nil {
+		return forge.Author{}, &forge.Error{Kind: forge.ErrKindNetwork, Message: err.Error(), Err: err}
+	}
+	if token != "" {
+		req.Header.Set("PRIVATE-TOKEN", token)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return forge.Author{}, &forge.Error{Kind: forge.ErrKindNetwork, Message: err.Error(), Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return forge.Author{}, classifyError(resp, body)
+	}
 	var u struct {
 		Username string `json:"username"`
 		Name     string `json:"name"`
 	}
-	if err := p.get(ctx, "/user", nil, &u); err != nil {
-		return forge.Author{}, err
+	if err := json.Unmarshal(body, &u); err != nil {
+		return forge.Author{}, &forge.Error{
+			Kind: forge.ErrKindUnknown, Status: resp.StatusCode, Message: "decode response: " + err.Error(), Err: err,
+		}
 	}
 	return forge.Author{Login: u.Username, Name: u.Name}, nil
 }
@@ -205,7 +252,7 @@ func (p *Provider) getRaw(ctx context.Context, path string, q url.Values, out an
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return resp.Header, p.classifyError(resp, body)
+		return resp.Header, classifyError(resp, body)
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -215,8 +262,9 @@ func (p *Provider) getRaw(ctx context.Context, path string, q url.Values, out an
 	return resp.Header, nil
 }
 
-// classifyError maps a non-2xx GitLab response to a forge.Error.
-func (p *Provider) classifyError(resp *http.Response, body []byte) error {
+// classifyError maps a non-2xx GitLab response to a forge.Error. It is a
+// package function (not a method) so the host-scoped VerifyToken can share it.
+func classifyError(resp *http.Response, body []byte) error {
 	msg := strings.TrimSpace(string(body))
 	var apiErr struct {
 		Message string `json:"message"`

@@ -203,6 +203,27 @@ export function deleteForgeToken(host: string): Promise<void> {
     return forgeFetch(`/api/forge/credentials?host=${encodeURIComponent(host)}`, { method: 'DELETE' })
 }
 
+/**
+ * Verify that a token authenticates against a forge host.
+ *
+ * Independent of saving: pass `token` to check one you are about to save, or
+ * omit it to re-check the stored credential. A failed check never mutates
+ * stored credentials.
+ *
+ * Resolves with `ok:false` (rather than rejecting) when the platform rejects
+ * the token, so the caller can tell "bad token" (code `auth`) apart from
+ * "host unreachable" (code `network`).
+ */
+export function verifyForgeToken(input: { host: string; token?: string }): Promise<{
+    ok: boolean
+    identity?: string
+    name?: string
+    code?: string
+    error?: string
+}> {
+    return forgeFetch('/api/forge/verify-token', { method: 'POST', body: input })
+}
+
 export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number }> {
     return forgeFetch('/api/forge/unread', { signal })
 }

@@ -466,7 +466,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, GitPullRequest } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, GitPullRequest, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -553,6 +553,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
+import { useForgeBinding } from './composables/useForgeBinding.ts'
 import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
@@ -1916,6 +1917,14 @@ watch(() => localConfig.uiScale, () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
+  // The forge tab serves both GitHub and GitLab, so its icon follows the bound
+  // platform instead of always showing one brand. Falls back to the neutral
+  // pull-request glyph when nothing is bound.
+  if (tab === 'forge') {
+    if (forgePlatform.value === 'github') return Github
+    if (forgePlatform.value === 'gitlab') return Gitlab
+    return GitPullRequest
+  }
   return overflowTabMeta[tab]?.icon ?? Clock
 }
 function dockTabTitle(tab) {
@@ -2006,7 +2015,9 @@ function handleWideDockTabClick(tab) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile, addUrlAttachment } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead, bump: bumpForgeUnread } = useForgeUnread()
+const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+// The forge dock icon reflects the bound platform (GitHub vs GitLab).
+const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
 // "Analyze with AI" from the Issues & PRs tab. Reuses the quote-input flow: the
 // issue/PR URL becomes a URL attachment chip, and the body is injected into the
@@ -2476,8 +2487,9 @@ function playQuoteEmitAnimation(e) {
 onMounted(async () => {
     applyTheme(theme.value)
     // Prime the forge unread badge (server-authoritative; independent of the
-    // notification toggles).
+    // notification toggles) and the bound platform (drives the dock icon).
     void refreshForgeUnread()
+    void refreshForgePlatform()
     let resp
     try {
         resp = await fetch('/api/me')

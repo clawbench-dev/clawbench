@@ -278,6 +278,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	// GitHub / GitLab integration (read-only issue & PR browsing).
 	register("/api/forge/credentials", middleware.Auth(ServeForgeCredentials))
+	register("/api/forge/verify-token", middleware.Auth(ServeForgeVerifyToken))
 	register("/api/forge/items", middleware.Auth(ServeForgeItems))
 	register("/api/forge/item", middleware.Auth(ServeForgeItem))
 	register("/api/forge/comments", middleware.Auth(ServeForgeComments))

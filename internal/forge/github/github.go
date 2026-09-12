@@ -66,6 +66,37 @@ func (p *Provider) CurrentUser(ctx context.Context) (forge.Author, error) {
 	return forge.Author{Login: user.GetLogin(), Name: user.GetName()}, nil
 }
 
+// VerifyToken checks that a credential authenticates against GitHub, returning
+// the account it belongs to.
+//
+// It is host-scoped, not repo-scoped: verifying a token must not require a
+// bound repository. GET /user is the standard probe — it needs no repo
+// permission and fails with 401 for a bad token.
+func VerifyToken(ctx context.Context, cfg Config) (forge.Author, error) {
+	httpClient := cfg.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	client := gogithub.NewClient(httpClient)
+	if cfg.Token != "" {
+		client = client.WithAuthToken(cfg.Token)
+	}
+	if cfg.BaseURL != "" {
+		var err error
+		client, err = client.WithEnterpriseURLs(strings.TrimSuffix(cfg.BaseURL, "/"), strings.TrimSuffix(cfg.BaseURL, "/"))
+		if err != nil {
+			return forge.Author{}, &forge.Error{
+				Kind: forge.ErrKindUnsupported, Message: "configure base url: " + err.Error(), Err: err,
+			}
+		}
+	}
+	user, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		return forge.Author{}, wrapErr(err)
+	}
+	return forge.Author{Login: user.GetLogin(), Name: user.GetName()}, nil
+}
+
 // ListItems returns a page of issues or pull requests.
 func (p *Provider) ListItems(ctx context.Context, opts forge.ListOptions) (forge.ListResult, error) {
 	if opts.Type == forge.ItemTypeChangeRequest {

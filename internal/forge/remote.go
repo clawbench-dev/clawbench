@@ -89,7 +89,7 @@ func ParseRemoteURL(raw string) (Remote, error) {
 		return Remote{}, err
 	}
 
-	platform := platformForHost(host)
+	platform := PlatformForHost(host)
 
 	// GitHub namespaces are always a single owner segment. A deeper path means
 	// this is not a GitHub clone URL (e.g. a /tree/main web URL).
@@ -134,9 +134,12 @@ func remotePathSegments(path string) ([]string, error) {
 	return segments, nil
 }
 
-// platformForHost maps a host to its forge platform. The port is stripped
+// PlatformForHost maps a host to its forge platform. The port is stripped
 // before comparison so "github.com:443" is still recognized.
-func platformForHost(host string) Platform {
+//
+// Exported so the credential flow can pick the right verifier for a bare host,
+// where there is no remote URL to parse.
+func PlatformForHost(host string) Platform {
 	hostname := host
 	if i := strings.LastIndex(hostname, ":"); i >= 0 {
 		hostname = hostname[:i]
