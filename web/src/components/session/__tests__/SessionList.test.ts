@@ -2,13 +2,14 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
+import { LongPressDirective } from '@/directives/longPress'
 
 const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore } = vi.hoisted(() => {
   const mockStore = { state: { chatSessionPageSize: 10, sessionListVersion: 0, sessionCount: 0 } }
   return {
     mockGetAgentBackend: vi.fn(() => ''),
     mockGetAgentName: vi.fn(() => 'Agent'),
-    mockDialogHolder: { confirm: null as null | ((m: string, o?: any) => Promise<boolean>), lastOptions: null as any },
+    mockDialogHolder: { confirm: null as null | ((m: string, o?: any) => Promise<boolean>), prompt: null as null | ((m: string, o?: any) => Promise<string | null>), lastOptions: null as any },
     mockReconcileRunningSessions: vi.fn(),
     mockRemoveEventHandler: vi.fn(),
     mockEventHolder: { handler: null as null | ((event: string) => void) },
@@ -16,9 +17,13 @@ const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRu
   }
 })
 
-vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
-}))
+vi.mock('vue-i18n', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-i18n')>()
+  return {
+    ...actual,
+    useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
+  }
+})
 vi.mock('@/composables/useLocale', () => ({
   useLocale: () => ({ currentLocale: { value: 'en' } }),
   gt: (key: string) => key,
@@ -40,6 +45,7 @@ vi.mock('@/composables/useAgents', () => ({
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({
     confirm: (m: string, o?: any) => { mockDialogHolder.lastOptions = o; return mockDialogHolder.confirm!(m, o) },
+    prompt: (m: string, o?: any) => { mockDialogHolder.lastOptions = o; return mockDialogHolder.prompt!(m, o) },
   }),
 }))
 vi.mock('@/composables/useSessionIdentity', () => ({
@@ -81,6 +87,7 @@ describe('SessionList', () => {
     mockFetch.mockReset()
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
     mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
     mockDialogHolder.lastOptions = null
     mockEventHolder.handler = null
     mockStore.state.sessionListVersion = 0
@@ -89,6 +96,7 @@ describe('SessionList', () => {
   async function mountList(props = {}) {
     const wrapper = mount(SessionList, {
       props: { currentSessionId: 's1', runningSessionIds: new Set(), ...props },
+      global: { directives: { 'long-press': LongPressDirective } },
     })
     await flushPromises()
     return wrapper
@@ -350,5 +358,116 @@ describe('SessionList', () => {
 
     wrapper.unmount()
     expect(mockRemoveEventHandler).toHaveBeenCalled()
+  })
+
+  describe('context menu / long-press session targeting', () => {
+    it('long-press reads the session id from the DOM row, not a stale reference', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      expect(wrapper.findAll('.session-row').length).toBe(2)
+
+      // Touch the second row (s2). The long-press handler must resolve the
+      // session id from that row's data-session-id attribute, so the context
+      // menu targets s2 even if the list re-renders afterwards.
+      const rows = wrapper.findAll('.session-row')
+      const targetRow = rows[1]
+      expect(targetRow.attributes('data-session-id')).toBe('s2')
+
+      const touch = { clientX: 100, clientY: 200, touches: [{ clientX: 100, clientY: 200 }] }
+      wrapper.vm.onSessionLongPress({ currentTarget: targetRow.element, target: targetRow.element, touches: touch.touches })
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.visible).toBe(true)
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+      // The menu-open highlight must sit on the s2 row.
+      const highlighted = wrapper.findAll('.session-row.menu-open')
+      expect(highlighted.length).toBe(1)
+      expect(highlighted[0].attributes('data-session-id')).toBe('s2')
+    })
+
+    it('long-press on a pinned and an unpinned row each target their own session', async () => {
+      const pinned = { ...sessionsFixture().s1, pinned: true }
+      const unpinned = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const touch = (x: number) => ({ clientX: x, clientY: 200, touches: [{ clientX: x, clientY: 200 }] })
+
+      // Long-press the pinned row (s1).
+      const pinnedRow = wrapper.findAll('.session-row.pinned')[0]
+      wrapper.vm.onSessionLongPress({ currentTarget: pinnedRow.element, target: pinnedRow.element, touches: touch(50).touches })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s1')
+      expect(wrapper.vm.contextMenu.pinned).toBe(true)
+      wrapper.vm.contextMenu.visible = false
+      await nextTick()
+
+      // Long-press the unpinned row (s2) — must NOT reuse the previous s1 target.
+      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
+      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: touch(150).touches })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+      expect(wrapper.vm.contextMenu.pinned).toBe(false)
+    })
+
+    it('rename from menu targets the long-pressed session', async () => {
+      const pinned = { ...sessionsFixture().s1, pinned: true, title: 'Pinned A' }
+      const unpinned = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue('Renamed B')
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Long-press the unpinned row (s2), then rename from the menu.
+      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
+      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: [{ clientX: 150, clientY: 200 }] })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+
+      await wrapper.vm.renameSessionFromMenu(wrapper.vm.contextMenu.sessionId)
+      await flushPromises()
+
+      // The API call must carry s2 (not the pinned s1) via the session_id query.
+      const patchCall = mockFetch.mock.calls.find(c => (c[0] as string).startsWith('/api/ai/session/update'))
+      expect(patchCall).toBeTruthy()
+      expect(patchCall![0]).toContain(`session_id=${encodeURIComponent('s2')}`)
+      const body = JSON.parse(patchCall![1].body)
+      expect(body.title).toBe('Renamed B')
+      // Only s2's title updated locally.
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').title).toBe('Renamed B')
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').title).toBe('Pinned A')
+    })
+
+    it('pin from menu toggles the long-pressed session', async () => {
+      const pinned = { ...sessionsFixture().s1, pinned: true }
+      const unpinned = sessionsFixture().s2
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinned, unpinned], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Long-press the unpinned row (s2), then pin from the menu.
+      const unpinnedRow = wrapper.findAll('.session-row:not(.pinned)')[0]
+      wrapper.vm.onSessionLongPress({ currentTarget: unpinnedRow.element, target: unpinnedRow.element, touches: [{ clientX: 150, clientY: 200 }] })
+      await nextTick()
+      expect(wrapper.vm.contextMenu.sessionId).toBe('s2')
+
+      await wrapper.vm.togglePin(wrapper.vm.contextMenu.sessionId, wrapper.vm.contextMenu.pinned)
+      await flushPromises()
+
+      const patchCall = mockFetch.mock.calls.find(c => (c[0] as string).startsWith('/api/ai/session/update'))
+      expect(patchCall).toBeTruthy()
+      expect(patchCall![0]).toContain(`session_id=${encodeURIComponent('s2')}`)
+      const body = JSON.parse(patchCall![1].body)
+      expect(body.pinned).toBe(true)
+      // Optimistic local update applied to s2, not s1.
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').pinned).toBe(true)
+      expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').pinned).toBe(true)
+    })
   })
 })

@@ -4,6 +4,7 @@ import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
+import { store } from '@/stores/app.ts'
 
 const TAG = 'SessionIdentity'
 
@@ -444,6 +445,11 @@ export async function renameSession(title: string): Promise<boolean> {
       return false
     }
     currentSessionTitle.value = title
+    // The rename endpoint writes the title but does not emit a WS
+    // session_update, so a mounted session list (drawer/sidebar) would keep
+    // showing the stale title. Bump the list version to trigger its reload
+    // watcher — same signal loadSessionsOnce uses for non-WS refreshes.
+    store.state.sessionListVersion++
     return true
   } catch (err) {
     appLog.e(TAG, 'Failed to rename session:', err)

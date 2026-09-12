@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
+	pinned INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -107,7 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS ai_raw_responses (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	session_id TEXT NOT NULL,
@@ -399,19 +401,18 @@ func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
 	assert.False(t, renamed, "auto-titled sessions must not be marked as renamed")
 }
 
-// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the placeholder title path
-// leaves the lock untouched, so first-message auto-titling still applies.
-func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
+// TestAutoTitleAppliesToPlaceholderSource verifies the placeholder source path
+// (plain CreateSession) leaves the title replaceable, so first-message
+// auto-titling still applies.
+func TestAutoTitleAppliesToPlaceholderSource(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
-	require.NoError(t, service.UpdateSessionTitle(sid, "Placeholder Title"))
-
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	require.NoError(t, err)
 	assert.False(t, renamed)
 
-	// Because it was not locked, the first message may still auto-title it.
+	// Because it is only a placeholder, the first message may auto-title it.
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites placeholder", nil, false, "NewSession")
 	assert.NoError(t, err)
 	title, err := service.GetSessionTitle(sid)
@@ -5626,4 +5627,59 @@ func TestPatchContextStateMerge_UsageFirstWriteAsIs(t *testing.T) {
 	assert.Equal(t, 0, state.Usage.Used)
 	assert.Equal(t, 0, state.Usage.Size)
 	assert.Equal(t, 0.5, state.Usage.Cost)
+}
+
+func TestPinnedSessionSortOrder(t *testing.T) {
+	db := setupDB(t)
+	projectPath := "/test/pinned-sort"
+
+	// Create sessions with different pinned states
+	s1 := helperCreateSession(t, projectPath, "claude", "First")
+	s2 := helperCreateSession(t, projectPath, "claude", "Second")
+	s3 := helperCreateSession(t, projectPath, "claude", "Third")
+
+	// Pin the second session (oldest by creation)
+	require.NoError(t, service.UpdateSessionPinned(s2, true))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+
+	// Pinned session must be first regardless of created_at
+	assert.Equal(t, s2, sessions[0].ID, "pinned session should be first")
+	assert.True(t, sessions[0].Pinned, "pinned session should have Pinned=true")
+	assert.False(t, sessions[1].Pinned, "non-pinned session should have Pinned=false")
+
+	// Unpin — should revert to created_at order
+	require.NoError(t, service.UpdateSessionPinned(s2, false))
+	sessions, err = service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	assert.False(t, sessions[0].Pinned, "after unpin, first session should not be pinned")
+	assert.False(t, sessions[1].Pinned, "after unpin, second session should not be pinned")
+	assert.False(t, sessions[2].Pinned, "after unpin, third session should not be pinned")
+
+	// Pin multiple — all pinned sessions come before unpinned ones
+	require.NoError(t, service.UpdateSessionPinned(s1, true))
+	require.NoError(t, service.UpdateSessionPinned(s3, true))
+	sessions, err = service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	// Collect pinned and unpinned IDs
+	var pinnedIDs []string
+	var unpinnedIDs []string
+	for _, s := range sessions {
+		if s.Pinned {
+			pinnedIDs = append(pinnedIDs, s.ID)
+		} else {
+			unpinnedIDs = append(unpinnedIDs, s.ID)
+		}
+	}
+	assert.ElementsMatch(t, []string{s1, s3}, pinnedIDs, "pinned sessions should be s1 and s3")
+	assert.ElementsMatch(t, []string{s2}, unpinnedIDs, "unpinned session should be s2")
+	// Verify order: all pinned before unpinned
+	require.Len(t, sessions, 3)
+	assert.True(t, sessions[0].Pinned, "first session should be pinned")
+	assert.True(t, sessions[1].Pinned, "second session should be pinned")
+	assert.False(t, sessions[2].Pinned, "third session should not be pinned")
+
+	_ = db
 }

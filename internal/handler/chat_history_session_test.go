@@ -885,3 +885,63 @@ func TestServeAISessionUpdate_BadMethod(t *testing.T) {
 	w := callHandler(ServeAISessionUpdate, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+func TestServeAISessionUpdate_BodySessionIDOverridesCookie(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create two sessions. The pin target is passed in the body (the session the
+	// user long-pressed), while the cookie points at a different session. The
+	// body id must win so pinning a non-active session hits the right one.
+	_, err := service.CreateSession(env.ProjectDir, "claude", "Active", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	targetID, err := service.CreateSession(env.ProjectDir, "claude", "Target", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": targetID,
+		"pinned":    true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	req = withSessionCookie(req, targetID+"-different") // cookie points elsewhere
+
+	w := callHandler(ServeAISessionUpdate, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// The body-target session must now be pinned.
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	for _, s := range sessions {
+		if s.ID == targetID {
+			assert.True(t, s.Pinned, "body-target session should be pinned")
+		}
+	}
+}
+
+func TestServeAISessionUpdate_CookieSessionIDFallback(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// No body sessionId — falls back to the chat_session_id cookie.
+	_, err := service.CreateSession(env.ProjectDir, "claude", "Active", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Cookie", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"title": "Renamed via Cookie",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	req = withSessionCookie(req, sid)
+
+	w := callHandler(ServeAISessionUpdate, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	for _, s := range sessions {
+		if s.ID == sid {
+			assert.Equal(t, "Renamed via Cookie", s.Title)
+		}
+	}
+}

@@ -197,6 +197,110 @@ func TestSchema_TitleRenamedMigration_Idempotent(t *testing.T) {
 	assert.Contains(t, columns, "title_renamed")
 }
 
+// TestSchema_TitleSourceColumnExists verifies the additive migration that
+// replaces title_renamed with the title_source priority enum.
+func TestSchema_TitleSourceColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_source", "chat_sessions should have title_source column")
+}
+
+// TestSchema_TitleSourceBackfill verifies the one-time backfill maps existing
+// rows to the correct source: title_renamed=1 -> custom; otherwise a session
+// with a user message -> auto; a session with no user messages -> placeholder.
+func TestSchema_TitleSourceBackfill(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: create the full current schema, then drop title_source to
+	// simulate a pre-migration database. Building via InitDB (rather than a
+	// hand-written partial schema) guarantees every other table/index exists,
+	// so the second InitDB below exercises ONLY the title_source migration.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	// custom: renamed by the user.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-custom', '/p', 'claude', 'Mine', 1)")
+	require.NoError(t, err)
+	// auto: has a user message, not renamed.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-auto', '/p', 'claude', 'Auto', 0)")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id) VALUES ('/p', 'user', 'hi', 's-auto')")
+	require.NoError(t, err)
+	// placeholder: no messages, not renamed.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-ph', '/p', 'claude', 'New Session 1', 0)")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN title_source")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column and runs the backfill.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	got := map[string]string{}
+	rows, err := db.Query("SELECT id, title_source FROM chat_sessions")
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var id, source string
+		require.NoError(t, rows.Scan(&id, &source))
+		got[id] = source
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, "custom", got["s-custom"])
+	assert.Equal(t, "auto", got["s-auto"])
+	assert.Equal(t, "placeholder", got["s-ph"])
+}
+
+// TestSchema_TitleSourceMigration_Idempotent verifies running InitDB twice does
+// not fail on the already-present title_source column.
+func TestSchema_TitleSourceMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	err = InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_source")
+}
+
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir

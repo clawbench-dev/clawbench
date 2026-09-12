@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -386,6 +387,33 @@ func getSessionID(r *http.Request) string {
 	return cookie.Value
 }
 
+// resolveUpdateTargetSession resolves the target session for PATCH
+// /api/ai/session/update. An explicit body sessionId wins over the query
+// param / cookie: the frontend sends {sessionId, title} in the body, and the
+// cookie may point at a different session (another project, or a background
+// refresh). Falling back to the cookie there would rename the WRONG session,
+// leaving the intended one unlocked so its first message overwrites the title
+// — the "renamed title gets clobbered" bug. Returns ("", false) after writing
+// an error response when the target is missing or not owned by the project.
+func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySessionID string) (string, bool) {
+	if bodySessionID == "" {
+		return requireSessionID(w, r)
+	}
+	info := service.GetSessionFullInfo(bodySessionID)
+	if info == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return "", false
+	}
+	// Enforce project ownership when a project cookie is present (mirrors the
+	// GET/POST chat guards). Tests and pre-project callers without the cookie
+	// keep the historical lenient behavior.
+	if projectPath := middleware.GetProjectFromCookie(r); projectPath != "" && info.ProjectPath != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", false
+	}
+	return bodySessionID, true
+}
+
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
 // session-scoped settings (mode, thinkingEffort, model, transport) so they
 // survive page reload even without sending a chat message.
@@ -393,19 +421,21 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPatch) {
 		return
 	}
-	sessionID, ok := requireSessionID(w, r)
-	if !ok {
-		return
-	}
 	var req struct {
+		SessionID      string `json:"sessionId"` // explicit target; overrides query/cookie
 		ModeID         string `json:"modeId"`
 		ThinkingEffort string `json:"thinkingEffort"`
 		ModelID        string `json:"modelId"`
 		Transport      string `json:"transport"`
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
 		Title          string `json:"title"`
+		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
 	}
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	sessionID, ok := resolveUpdateTargetSession(w, r, req.SessionID)
+	if !ok {
 		return
 	}
 	if req.ModeID != "" {
@@ -468,6 +498,10 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// value cannot latch a blank title.
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.SetSessionTitleLocked(sessionID, title)
+	}
+	if req.Pinned != nil {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionPinned(sessionID, *req.Pinned)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
