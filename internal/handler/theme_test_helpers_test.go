@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -57,5 +58,18 @@ func makePNG(w, h int) []byte {
 	}
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+// makeJPEG renders a grayscale image and JPEG-encodes it.
+func makeJPEG(w, h int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 64, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80})
 	return buf.Bytes()
 }

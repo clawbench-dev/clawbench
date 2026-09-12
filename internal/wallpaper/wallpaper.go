@@ -90,19 +90,9 @@ const (
 	bingPrefix  = "bing-"
 )
 
-// writeMu serializes wallpaper file writes so concurrent set operations
-// (two tabs, upload vs Bing fetch) never interleave temp-file renames.
+// writeMu serializes wallpaper file writes so concurrent writes (two tabs,
+// upload vs Bing fetch) never interleave temp-file renames.
 var writeMu sync.Mutex
-
-// WithWriteLock runs fn while holding the package write lock, so a sequence of
-// steps that must not interleave (write file → record in config → delete stale
-// files) stays atomic with respect to other wallpaper writers. Callers that
-// only need a single atomic file write should use WriteAtomic instead.
-func WithWriteLock(fn func() error) error {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return fn()
-}
 
 // MimeFor maps a wallpaper extension to its MIME type. Unknown extensions
 // return an empty string.
@@ -382,12 +372,7 @@ func SVGLooksSafe(src []byte) bool {
 func WriteAtomic(dir, name string, data []byte) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	return writeAtomicLocked(dir, name, data)
-}
 
-// writeAtomicLocked is WriteAtomic without taking the lock, for callers already
-// holding it via WithWriteLock.
-func writeAtomicLocked(dir, name string, data []byte) error {
 	if dir == "" {
 		return fmt.Errorf("wallpaper directory unavailable")
 	}
@@ -404,13 +389,6 @@ func writeAtomicLocked(dir, name string, data []byte) error {
 		return fmt.Errorf("failed to write wallpaper: %w", err)
 	}
 	return nil
-}
-
-// WriteAtomicWithinLock is WriteAtomic for callers that already hold the write
-// lock through WithWriteLock. Calling WriteAtomic from inside that lock would
-// deadlock, since the lock is not reentrant.
-func WriteAtomicWithinLock(dir, name string, data []byte) error {
-	return writeAtomicLocked(dir, name, data)
 }
 
 // RemoveFile deletes a wallpaper file, ignoring a missing file so callers can

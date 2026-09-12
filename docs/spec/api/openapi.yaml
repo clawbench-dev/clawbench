@@ -1550,8 +1550,8 @@ paths:
       tags: [Share]
       summary: 公开分享数据（token 即凭证）
       description: |
-        免鉴权。子路径分派：`{token}/file`（原文件）、`{token}/local/...`（相对资源）、
-        `{token}/download`、`{token}/appearance`、`{token}/theme-background`。
+        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/download`
+        （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
         token 不存在一律 404，零信息暴露。
       operationId: sharePublic
       security: []
@@ -1992,16 +1992,36 @@ paths:
           description: 任务详情
     put:
       tags: [Tasks]
-      summary: 更新任务
+      summary: 更新任务 / 删除执行记录
+      description: |
+        更新任务字段。另承担执行记录的删除操作（无独立 DELETE 路由）：请求体带
+        `action: "deleteExecution"` + `execution_id` 删除单条，或
+        `action: "deleteAllExecutions"` 清空该任务的执行历史。
+        **注意**：对 `/api/tasks/{id}/executions` 直接发 DELETE 不会删除执行记录，
+        而是删除整个任务。
       operationId: taskUpdate
       parameters:
         - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [deleteExecution, deleteAllExecutions]
+                execution_id:
+                  type: integer
+                  description: 仅 `deleteExecution` 需要。
       responses:
         "200":
           description: 结果
     delete:
       tags: [Tasks]
       summary: 删除任务
+      description: 删除整个任务（含其执行历史）。子路径 `/executions` 上的 DELETE 也会落到此分支。
       operationId: taskDelete
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -2027,36 +2047,26 @@ paths:
       responses:
         "200":
           description: 执行记录
-    delete:
-      tags: [Tasks]
-      summary: 清空执行历史
-      operationId: taskExecutionsClear
-      parameters:
-        - $ref: "#/components/parameters/Id"
-      responses:
-        "200":
-          description: 结果
 
-  /api/tasks/{id}/executions/{execId}:
-    delete:
+  /api/tasks/{id}/executions/{execId}/continue:
+    get:
       tags: [Tasks]
-      summary: 删除单条执行记录
-      operationId: taskExecutionDelete
+      summary: 查询续接会话是否存在
+      description: 返回 `{exists, sessionId}`，供前端决定是「继续」还是「新建」。
+      operationId: taskExecutionContinueCheck
       parameters:
         - $ref: "#/components/parameters/Id"
         - name: execId
           in: path
           required: true
           schema:
-            type: string
+            type: integer
       responses:
         "200":
-          description: 结果
-
-  /api/tasks/{id}/executions/{execId}/continue:
+          description: 存在性
     post:
       tags: [Tasks]
-      summary: 继续执行
+      summary: 以某次执行为起点继续对话
       operationId: taskExecutionContinue
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -2064,7 +2074,7 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            type: integer
       responses:
         "200":
           description: 结果

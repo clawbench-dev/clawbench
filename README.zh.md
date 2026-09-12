@@ -340,7 +340,7 @@ clawbench
 - **统一物理返回键**：Android 物理/预测返回键委托给 JS 层，汇入 App 统一返回状态机裁决（关浮层 → 退编辑 → 文件历史 → 跳转来源 → 父目录）；无可返回时双击退出保护（2 秒内第二按才退出）
 - 终端音量键映射：打开终端时音量键作为方向键
 - **应用自升级**：Web 端一键检查版本、下载二进制、重启服务；断线恢复轮询兜底；版本跳过选项
-- **Android 版本不匹配检测**：WebView 启动时对比 APK 版本与服务器版本，不匹配时展示 `VersionMismatchOverlay` 提示下载新版 APK
+- **Android 版本不匹配检测**：加载 WebView 之前，原生层对比 APK 版本与 `/api/health` 返回的服务器版本；APK 落后时弹出阻塞式原生弹窗，提供「下载 APK」与「强制跳过」（不记忆跳过，每次启动都会重新提示）
 - **桌面悬浮状态窗**：系统级悬浮胶囊（Android 8.0+ `TYPE_APPLICATION_OVERLAY`），通过后台 WebSocket 通道实时显示会话统计（执行中 / 权限待审 / 未读计数）；无任务时显示"空闲"状态而非隐藏；可拖动贴边并记住位置；点击展开按项目分组的会话列表面板（项目分组头显示项目名+路径，状态点 + 未读徽章），点击会话行直达对应会话；设置中提供开关和 `SYSTEM_ALERT_WINDOW` 权限申请流程
 - **Live Updates 实时状态（灵动岛）**：Android 16 实时更新通知把会话状态带上状态栏和锁屏——状态栏单行状态胶囊（待审批 > 未读 > 运行中，按紧急度取最高，全空自动移除）+ 锁屏/通知抽屉默认展开卡片（三组完整计数）；与悬浮窗共享同一份 overview 数据，统计永远一致；独立于悬浮窗的开关（默认开），需系统「实时更新」通知权限，不支持时自动回退普通常驻通知
 - **全量国际化**：Android 原生 UI 全面双语（英文默认 + 中文镜像），登录/连接错误/通知文字等硬编码中文全部抽离，语言跟随 App 内选择 / Cookie / 系统 locale 三层保障
@@ -356,7 +356,7 @@ clawbench
 ### 🎨 主题
 - **36 个命名主题**：VSCode 风格自包含配色方案，按亮度从浅到深排列——亮色 16 个（GitHub Light、One Light、Ayu Light、Light Modern、Light Plus、Quiet Light、Vitesse Light、Bluloco Light、Material Lighter、Alabaster、Everforest Light、High Contrast Light、Nord Light、Catppuccin Latte、Solarized Light、Gruvbox Light），暗色 20 个（Solarized Dark/Deep、Monokai、Material Darker、Dark Plus、Bluloco Dark、Nord、Everforest Dark、One Dark Pro、Dracula、Rose Pine、Gruvbox Dark、GitHub Dark、Catppuccin Mocha、Vitesse Dark、Tokyo Night、Kanagawa、Ayu Dark、Night Owl、High Contrast Dark）
 - **跟随系统**：`auto` 模式下根据系统深浅色自动选择默认 GitHub Light/Dark
-- **自定义壁纸背景**：支持上传图片或从服务器本地路径设置为主题背景图（`.wallpaper-layer` 渲染，全局跨项目共享，`POST/DELETE /api/theme-background` 写、`GET /api/file/theme-background` 读），配套滑块调节面板不透明度（下限 0.5 保证可读性）与高斯模糊；壁纸开启后 header/Tab/面板/卡片/CodeMirror 等界面层半透明透出底层背景，CodeMirror 等编辑区保持不透明保证可读
+- **自定义壁纸背景**：支持上传图片或从服务器本地路径设置为主题背景图（`.wallpaper-layer` 渲染，全局跨项目共享，`POST /api/theme/local/upload` 入库 + `POST /api/theme/local/select` 选中、`GET /api/file/theme-wallpaper` 读取），配套滑块调节面板不透明度（下限 0.5 保证可读性）与高斯模糊；壁纸开启后 header/Tab/面板/卡片/CodeMirror 等界面层半透明透出底层背景，CodeMirror 等编辑区保持不透明保证可读
 - **快捷主题选择器**：Header 上的调色板按钮可即时切换主题，并带实时配色预览；下拉面板风格与项目选择界面统一，底部固定"更多外观选项"入口，点击深链到设置 → 外观（完整主题网格/字体/界面缩放）
 - **自定义字体**：支持选择常用开源字体作为代码字体（等宽）与界面字体（比例）主通道，可另配备选字体——纯 CSS 字体栈切换，设备未安装自动回退默认栈；导出 HTML 与 xterm/CodeMirror/Mermaid 等 JS 渲染器均跟随所选字体
 - **持久化与状态栏适配**：选择本地保存、刷新后恢复；Android 状态栏颜色跟随当前主题
