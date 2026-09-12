@@ -35,6 +35,15 @@ func DiskPublicExists() bool {
 	return err == nil && fi.IsDir()
 }
 
+// EmbeddedFS returns the build-time embedded frontend filesystem (go:embed
+// dist/) unconditionally. Unlike GetFS(), it never consults the working
+// directory, so build-time artifacts that must match the running binary —
+// notably the Android APK — stay consistent no matter where the server was
+// started. Callers needing the hot-swappable disk override should use GetFS().
+func EmbeddedFS() fs.FS {
+	return distFS
+}
+
 // ModeLabel returns a human-readable label for the current frontend serving mode.
 func ModeLabel() string {
 	if DiskPublicExists() {

@@ -499,3 +499,42 @@ func TestGetFS_ConsistencyWithModeLabel(t *testing.T) {
 	}
 	assert.Equal(t, "disk-content", string(data))
 }
+
+// TestEmbeddedFS_IgnoresDiskPublic locks the contract that EmbeddedFS() always
+// returns the build-time embedded filesystem and never consults the working
+// directory. This is what makes build-time artifacts such as the Android APK
+// immune to a stray public/ dir in the CWD (which previously shadowed the
+// embedded copy and produced a 404 from /api/apk).
+func TestEmbeddedFS_IgnoresDiskPublic(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	// CWD has a public/ dir holding a sentinel that must NOT be reachable.
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "sentinel.txt"), []byte("disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity check: GetFS() does consult the disk here, so the sentinel is
+	// visible through it. This proves the CWD shadowing scenario is real.
+	diskData, err := fs.ReadFile(GetFS(), "sentinel.txt")
+	if err != nil {
+		t.Fatalf("GetFS() should read the disk sentinel: %v", err)
+	}
+	assert.Equal(t, "disk", string(diskData))
+
+	// EmbeddedFS() must ignore public/ entirely — the sentinel is invisible.
+	if _, err := fs.ReadFile(EmbeddedFS(), "sentinel.txt"); err == nil {
+		t.Fatal("EmbeddedFS() read sentinel.txt from disk; it must never consult the CWD")
+	}
+}
