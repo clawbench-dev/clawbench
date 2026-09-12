@@ -647,24 +647,59 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 	return result.LastInsertId()
 }
 
+// Session title sources, ordered by priority (higher rank wins). The stored
+// title is always the effective title; priority is enforced only on WRITE, so
+// every read path keeps returning chat_sessions.title unchanged.
+//
+// 会话标题来源，按优先级排序（rank 高者胜）。title 列始终保存有效标题；优先级只在
+// 写入时门控，因此所有读取路径照常返回 chat_sessions.title，无需改动。
+const (
+	// TitleSourcePlaceholder: auto placeholder (e.g. "New Session 3"),
+	// replaceable by the first user message.
+	TitleSourcePlaceholder = "placeholder"
+	// TitleSourceAuto: derived from the first user message / attachments.
+	TitleSourceAuto = "auto"
+	// TitleSourceCustom: deliberately chosen by the user (manual rename,
+	// meaningful title at creation, task name, fork, imported title).
+	TitleSourceCustom = "custom"
+)
+
+// titleSourceRank maps a title_source value to its priority. An empty or
+// unknown value (e.g. a minimal test schema without the column) ranks 0, which
+// preserves the historical "auto-title may overwrite" behavior.
+func titleSourceRank(source string) int {
+	switch source {
+	case TitleSourceAuto:
+		return 1
+	case TitleSourceCustom:
+		return 2
+	default: // "" or TitleSourcePlaceholder
+		return 0
+	}
+}
+
 // maybeAutoTitleSessionTx sets the session title from the first user message,
-// unless the title was deliberately chosen (title_renamed=1): a manual rename,
-// or a meaningful title supplied at creation (scheduled task, fork, continue,
-// imported session). No-op when this is not the session's first message.
+// unless the title was deliberately chosen (title_source='custom'): a manual
+// rename, or a meaningful title supplied at creation (scheduled task, fork,
+// continue, imported session). No-op when this is not the session's first
+// message.
 func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
 	var count int
 	// Only the first message auto-titles. A read error (or any other count) means
 	// "not the first message", so the historical behavior is preserved.
 	if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
-		var renamed int
+		var source string
 		// Best-effort read: a missing column (minimal test schemas) leaves the zero
 		// value, preserving the historical auto-title behavior. Any other error is
 		// unexpected and worth surfacing — it would silently overwrite a locked title.
-		if err := tx.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed); err != nil && !strings.Contains(err.Error(), "no such column") {
-			slog.Warn("chat: could not read title_renamed; auto-title may overwrite a locked title",
+		if err := tx.QueryRow("SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&source); err != nil && !strings.Contains(err.Error(), "no such column") {
+			slog.Warn("chat: could not read title_source; auto-title may overwrite a locked title",
 				slog.String("session", sessionID), slog.String("err", err.Error()))
 		}
-		if renamed != 0 {
+		// Only a placeholder (rank 0) may be replaced by the auto title. A custom
+		// title (rank 2) is never clobbered; an existing auto title (rank 1) is
+		// left as-is (only one first message exists anyway).
+		if titleSourceRank(source) >= titleSourceRank(TitleSourceAuto) {
 			return nil
 		}
 		title := ExtractPlainText(content)
@@ -677,7 +712,7 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		if runes := []rune(title); len(runes) > 50 {
 			title = string(runes[:50]) + "..."
 		}
-		if _, err := tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); err != nil {
+		if _, err := tx.Exec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceAuto, sessionID); err != nil {
 			return err
 		}
 	}
@@ -1138,12 +1173,12 @@ func generateSessionID() string {
 }
 
 // GetSessions retrieves chat sessions for a given project path,
-// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
+// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
 // If backend is non-empty, filters by backend; otherwise returns all backends.
 // Only returns sessions with session_type='chat' (excludes scheduled sessions).
 func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 	sessions := []model.ChatSession{}
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at,
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
 		COALESCE(unread.cnt, 0) AS unread_count
 		FROM chat_sessions s
 		LEFT JOIN (
@@ -1161,7 +1196,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
 	}
-	query += " ORDER BY s.created_at DESC, s.id DESC"
+	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC"
 
 	rows, err := dbRead.Query(query, args...)
 	if err != nil {
@@ -1173,7 +1208,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRead.Valid {
@@ -1230,14 +1265,24 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 }
 
 // GetSessionsPaged retrieves chat sessions with cursor-based pagination,
-// ordered by created_at DESC (newest first; fixed order, unaffected by interaction).
+// ordered by pinned DESC, created_at DESC (pinned sessions first, then newest first).
 // limit=0 means no limit (returns all sessions).
-// cursor and cursorID: when non-empty, only return sessions with
 //
-//	(created_at < cursor) OR (created_at = cursor AND id < cursorID)
+// The cursor is the full sort key of the last row of the previous page, not
+// just its created_at. Ordering is (pinned DESC, created_at DESC, id DESC), so
+// the keyset predicate must compare all three columns lexicographically:
+//
+//	pinned < cursorPinned
+//	OR (pinned = cursorPinned AND (created_at < cursor
+//	      OR (created_at = cursor AND id < cursorID)))
+//
+// Comparing created_at alone re-returns every pinned row on each page (a pinned
+// row sorts first regardless of its created_at), duplicating rows across pages.
+// cursorPinned is optional for backward compatibility: when nil the legacy
+// created_at-only predicate is used, so older clients keep working unchanged.
 //
 // Returns sessions and hasMore flag.
-func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string) ([]model.ChatSession, bool, error) {
+func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool) ([]model.ChatSession, bool, error) {
 	// No limit: return all sessions
 	if limit <= 0 {
 		sessions, err := GetSessions(projectPath, backend)
@@ -1248,7 +1293,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	}
 
 	// Build main query with cursor and limit+1
-	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at,
+	query := `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.created_at, s.updated_at, s.last_read_at,
 		COALESCE(unread.cnt, 0) AS unread_count
 		FROM chat_sessions s
 		LEFT JOIN (
@@ -1267,10 +1312,24 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		args = append(args, backend)
 	}
 	if cursor != "" && cursorID != "" {
-		query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
-		args = append(args, cursor, cursor, cursorID)
+		if cursorPinned != nil {
+			// Full keyset: pinned is the leading sort column, so a row is "after"
+			// the cursor when it has a lower pinned flag, or the same flag with an
+			// older created_at / smaller id.
+			query += " AND (s.pinned < ? OR (s.pinned = ? AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))))"
+			pinnedInt := 0
+			if *cursorPinned {
+				pinnedInt = 1
+			}
+			args = append(args, pinnedInt, pinnedInt, cursor, cursor, cursorID)
+		} else {
+			// Legacy cursor (created_at + id only). Kept so an older client that
+			// does not send cursor_pinned still pages without error.
+			query += " AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))"
+			args = append(args, cursor, cursor, cursorID)
+		}
 	}
-	query += " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
+	query += " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT ?"
 	args = append(args, limit+1)
 
 	rows, err := dbRead.Query(query, args...)
@@ -1284,7 +1343,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 		var s model.ChatSession
 		var lastRead sql.NullTime
 		var sourceSessionID sql.NullString
-		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Backend, &s.AgentID, &s.AgentSource, &s.Model, &s.SessionType, &sourceSessionID, &s.Pinned, &s.CreatedAt, &s.UpdatedAt, &lastRead, &s.UnreadCount); err != nil {
 			return nil, false, err
 		}
 		if lastRead.Valid {
@@ -1563,8 +1622,8 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 
 // CreateSessionWithLockedTitle creates a session whose title was deliberately
 // chosen by the caller (e.g. a scheduled task name, a fork/continue title, or a
-// user-supplied name at creation). It marks chat_sessions.title_renamed=1 so
-// the first-message auto-title does not overwrite it.
+// user-supplied name at creation). It marks chat_sessions.title_source='custom'
+// so the first-message auto-title does not overwrite it.
 func CreateSessionWithLockedTitle(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {
 	return createSession(projectPath, backend, title, agentID, modelName, agentSource, sessionType, true)
 }
@@ -1586,6 +1645,8 @@ func createSession(projectPath, backend, title, agentID, modelName, agentSource,
 	}
 	if lockTitle {
 		markSessionTitleRenamed(sessionID)
+	} else {
+		markSessionTitlePlaceholder(sessionID)
 	}
 	applyAgentAutoApproveDefault(sessionID, agentID)
 	slog.Info("session created",
@@ -1597,13 +1658,26 @@ func createSession(projectPath, backend, title, agentID, modelName, agentSource,
 	return sessionID, nil
 }
 
-// markSessionTitleRenamed sets chat_sessions.title_renamed=1 so the first-message
-// auto-title does not overwrite a deliberately chosen title. Implemented as a
-// guarded UPDATE (not part of the INSERT) so session creation does not depend on
-// the column being present in minimal schemas; failure is non-fatal.
+// markSessionTitleRenamed sets chat_sessions.title_source='custom' so the
+// first-message auto-title does not overwrite a deliberately chosen title.
+// Implemented as a guarded UPDATE (not part of the INSERT) so session creation
+// does not depend on the column being present in minimal schemas; failure is
+// non-fatal.
 func markSessionTitleRenamed(sessionID string) {
-	if _, err := WriteExec("UPDATE chat_sessions SET title_renamed = 1 WHERE id = ?", sessionID); err != nil {
-		slog.Warn("failed to mark session title as renamed",
+	if _, err := WriteExec("UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourceCustom, sessionID); err != nil {
+		slog.Warn("failed to mark session title as custom",
+			slog.String("session", sessionID),
+			slog.String("err", err.Error()))
+	}
+}
+
+// markSessionTitlePlaceholder sets chat_sessions.title_source='placeholder' for
+// a session created with an auto placeholder title, so the first user message
+// may replace it. Guarded UPDATE like markSessionTitleRenamed; failure is
+// non-fatal (an empty/unknown source also ranks as placeholder).
+func markSessionTitlePlaceholder(sessionID string) {
+	if _, err := WriteExec("UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourcePlaceholder, sessionID); err != nil {
+		slog.Warn("failed to mark session title as placeholder",
 			slog.String("session", sessionID),
 			slog.String("err", err.Error()))
 	}
@@ -1638,21 +1712,24 @@ func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
 	return err
 }
 
-// UpdateSessionTitle updates the title of a chat session WITHOUT locking it.
-// Use this only for titles that are still placeholders and may legitimately be
-// replaced by first-message auto-titling. For a deliberately chosen title, use
-// SetSessionTitleLocked.
-func UpdateSessionTitle(sessionID, title string) error {
-	_, err := WriteExec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
+// SetSessionTitleLocked updates the title of a chat session and marks its
+// source as deliberately chosen (title_source='custom') so the first-message
+// auto-title will not overwrite it. Used by the manual rename endpoint and by
+// ACP session import, where the title is derived from the CLI's own transcript.
+func SetSessionTitleLocked(sessionID, title string) error {
+	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceCustom, sessionID)
 	return err
 }
 
-// SetSessionTitleLocked updates the title of a chat session and marks it as
-// deliberately chosen (title_renamed=1) so the first-message auto-title will
-// not overwrite it. Used by the manual rename endpoint and by ACP session
-// import, where the title is derived from the CLI's own transcript.
-func SetSessionTitleLocked(sessionID, title string) error {
-	_, err := WriteExec("UPDATE chat_sessions SET title = ?, title_renamed = 1 WHERE id = ?", title, sessionID)
+// UpdateSessionPinned sets the pinned state for a session.
+// Pinned sessions sort to the top of the session list.
+//
+// Deliberately does NOT touch updated_at: pinning is a UI preference, not
+// session activity. updated_at drives the relative-time label in the session
+// list and GetLatestSessionID's "most recent session" pick, so bumping it would
+// make an old pinned session read as "just now" and hijack the default session.
+func UpdateSessionPinned(sessionID string, pinned bool) error {
+	_, err := WriteExec("UPDATE chat_sessions SET pinned = ? WHERE id = ?", pinned, sessionID)
 	return err
 }
 
@@ -1906,14 +1983,15 @@ func GetSessionTitle(sessionID string) (string, error) {
 }
 
 // GetSessionTitleRenamed reports whether the session title was set manually by
-// the user (title_renamed=1), which suppresses first-message auto-titling.
+// the user (title_source='custom'), which suppresses first-message
+// auto-titling. Derived from title_source, the source of truth.
 func GetSessionTitleRenamed(sessionID string) (bool, error) {
-	var renamed int
-	err := dbRead.QueryRow("SELECT COALESCE(title_renamed, 0) FROM chat_sessions WHERE id = ?", sessionID).Scan(&renamed)
+	var source string
+	err := dbRead.QueryRow("SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", sessionID).Scan(&source)
 	if err != nil {
 		return false, err
 	}
-	return renamed == 1, nil
+	return source == TitleSourceCustom, nil
 }
 
 // GetSessionTitlesBatch fetches titles for multiple sessions in a single query.

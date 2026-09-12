@@ -1,6 +1,6 @@
 <template>
   <div class="session-list">
-    <!-- ── Project pane: the existing infinite-scrolling session list ── -->
+    <!-- ── Project pane: pinned + recent sections, infinite-scrolling ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
@@ -8,36 +8,91 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <TransitionGroup name="session-list" tag="div" class="session-rows">
-          <div
-            v-for="(session, idx) in sessionsWithStatus"
-            :key="session.id"
-            class="session-row"
-            :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
-          >
-            <span v-if="session.running" class="session-running-line"></span>
+        <!-- Pinned section: only shown when there are pinned sessions -->
+        <section v-if="pinnedSessions.length > 0" class="session-section">
+          <div class="session-section-header" @click="pinnedCollapsed = !pinnedCollapsed">
+            <Pin :size="12" class="session-section-pin-icon" />
+            <span class="session-section-title">{{ t('common.pinnedSection') }}</span>
+            <span class="session-section-count">{{ pinnedSessions.length }}</span>
+            <ChevronDown :size="14" class="session-section-chevron" :class="{ collapsed: pinnedCollapsed }" />
+          </div>
+          <TransitionGroup v-show="!pinnedCollapsed" name="session-list" tag="div" class="session-rows">
             <div
-              class="session-item"
-              :class="{ active: session.id === currentSessionId }"
-              @click="selectSession(session.id, session.backend)"
+              v-for="(session, idx) in pinnedSessions"
+              :key="session.id"
+              :data-session-id="session.id"
+              class="session-row pinned"
+              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+              @contextmenu.prevent="showContextMenu($event, session)"
+              v-long-press="onSessionLongPress"
             >
-              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-              <div class="session-item-info">
-                <div class="session-item-header">
-                  <span class="session-item-title">{{ session.title }}</span>
-                </div>
-                <div class="session-item-meta">
-                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+              <span v-if="session.running" class="session-running-line"></span>
+              <div
+                class="session-item"
+                :class="{ active: session.id === currentSessionId }"
+                @click="selectSession(session.id, session.backend)"
+              >
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
                 </div>
               </div>
+              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+                <Archive :size="15" />
+              </button>
             </div>
-            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-              <Archive :size="15" />
-            </button>
+          </TransitionGroup>
+        </section>
+
+        <!-- Recent (unpinned) section -->
+        <section class="session-section">
+          <div v-if="pinnedSessions.length > 0" class="session-section-header" @click="recentCollapsed = !recentCollapsed">
+            <span class="session-section-title">{{ t('common.recentSection') }}</span>
+            <span class="session-section-count">{{ unpinnedSessions.length }}</span>
+            <ChevronDown :size="14" class="session-section-chevron" :class="{ collapsed: recentCollapsed }" />
           </div>
-        </TransitionGroup>
+          <TransitionGroup v-show="!recentCollapsed" name="session-list" tag="div" class="session-rows">
+            <div
+              v-for="(session, idx) in unpinnedSessions"
+              :key="session.id"
+              :data-session-id="session.id"
+              class="session-row"
+              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === unpinnedIndexOffset + idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+              @contextmenu.prevent="showContextMenu($event, session)"
+              v-long-press="onSessionLongPress"
+            >
+              <span v-if="session.running" class="session-running-line"></span>
+              <div
+                class="session-item"
+                :class="{ active: session.id === currentSessionId }"
+                @click="selectSession(session.id, session.backend)"
+              >
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
+                </div>
+              </div>
+              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+                <Archive :size="15" />
+              </button>
+            </div>
+          </TransitionGroup>
+        </section>
+
         <div ref="sentinelRef" class="session-list-sentinel"></div>
         <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
         <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
@@ -78,13 +133,31 @@
         </div>
       </template>
     </div>
+
+    <!-- Context menu for pin/unpin & rename -->
+    <Teleport to="body">
+      <div v-if="contextMenu.visible" class="session-context-menu" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }" @click="contextMenu.visible = false">
+        <button class="session-context-menu-item" @click="togglePin(contextMenu.sessionId, contextMenu.pinned)">
+          <span>{{ contextMenu.pinned ? t('common.unpin') : t('common.pin') }}</span>
+          <component :is="contextMenu.pinned ? PinOff : Pin" :size="14" class="session-context-menu-icon" />
+        </button>
+        <button class="session-context-menu-item" @click="renameSessionFromMenu(contextMenu.sessionId)">
+          <span>{{ t('common.editSessionName') }}</span>
+          <PencilLine :size="14" class="session-context-menu-icon" />
+        </button>
+        <button class="session-context-menu-item" @click="archiveFromMenu(contextMenu.sessionId)">
+          <span>{{ t('common.removeFromList') }}</span>
+          <ListX :size="14" class="session-context-menu-icon" />
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, ChevronDown, PencilLine, ListX } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents } from '@/composables/useAgents'
@@ -95,6 +168,7 @@ import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useS
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
+import { apiPatch } from '@/utils/api.ts'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -132,6 +206,18 @@ const sessionsWithStatus = computed(() => {
     running: props.runningSessionIds.has(s.id),
   }))
 })
+
+// Display order is pinned-first, then the rest — matching the backend's
+// `ORDER BY pinned DESC, created_at DESC`. Both sections are derived from the
+// same source array so the rendered DOM order equals sessionsWithStatus order,
+// which is what useListNav indexes into.
+const pinnedSessions = computed(() => sessionsWithStatus.value.filter(s => s.pinned))
+const unpinnedSessions = computed(() => sessionsWithStatus.value.filter(s => !s.pinned))
+// Global nav index of the first unpinned row: pinned rows occupy [0, n).
+const unpinnedIndexOffset = computed(() => pinnedSessions.value.length)
+
+const pinnedCollapsed = ref(false)
+const recentCollapsed = ref(false)
 
 async function loadSessions() {
   // Keep the existing list on screen during background refreshes — only show
@@ -172,17 +258,16 @@ async function loadSessions() {
  * Each page is fetched after the previous one's last row (cursor semantics
  * identical to loadMoreSessions below).
  *
- * The cursor is the row's createdAt, NOT updatedAt: the backend orders and
- * filters paged sessions by created_at (GetSessionsPaged), so sending
- * updatedAt — which is >= createdAt and bumped on every message — makes the
- * `created_at < cursor` filter match rows already shown on the previous page,
- * duplicating the list.
+ * The cursor is the last row's full sort key — createdAt + id + pinned — NOT
+ * updatedAt: the backend orders and filters paged sessions by
+ * (pinned DESC, created_at DESC, id DESC), so sending updatedAt (which is
+ * >= createdAt and bumped on every message) makes the cursor filter match rows
+ * already shown, and omitting pinned re-returns every pinned row on each page.
  */
 async function fetchSessionsUpTo(minCount) {
   const limit = pageSize.value
   const accumulated = []
-  let cursorTime = null
-  let cursorId = null
+  let cursor = null
   // Always fetch at least one page; afterwards keep going only when a reload
   // must preserve a deeper list (minCount > pageSize). On a plain first load
   // (minCount = 0) one page is exactly right — the remaining pages are loaded
@@ -194,9 +279,7 @@ async function fetchSessionsUpTo(minCount) {
   let pages = 0
   for (;;) {
     let url = `/api/ai/sessions?limit=${limit}`
-    if (cursorTime && cursorId) {
-      url += `&cursor=${encodeURIComponent(cursorTime)}&cursor_id=${encodeURIComponent(cursorId)}`
-    }
+    if (cursor) url += buildCursorQuery(cursor)
     const resp = await fetch(url)
     const data = await resp.json()
     const list = data.sessions || []
@@ -215,11 +298,21 @@ async function fetchSessionsUpTo(minCount) {
       serverHasMore = false
       break
     }
-    cursorTime = last.createdAt
-    cursorId = last.id
+    cursor = last
   }
   hasMore.value = serverHasMore
   return accumulated
+}
+
+/**
+ * Build the cursor query string for the row the next page starts after.
+ * `pinned` is part of the sort key, so it must travel with the cursor —
+ * without it the backend cannot exclude already-seen pinned rows.
+ */
+function buildCursorQuery(row) {
+  return `&cursor=${encodeURIComponent(row.createdAt)}`
+    + `&cursor_id=${encodeURIComponent(row.id)}`
+    + `&cursor_pinned=${row.pinned ? 1 : 0}`
 }
 
 async function loadMoreSessions() {
@@ -235,8 +328,8 @@ async function loadMoreSessions() {
       hasMore.value = false
       return
     }
-    // Cursor = createdAt (backend paginates by created_at, see fetchSessionsUpTo).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}&cursor=${encodeURIComponent(last.createdAt)}&cursor_id=${encodeURIComponent(last.id)}`)
+    // Cursor = the last row's full sort key (pinned, createdAt, id).
+    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}`)
     const data = await resp.json()
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]
@@ -289,6 +382,96 @@ async function archiveSession(sessionId) {
   }
 }
 
+const contextMenu = reactive({ visible: false, x: 0, y: 0, sessionId: '', pinned: false })
+
+function showContextMenu(event, session) {
+  contextMenu.visible = true
+  contextMenu.x = event.clientX
+  contextMenu.y = event.clientY
+  contextMenu.sessionId = session.id
+  contextMenu.pinned = !!session.pinned
+}
+
+function onSessionLongPress(e, capturedSessionId) {
+  // Prefer the session id captured at touchstart time by the directive — it is
+  // the id of the row that was actually pressed. Important: inside the
+  // directive's setTimeout callback `e.currentTarget` is null (the touch event
+  // has already finished dispatching), so reading the DOM attribute from the
+  // event target at fire-time can return a different row when TransitionGroup
+  // has moved/reused DOM nodes (e.g. after pinning reorders the list).
+  let sessionId = capturedSessionId
+  if (!sessionId) {
+    const el = e.currentTarget || e.target
+    sessionId = el?.dataset?.sessionId || el?.closest('[data-session-id]')?.dataset?.sessionId
+  }
+  if (!sessionId) return
+  const session = sessionsWithStatus.value.find(s => s.id === sessionId)
+  if (!session) return
+  const touch = e.touches[0]
+  contextMenu.visible = true
+  contextMenu.x = touch.clientX
+  contextMenu.y = touch.clientY + 10
+  contextMenu.sessionId = sessionId
+  contextMenu.pinned = !!session.pinned
+  nextTick(() => clampContextMenu())
+}
+
+function clampContextMenu() {
+  const menu = document.querySelector('.session-context-menu')
+  if (!menu) return
+  const pad = 8
+  const maxX = window.innerWidth - menu.offsetWidth - pad
+  const maxY = window.innerHeight - menu.offsetHeight - pad
+  contextMenu.x = Math.max(pad, Math.min(contextMenu.x, maxX))
+  contextMenu.y = Math.max(pad, Math.min(contextMenu.y, maxY))
+}
+
+async function togglePin(sessionId, currentPinned) {
+  const newPinned = !currentPinned
+  // Optimistic update
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (session) session.pinned = newPinned
+  try {
+    await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { pinned: newPinned })
+    // Refresh list to ensure correct sort order
+    store.state.sessionListVersion++
+  } catch (err) {
+    // Rollback on failure
+    if (session) session.pinned = currentPinned
+    appLog.e('SessionList', 'Failed to toggle pin:', err)
+  }
+}
+
+async function renameSessionFromMenu(sessionId) {
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session) return
+  const current = session.title || ''
+  const newTitle = await dialog.prompt(
+    t('chat.sessionRename.prompt'),
+    {
+      title: t('chat.sessionRename.title'),
+      value: current,
+      placeholder: t('chat.sessionRename.placeholder'),
+      confirmText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+    }
+  )
+  if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === current) return
+  try {
+    await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { title: newTitle.trim() })
+    session.title = newTitle.trim()
+    store.state.sessionListVersion++
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to rename session:', err)
+  }
+}
+
+function archiveFromMenu(sessionId) {
+  const session = sessions.value.find(s => s.id === sessionId)
+  contextMenu.visible = false
+  emit('archive', sessionId, session?.backend)
+}
+
 function addSessionLocally(session) {
   if (!session) return
   if (sessions.value.some(s => s.id === session.id)) return
@@ -310,6 +493,11 @@ function reload() {
   loadSessions()
 }
 
+// Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
+// then newest-first) is exactly the rendered DOM order. Both sections bind
+// `session-row-active` against that same global index — the unpinned section
+// offsets by the pinned count — so the highlight and Enter target stay aligned
+// with what the user sees.
 const listNav = useListNav({
   getCount: () => sessionsWithStatus.value.length,
   onConfirm: (idx) => {
@@ -393,13 +581,21 @@ onMounted(() => {
   removeEventHandler = onEvent((event) => {
     if (event === 'session_update') scheduleReload()
   })
+  // Close context menu on click outside
+  document.addEventListener('click', closeContextMenuOnOutside)
 })
 onUnmounted(() => {
   removeEventHandler?.()
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
   if (observer) { observer.disconnect(); observer = null }
+  contextMenu.visible = false
+  document.removeEventListener('click', closeContextMenuOnOutside)
 })
+
+function closeContextMenuOnOutside() {
+  contextMenu.visible = false
+}
 </script>
 
 <style scoped>
@@ -677,6 +873,108 @@ onUnmounted(() => {
 
 .session-list-end {
   height: 0;
+}
+
+/* ── Pinned / section grouping ── */
+
+.session-row.pinned .session-item {
+  border-top: 1px solid color-mix(in srgb, #f59e0b 15%, var(--border-color, #dee2e6));
+}
+
+.session-row.pinned.active .session-item {
+  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
+}
+
+/* Section groups */
+.session-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 4px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.session-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #495057);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.session-section-count {
+  font-size: 10px;
+  color: var(--text-muted, #999);
+  background: var(--bg-tertiary, #e9ecef);
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.session-section-pin-icon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.session-section-chevron {
+  margin-left: auto;
+  color: var(--text-muted, #999);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.session-section-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+/* ── Long-press feedback ── */
+
+.session-row.long-pressing .session-item {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+/* ── Context menu ── */
+
+.session-context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 4px 0;
+  width: 180px;
+}
+
+.session-context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary, #1a1a1a);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-context-menu-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary, #495057);
+}
+
+.session-context-menu-item:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 /* ── Cross-project pane ── */

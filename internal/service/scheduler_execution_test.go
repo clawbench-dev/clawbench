@@ -367,6 +367,7 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
 			title_renamed INTEGER NOT NULL DEFAULT 0,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

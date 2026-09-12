@@ -28,6 +28,12 @@ vi.mock('@/components/session/SessionListHeader.vue', () => ({
 vi.mock('@/components/session/SessionListTabs.vue', () => ({
   default: { name: 'SessionListTabs', template: '<div class="tabs-stub" />', props: ['activeTab'] },
 }))
+vi.mock('@/components/session/ProjectChipsBar.vue', () => ({
+  default: {
+    name: 'ProjectChipsBar',
+    template: '<div class="project-chips-stub" />',
+  },
+}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div />' },
 }))

@@ -948,12 +948,22 @@ paths:
       parameters:
         - name: cursor
           in: query
+          description: 游标；上一页最后一行的 `createdAt`，需与 `cursor_id` 同时提供才生效。
           schema:
             type: string
         - name: cursor_id
           in: query
           schema:
             type: string
+        - name: cursor_pinned
+          in: query
+          description: |
+            游标；上一页最后一行的 `pinned`（`1`/`0`）。
+            排序为 `pinned DESC, created_at DESC, id DESC`，游标必须携带 pinned，
+            否则置顶会话会在每一页重复返回。省略时退回旧的 created_at-only 行为。
+          schema:
+            type: integer
+            enum: [0, 1]
         - name: limit
           in: query
           schema:

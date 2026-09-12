@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	external_session_id TEXT DEFAULT '',
 	transport TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	last_read_at DATETIME,
