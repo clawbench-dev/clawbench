@@ -152,6 +152,104 @@ func DeleteProjectForge(projectPath string) error {
 	return err
 }
 
+// AutoBindProjectForge binds a project to a remote derived from its git remote,
+// unless the user has explicitly opted out (by unbinding) or a binding already
+// exists.
+//
+// This is a single atomic statement on purpose. The obvious read-then-write
+// (GetProjectForge → UpsertProjectForge) has two races: an in-flight GET that
+// already read "unbound" could write back *after* the user's DELETE commits
+// (resurrecting the binding), and two concurrent GETs — the app fetches the
+// binding on mount and the panel fetches it again when opened — would both
+// write. ON CONFLICT DO NOTHING also guarantees a user's manual binding is
+// never overwritten by a later auto-bind.
+//
+// Returns true when this call created the binding.
+func AutoBindProjectForge(projectPath string, remote forge.Remote) (bool, error) {
+	if db == nil {
+		return false, nil
+	}
+	projectPath = NormalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return false, nil
+	}
+	if remote.Platform == "" || remote.Host == "" || remote.Owner == "" || remote.Repo == "" {
+		return false, fmt.Errorf("project_forges: platform, host, owner and repo are required")
+	}
+	res, err := WriteExec(
+		`INSERT INTO project_forges (project_path, platform, host, owner, repo, source)
+		 SELECT ?, ?, ?, ?, ?, 'auto'
+		 WHERE NOT EXISTS (
+			SELECT 1 FROM project_meta
+			WHERE project_path = ? AND forge_bind_opt_out = 1
+		 )
+		 ON CONFLICT(project_path) DO NOTHING`,
+		projectPath, string(remote.Platform), remote.Host, remote.Owner, remote.Repo, projectPath,
+	)
+	if err != nil {
+		slog.Warn("project_forges: auto-bind failed", "error", err, "project_path", projectPath)
+		return false, err
+	}
+	// The count is advisory (did this call create the row?). The statement itself
+	// already succeeded, so a driver that cannot report the count is not an error.
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// SetForgeBindOptOut records whether the user has explicitly unbound this
+// project's forge repository.
+//
+// While set, AutoBindProjectForge leaves the project unbound. This is what stops
+// "unbind" from being undone by the next GET. It is intentionally not scoped to
+// a particular remote: the user said they do not want a binding, so changing the
+// git remote afterwards does not re-enable auto-binding. An explicit POST
+// binding clears it.
+func SetForgeBindOptOut(projectPath string, optedOut bool) error {
+	if db == nil {
+		return nil
+	}
+	projectPath = NormalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	v := 0
+	if optedOut {
+		v = 1
+	}
+	_, err := WriteExec(
+		`INSERT INTO project_meta (project_path, forge_bind_opt_out)
+		 VALUES (?, ?)
+		 ON CONFLICT(project_path) DO UPDATE SET
+			forge_bind_opt_out = excluded.forge_bind_opt_out,
+			updated_at = CURRENT_TIMESTAMP`,
+		projectPath, v,
+	)
+	return err
+}
+
+// IsForgeBindOptedOut reports whether the user has explicitly unbound this
+// project. A missing row means "not opted out".
+func IsForgeBindOptedOut(projectPath string) (bool, error) {
+	if dbRead == nil {
+		return false, nil
+	}
+	projectPath = NormalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return false, nil
+	}
+	var v int
+	err := dbRead.QueryRow(
+		`SELECT forge_bind_opt_out FROM project_meta WHERE project_path = ?`, projectPath,
+	).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return v == 1, nil
+}
+
 // ListProjectForges returns all bindings, newest first.
 func ListProjectForges() ([]ProjectForge, error) {
 	if dbRead == nil {

@@ -324,10 +324,31 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if pf == nil {
-			// Unbound: offer a suggestion derived from the git remote so the UI
-			// can pre-fill the binding form. It is NOT persisted — the user must
-			// confirm, which is also the SSRF guard's explicit-confirmation step
-			// for non-official hosts.
+			// Unbound: bind the highest-priority git remote automatically when it
+			// points at a platform-operated host, so the common case needs no
+			// dialog at all. Users who bind the wrong repository can change or
+			// clear it from the panel header.
+			//
+			// Non-official hosts (a self-hosted GitLab, say) are NOT auto-bound:
+			// the user's explicit confirmation is the SSRF guard's confirmation
+			// step for hosts whose endpoints we cannot vouch for, so those still
+			// come back as a suggestion for the UI to confirm.
+			if remote, _, ok := pickForgeRemote(projectPath); ok && isOfficialForgeHost(remote.Host) {
+				created, aerr := service.AutoBindProjectForge(projectPath, remote)
+				if aerr != nil {
+					writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+					return
+				}
+				if created {
+					if bound, gerr := service.GetProjectForge(projectPath); gerr == nil && bound != nil {
+						writeJSON(w, http.StatusOK, map[string]any{jsonBinding: bindingView(bound)})
+						return
+					}
+				}
+			}
+			// Either nothing to bind, a non-official host needing confirmation,
+			// or the user previously opted out (AutoBindProjectForge is a no-op
+			// then) — report unbound, with a suggestion when one exists.
 			writeJSON(w, http.StatusOK, map[string]any{
 				jsonBinding: nil,
 				"suggested": suggestForgeBinding(projectPath),
@@ -338,6 +359,12 @@ func ServeForgeBinding(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		serveForgeBindingSet(w, r, projectPath)
 	case http.MethodDelete:
+		// Record the opt-out BEFORE deleting, so the auto-bind on the next GET
+		// cannot bind it straight back.
+		if err := service.SetForgeBindOptOut(projectPath, true); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
 		if err := service.DeleteProjectForge(projectPath); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
@@ -402,6 +429,12 @@ func serveForgeBindingSet(w http.ResponseWriter, r *http.Request, projectPath st
 	pf := service.ProjectForgeFromRemote(projectPath, remote, source)
 	if err := service.UpsertProjectForge(pf); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
+		return
+	}
+	// An explicit bind supersedes any earlier unbind, so the project follows
+	// normal auto-bind behavior again if this binding is later cleared.
+	if err := service.SetForgeBindOptOut(projectPath, false); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 	stored, err := service.GetProjectForge(projectPath)
@@ -523,14 +556,14 @@ func atoiDefault(s string, def int) int {
 	return n
 }
 
-// suggestForgeBinding derives a candidate binding from the project's git
-// remotes. It prefers "origin", falls back to the first remote that parses as a
-// forge URL, and returns nil when none qualifies. The result is a suggestion
-// only — callers must not persist it without user confirmation.
-func suggestForgeBinding(projectPath string) map[string]any {
+// pickForgeRemote derives the highest-priority candidate binding from the
+// project's git remotes. It prefers "origin", falls back to the first remote
+// that parses as a forge URL, and reports false when none qualifies. Hosts that
+// must never receive credentials are skipped.
+func pickForgeRemote(projectPath string) (forge.Remote, string, bool) {
 	remotes, err := listGitRemotes(projectPath)
 	if err != nil {
-		return nil
+		return forge.Remote{}, "", false
 	}
 	// Prefer origin, then any parseable remote.
 	ordered := make([]gitRemote, 0, len(remotes))
@@ -550,16 +583,38 @@ func suggestForgeBinding(projectPath string) map[string]any {
 		if checkForgeHostAllowed(parsed.Host) != nil {
 			continue
 		}
-		return map[string]any{
-			"platform": string(parsed.Platform),
-			jsonHost:   parsed.Host,
-			"owner":    parsed.Owner,
-			"repo":     parsed.Repo,
-			"slug":     parsed.Slug(),
-			"remote":   rem.Name,
-		}
+		return parsed, rem.Name, true
 	}
-	return nil
+	return forge.Remote{}, "", false
+}
+
+// isOfficialForgeHost reports whether host is exactly a platform-operated host.
+//
+// It deliberately does NOT use Remote.IsOfficialHost(), which strips the port:
+// that would treat "github.com:8443" as official and let auto-binding persist it,
+// after which newForgeProvider would send the stored token to
+// https://github.com:8443/api/v3. An exact match keeps auto-binding on the hosts
+// whose endpoints are known.
+func isOfficialForgeHost(host string) bool {
+	return host == forge.GitHubHost || host == forge.GitLabHost
+}
+
+// suggestForgeBinding derives a candidate binding from the project's git
+// remotes. The result is a suggestion only — non-official hosts must not be
+// persisted without user confirmation (see ServeForgeBinding).
+func suggestForgeBinding(projectPath string) map[string]any {
+	parsed, name, ok := pickForgeRemote(projectPath)
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"platform": string(parsed.Platform),
+		jsonHost:   parsed.Host,
+		"owner":    parsed.Owner,
+		"repo":     parsed.Repo,
+		"slug":     parsed.Slug(),
+		"remote":   name,
+	}
 }
 
 // ServeForgeUnread returns the unread forge-event count. The count is

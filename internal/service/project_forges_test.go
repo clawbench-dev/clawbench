@@ -15,7 +15,9 @@ import (
 )
 
 // setupTestDBForProjectForges creates an in-memory SQLite with the
-// project_forges table (mirrors the production DDL in database.go).
+// project_forges table (mirrors the production DDL in database.go). The
+// project_meta table is created too, because the auto-bind path reads
+// forge_bind_opt_out from it.
 func setupTestDBForProjectForges(t *testing.T) {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -23,6 +25,14 @@ func setupTestDBForProjectForges(t *testing.T) {
 	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(service.ProjectForgesDDL)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS project_meta (
+		project_path TEXT PRIMARY KEY,
+		next_session_number INTEGER NOT NULL DEFAULT 0,
+		forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
 	require.NoError(t, err)
 
 	cleanup := service.SetDBForTest(db, db)
@@ -163,6 +173,109 @@ func TestProjectForge_FromRemote(t *testing.T) {
 	assert.Equal(t, "group/sub/team", pf.Owner)
 	assert.Equal(t, "widgets", pf.Repo)
 	assert.Equal(t, "auto", pf.Source)
+}
+
+func TestAutoBindProjectForge_CreatesWhenUnbound(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+	remote, err := forge.ParseRemoteURL("git@github.com:acme/widgets.git")
+	require.NoError(t, err)
+
+	created, err := service.AutoBindProjectForge(dir, remote)
+	require.NoError(t, err)
+	assert.True(t, created)
+
+	got, err := service.GetProjectForge(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "acme/widgets", got.Slug())
+	assert.Equal(t, "auto", got.Source, "auto-bind must be recorded as source=auto")
+}
+
+func TestAutoBindProjectForge_DoesNotOverwriteExistingBinding(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+	// The user picked a different repository manually.
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: dir, Platform: "github", Host: "github.com", Owner: "chosen", Repo: "repo", Source: "manual",
+	}))
+
+	remote, err := forge.ParseRemoteURL("git@github.com:acme/widgets.git")
+	require.NoError(t, err)
+	created, err := service.AutoBindProjectForge(dir, remote)
+	require.NoError(t, err)
+	assert.False(t, created, "an existing binding must not be replaced by auto-bind")
+
+	got, err := service.GetProjectForge(dir)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "chosen/repo", got.Slug(), "the user's manual choice must win")
+}
+
+func TestAutoBindProjectForge_RespectsOptOut(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+	require.NoError(t, service.SetForgeBindOptOut(dir, true))
+
+	remote, err := forge.ParseRemoteURL("git@github.com:acme/widgets.git")
+	require.NoError(t, err)
+	created, err := service.AutoBindProjectForge(dir, remote)
+	require.NoError(t, err)
+	assert.False(t, created, "an opted-out project must stay unbound")
+
+	got, err := service.GetProjectForge(dir)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+}
+
+func TestAutoBindProjectForge_ClearingOptOutReenables(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+	remote, err := forge.ParseRemoteURL("git@github.com:acme/widgets.git")
+	require.NoError(t, err)
+
+	require.NoError(t, service.SetForgeBindOptOut(dir, true))
+	_, err = service.AutoBindProjectForge(dir, remote)
+	require.NoError(t, err)
+
+	// An explicit bind clears the opt-out, so auto-bind works again afterwards.
+	require.NoError(t, service.SetForgeBindOptOut(dir, false))
+	created, err := service.AutoBindProjectForge(dir, remote)
+	require.NoError(t, err)
+	assert.True(t, created, "clearing the opt-out must re-enable auto-bind")
+}
+
+func TestForgeBindOptOut_RoundTrip(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	dir := t.TempDir()
+
+	// A project with no row at all is not opted out.
+	opted, err := service.IsForgeBindOptedOut(dir)
+	require.NoError(t, err)
+	assert.False(t, opted, "a missing project_meta row means not opted out")
+
+	require.NoError(t, service.SetForgeBindOptOut(dir, true))
+	opted, err = service.IsForgeBindOptedOut(dir)
+	require.NoError(t, err)
+	assert.True(t, opted)
+
+	// Setting it twice must not error (upsert).
+	require.NoError(t, service.SetForgeBindOptOut(dir, true))
+	opted, err = service.IsForgeBindOptedOut(dir)
+	require.NoError(t, err)
+	assert.True(t, opted)
+
+	require.NoError(t, service.SetForgeBindOptOut(dir, false))
+	opted, err = service.IsForgeBindOptedOut(dir)
+	require.NoError(t, err)
+	assert.False(t, opted)
+}
+
+func TestAutoBindProjectForge_RejectsIncompleteRemote(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	created, err := service.AutoBindProjectForge(t.TempDir(), forge.Remote{Platform: "github", Host: "github.com"})
+	assert.Error(t, err)
+	assert.False(t, created)
 }
 
 func TestUniqueForgeRepos_DeduplicatesAcrossProjects(t *testing.T) {

@@ -82,10 +82,9 @@ export default {
       noProjectHeader: 'Which project?',
       noProjectBody: 'Pick a project to see the issues and PRs of its repository.',
       chooseProject: 'Choose a project',
-      noBindingHeader: 'Which repository?',
-      noBindingBody: 'This project is not bound to a GitHub / GitLab repository yet.',
+      noBindingHeader: 'No repository bound',
+      noBindingBody: 'No GitHub / GitLab remote could be bound automatically. Pick one manually, or change the repository from the header once bound.',
       bindRepo: 'Bind a repository',
-      useSuggestion: 'Use detected repository: {slug}',
     },
     bind: {
       title: 'Bind repository',

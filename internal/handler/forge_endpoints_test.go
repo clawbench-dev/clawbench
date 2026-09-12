@@ -39,7 +39,8 @@ func TestServeForgeBinding_CRUD(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
 
-	// Initially unbound.
+	// Initially unbound. This temp dir has no git remote, so auto-bind finds
+	// nothing to bind and the null binding stands.
 	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
 	withProjectCookie(req, env.ProjectDir)
 	withAuthCookie(req, model.SessionToken)
@@ -83,6 +84,148 @@ func TestServeForgeBinding_CRUD(t *testing.T) {
 	pf, err := service.GetProjectForge(env.ProjectDir)
 	require.NoError(t, err)
 	assert.Nil(t, pf)
+}
+
+// getBinding performs an authenticated GET /api/forge/binding for a project and
+// returns the decoded body.
+func getBinding(t *testing.T, projectDir string) map[string]any {
+	t.Helper()
+	req := newRequest(t, http.MethodGet, "/api/forge/binding", nil)
+	withProjectCookie(req, projectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp
+}
+
+// TestServeForgeBinding_AutoBindsOfficialRemote covers the happy path: an
+// unbound project whose origin points at github.com is bound on GET without any
+// dialog, so the panel can render the list immediately.
+func TestServeForgeBinding_AutoBindsOfficialRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+
+	resp := getBinding(t, env.ProjectDir)
+	binding, ok := resp["binding"].(map[string]any)
+	require.True(t, ok, "an official remote must be bound automatically, got %v", resp)
+	assert.Equal(t, "acme/widgets", binding["slug"])
+	assert.Equal(t, "auto", binding["source"], "auto-binding must be recorded as source=auto")
+
+	// It must be persisted, not just reported.
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	require.NotNil(t, pf)
+	assert.Equal(t, "acme/widgets", pf.Slug())
+}
+
+// TestServeForgeBinding_DoesNotAutoBindNonOfficialHost pins the security
+// boundary: a self-hosted host still needs the user's explicit confirmation, so
+// it comes back as a suggestion rather than being persisted.
+func TestServeForgeBinding_DoesNotAutoBindNonOfficialHost(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	// A self-hosted host must be resolvable to survive the SSRF guard and reach
+	// the official/non-official decision; stub the guard so the test does not
+	// depend on DNS (the same override forge_credentials_test.go uses).
+	orig := forgeHostGuard
+	forgeHostGuard = func(string) error { return nil }
+	t.Cleanup(func() { forgeHostGuard = orig })
+
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://gitlab.example.com/acme/widgets.git")
+
+	resp := getBinding(t, env.ProjectDir)
+	assert.Nil(t, resp["binding"], "a non-official host must not be auto-bound")
+	assert.NotNil(t, resp["suggested"], "it should still be offered as a suggestion")
+
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Nil(t, pf, "nothing may be persisted without confirmation")
+}
+
+// TestServeForgeBinding_DoesNotAutoBindOfficialHostWithPort is the port guard:
+// IsOfficialHost() strips the port, so "github.com:8443" would otherwise be
+// treated as official and the stored token later sent to
+// https://github.com:8443/api/v3.
+func TestServeForgeBinding_DoesNotAutoBindOfficialHostWithPort(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://github.com:8443/acme/widgets.git")
+
+	resp := getBinding(t, env.ProjectDir)
+	assert.Nil(t, resp["binding"], "an official host on a non-default port must not be auto-bound")
+
+	pf, err := service.GetProjectForge(env.ProjectDir)
+	require.NoError(t, err)
+	assert.Nil(t, pf)
+}
+
+// TestServeForgeBinding_UnbindIsNotUndoneByAutoBind is the regression guard for
+// the unbind loop: without the opt-out marker the next GET would bind the
+// repository straight back.
+func TestServeForgeBinding_UnbindIsNotUndoneByAutoBind(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	runGitInDir(t, env.ProjectDir, "init")
+	runGitInDir(t, env.ProjectDir, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+
+	// First GET auto-binds.
+	require.NotNil(t, getBinding(t, env.ProjectDir)["binding"])
+
+	// Unbind.
+	req := newRequest(t, http.MethodDelete, "/api/forge/binding", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+
+	// It must stay unbound across subsequent reads.
+	for i := range 2 {
+		resp := getBinding(t, env.ProjectDir)
+		assert.Nil(t, resp["binding"], "unbind must survive the auto-bind on GET (read %d)", i)
+	}
+}
+
+// TestServeForgeBinding_ExplicitBindClearsOptOut ensures a manual bind restores
+// normal auto-bind behavior for that project.
+func TestServeForgeBinding_ExplicitBindClearsOptOut(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// Opt out first.
+	require.NoError(t, service.SetForgeBindOptOut(env.ProjectDir, true))
+	opted, err := service.IsForgeBindOptedOut(env.ProjectDir)
+	require.NoError(t, err)
+	require.True(t, opted)
+
+	// An explicit POST bind.
+	req := newRequest(t, http.MethodPost, "/api/forge/binding",
+		map[string]any{"url": "https://github.com/acme/widgets.git"})
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeBinding, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	opted, err = service.IsForgeBindOptedOut(env.ProjectDir)
+	require.NoError(t, err)
+	assert.False(t, opted, "an explicit bind must clear the opt-out")
 }
 
 func TestServeForgeBinding_RejectsUnsafeHost(t *testing.T) {
@@ -285,8 +428,10 @@ var (
 )
 
 // TestSuggestForgeBinding_FromGitRemote verifies auto-detection: a project with
-// an origin remote pointing at a forge yields a suggestion, and the suggestion
-// is not persisted (the user must confirm).
+// an origin remote pointing at a forge yields a suggestion. (For official hosts
+// ServeForgeBinding persists it automatically — see
+// TestServeForgeBinding_AutoBindsOfficialRemote; suggestForgeBinding itself
+// remains a pure read.)
 func TestSuggestForgeBinding_FromGitRemote(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

@@ -82,10 +82,9 @@ export default {
       noProjectHeader: '要查看哪个项目？',
       noProjectBody: '选择一个项目后即可查看它对应的仓库议题和合并请求。',
       chooseProject: '选择项目',
-      noBindingHeader: '要绑定哪个仓库？',
-      noBindingBody: '该项目还未绑定 GitHub / GitLab 仓库。',
+      noBindingHeader: '未绑定仓库',
+      noBindingBody: '未能自动绑定 GitHub / GitLab 仓库。可在此手动指定；绑定后也可从顶栏更换仓库。',
       bindRepo: '绑定仓库',
-      useSuggestion: '使用检测到的仓库：{slug}',
     },
     bind: {
       title: '绑定仓库',

@@ -18,6 +18,11 @@
       </div>
     </div>
 
+    <!-- Fallback only. The backend auto-binds the highest-priority git remote
+         when it points at github.com / gitlab.com, so this card appears only
+         when nothing could be bound automatically: no usable remote, a
+         self-hosted host that needs explicit confirmation, or the user having
+         unbound the repository earlier. -->
     <div v-else-if="!items.isBound.value && !items.loading.value" class="forge-state">
       <div class="forge-card">
         <div class="forge-card-icon">
@@ -28,13 +33,6 @@
         <div class="forge-card-options">
           <button class="fbtn fbtn-primary" @click="openBindDialog">
             {{ t('forge.empty.bindRepo') }}
-          </button>
-          <button
-            v-if="items.suggested.value"
-            class="fbtn"
-            @click="acceptSuggestion"
-          >
-            {{ t('forge.empty.useSuggestion', { slug: items.suggested.value.slug }) }}
           </button>
         </div>
       </div>
@@ -357,12 +355,6 @@ async function bindFromRemote(r: ForgeRemote) {
 
 async function bindFromUrl() {
   await submitBinding({ url: manualUrl.value })
-}
-
-async function acceptSuggestion() {
-  const s = items.suggested.value
-  if (!s) return
-  await submitBinding({ platform: s.platform, host: s.host, owner: s.owner, repo: s.repo })
 }
 
 async function submitBinding(input: { url?: string; platform?: string; host?: string; owner?: string; repo?: string }) {

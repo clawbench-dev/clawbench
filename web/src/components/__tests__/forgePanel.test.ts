@@ -88,7 +88,6 @@ function makeI18n() {
             noBindingHeader: 'Which repository?',
             noBindingBody: 'Not bound yet.',
             bindRepo: 'Bind a repository',
-            useSuggestion: 'Use detected repository: {slug}',
           },
           bind: {
             title: 'Bind repository',
@@ -217,6 +216,27 @@ describe('ForgePanelContent', () => {
     // the click is routed to the right setter rather than the resulting state.
     await tabs[1].trigger('click')
     expect(mockSetType).toHaveBeenCalledWith('pr')
+  })
+
+  it('fallback card offers only manual binding (no suggestion button)', async () => {
+    // The backend auto-binds official hosts, so the panel no longer renders a
+    // "use detected repository" shortcut — the card is a fallback for cases
+    // where nothing could be bound automatically.
+    state.binding.value = null
+    state.isBound.value = false
+    state.loading.value = false
+    state.items.value = []
+    state.suggested.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    const buttons = wrapper.findAll('.forge-card-options button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].text()).toContain('Bind a repository')
+    // Even with a suggestion present, no shortcut button is rendered.
+    expect(wrapper.text()).not.toContain('acme/widgets')
   })
 
   it('registers a back handler that closes the open detail view', async () => {

@@ -267,6 +267,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: add project_meta.forge_bind_opt_out before createTables runs.
+	// The CREATE TABLE below is a no-op on an existing database, so the column
+	// would never appear there. On a fresh database the table does not exist yet
+	// and the CREATE TABLE (which now includes the column) covers it — hence the
+	// existence guard rather than an unconditional ALTER.
+	var projectMetaExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&projectMetaExists)
+	if projectMetaExists > 0 {
+		var hasCol int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_meta') WHERE name='forge_bind_opt_out'").Scan(&hasCol)
+		if hasCol == 0 {
+			if _, err := WriteExec("ALTER TABLE project_meta ADD COLUMN forge_bind_opt_out INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add project_meta.forge_bind_opt_out column: %w", err)
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
@@ -309,6 +326,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE TABLE IF NOT EXISTS project_meta (
 			project_path TEXT PRIMARY KEY,
 			next_session_number INTEGER NOT NULL DEFAULT 0,
+			-- Set when the user explicitly unbinds the forge repository, so the
+			-- auto-bind on GET does not immediately bind it straight back.
+			forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
