@@ -1304,6 +1304,83 @@ func TestAIChat_URLAttachment_PreservesLabel(t *testing.T) {
 		"the URL label must be preserved so the chip is not blank after a reload")
 }
 
+// TestAIChat_URLAttachment_RejectsUnsafeScheme verifies a non-http(s) URL is
+// rejected at the boundary.
+//
+// The URL is persisted and re-rendered as an anchor href on every later load,
+// so a javascript:/data: value stored once would become an executable link
+// forever. Client-side guards are not sufficient: any renderer that forgets
+// one re-opens the hole. Rejecting here keeps every renderer safe.
+func TestAIChat_URLAttachment_RejectsUnsafeScheme(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Note: an entry with kind=url but an EMPTY url is not a URL entry at all
+	// (model.FileEntry.IsURL requires a non-empty address), so it falls through
+	// to normal path validation instead — covered by the not-found path, not
+	// here.
+	unsafe := []string{
+		"javascript:alert(1)",
+		"JavaScript:alert(1)", // scheme match must be case-insensitive
+		"data:text/html,<script>alert(1)</script>",
+		"file:///etc/passwd",
+		"vbscript:msgbox(1)",
+		"not a url",
+		"//example.com/no-scheme", // protocol-relative: no scheme
+		"ftp://example.com/x",
+	}
+	for _, raw := range unsafe {
+		t.Run(raw, func(t *testing.T) {
+			sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-unsafe", "", "", "default", "chat")
+			assert.NoError(t, err)
+
+			body := map[string]any{
+				"message": "x",
+				"files": []model.FileEntry{{
+					Path: "label", Kind: "url", URL: raw,
+				}},
+			}
+			req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+			withProjectCookie(req, env.ProjectDir)
+
+			w := callHandler(AIChat, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code,
+				"a non-http(s) URL attachment must be rejected, got %s", w.Body.String())
+
+			// Nothing may have been persisted.
+			msgs, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+			assert.NoError(t, err)
+			assert.Empty(t, msgs, "a rejected request must not persist a message")
+		})
+	}
+}
+
+// TestAIChat_URLAttachment_AcceptsHTTPS confirms the happy path still works and
+// the address is stored as given.
+func TestAIChat_URLAttachment_AcceptsHTTPS(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-https", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "x",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#1", Kind: "url", URL: "https://github.com/acme/widgets/issues/1",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	assertOK(t, callHandler(AIChat, req))
+}
+
 // TestAIChat_URLAttachment_NotResolvedAsPath verifies a URL entry is never
 // treated as a filesystem path (which would 404 since it does not exist).
 func TestAIChat_URLAttachment_NotResolvedAsPath(t *testing.T) {

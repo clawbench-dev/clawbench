@@ -323,12 +323,15 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
 // ── Event trigger configuration ──
 // The event-type list mirrors the backend's validForgeEventTypes set.
 // Event keys are kind-scoped ("issue.opened" / "pr.opened") so the two are
-// independent triggers. merged and pipeline_done are PR-only: an issue has no
-// merge and no CI, so offering them under Issues would create a subscription
-// that can never fire.
+// independent triggers. merged is PR-only: an issue has no merge, so offering
+// it under Issues would create a subscription that can never fire.
+//
+// pipeline_done is deliberately absent: nothing derives a pipeline event yet,
+// so subscribing would never fire. It stays in TRANSITION_LABELS so a task that
+// already stores one still renders a readable label in the list.
 const TRANSITIONS = {
   issue: ['opened', 'closed', 'reopened', 'commented'],
-  pr: ['opened', 'closed', 'merged', 'reopened', 'commented', 'pipeline_done'],
+  pr: ['opened', 'closed', 'merged', 'reopened', 'commented'],
 }
 const TRANSITION_LABELS = {
   opened: 'task.form.eventOpened',
@@ -346,10 +349,48 @@ const eventTypeGroups = computed(() => [
   options: TRANSITIONS[g.kind].map(tr => ({ value: `${g.kind}.${tr}`, label: t(TRANSITION_LABELS[tr]) })),
 })))
 
+// Every kind-scoped value the checkboxes can represent.
+const OFFERED_EVENT_VALUES = computed(() => new Set(
+  Object.entries(TRANSITIONS).flatMap(([kind, trs]) => trs.map(tr => `${kind}.${tr}`)),
+))
+
+// Expand a stored subscription into checkbox values.
+//
+// A bare key is the pre-split spelling. The backend treats it as "either kind",
+// so it maps to EVERY kind that supports that transition (bare `opened` means
+// both issue.opened and pr.opened; bare `merged` means pr.merged only). Without
+// this, a legacy task would show zero events selected — and saving would then
+// silently rewrite its subscription to whatever the user happened to tick.
+function expandStoredEventTypes(raw) {
+  const keys = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : []
+  const out = []
+  for (const key of keys) {
+    if (key.includes('.')) { out.push(key); continue }
+    const kinds = Object.entries(TRANSITIONS)
+      .filter(([, trs]) => trs.includes(key))
+      .map(([kind]) => kind)
+    // Unrecognized key: keep it verbatim rather than dropping it.
+    if (kinds.length === 0) out.push(key)
+    else for (const kind of kinds) out.push(`${kind}.${key}`)
+  }
+  return out
+}
+
+// Keys with no checkbox (a retired or unknown subscription). They must survive
+// an edit untouched, or saving would drop something the user cannot even see.
+function unrepresentableEventKeys() {
+  return expandStoredEventTypes(form.value.eventTypes)
+    .filter(k => !OFFERED_EVENT_VALUES.value.has(k))
+}
+
 // selectedEventTypes is a view over form.eventTypes (comma-separated).
 const selectedEventTypes = computed({
-  get: () => (form.value.eventTypes ? form.value.eventTypes.split(',').map(s => s.trim()).filter(Boolean) : []),
-  set: (vals) => { form.value.eventTypes = vals.join(',') },
+  get: () => expandStoredEventTypes(form.value.eventTypes)
+    .filter(k => OFFERED_EVENT_VALUES.value.has(k)),
+  set: (vals) => {
+    // Re-append anything the UI cannot represent so it is never lost.
+    form.value.eventTypes = [...vals, ...unrepresentableEventKeys()].join(',')
+  },
 })
 
 // The project has at most one binding (1:1), so the repo scope is a two-way

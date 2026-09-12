@@ -22,6 +22,35 @@ describe('AttachmentTags', () => {
     expect(wrapper.find('.attachment-filename').text()).toBe('main.go')
   })
 
+  // ── URL attachment chips ──
+
+  it('renders a URL attachment as a link', () => {
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: 'acme/widgets#1', kind: 'url', url: 'https://github.com/acme/widgets/issues/1' }],
+      },
+    })
+    const link = wrapper.find('a.attachment-url')
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('https://github.com/acme/widgets/issues/1')
+    expect(link.attributes('target')).toBe('_blank')
+    expect(wrapper.text()).toContain('acme/widgets#1')
+  })
+
+  it('renders a non-http(s) URL inert instead of a live link', () => {
+    // This renderer draws the same persisted FileEntry shape as the message
+    // bubble, so it needs the same guard: history navigation can restore a
+    // stored entry straight into the composer's attachments.
+    const wrapper = mount(AttachmentTags, {
+      props: {
+        files: [{ path: 'evil', kind: 'url', url: 'javascript:alert(1)' }],
+      },
+    })
+    const link = wrapper.find('a.attachment-url')
+    expect(link.attributes('href')).toBeUndefined()
+    expect(link.classes()).toContain('attachment-url-inert')
+  })
+
   it('renders the line range suffix on a ranged reference card', () => {
     const wrapper = mount(AttachmentTags, {
       props: {

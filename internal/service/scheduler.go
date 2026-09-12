@@ -553,13 +553,22 @@ const (
 	forgeEventKindPR    = "pr"
 )
 
-// forgeEventTransitions lists the subscribable transitions per kind. merged and
-// pipeline_done are PR-only (an issue has no merge and no CI), so offering
-// issue.merged would create a trigger that can never fire.
+// forgeEventTransitions lists the subscribable transitions per kind. merged is
+// PR-only: an issue has no merge, so offering issue.merged would create a
+// trigger that can never fire.
 var forgeEventTransitions = map[string][]string{
 	forgeEventKindIssue: {"opened", "closed", "reopened", "commented"},
-	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented", "pipeline_done"},
+	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented"},
 }
+
+// forgeRetiredEventTypes are accepted but no longer offered.
+//
+// Nothing derives these events yet (no code path emits a pipeline change), so
+// subscribing would create a trigger that can never fire. They stay VALID so a
+// task that already stores one is not rejected on its next edit — the editor
+// cannot render a checkbox for them, and rejecting on save would strand the
+// user with a task they cannot fix from the UI.
+var forgeRetiredEventTypes = []string{"pipeline_done"}
 
 // forgeEventKey builds the canonical kind-scoped subscription key.
 func forgeEventKey(kind, transition string) string { return kind + "." + transition }
@@ -576,8 +585,24 @@ var validForgeEventTypes = func() map[string]bool {
 			out[tr] = true
 		}
 	}
+	for _, tr := range forgeRetiredEventTypes {
+		out[tr] = true
+		out[forgeEventKey(forgeEventKindPR, tr)] = true
+	}
 	return out
 }()
+
+// OfferedForgeEventTypesForTest exposes the offered vocabulary so a test can
+// assert that a retired type is no longer presented to users.
+func OfferedForgeEventTypesForTest() []string {
+	out := make([]string, 0)
+	for kind, transitions := range forgeEventTransitions {
+		for _, tr := range transitions {
+			out = append(out, forgeEventKey(kind, tr))
+		}
+	}
+	return out
+}
 
 // ValidateEventSubscription checks a comma-separated event subscription. It is
 // exported so the HTTP layer can reject a bad configuration as a 400 before

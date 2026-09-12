@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -340,10 +341,21 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			// Path carries the human-readable label (e.g. "owner/repo#123") and
 			// must be preserved: it is the chip text shown after a reload. Only
 			// the filesystem resolution is skipped for URL entries.
+			//
+			// The scheme is restricted to http(s) here, at the boundary, because
+			// this value is persisted and later re-rendered as an anchor href.
+			// A javascript:/data: entry stored once would otherwise become an
+			// executable link on every subsequent load, and client-side guards
+			// are not enough (a different renderer may forget to apply one).
+			url := strings.TrimSpace(fEntry.URL)
+			if !isSafeExternalURL(url) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidURLAttachment")
+				return
+			}
 			validatedFileEntries = append(validatedFileEntries, model.FileEntry{
 				Path: fEntry.Path,
 				Kind: "url",
-				URL:  fEntry.URL,
+				URL:  url,
 			})
 			continue
 		}
@@ -1218,4 +1230,21 @@ func MarkChatRead(w http.ResponseWriter, r *http.Request) {
 	service.UpdateLastRead(sessionID)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// isSafeExternalURL reports whether an external URL attachment may be persisted
+// and later rendered as a clickable link.
+//
+// Only http(s) is allowed. The value is stored and re-rendered as an anchor
+// href on every subsequent load, so a javascript:/data: entry would become an
+// executable link long after the request that created it. Rejecting it at the
+// boundary keeps every renderer safe without each one having to remember a
+// guard.
+func isSafeExternalURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return (scheme == "http" || scheme == "https") && u.Host != ""
 }

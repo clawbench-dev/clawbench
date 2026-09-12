@@ -71,6 +71,25 @@ func TestForgeTaskTrigger_FiresMatchingTask(t *testing.T) {
 	assert.Equal(t, []int64{1}, fired, "only the subscribed task fires")
 }
 
+// TestForgeRetiredEventTypesNotOffered pins the pipeline_done retirement.
+//
+// Nothing derives a pipeline event, so subscribing would create a trigger that
+// can never fire. It must NOT be offered (absent from the offered set) but MUST
+// stay accepted, so a task already storing it is not rejected on its next edit
+// — the editor has no checkbox to remove it, so rejecting would strand it.
+func TestForgeRetiredEventTypesNotOffered(t *testing.T) {
+	offered := service.OfferedForgeEventTypesForTest()
+	assert.NotContains(t, offered, "pr.pipeline_done", "a retired type must not be offered")
+	assert.NotContains(t, offered, "issue.pipeline_done")
+
+	// Still valid, so an existing task survives an edit.
+	assert.NoError(t, service.ValidateEventSubscription("pr.pipeline_done"))
+	assert.NoError(t, service.ValidateEventSubscription("pipeline_done"))
+
+	// An unknown type is still rejected.
+	assert.Error(t, service.ValidateEventSubscription("pr.bogus"))
+}
+
 // TestForgeTaskTrigger_SplitsIssueAndPR verifies that "a new issue" and "a new
 // PR" are independent triggers: subscribing to issue.opened must NOT fire for a
 // PR, and vice versa. Before the split both collapsed onto the same "opened".
@@ -81,10 +100,10 @@ func TestForgeTaskTrigger_SplitsIssueAndPR(t *testing.T) {
 	prItem.Type = forge.ItemTypeChangeRequest
 
 	cases := []struct {
-		name        string
-		subscribed  string
-		item        forge.Item
-		wantFired   bool
+		name       string
+		subscribed string
+		item       forge.Item
+		wantFired  bool
 	}{
 		{"issue.opened fires for an issue", "issue.opened", triggerItem(1), true},
 		{"issue.opened ignores a PR", "issue.opened", prItem, false},
@@ -203,16 +222,21 @@ func TestForgeTaskTrigger_DebounceIsPerKind(t *testing.T) {
 // TestValidateEventSubscription_KindScopedKeys covers the accepted vocabulary.
 func TestValidateEventSubscription_KindScopedKeys(t *testing.T) {
 	valid := []string{
-		"issue.opened", "pr.opened", "pr.merged", "issue.commented", "pr.pipeline_done",
+		"issue.opened", "pr.opened", "pr.merged", "issue.commented",
 		"issue.opened,pr.merged",
 		"opened", // bare legacy key still accepted
+		// Retired: nothing derives a pipeline event, so it is no longer offered,
+		// but a task that already stores one must not be rejected on its next
+		// edit (the editor cannot render a checkbox to remove it).
+		"pr.pipeline_done",
+		"pipeline_done",
 	}
 	for _, v := range valid {
 		assert.NoError(t, service.ValidateEventSubscription(v), "expected %q to be valid", v)
 	}
 
 	invalid := []string{
-		"issue.merged",   // an issue can never be merged
+		"issue.merged",        // an issue can never be merged
 		"issue.pipeline_done", // issues have no CI
 		"bogus.opened",
 		"pr.bogus",

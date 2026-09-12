@@ -22,7 +22,8 @@
     <a v-for="fileEntry in urlEntries"
       :key="'url-' + fileEntry.url"
       class="chat-file-attachment attachment-ref attachment-url"
-      :href="fileEntry.url"
+      :class="{ 'attachment-url-inert': !isSafeExternalUrl(fileEntry.url) }"
+      :href="isSafeExternalUrl(fileEntry.url) ? fileEntry.url : undefined"
       target="_blank"
       rel="noopener noreferrer"
       :title="fileEntry.url">
@@ -59,7 +60,7 @@ import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile, isUrlEntry, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { isImageFile, isUrlEntry, isSafeExternalUrl, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { Link as LinkIcon } from 'lucide-vue-next'
 import { baseName } from '@/utils/path'
 import type { PendingFile } from '@/composables/useFileUpload'
@@ -259,5 +260,12 @@ watch(() => props.files, (files) => {
   font-weight: 600;
   color: #ffffff;
   line-height: 1;
+}
+
+/* A URL whose scheme is not http(s) renders inert: the backend rejects these
+   now, but a pre-existing row could still carry one. */
+.attachment-url-inert {
+  color: var(--text-muted, #8b8b8b);
+  cursor: default;
 }
 </style>

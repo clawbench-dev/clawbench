@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
@@ -7,13 +7,17 @@ import TaskFormPage from '../TaskFormPage.vue'
 // The real composable returns `form` as a ref. The template auto-unwraps it
 // (`form.triggerMode`) while the script reads `form.value.agentId`, so the mock
 // must be a genuine ref to satisfy both.
+// Exposed so individual tests can seed a stored subscription (e.g. a legacy
+// task) before mounting.
+const formRef = ref({
+  name: 't', prompt: 'p', agentId: '', cronExpr: '',
+  triggerMode: 'event', eventTypes: '', eventRepo: '',
+  repeatMode: 'unlimited', maxRuns: 0,
+})
+
 vi.mock('@/composables/useTaskForm', () => ({
   useTaskForm: () => ({
-    form: ref({
-      name: 't', prompt: 'p', agentId: '', cronExpr: '',
-      triggerMode: 'event', eventTypes: '', eventRepo: '',
-      repeatMode: 'unlimited', maxRuns: 0,
-    }),
+    form: formRef,
     errors: ref({}),
     formError: ref(''),
     saving: ref(false),
@@ -60,6 +64,8 @@ function mountForm() {
 }
 
 describe('TaskFormPage event type grouping', () => {
+  beforeEach(() => { formRef.value.eventTypes = '' })
+
   it('groups events under Issues and Pull requests', () => {
     const wrapper = mountForm()
     const groups = wrapper.findAll('.event-type-group')
@@ -79,14 +85,22 @@ describe('TaskFormPage event type grouping', () => {
     expect(values).not.toContain('opened')
   })
 
-  it('offers merge and pipeline only for pull requests', () => {
+  it('offers merge only for pull requests', () => {
     const wrapper = mountForm()
     const values = wrapper.findAll('.event-type-group input[type=checkbox]')
       .map(i => (i.element as HTMLInputElement).value)
-    // An issue has no merge and no CI, so these would never fire.
+    // An issue has no merge, so issue.merged would never fire.
     expect(values).toContain('pr.merged')
-    expect(values).toContain('pr.pipeline_done')
     expect(values).not.toContain('issue.merged')
+  })
+
+  it('does not offer pipeline_done, which nothing can trigger yet', () => {
+    // No code path derives a pipeline event, so offering it would create a
+    // subscription that can never fire.
+    const wrapper = mountForm()
+    const values = wrapper.findAll('.event-type-group input[type=checkbox]')
+      .map(i => (i.element as HTMLInputElement).value)
+    expect(values).not.toContain('pr.pipeline_done')
     expect(values).not.toContain('issue.pipeline_done')
   })
 
@@ -96,6 +110,56 @@ describe('TaskFormPage event type grouping', () => {
     const issueCount = groups[0].findAll('input[type=checkbox]').length
     const prCount = groups[1].findAll('input[type=checkbox]').length
     expect(issueCount).toBe(4)
-    expect(prCount).toBe(6)
+    expect(prCount).toBe(5)
+  })
+
+  // ── Legacy (pre-split) subscriptions ──
+
+  function checkedValues(wrapper: ReturnType<typeof mountForm>) {
+    return wrapper.findAll('.event-type-group input[type=checkbox]')
+      .filter(i => (i.element as HTMLInputElement).checked)
+      .map(i => (i.element as HTMLInputElement).value)
+  }
+
+  it('shows a legacy bare key as checked under every kind it matches', () => {
+    // Regression: a task stored as "opened" showed ZERO boxes ticked, because
+    // the model held bare keys while the checkboxes use scoped values.
+    formRef.value.eventTypes = 'opened'
+    const wrapper = mountForm()
+    // The backend treats bare "opened" as "either kind", so both must be shown.
+    expect(checkedValues(wrapper)).toEqual(['issue.opened', 'pr.opened'])
+  })
+
+  it('maps a bare key that only one kind supports to just that kind', () => {
+    formRef.value.eventTypes = 'merged'
+    const wrapper = mountForm()
+    expect(checkedValues(wrapper)).toEqual(['pr.merged'])
+  })
+
+  it('does not silently drop a legacy subscription when another box is toggled', async () => {
+    // Regression: the old setter wrote vals.join(','), so ticking one box
+    // rewrote "opened,closed" to just the new value and lost the rest.
+    formRef.value.eventTypes = 'opened,closed'
+    const wrapper = mountForm()
+    const boxes = wrapper.findAll('.event-type-group input[type=checkbox]')
+    // Tick issue.commented on top of the expanded legacy selection. Use
+    // setValue so Vue's v-model actually observes the change.
+    const commented = boxes.find(i => (i.element as HTMLInputElement).value === 'issue.commented')!
+    await commented.setValue(true)
+    const stored = formRef.value.eventTypes.split(',').map((x: string) => x.trim()).sort()
+    expect(stored).toContain('issue.commented')
+    // Every originally-subscribed transition survives.
+    expect(stored).toContain('issue.closed')
+    expect(stored).toContain('pr.closed')
+  })
+
+  it('preserves an unrecognized stored key it cannot render', async () => {
+    // A retired/unknown key has no checkbox; an edit must not erase it.
+    formRef.value.eventTypes = 'opened,some_future_event'
+    const wrapper = mountForm()
+    const boxes = wrapper.findAll('.event-type-group input[type=checkbox]')
+    const commented = boxes.find(i => (i.element as HTMLInputElement).value === 'issue.commented')!
+    await commented.setValue(true)
+    expect(formRef.value.eventTypes).toContain('some_future_event')
   })
 })
