@@ -504,6 +504,39 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent concurrent sessions for the same session ID
 	if !service.TrySetSessionRunning(sessionID) {
+		// Session already running. Before queueing, give the backend a chance to
+		// put this message into the turn that is running right now (the policy is
+		// backend-owned; see service/midturn.go). A decline falls through to the
+		// queue path below.
+		if injected, msgID := service.TryInjectMidTurn(service.EnqueueStartConfig{
+			SessionID:   sessionID,
+			ProjectPath: projectPath,
+			BackendName: backendName,
+			AgentID:     effectiveAgentID,
+			Message:     req.Message,
+			Files:       allFiles,
+			QueueID:     req.QueueID,
+		}, req.ClientID); injected {
+			// The message joined the running turn: persist already happened, so
+			// emit it as a normal (not queued) user message for cross-device sync.
+			ws.EmitToSession(sessionID, ai.StreamEvent{
+				Type: "user_message",
+				UserMessage: &ai.UserMessageData{
+					MessageID:      msgID,
+					Content:        req.Message,
+					Files:          allFiles,
+					SenderClientID: req.ClientID,
+					QueueID:        req.QueueID,
+				},
+			})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"running":  true,
+				"steered":  true,
+				"injected": true,
+			})
+			return
+		}
+
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
 		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))

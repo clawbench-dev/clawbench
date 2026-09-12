@@ -5264,7 +5264,7 @@ func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Enqueue Start")
 
 	// Verify running state becomes true (goroutine started).
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5306,7 +5306,7 @@ func TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued(t *testing
 
 	// EnqueueAndMaybeStart wins the idle-session claim and runs "current"
 	// directly via cfg.Message. It must consume only its own row.
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5360,7 +5360,7 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+			started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 				SessionID:   sid,
 				ProjectPath: "/project",
 				BackendName: backendID,
@@ -5433,7 +5433,7 @@ func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
 	// Mark session as already running.
 	service.SetSessionRunning(sid, true)
 
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",

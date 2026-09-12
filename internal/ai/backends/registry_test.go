@@ -1,6 +1,7 @@
 package backends_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -225,4 +226,32 @@ func TestRegistry_LookupACPToolCallIDPrefixes(t *testing.T) {
 	if prefixes != nil {
 		t.Errorf("expected nil for nonexistent backend, got %v", prefixes)
 	}
+}
+
+// TestLookupMidTurnInjector verifies the mid-turn policy lookup used by core
+// flow: registered backends resolve, everything else is nil (queue as usual).
+func TestLookupMidTurnInjector(t *testing.T) {
+	backends.ResetForTest()
+	t.Cleanup(backends.ResetForTest)
+
+	stub := &stubMidTurnInjector{}
+	backends.Register(&backends.BackendPlugin{ID: "with-inject", MidTurn: stub})
+	backends.Register(&backends.BackendPlugin{ID: "without-inject"})
+
+	if got := backends.LookupMidTurnInjector("with-inject"); got != stub {
+		t.Errorf("expected the registered injector, got %v", got)
+	}
+	if got := backends.LookupMidTurnInjector("without-inject"); got != nil {
+		t.Errorf("expected nil for a backend without a policy, got %v", got)
+	}
+	if got := backends.LookupMidTurnInjector("nonexistent"); got != nil {
+		t.Errorf("expected nil for an unknown backend, got %v", got)
+	}
+}
+
+// stubMidTurnInjector is a no-op policy used to exercise the registry.
+type stubMidTurnInjector struct{}
+
+func (s *stubMidTurnInjector) Inject(context.Context, ai.RawRPCTransport, ai.MidTurnInjectRequest) (ai.MidTurnInjectResult, error) {
+	return ai.MidTurnInjectResult{}, nil
 }

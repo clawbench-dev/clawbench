@@ -33,6 +33,36 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	}
 
 	switch {
+	case update.UserMessageChunk != nil:
+		// Mid-turn injection boundary (CodeBuddy `session/steer`).
+		//
+		// When a user message is injected into the RUNNING turn, the agent echoes
+		// it back as a `user_message_chunk` at the exact point it entered the
+		// conversation — verified on the wire: the frame's
+		// _meta["codebuddy.ai/messageId"] equals the clientUserMessageId we sent,
+		// and it is interleaved between the reply's pre- and post-injection
+		// content chunks (docs/dev/codebuddy_acp_extensions.md §9.6).
+		//
+		// We emit a boundary event ONLY for ids this host actually issued
+		// (claimPendingSteerID consumes it, so a replayed duplicate cannot fire
+		// twice). user_message_chunk is also used for LoadSession replay and
+		// multi-page history broadcasts; without this gate those would be
+		// mistaken for live injections and wrongly split the assistant reply.
+		if conn != nil {
+			if id := metaString(update.UserMessageChunk.Meta[metaKeyCodeBuddyMessageID]); conn.claimPendingSteerID(id) {
+				slog.Info("acp: steer boundary observed",
+					slog.String("client_user_message_id", id),
+					slog.String("clawbench_sid", conn.clawbenchSID))
+				forwardACPEvent(ch, StreamEvent{
+					Type:          "steer_boundary",
+					SteerBoundary: &SteerBoundaryData{ClientUserMessageID: id},
+				})
+			}
+		}
+		// Not routed further: the injected user text is persisted and broadcast
+		// by the handler that accepted the message, not by this echo. Forwarding
+		// it as content would duplicate the user bubble.
+
 	case update.AgentMessageChunk != nil:
 		// When the agent transitions from thinking to content output, emit
 		// thinking_done so the frontend can stop the thinking spinner immediately.

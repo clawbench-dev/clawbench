@@ -3,6 +3,7 @@ package ai
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -799,6 +800,15 @@ type ACPConn struct {
 	// to unblock pending reads and prevent cleanup hangs.
 	stdoutFilter *acpStdoutFilter
 
+	// stdin is the write lock shared with the ACP SDK (the same instance is
+	// passed to acp.NewClientSideConnection). Retained so CallRaw can write
+	// without interleaving with SDK requests. Nil when not alive.
+	stdin *lockedWriter
+
+	// rawRPC carries JSON-RPC calls whose method names the SDK refuses to send
+	// (non-"_"-prefixed, e.g. CodeBuddy's session/steer). Nil when not alive.
+	rawRPC *acpRawRPC
+
 	// acpSID is the ACP session ID. Populated from DB (ResumeSession) or
 	// from NewSession response. Empty means no session yet.
 	acpSID string
@@ -943,6 +953,19 @@ type ACPConn struct {
 	// injected into each prompt so CodeBuddy can auto-load skills. Populated
 	// during spawn for CodeBuddy backend. Empty if no skills found.
 	skillsPrompt string
+
+	// pendingSteerIDs holds the clientUserMessageIds of mid-turn injections this
+	// host issued that have not yet been observed on the wire. CodeBuddy echoes
+	// the id back in the _meta of a `user_message_chunk` session update at the
+	// exact point the injected message entered the turn (see
+	// docs/dev/codebuddy_acp_extensions.md §9.6). Gating on OUR OWN id — rather
+	// than emitting a boundary for every user_message_chunk — is what keeps
+	// LoadSession replay and multi-page history broadcasts (which also use
+	// user_message_chunk) from being mistaken for live injections.
+	//
+	// guarded by metaMu (same lock as lastCompletedRequestID; both are touched
+	// from the notification goroutine and from the steer caller).
+	pendingSteerIDs map[string]struct{}
 }
 
 // cancelPrompt cancels the in-flight prompt (if any) via the ACP protocol,
@@ -1123,6 +1146,50 @@ func (c *ACPConn) AcpSID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.acpSID
+}
+
+// AcpSessionID returns the ACP session ID, satisfying ai.RawRPCTransport.
+func (c *ACPConn) AcpSessionID() string { return c.AcpSID() }
+
+// CallRaw sends a raw JSON-RPC request for a method the ACP SDK will not send
+// (anything not prefixed with "_", e.g. CodeBuddy's session/steer).
+//
+// Safe to call while a prompt is in flight: it does not touch the prompt's
+// context and never holds c.mu while waiting for the response (the same rule as
+// reapplyConfigOption — holding c.mu across an RPC deadlocks the notification
+// path).
+//
+// Returns errRawConnClosed when the connection is gone, and *RawRPCError when
+// the agent answered with a JSON-RPC error.
+func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	c.mu.Lock()
+	rpc := c.rawRPC
+	alive := c.alive && c.isAliveLocked()
+	c.mu.Unlock()
+
+	if rpc == nil || !alive {
+		return nil, errRawConnClosed
+	}
+	return rpc.CallRaw(ctx, method, params)
+}
+
+// ExpectSteerEcho registers a mid-turn injection id so the ACP notification
+// layer can recognise the agent's echo of it and emit a steer_boundary event.
+// Satisfies ai.SteerEchoTracker.
+func (c *ACPConn) ExpectSteerEcho(clientUserMessageID string) {
+	c.addPendingSteerID(clientUserMessageID)
+}
+
+// ForgetSteerEcho drops a registration for an injection that did not land, so
+// a declined steer cannot leave an entry behind for the connection's lifetime.
+// Satisfies ai.SteerEchoTracker.
+func (c *ACPConn) ForgetSteerEcho(clientUserMessageID string) {
+	if clientUserMessageID == "" {
+		return
+	}
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	delete(c.pendingSteerIDs, clientUserMessageID)
 }
 
 // AgentID returns the ID of the agent this connection belongs to.
@@ -1434,6 +1501,37 @@ func (c *ACPConn) setLastCompletedRequestID(rid string) {
 	c.metaMu.Lock()
 	defer c.metaMu.Unlock()
 	c.lastCompletedRequestID = rid
+}
+
+// addPendingSteerID records a mid-turn injection id this host just issued, so
+// the boundary observer can recognise its echo on the wire. Safe to call from
+// the steer caller goroutine (metaMu, never c.mu).
+func (c *ACPConn) addPendingSteerID(id string) {
+	if id == "" {
+		return
+	}
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	if c.pendingSteerIDs == nil {
+		c.pendingSteerIDs = make(map[string]struct{})
+	}
+	c.pendingSteerIDs[id] = struct{}{}
+}
+
+// claimPendingSteerID reports whether id belongs to an injection this host
+// issued, consuming it so a replayed/broadcast duplicate cannot fire a second
+// boundary. Called from the ACP notification goroutine.
+func (c *ACPConn) claimPendingSteerID(id string) bool {
+	if id == "" {
+		return false
+	}
+	c.metaMu.Lock()
+	defer c.metaMu.Unlock()
+	if _, ok := c.pendingSteerIDs[id]; !ok {
+		return false
+	}
+	delete(c.pendingSteerIDs, id)
+	return true
 }
 
 // getMetaAccum returns the accumulated _meta extensions without clearing.
@@ -1759,6 +1857,8 @@ func (c *ACPConn) killAndMarkDeadLocked() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
+		c.stdin = nil
+		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()
@@ -1786,6 +1886,8 @@ func (c *ACPConn) close() {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
+		c.stdin = nil
+		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()

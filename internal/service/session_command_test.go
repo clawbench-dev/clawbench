@@ -2537,7 +2537,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.NoError(t, err)
 
 	// Message 1 executes directly.
-	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",
@@ -2552,7 +2552,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
 
 	// Message 2 enqueued now (session idle) — starts a new run.
-	started2, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started2, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",

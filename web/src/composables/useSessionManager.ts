@@ -122,6 +122,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (!resp.ok) {
         throw new Error(`enqueue failed: ${resp.status}`)
       }
+      // The backend reports whether the message joined the RUNNING turn instead
+      // of being queued. An injected message gets no queue_drain, so the
+      // optimistic bubble must shed pending now rather than waiting for a drain
+      // that will never come. Backend-driven, so this stays backend-agnostic.
+      const data = await resp.json().catch(() => null)
+      if (data?.injected && queueId) {
+        dispatch({ type: 'clear_queued_pending', queueId })
+      }
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added.

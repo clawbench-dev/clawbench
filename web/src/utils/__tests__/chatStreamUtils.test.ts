@@ -3037,3 +3037,145 @@ describe('sub-agent thinking_done', () => {
     expect(thinks[0].done).toBeUndefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Mid-turn injection (steer) — the message joined the running turn instead of
+// being queued, so it must never wait for a drain event that will not arrive.
+// ---------------------------------------------------------------------------
+describe('mid-turn injection (steer) pending handling', () => {
+  it('optimistic_adopt_id clears pending when the caller opts in', () => {
+    // An injected message: the optimistic bubble was pushed pending (the enqueue
+    // path always does), but the backend reported it joined the running turn.
+    // No queue_drain will ever arrive for it, so it must shed pending now.
+    const messages: any[] = [
+      { role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'steered', blocks: [{ type: 'text', text: 'steered' }], pending: true, seq: nextClientSeq() },
+    ]
+    const next = chatMessageReducer(messages, {
+      type: 'optimistic_adopt_id', id: 'pending-1', dbId: 7, clearPending: true,
+    })
+    const m = next.find((x: any) => x.content === 'steered')!
+    expect(m.id).toBe(7)
+    expect(m.queueId).toBe('pending-1')
+    expect(m.pending).toBeUndefined()
+    expect(m.seq).toBeUndefined()
+  })
+
+  it('optimistic_adopt_id keeps a queued bubble pending by default', () => {
+    // A genuinely queued message: the drain loop will carry its id, so the
+    // bubble must stay pending until then (pre-existing behavior, unchanged).
+    const messages: any[] = [
+      { role: 'user', id: 'queue-B', queueId: 'queue-B', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, seq: nextClientSeq() },
+    ]
+    const next = chatMessageReducer(messages, {
+      type: 'optimistic_adopt_id', id: 'queue-B', dbId: 9,
+    })
+    const m = next.find((x: any) => x.content === 'queued')!
+    expect(m.pending).toBe(true)
+    expect(m.id).toBe('queue-B')
+  })
+
+  it('clear_queued_pending drops the pending marker for the injected message', () => {
+    // The /api/ai/queue path returns {injected:true} — no drain will follow.
+    const messages: any[] = [
+      { role: 'user', id: 'q-inj', queueId: 'q-inj', content: 'inj', blocks: [{ type: 'text', text: 'inj' }], pending: true, queued: true, seq: nextClientSeq() },
+      { role: 'user', id: 'q-keep', queueId: 'q-keep', content: 'kept', blocks: [{ type: 'text', text: 'kept' }], pending: true, queued: true, seq: nextClientSeq() },
+    ]
+    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-inj' })
+
+    const injected = next.find((x: any) => x.content === 'inj')!
+    expect(injected.pending).toBeUndefined()
+    expect(injected.queued).toBeUndefined()
+
+    // Other queued messages are untouched.
+    const kept = next.find((x: any) => x.content === 'kept')!
+    expect(kept.pending).toBe(true)
+  })
+
+  it('ws_user_message keeps an injected remote bubble non-pending', () => {
+    // Cross-device: the backend emits queued=false for an injected message, so
+    // the receiving device must not render it as waiting in the queue.
+    const next = chatMessageReducer([], {
+      type: 'ws_user_message',
+      data: { messageId: 11, content: 'remote injected', queueId: 'r-1', senderClientId: 'other-device', queued: false },
+    } as any)
+    const m = next[0]
+    expect(m.pending).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Mid-turn split — the assistant reply is cut in two at the injection point so
+// the injected question renders BETWEEN the halves instead of below a reply
+// that is still streaming.
+// ---------------------------------------------------------------------------
+describe('ws_stream_split (mid-turn assistant split)', () => {
+  it('finalizes the current bubble and opens a new anchored one', () => {
+    // Live state: Q1, the streaming reply, and the just-injected Q2.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }] },
+      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'before half' }], streaming: true },
+      { role: 'user', id: 3, queueId: 'pending-inject-1', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }] },
+    ]
+
+    const next = chatMessageReducer(messages, {
+      type: 'ws_stream_split', messageId: 4, queueId: 'pending-inject-1',
+    })
+
+    const before = next.find((m: any) => m.id === 2)!
+    expect(before.streaming).toBeUndefined()
+    expect(before.blocks[0].text).toBe('before half')
+
+    const after = next.find((m: any) => m.id === 4)!
+    expect(after.role).toBe('assistant')
+    expect(after.streaming).toBe(true)
+    expect(after.parentQueueId).toBe('pending-inject-1')
+    expect(after.blocks).toEqual([])
+
+    // The injected question must sort BETWEEN the halves.
+    const contents = next.map((m: any) => m.content)
+    expect(contents.indexOf('before half') < contents.indexOf('Q2')).toBe(true)
+    expect(contents.indexOf('Q2') < next.indexOf(after)).toBe(true)
+  })
+
+  it('marks unfinished tool blocks done on the before-half', () => {
+    const messages: any[] = [
+      { role: 'assistant', id: 2, content: '', streaming: true, blocks: [
+        { type: 'tool_use', name: 'Bash', id: 't1', done: false, output: '}' },
+        { type: 'tool_use', name: 'PermissionApproval', id: 'p1', done: false },
+      ] },
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 5 })
+    const before = next.find((m: any) => m.id === 2)!
+    expect(before.blocks[0].done).toBe(true)
+    expect(before.blocks[0].output).toBe('')          // garbage output cleared
+    expect(before.blocks[1].done).toBe(false)         // approval still needs the user
+  })
+
+  it('is idempotent — a replayed split does not push a second bubble', () => {
+    const messages: any[] = [
+      { role: 'assistant', id: 2, content: '', streaming: true, blocks: [] },
+    ]
+    const once = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
+    const twice = chatMessageReducer(once, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
+    expect(twice.filter((m: any) => m.role === 'assistant')).toHaveLength(2)
+  })
+
+  it('ws_stream_start does not rename a bubble that already holds a DB id', () => {
+    // Regression guard for the split: after the split the new "after" bubble
+    // carries its own numeric id. A stale/duplicate stream_start for the FIRST
+    // row must not overwrite it, or the two messages collapse back into one.
+    const messages: any[] = [
+      { role: 'assistant', id: 7, content: '', streaming: true, blocks: [] },
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_stream_start', messageId: 99 })
+    expect(next[0].id).toBe(7)
+  })
+
+  it('ws_stream_start still adopts an id for a placeholder without one', () => {
+    const messages: any[] = [
+      { role: 'assistant', id: 'drain-abc', content: '', streaming: true, blocks: [] },
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_stream_start', messageId: 99 })
+    expect(next[0].id).toBe(99)
+  })
+})

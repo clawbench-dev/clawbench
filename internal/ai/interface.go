@@ -342,6 +342,17 @@ type StreamEvent struct {
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+	// SteerBoundary is set on a "steer_boundary" event: the exact point where a
+	// mid-turn injected user message entered the running turn. It lets the
+	// service layer split the assistant reply into two messages at that point
+	// (before/after the injection) instead of rendering the injected question
+	// below a reply that is still streaming. See SteerBoundaryData.
+	SteerBoundary *SteerBoundaryData
+	// StreamSplit is set on a "stream_split" event: the service layer finalized
+	// the "before" half of a split assistant reply and opened a new "after"
+	// message. It carries the new streaming row's id so clients can create a
+	// placeholder anchored to the injected question. See StreamSplitData.
+	StreamSplit *StreamSplitData
 	// ParentToolCallID is the parent Agent tool-call id for sub-agent content
 	// (Type=content, Type=thinking). Empty for top-level content. Extracted from
 	// the backend's _meta parent-link key; lets the frontend group a sub-agent's
@@ -360,6 +371,32 @@ type StreamStartData struct {
 	// a question, e.g. scheduled tasks). It lets a client whose question bubble
 	// is still in flight (recovery / cross-device) re-anchor the streaming
 	// placeholder to the true question instead of the newest stale user message.
+	QueueID string `json:"queue_id,omitempty"`
+}
+
+// SteerBoundaryData identifies the point where a mid-turn injected message
+// entered the running turn. Emitted by the ACP layer when the agent echoes back
+// the clientUserMessageId of an injection this host issued (CodeBuddy's
+// user_message_chunk receipt — see docs/dev/codebuddy_acp_extensions.md §9.6).
+//
+// The service layer splits the assistant reply here: everything accumulated so
+// far is finalized as the "before" message, and subsequent content becomes a
+// new "after" message. ClientUserMessageID is the injected question's queueId,
+// so the "after" message can be anchored to it for correct ordering.
+type SteerBoundaryData struct {
+	ClientUserMessageID string `json:"client_user_message_id"`
+}
+
+// StreamSplitData announces that an assistant reply was split in two at a
+// mid-turn injection point. The service layer emits it right after finalizing
+// the "before" message and creating the "after" streaming row, so any client
+// (including one that opened the session mid-turn) can render the second bubble
+// without waiting for a reload.
+type StreamSplitData struct {
+	// MessageID is the DB id of the new "after" streaming assistant row.
+	MessageID int64 `json:"message_id"`
+	// QueueID is the injected question's queue id — the "after" message is
+	// anchored to it so it sorts directly below that question.
 	QueueID string `json:"queue_id,omitempty"`
 }
 

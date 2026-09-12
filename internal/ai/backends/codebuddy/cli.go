@@ -24,6 +24,9 @@ func init() {
 			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:      2,
 		},
+		// CodeBuddy can inject a message into the running turn via its private
+		// session/steer method, instead of queueing it for the next turn.
+		MidTurn: &midTurnInjector{},
 	})
 }
 

@@ -64,6 +64,15 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [多服务器管理](client/multi-server.md) | 服务器列表、凭据保存、登录页选择、应用内快速切换 |
 | [客户端安装与 App 模式](client/install-and-app-mode.md) | PWA 安装、iOS 手动安装、APK 下载与原生模式识别 |
 
+## 参考资料
+
+`docs/dev/` 存放各 AI 后端的工具定义、调用样例与协议逆向分析，供接入/排查时查阅。
+
+| 文档 | 说明 |
+|------|------|
+| [CodeBuddy ACP 非标准扩展接口清单](../dev/codebuddy_acp_extensions.md) | `codebuddy --acp` 在 ACP v1 之外的扩展面：17 个 `extMethod` 请求、19 个自定义 `session/*` 方法（steer / 消息队列 / inject_history / 回滚 / multitask）、10 个 agent→client 扩展通知、7 类非标准 `sessionUpdate`、163 个 `codebuddy.ai/*` meta key、`initialize` 双向能力协商与各接口门控条件；含**真机探针实测结论**（`session/steer` 可用、裸 JSON-RPC 通道可行、`_codebuddy.ai/question` 在 stdio 下不触发） |
+| [Claude ACP 扩展面（与 CodeBuddy 对比）](../dev/claude_acp_extensions.md) | `claude-agent-acp` 是桥接 Claude Agent SDK 的适配器，**无 `extMethod` 兜底**：无 steer / 队列 / inject_history 等私有方法，`sessionUpdate` 全为标准类型，扩展仅靠 `_meta`（`claudeCode` / `_claude/origin` / `terminal_*`）；但有内建 prompt 排队（`promptQueueing`，并发调标准 `session/prompt`）——注意 ClawBench 现有 `RegisterSession` 覆盖写不支持并发 |
+
 ## 核心技术栈
 
 | 层 | 技术 |

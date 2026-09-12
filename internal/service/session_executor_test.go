@@ -2623,3 +2623,169 @@ func assertStreamingContentNotContains(t *testing.T, sid, notWant string) {
 		t.Errorf("streaming content should not contain %q, got %q", notWant, content)
 	}
 }
+
+// TestSessionExecutor_SteerBoundary_SplitsReply verifies the mid-turn split:
+// a steer_boundary event finalizes the accumulated "before" half and opens a
+// new streaming row for the "after" half, so the injected question's DB id
+// lands BETWEEN the two assistant rows. That id order is what makes the UI
+// render [Q1][reply·before][Q2][reply·after] with no special-case ordering.
+func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	// The injected question is persisted mid-turn, AFTER the "before" row but
+	// BEFORE the "after" row is created by the split.
+	_, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "", "pending-inject-1")
+	if err != nil {
+		t.Fatalf("failed to persist injected question: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-1"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// Production calls Finalize after the loop returns (it persists the terminal
+	// content of whichever row is streaming at the end — here, the "after" half).
+	emptyCh := make(chan ai.StreamEvent)
+	close(emptyCh)
+	result = executor.Finalize(result, emptyCh)
+
+	// The DB must now hold THREE rows in conversational order:
+	//   assistant(before, finalized) → user(injected) → assistant(after, finalized)
+	msgs, err := GetChatHistory("/test", "test", sid)
+	if err != nil {
+		t.Fatalf("GetChatHistory failed: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 rows (before, injected question, after), got %d: %+v", len(msgs), msgs)
+	}
+
+	// Row 1: the finalized "before" half keeps the ORIGINAL streaming id.
+	if msgs[0].Role != "assistant" || msgs[0].ID != streamMsgID {
+		t.Fatalf("row 1 should be the finalized before-half with id %d, got role=%s id=%d",
+			streamMsgID, msgs[0].Role, msgs[0].ID)
+	}
+	if msgs[0].Streaming {
+		t.Error("the before-half must be finalized (streaming=0)")
+	}
+	if !strings.Contains(msgs[0].Content, "before half") {
+		t.Errorf("before-half content missing, got %q", msgs[0].Content)
+	}
+
+	// Row 2: the injected question sorts BETWEEN the two halves — this is the
+	// whole point of the split.
+	if msgs[1].Role != "user" {
+		t.Fatalf("row 2 should be the injected question, got role=%s", msgs[1].Role)
+	}
+	if msgs[1].Content != "injected question" {
+		t.Errorf("row 2 content = %q, want %q", msgs[1].Content, "injected question")
+	}
+
+	// Row 3: the "after" half is a NEW row, anchored to the injected question.
+	if msgs[2].Role != "assistant" {
+		t.Fatalf("row 3 should be the after-half, got role=%s", msgs[2].Role)
+	}
+	if msgs[2].ID == streamMsgID {
+		t.Error("the after-half must be a NEW row, not the original streaming row")
+	}
+	if msgs[2].QueueID != "pending-inject-1" {
+		t.Errorf("after-half queueId = %q, want %q (anchors it to the injected question)",
+			msgs[2].QueueID, "pending-inject-1")
+	}
+	if !strings.Contains(msgs[2].Content, "after half") {
+		t.Errorf("after-half content missing, got %q", msgs[2].Content)
+	}
+	if msgs[2].Streaming {
+		t.Error("the after-half must be finalized by the terminal done event")
+	}
+
+	// Content must NOT be duplicated across the halves.
+	if strings.Contains(msgs[0].Content, "after half") {
+		t.Error("before-half must not contain the after-half's content")
+	}
+	if strings.Contains(msgs[2].Content, "before half") {
+		t.Error("after-half must not contain the before-half's content")
+	}
+
+	// No streaming row may be left behind (GetStreamingMessageID falls back to
+	// the latest finalized row, so query the flag directly).
+	var stillStreaming int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sid,
+	).Scan(&stillStreaming); err != nil {
+		t.Fatalf("failed to count streaming rows: %v", err)
+	}
+	if stillStreaming != 0 {
+		t.Errorf("expected no leftover streaming row, got %d", stillStreaming)
+	}
+}
+
+// TestSessionExecutor_SteerBoundary_NoDBIsNoop verifies a boundary event with no
+// DB (bare executor) is swallowed instead of being accumulated as a content
+// block or panicking.
+func TestSessionExecutor_SteerBoundary_NoDBIsNoop(t *testing.T) {
+	// Deliberately NOT calling setupExecutorDB — db is nil.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "q-1"}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   "no-db-session",
+		AgentID:     "test-agent",
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// The boundary event must not have produced a block of its own.
+	for _, b := range result.Blocks {
+		if strings.Contains(b.Text, "boundary") {
+			t.Errorf("boundary event leaked into content blocks: %+v", b)
+		}
+	}
+}

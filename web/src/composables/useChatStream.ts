@@ -329,6 +329,20 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'stream_split': {
+        if (sessionChanged()) return
+        const messageId = payload.message_id as number | undefined
+        const splitQueueId = typeof payload.queue_id === 'string' ? payload.queue_id : undefined
+        if (!messageId) break
+        // The assistant reply was split in two at a mid-turn injection point.
+        // The reducer finalizes the current bubble and pushes the new "after"
+        // bubble; the injected question sorts between them by DB id.
+        dispatch({ type: 'ws_stream_split', messageId, queueId: splitQueueId })
+        onRenderNeeded()
+        onScrollBottom(false)
+        break
+      }
+
       case 'content_reset': {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) return
@@ -624,7 +638,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'user_message': {
         if (sessionChanged()) return
-        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean }
 
         // Skip self-echo: if the sender is this device, we already have the
         // optimistic message. Still adopt its DB id from messageId — this is
@@ -635,7 +649,17 @@ export function useChatStream(options: UseChatStreamOptions) {
         const myClientId = localStorage.getItem('clawbench_client_id')
         if (userData.senderClientId && userData.senderClientId === myClientId) {
           if (userData.messageId && userData.queueId) {
-            dispatch({ type: 'optimistic_adopt_id', id: userData.queueId, dbId: userData.messageId })
+            // The backend's own `queued` flag decides whether this bubble is
+            // still waiting for the drain loop. A message that joined the
+            // RUNNING turn (mid-turn injection) is not queued, so no drain will
+            // ever come for it — it must shed pending now or it would spin
+            // forever. Backend-driven, so this stays backend-agnostic.
+            dispatch({
+              type: 'optimistic_adopt_id',
+              id: userData.queueId,
+              dbId: userData.messageId,
+              clearPending: userData.queued !== true,
+            })
           }
           break
         }

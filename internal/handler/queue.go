@@ -98,7 +98,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	// msgID is the persisted DB id of the message, used to broadcast a
 	// user_message event so other devices see it before it drains
 	// (cross-device sync).
-	started, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, injected, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
@@ -125,13 +125,14 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 			Files:          validatedFiles,
 			SenderClientID: req.ClientID,
 			QueueID:        req.QueueID,
-			Queued:         true, // enqueued: waiting for the drain loop, not yet started
+			Queued:         !injected, // injected = joined the running turn, not queued
 		},
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"started": started,
+		"ok":       true,
+		"started":  started,
+		"injected": injected,
 	})
 }
 

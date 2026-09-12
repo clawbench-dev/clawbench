@@ -157,10 +157,11 @@ func sendMessageToSessionFromPush(sessionID, message string) error {
 	}
 
 	// Persist the message + start execution or signal the running drain loop.
-	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally.
+	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally, and
+	// may inject the message into the running turn instead of queueing it.
 	// msgID is the persisted DB id — used to emit a user_message event carrying
 	// the real id (not 0) for cross-device sync.
-	_, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	_, _, msgID, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sessionID,
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
@@ -287,10 +288,25 @@ type EnqueueStartConfig struct {
 // session is no longer running, it takes over and starts the execution itself
 // so the queued message is never silently lost.
 // EnqueueAndMaybeStart persists the message and starts/notifies execution.
+//
+// If the session is already running and the backend can inject into the running
+// turn, the message is delivered there instead of being queued (injected=true).
+//
 // It returns started=true when a new execution goroutine was launched (the
 // session was idle), plus the persisted DB message id (msgID, >0) so callers
 // can emit a user_message event carrying the real id for cross-device sync.
-func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, err error) {
+func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, msgID int64, err error) {
+	// Mid-turn injection: while a turn is running, a backend may be able to put
+	// this message into that very turn rather than queueing it for the next one.
+	// The policy is backend-owned (see service/midturn.go); a decline — including
+	// the benign race where the turn ends between the check and the attempt —
+	// falls through to the normal queue path below.
+	if IsSessionRunning(cfg.SessionID) {
+		if ok, id := TryInjectMidTurn(cfg, ""); ok {
+			return false, true, id, nil
+		}
+	}
+
 	// Persist model/transport selection so the drain loop uses the user's
 	// choices (parity with the POST /api/ai/chat handler).
 	if cfg.ModelID != "" {
@@ -308,7 +324,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 
 	msgID, err = AddQueuedMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, cfg.Message, cfg.Files, cfg.QueueID, "")
 	if err != nil {
-		return false, 0, err
+		return false, false, 0, err
 	}
 
 	if TrySetSessionRunning(cfg.SessionID) {
@@ -331,7 +347,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 			Message:     cfg.Message,
 			QueueID:     cfg.QueueID,
 		})
-		return true, msgID, nil
+		return true, false, msgID, nil
 	}
 
 	// Session is running — the drain loop will pick the message up. Signal it.
@@ -360,7 +376,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 			}
 		}
 	}()
-	return false, msgID, nil
+	return false, false, msgID, nil
 }
 
 // consumeQueuedMessageByID dequeues the specific queued message identified by

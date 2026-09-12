@@ -948,13 +948,17 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
-            // Session already running — the message was enqueued.
-            // Mark the pre-pushed user message as pending (ID is already pendingId).
-            const localIdx = messages.value.findLastIndex(
-                (m) => m.role === 'user' && m.id === pendingId
-            )
-            if (localIdx !== -1) {
-                messages.value[localIdx].pending = true
+            // The message either joined the running turn (data.steered) or was
+            // queued for the next one. Only a QUEUED message stays pending — it
+            // is waiting for the drain loop. An injected one has no drain
+            // coming, so marking it pending would leave it spinning forever.
+            if (!data.steered) {
+                const localIdx = messages.value.findLastIndex(
+                    (m) => m.role === 'user' && m.id === pendingId
+                )
+                if (localIdx !== -1) {
+                    messages.value[localIdx].pending = true
+                }
             }
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session

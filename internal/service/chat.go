@@ -2257,6 +2257,22 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 	return false
 }
 
+// CreateStreamingMessage inserts a fresh streaming assistant placeholder and
+// returns its id. Used when a mid-turn injection splits an assistant reply: the
+// "after" half needs its own streaming row so it finalizes independently of the
+// "before" half.
+//
+// queueID anchors the new row to the injected question (the same convention as
+// a run that answers a queued message), so the frontend places this reply
+// directly below that question. Pass "" for an unanchored placeholder.
+func CreateStreamingMessage(projectPath, backend, sessionID, queueID string) (int64, error) {
+	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
+	if err != nil {
+		return 0, err
+	}
+	return AddChatMessage(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
+}
+
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
 // Also marks the message as unindexed (indexed=0) so the RAG indexer picks it up.
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,

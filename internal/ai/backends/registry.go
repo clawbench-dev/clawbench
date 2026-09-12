@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -89,6 +90,17 @@ func LookupACPToolCallIDPrefixes(backendID string) map[string]string {
 	defer pluginsMu.RUnlock()
 	if p, ok := plugins[backendID]; ok && p.ACP != nil {
 		return p.ACP.ToolCallIDPrefixes
+	}
+	return nil
+}
+
+// LookupMidTurnInjector returns the backend's mid-turn injection policy, or nil
+// when the backend cannot inject a message into a running turn.
+func LookupMidTurnInjector(backendID string) ai.MidTurnInjector {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok {
+		return p.MidTurn
 	}
 	return nil
 }

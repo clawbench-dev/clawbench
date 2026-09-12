@@ -36,6 +36,14 @@ type BackendPlugin struct {
 	// ACP event handling logic stays in internal/ai/ as shared infrastructure;
 	// sub-packages only register mapping data (tool names, input field remaps).
 	ACP *ACPPlugin
+
+	// MidTurn is the backend's optional mid-turn injection policy: how to put a
+	// user message into a turn that is already running, instead of queueing it
+	// for the next one. nil means "always queue" (the default behavior).
+	//
+	// This is behavior, not mapping data, so it lives at the top level rather
+	// than under ACP — a non-ACP backend could implement it too.
+	MidTurn ai.MidTurnInjector
 }
 
 // CLIPlugin provides CLI-mode configuration for backends using the CLIBackend skeleton.

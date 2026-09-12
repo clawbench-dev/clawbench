@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -447,4 +448,66 @@ func TestACPStdoutFilter_MultipleLinesWithModels(t *testing.T) {
 	cached := f.GetAndClearCachedModels()
 	require.NotNil(t, cached)
 	assert.Equal(t, "m1", cached.CurrentModelID)
+}
+
+// sinkRecorder captures every line handed to the raw sink, in order.
+type sinkRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (s *sinkRecorder) DispatchRawResponse(line []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, string(line))
+}
+
+func (s *sinkRecorder) captured() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.lines))
+	copy(out, s.lines)
+	return out
+}
+
+// TestACPStdoutFilter_TeesToRawSink verifies the raw sink sees exactly the lines
+// the SDK reader receives — a tee, not a steal. The SDK must still get its data,
+// otherwise ACP would break for every backend as soon as a sink is installed.
+func TestACPStdoutFilter_TeesToRawSink(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
+{"jsonrpc":"2.0","id":"cb-1","result":{"steered":true}}
+not json — should be dropped before the sink
+`
+	sink := &sinkRecorder{}
+	f := newACPStdoutFilter(strings.NewReader(input))
+	f.SetRawSink(sink)
+	defer f.Close()
+
+	var buf bytes.Buffer
+	_, err := io.Copy(&buf, f)
+	require.NoError(t, err)
+
+	// The SDK side keeps everything it used to get.
+	assert.Contains(t, buf.String(), `"status":"ok"`)
+	assert.Contains(t, buf.String(), `"cb-1"`)
+
+	// The sink sees the same two JSON lines (the non-JSON line is filtered out
+	// before the sink, matching what the SDK would have received).
+	got := sink.captured()
+	require.Len(t, got, 2)
+	assert.Contains(t, got[0], `"status":"ok"`)
+	assert.Contains(t, got[1], `"cb-1"`)
+}
+
+// TestACPStdoutFilter_NoSinkIsSafe verifies a filter without a sink behaves
+// exactly as before (the hook is optional).
+func TestACPStdoutFilter_NoSinkIsSafe(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}` + "\n"
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+
+	var buf bytes.Buffer
+	_, err := io.Copy(&buf, f)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), `"status":"ok"`)
 }

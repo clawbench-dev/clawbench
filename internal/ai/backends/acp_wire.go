@@ -12,6 +12,11 @@ func init() {
 	ai.LookupACPRemapsFn = LookupACPRemaps
 	ai.LookupACPToolCallIDPrefixesFn = LookupACPToolCallIDPrefixes
 
+	// Wire up the mid-turn injection policy lookup so core flow can ask a
+	// backend whether a mid-turn message can join the running turn (e.g.
+	// CodeBuddy's session/steer) without importing the backends package.
+	ai.LookupMidTurnInjectorFn = LookupMidTurnInjector
+
 	// Wire up the BackendSpec loader so model/discovery.go can build
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted

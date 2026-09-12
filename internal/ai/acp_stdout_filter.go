@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sync"
+	"sync/atomic"
 
 	"clawbench/internal/model"
 )
@@ -34,6 +35,10 @@ const (
 //     v0.13.5 schema. The SDK's json.Unmarshal silently drops this field. This filter
 //     intercepts the raw JSON and caches the models for later retrieval.
 //
+//  4. Raw JSON-RPC demux: a rawResponseSink (see acp_raw_rpc.go) receives every
+//     parsed line so a side channel can claim responses the SDK would drop. This
+//     is a tee, not a steal — the line is still forwarded to the SDK.
+//
 // The filter runs a background goroutine that reads from the underlying source and
 // writes filtered output to an io.Pipe. Closing the filter (via Close) unblocks any
 // pending reads, preventing the ACP connection cleanup from hanging when the agent
@@ -50,6 +55,25 @@ type acpStdoutFilter struct {
 	// extract it from the raw JSON here. Thread-safe via modelsMu.
 	modelsMu     sync.Mutex
 	cachedModels *ModelListState
+
+	// rawSink, when set, is handed every parsed line (see SetRawSink). Stored in
+	// an atomic.Value because it is written once after the pump starts and read
+	// on the pump goroutine.
+	rawSink atomic.Value // holds rawResponseSink
+}
+
+// SetRawSink installs a sink that receives every parsed line. Must be called at
+// most once per filter, before any raw call is issued.
+func (f *acpStdoutFilter) SetRawSink(s rawResponseSink) {
+	f.rawSink.Store(s)
+}
+
+// dispatchRawSink forwards one line to the registered sink, if any. Never blocks
+// on the caller's behalf beyond the sink's own contract (sinks must not block).
+func (f *acpStdoutFilter) dispatchRawSink(line []byte) {
+	if s, ok := f.rawSink.Load().(rawResponseSink); ok && s != nil {
+		s.DispatchRawResponse(line)
+	}
 }
 
 // newACPStdoutFilter creates a new filtered reader that fixes protocol violations.
@@ -79,6 +103,11 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 
 		// Fix string-number ID mismatch
 		fixed := fixStringNumericID(line)
+
+		// Tee to the raw JSON-RPC side channel. It claims only responses whose
+		// id carries its own string prefix; the line is still written to the SDK
+		// below, which no-ops ids it does not recognize.
+		f.dispatchRawSink(fixed)
 
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK

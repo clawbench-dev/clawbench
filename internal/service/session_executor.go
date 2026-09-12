@@ -428,6 +428,16 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
+	// steer_boundary: a mid-turn injected message just entered the running turn.
+	// Split the assistant reply here so the injected question renders between the
+	// "before" and "after" halves instead of below a reply that is still
+	// streaming. Handled before the generic forward/accumulate path because the
+	// split itself owns persisting and announcing the new row.
+	if event.Type == "steer_boundary" {
+		e.splitAtSteerBoundary(event)
+		return
+	}
+
 	// Inject per-tool duration into completion events before forwarding,
 	// so WS clients and AccumulateBlock both see it.
 	if event.Type == eventTypeToolUse || event.Type == eventTypeToolResult {
@@ -872,6 +882,133 @@ func (e *SessionExecutor) thinkingPersisted(thinkID string) bool {
 // tool/usage events that did not alter the content JSON still reaches the DB
 // promptly. The streaming row itself is only rewritten when the marshaled
 // content actually changed.
+// splitAtSteerBoundary finalizes the assistant reply accumulated so far and
+// opens a new streaming message for the content that follows a mid-turn
+// injection. It is the executor half of the "split at the insertion point"
+// feature; the ACP layer detects the boundary (see mapACPSessionUpdate's
+// UserMessageChunk branch) and the backend policy registers the echo it expects.
+//
+// Why split at all: without it the injected question is persisted with a higher
+// DB id than the streaming assistant row, so it renders BELOW a reply that is
+// still being generated — the user sees their message with nothing after it.
+// Splitting makes the DB id order match the conversational order:
+//
+//	Q1(1) → assistant·before(2) → Q2 injected(3) → assistant·after(4)
+//
+// which needs no UI special-casing: the plain id sort is already correct.
+//
+// Failure is non-fatal by design. A split is a presentation improvement; if the
+// "before" row cannot be finalized or the "after" row cannot be created, we log
+// and keep accumulating into the ORIGINAL streaming row, degrading to the
+// previous single-message behavior rather than losing content.
+func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
+	if event.SteerBoundary == nil {
+		return
+	}
+	queueID := event.SteerBoundary.ClientUserMessageID
+
+	// No DB (bare executor in a unit test): nothing to split, but the event must
+	// still not reach the generic path (it would be accumulated as a block).
+	if db == nil {
+		return
+	}
+
+	// Serialize against the accumulator and the flush ticker. The split replaces
+	// e.blocks and the streaming-row identity, so it must not interleave with a
+	// concurrent flush.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Flush batched side-writes for the "before" half first, so tool-call rows
+	// and thinking text produced before the injection belong to it.
+	e.flushPendingToolCalls()
+	e.flushPendingContextState()
+	e.flushPendingThinking()
+
+	// Finalize the "before" half: write its content and clear streaming=1. The
+	// row keeps its id (lower than the injected question's), which is exactly the
+	// ordering we want.
+	beforeContent := e.buildSplitContentLocked()
+	beforeID := e.cfg.StreamingMessageID
+	if _, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, beforeContent); err != nil {
+		slog.Error("session executor: failed to finalize assistant half at steer boundary; "+
+			"continuing in the original row (no split)",
+			slog.String("session", e.cfg.SessionID),
+			slog.Int64("before_msg_id", beforeID),
+			slog.String("err", err.Error()))
+		return
+	}
+
+	// Open the "after" half: a fresh streaming assistant row anchored to the
+	// injected question, so the frontend places it directly below that question.
+	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, queueID)
+	if err != nil {
+		// The "before" half is already durable; the rest of the turn simply keeps
+		// appending to it via UpdateStreamingMessage's "latest streaming row"
+		// lookup... except there is now no streaming row, so the remaining content
+		// would be lost. Re-open one without the anchor to stay safe.
+		slog.Error("session executor: failed to create assistant half at steer boundary; "+
+			"reopening an unanchored row so remaining content is not lost",
+			slog.String("session", e.cfg.SessionID),
+			slog.String("err", err.Error()))
+		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, ""); ferr == nil {
+			e.resetForSplitLocked(fallbackID, "")
+		}
+		return
+	}
+
+	slog.Info("session executor: split assistant reply at steer boundary",
+		slog.String("session", e.cfg.SessionID),
+		slog.Int64("before_msg_id", beforeID),
+		slog.Int64("after_msg_id", afterID),
+		slog.String("queue_id", queueID))
+
+	// Announce the split so every subscribed client (including one that opened
+	// the session mid-turn) creates the second bubble immediately instead of
+	// waiting for a reload.
+	e.forwardEvent(ai.StreamEvent{
+		Type:        "stream_split",
+		StreamSplit: &ai.StreamSplitData{MessageID: afterID, QueueID: queueID},
+	})
+
+	e.resetForSplitLocked(afterID, queueID)
+}
+
+// resetForSplitLocked re-points the executor at a newly created streaming row
+// and clears all per-message accumulation, so the "after" half starts empty.
+// Caller holds e.mu.
+func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string) {
+	e.cfg.StreamingMessageID = newMessageID
+	e.blocks = nil
+	e.responseMetadata = nil
+	e.lastWrittenContent = ""
+	e.lastFlush = time.Time{}
+	e.toolStarts = make(map[string]time.Time)
+	e.pendingToolCalls = make(map[string]struct{})
+	e.pendingContextPatches = make(map[string]string)
+	// Thinking is per-message (chat_thinking rows key off message_id); the
+	// "before" half's thinking was already flushed above, so the "after" half
+	// starts its own cursors.
+	e.thinkingFlushed = make(map[string]*thinkingFlushState)
+	_ = queueID
+}
+
+// buildSplitContentLocked renders the accumulated blocks as the content JSON for
+// the "before" half. Thinking text is split out into chat_thinking exactly like
+// a normal finalize, so the completed half is indistinguishable from any other
+// finalized assistant message. Caller holds e.mu.
+func (e *SessionExecutor) buildSplitContentLocked() string {
+	blocks := e.postProcessBlocks(e.blocks)
+	// Mirror Finalize: ConvertAskQuestionBlocks creates ask-* tool blocks that
+	// the normal upsert path never saw, so persist them against the "before"
+	// row. Without this the completed half would render the question as plain
+	// text after a reload.
+	e.persistAskToolCalls(blocks)
+	content, _ := e.buildContentJSON(blocks, RunResult{Blocks: blocks}, e.responseMetadata)
+	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
+}
+
+// flushStreamingMessage writes the accumulated blocks to the database.
 func (e *SessionExecutor) flushStreamingMessage() {
 	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
 	// is nothing to persist to. Guarding here keeps the rate-limited streaming
