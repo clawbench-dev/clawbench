@@ -250,6 +250,49 @@ describe('ForgePanelContent', () => {
     expect(wrapper.html()).not.toContain('lucide-git-pull-request')
   })
 
+  it('actually renders the binding dialog when the button is clicked', async () => {
+    // Regression: the dialog was mounted with `v-if="bindDialogOpen"` but no
+    // `:open` prop. ModalDialog gates rendering on its own everOpened latch,
+    // which only flips inside the props.open watcher — so the dialog never
+    // appeared and the button looked dead. The shared globalOpts stubs
+    // ModalDialog away, which is exactly why this slipped through, so this
+    // case mounts the REAL component.
+    state.binding.value = null
+    state.isBound.value = false
+    state.loading.value = false
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: {
+        plugins: [makeI18n()],
+        stubs: {
+          LoadingIndicator: true,
+          RefreshButton: true,
+          ForgeDetail: true,
+          PopupMenu: { props: ['show'], template: '<div v-if="show"><slot /></div>' },
+        },
+      },
+      attachTo: document.body,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    // Nothing rendered before the click.
+    expect(document.body.querySelector('.modal-overlay')).toBeNull()
+
+    const button = wrapper.findAll('.forge-card-options button')[0]
+    expect(button.text()).toContain('Bind a repository')
+    await button.trigger('click')
+    await new Promise(r => setTimeout(r, 50))
+
+    // The dialog body must be in the DOM (ModalDialog teleports to body).
+    const overlay = document.body.querySelector('.modal-overlay')
+    expect(overlay, 'clicking Bind must open the dialog').not.toBeNull()
+    expect(document.body.querySelector('.forge-bind-form')).not.toBeNull()
+
+    wrapper.unmount()
+    document.body.querySelectorAll('.modal-overlay').forEach(el => el.remove())
+  })
+
   it('fallback card offers only manual binding (no suggestion button)', async () => {
     // The backend auto-binds official hosts, so the panel no longer renders a
     // "use detected repository" shortcut — the card is a fallback for cases

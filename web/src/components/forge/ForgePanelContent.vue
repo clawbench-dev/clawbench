@@ -193,8 +193,10 @@
       </template>
     </template>
 
-    <!-- Binding dialog -->
-    <ModalDialog v-if="bindDialogOpen" :title="t('forge.bind.title')" @close="bindDialogOpen = false">
+    <!-- Binding dialog. ModalDialog renders on its own `everOpened` latch, which
+         only flips inside its props.open watcher — so `open` MUST be passed. A
+         bare v-if would leave the dialog permanently unrendered. -->
+    <ModalDialog :open="bindDialogOpen" :title="t('forge.bind.title')" @close="bindDialogOpen = false">
       <div class="forge-bind-form">
         <div v-if="remotes.length" class="forge-bind-remotes">
           <div class="forge-bind-label">{{ t('forge.bind.fromRemote') }}</div>
