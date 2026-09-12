@@ -6,7 +6,7 @@
     <div v-if="!projectPath" class="forge-state">
       <div class="forge-card">
         <div class="forge-card-icon">
-          <FolderGit2 :size="30" :stroke-width="1.5" />
+          <Github :size="30" />
         </div>
         <div class="forge-card-header">{{ t('forge.empty.noProjectHeader') }}</div>
         <div class="forge-card-body">{{ t('forge.empty.noProjectBody') }}</div>
@@ -26,7 +26,7 @@
     <div v-else-if="!items.isBound.value && !items.loading.value" class="forge-state">
       <div class="forge-card">
         <div class="forge-card-icon">
-          <GitPullRequest :size="30" :stroke-width="1.5" />
+          <Github :size="30" />
         </div>
         <div class="forge-card-header">{{ t('forge.empty.noBindingHeader') }}</div>
         <div class="forge-card-body">{{ t('forge.empty.noBindingBody') }}</div>
@@ -56,7 +56,7 @@
              to change or clear the binding once one exists. -->
         <div class="forge-header">
           <span class="forge-header-title">
-            <GitPullRequest :size="14" />
+            <Github :size="14" />
             <button
               v-if="items.binding.value"
               ref="repoBadgeRef"
@@ -80,7 +80,7 @@
 
         <PopupMenu v-model:show="repoMenuOpen" :target-element="repoBadgeRef" :menu-items-count="2">
           <button class="forge-repo-menu-item" @click="openRebindDialog">
-            <FolderGit2 :size="14" />
+            <Github :size="14" />
             <span>{{ t('forge.bind.change') }}</span>
           </button>
           <button class="forge-repo-menu-item danger" @click="unbindRepo">
@@ -98,7 +98,7 @@
             :class="{ active: items.type.value === 'issue' }"
             @click="items.setType('issue')"
           >
-            <CircleDot :size="13" />
+            <Github :size="13" />
             <span>{{ t('forge.type.issues') }}</span>
           </button>
           <button
@@ -106,7 +106,7 @@
             :class="{ active: items.type.value === 'pr' }"
             @click="items.setType('pr')"
           >
-            <GitPullRequest :size="13" />
+            <Github :size="13" />
             <span>{{ t('forge.type.prs') }}</span>
           </button>
         </div>
@@ -232,8 +232,8 @@
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  GitPullRequest, CircleDot, Inbox, MessageSquare,
-  ChevronRight, ChevronDown, AlertCircle, FolderGit2, Unlink,
+  Github, Inbox, MessageSquare,
+  ChevronRight, ChevronDown, AlertCircle, Unlink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'

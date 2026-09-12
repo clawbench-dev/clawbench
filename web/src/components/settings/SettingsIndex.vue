@@ -36,7 +36,7 @@ import {
   Info,
   Sparkles,
   ChevronRight,
-  GitPullRequest,
+  Github,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsCard from './SettingsCard.vue'
@@ -59,7 +59,7 @@ const categoryDefs = computed(() => [
   { id: 'rag', icon: Brain },
   { id: 'portForward', icon: ArrowLeftRight },
   { id: 'frp', icon: Globe },
-  { id: 'forgeIntegration', icon: GitPullRequest },
+  { id: 'forgeIntegration', icon: Github },
   { id: 'notification', icon: Bell },
   { id: 'security', icon: Shield },
   { id: 'debug', icon: Bug },

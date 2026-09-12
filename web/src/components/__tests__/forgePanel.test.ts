@@ -218,6 +218,38 @@ describe('ForgePanelContent', () => {
     expect(mockSetType).toHaveBeenCalledWith('pr')
   })
 
+  it('uses the GitHub brand icon everywhere, never a neutral glyph', async () => {
+    // The forge tab serves both platforms but always shows the GitHub mark;
+    // the previous neutral pull-request / circle-dot / folder glyphs are gone.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    const html = wrapper.html()
+    expect(html).toContain('lucide-github')
+    for (const neutral of ['lucide-git-pull-request', 'lucide-circle-dot', 'lucide-folder-git-2']) {
+      expect(html, `${neutral} must not be rendered`).not.toContain(neutral)
+    }
+  })
+
+  it('shows the GitHub icon in the unbound fallback card too', async () => {
+    state.binding.value = null
+    state.isBound.value = false
+    state.loading.value = false
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    expect(wrapper.html()).toContain('lucide-github')
+    expect(wrapper.html()).not.toContain('lucide-git-pull-request')
+  })
+
   it('fallback card offers only manual binding (no suggestion button)', async () => {
     // The backend auto-binds official hosts, so the panel no longer renders a
     // "use detected repository" shortcut — the card is a fallback for cases
