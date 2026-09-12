@@ -29,6 +29,9 @@ const i18n = createI18n({
         installDirNotWritableTitle: '无法自动升级：安装目录不可写',
         installDirNotWritableBody: '当前用户对 {dir} 没有写权限。',
         installDirNotWritableHint: '请用 sudo 手动更新，或安装到用户可写目录。',
+        selfPathUnresolvedTitle: '无法自动升级：找不到正在运行的程序',
+        selfPathUnresolvedBody: '运行中的二进制文件已被外部替换或删除。',
+        selfPathUnresolvedHint: '请重启 ClawBench 后再试。',
         dockerHintTitle: '当前运行在 Docker 中',
         dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。',
         dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
@@ -69,6 +72,7 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useUpgrade')>()
   return {
     ERR_INSTALL_DIR_NOT_WRITABLE: actual.ERR_INSTALL_DIR_NOT_WRITABLE,
+    ERR_SELF_PATH_UNRESOLVED: actual.ERR_SELF_PATH_UNRESOLVED,
     useUpgrade: () => ({
       state: mockState,
       checking: mockChecking,
@@ -387,6 +391,19 @@ describe('UpgradeDialog', () => {
       expect(document.body.textContent).toContain('/usr/local/bin')
       // Raw backend error must not leak through.
       expect(document.body.textContent).not.toContain('permission denied')
+    })
+
+    it('shows actionable message when the running binary cannot be located', async () => {
+      mockIsFailed.value = true
+      mockState.error_code = 'self_path_unresolved'
+      mockState.error = 'running binary is not accessible at /opt/.clawbench-abc/bin/clawbench: no such file or directory'
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-failed')).toBeTruthy()
+      expect(document.body.textContent).toContain('找不到正在运行的程序')
+      // Raw backend error must not leak through.
+      expect(document.body.textContent).not.toContain('no such file or directory')
     })
   })
 

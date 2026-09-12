@@ -70,6 +70,13 @@ const (
 	// UpgradeErrInstallDirNotWritable means the running user cannot create
 	// files in the directory holding the binary, so backup/replace will fail.
 	UpgradeErrInstallDirNotWritable = "install_dir_not_writable"
+
+	// UpgradeErrSelfPathUnresolved means no usable path to the running binary
+	// could be found. Typical cause: the package directory was replaced or
+	// deleted by an external package manager (e.g. npm install/update while the
+	// service was running), so neither the recorded self-path nor
+	// os.Executable() resolves to a live file. Restarting the service fixes it.
+	UpgradeErrSelfPathUnresolved = "self_path_unresolved"
 )
 
 // SetUpgradeError sets phase to failed with an error message.

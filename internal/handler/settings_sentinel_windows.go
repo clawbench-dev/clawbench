@@ -7,10 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+
+	"clawbench/internal/service"
 )
 
 func launchSentinel() (*exec.Cmd, error) {
-	exe, err := os.Executable()
+	// See settings_sentinel_unix.go: the recorded self-path survives a package
+	// manager replacing the package while the service runs.
+	exe, err := service.ResolveSelfBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}
