@@ -98,7 +98,7 @@
             :class="{ active: items.type.value === 'issue' }"
             @click="items.setType('issue')"
           >
-            <Github :size="13" />
+            <CircleDot :size="13" />
             <span>{{ t('forge.type.issues') }}</span>
           </button>
           <button
@@ -106,7 +106,7 @@
             :class="{ active: items.type.value === 'pr' }"
             @click="items.setType('pr')"
           >
-            <Github :size="13" />
+            <GitPullRequest :size="13" />
             <span>{{ t('forge.type.prs') }}</span>
           </button>
         </div>
@@ -250,7 +250,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Inbox, MessageSquare,
+  Github, Inbox, MessageSquare, CircleDot, GitPullRequest,
   ChevronRight, ChevronDown, AlertCircle, Unlink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
