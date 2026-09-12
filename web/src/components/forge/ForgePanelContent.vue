@@ -68,7 +68,6 @@
               <ChevronDown :size="12" />
             </button>
             <span v-else>{{ t('nav.forge') }}</span>
-            <span v-if="items.items.value.length" class="forge-header-count">{{ items.items.value.length }}</span>
           </span>
           <RefreshButton
             class="forge-header-btn"
@@ -491,15 +490,6 @@ function formatTime(iso: string): string {
 }
 .forge-repo-menu-item.danger {
   color: var(--color-red);
-}
-.forge-header-count {
-  font-size: 10px;
-  font-weight: 700;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-  padding: 1px 6px;
-  border-radius: 10px;
-  flex-shrink: 0;
 }
 /* Header icon button — same 28px round treatment as .header-btn elsewhere */
 .forge-header-btn {

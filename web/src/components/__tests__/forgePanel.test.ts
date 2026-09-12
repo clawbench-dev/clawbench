@@ -180,6 +180,27 @@ describe('ForgePanelContent', () => {
     expect(wrapper.find('.forge-row').exists()).toBe(true)
   })
 
+  it('shows no count badge in the header', async () => {
+    // The header used to render items.length — the number of items loaded so
+    // far, which starts at the page size (30) and grows on scroll. That is not
+    // a total and not an unread count, so it carried no actionable meaning and
+    // was removed. This guards against it creeping back.
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice', commentCount: 2, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'Another bug', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '2026-09-10T00:00:00Z', slug: 'a/b' },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    // Both rows render, yet nothing in the header counts them.
+    expect(wrapper.findAll('.forge-row')).toHaveLength(2)
+    expect(wrapper.find('.forge-header-count').exists()).toBe(false)
+  })
+
   it('renders the type switch as page tabs (stats-style), not a segmented control', async () => {
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
     state.isBound.value = true
