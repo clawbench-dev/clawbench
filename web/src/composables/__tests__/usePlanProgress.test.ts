@@ -59,32 +59,58 @@ describe('usePlanProgress', () => {
   it('clearPlanState resets everything', () => {
     const { hasPlan, planCollapsed, planHasUpdate } = usePlanProgress()
     updatePlanEntries([{ content: 'X', priority: 'high', status: 'pending' }])
-    setPlanCollapsed(true)
+    setPlanCollapsed(false)
     expect(hasPlan.value).toBe(true)
     clearPlanState()
     expect(hasPlan.value).toBe(false)
-    expect(planCollapsed.value).toBe(false)
+    expect(planCollapsed.value).toBe(true)
     expect(planHasUpdate.value).toBe(false)
   })
 
-  it('planHasUpdate is set when collapsed and entries update', () => {
-    const { planHasUpdate } = usePlanProgress()
-    setPlanCollapsed(true)
+  it('defaults to collapsed and shows no update glow when a plan first appears', () => {
+    const { planCollapsed, planHasUpdate } = usePlanProgress()
     updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    expect(planCollapsed.value).toBe(true)
+    expect(planHasUpdate.value).toBe(false)
+  })
+
+  it('opens collapsed again after being cleared', () => {
+    const { planCollapsed } = usePlanProgress()
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    setPlanCollapsed(false)
+    clearPlanState()
+    updatePlanEntries([{ content: 'B', priority: 'high', status: 'pending' }])
+    expect(planCollapsed.value).toBe(true)
+  })
+
+  it('preserves the expanded choice across updates to a visible plan', () => {
+    const { planCollapsed } = usePlanProgress()
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    setPlanCollapsed(false)
+    updatePlanEntries([{ content: 'B', priority: 'high', status: 'in_progress' }])
+    expect(planCollapsed.value).toBe(false)
+  })
+
+  it('planHasUpdate is set when a collapsed plan updates', () => {
+    const { planCollapsed, planHasUpdate } = usePlanProgress()
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    expect(planCollapsed.value).toBe(true)
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'in_progress' }])
     expect(planHasUpdate.value).toBe(true)
   })
 
   it('planHasUpdate is not set when expanded and entries update', () => {
     const { planHasUpdate } = usePlanProgress()
-    setPlanCollapsed(false)
     updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    setPlanCollapsed(false)
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'in_progress' }])
     expect(planHasUpdate.value).toBe(false)
   })
 
   it('expanding clears planHasUpdate', () => {
     const { planHasUpdate } = usePlanProgress()
-    setPlanCollapsed(true)
     updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'in_progress' }])
     expect(planHasUpdate.value).toBe(true)
     setPlanCollapsed(false)
     expect(planHasUpdate.value).toBe(false)
@@ -92,8 +118,8 @@ describe('usePlanProgress', () => {
 
   it('togglePlanCollapse flips state and clears update on expand', () => {
     const { planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
-    setPlanCollapsed(true)
     updatePlanEntries([{ content: 'A', priority: 'high', status: 'pending' }])
+    updatePlanEntries([{ content: 'A', priority: 'high', status: 'in_progress' }])
     expect(planHasUpdate.value).toBe(true)
     togglePlanCollapse()
     expect(planCollapsed.value).toBe(false)

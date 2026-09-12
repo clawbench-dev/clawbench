@@ -14,13 +14,24 @@ export interface PlanEntry {
 }
 
 const planEntries = ref<PlanEntry[]>([])
-const planCollapsed = ref(false)
+const planCollapsed = ref(true)
 const planHasUpdate = ref(false)
 
-/** Replace plan entries (ACP replace semantics). Sets planHasUpdate if collapsed. */
+/**
+ * Replace plan entries (ACP replace semantics).
+ *
+ * The panel "opens" when a plan first appears (empty → non-empty): it starts
+ * collapsed so it does not push the conversation around, and no update glow is
+ * shown for the initial content. Updates to an already-visible plan preserve
+ * the user's expand/collapse choice and glow the chip only while collapsed.
+ */
 export function updatePlanEntries(entries: PlanEntry[]) {
+  const wasEmpty = planEntries.value.length === 0
   planEntries.value = entries
-  if (planCollapsed.value && entries.length > 0) {
+  if (wasEmpty && entries.length > 0) {
+    planCollapsed.value = true
+    planHasUpdate.value = false
+  } else if (planCollapsed.value && entries.length > 0) {
     planHasUpdate.value = true
   }
 }
@@ -28,7 +39,7 @@ export function updatePlanEntries(entries: PlanEntry[]) {
 /** Reset all plan state — called on session switch or clear. */
 export function clearPlanState() {
   planEntries.value = []
-  planCollapsed.value = false
+  planCollapsed.value = true
   planHasUpdate.value = false
 }
 
