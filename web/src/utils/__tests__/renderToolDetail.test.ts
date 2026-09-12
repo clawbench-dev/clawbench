@@ -974,6 +974,45 @@ describe('AskUserQuestion action handler', () => {
       cleanup(container)
     })
 
+    it('clicking the selected option again deselects it', () => {
+      const { container, emit } = createAskDOM(false)
+      const option = container.querySelector('.ask-question-option') as HTMLElement
+
+      // First click: select
+      const click1 = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(click1, 'target', { value: option, writable: false })
+      handleToolAction('AskUserQuestion', click1, emit)
+      expect(option.classList.contains('selected')).toBe(true)
+
+      // Second click on the same option: deselect (undo a mis-tap)
+      const click2 = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(click2, 'target', { value: option, writable: false })
+      handleToolAction('AskUserQuestion', click2, emit)
+
+      expect(option.classList.contains('selected')).toBe(false)
+      const indicator = option.querySelector('.ask-option-indicator')
+      expect(indicator?.textContent).toBe('◯')
+      cleanup(container)
+    })
+
+    it('disables submit button again after deselecting the only selection', () => {
+      const { container, emit } = createAskDOM(false)
+      const option = container.querySelector('.ask-question-option') as HTMLElement
+      const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+
+      const click1 = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(click1, 'target', { value: option, writable: false })
+      handleToolAction('AskUserQuestion', click1, emit)
+      expect(submitBtn.disabled).toBe(false)
+
+      const click2 = new MouseEvent('click', { bubbles: true, cancelable: true })
+      Object.defineProperty(click2, 'target', { value: option, writable: false })
+      handleToolAction('AskUserQuestion', click2, emit)
+
+      expect(submitBtn.disabled).toBe(true)
+      cleanup(container)
+    })
+
     it('enables submit button when an option is selected', () => {
       const { container, emit } = createAskDOM(false)
       const option = container.querySelector('.ask-question-option') as HTMLElement

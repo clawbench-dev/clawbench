@@ -1774,17 +1774,23 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
         const indicator = optionEl.querySelector('.ask-option-indicator')
         if (indicator) indicator.textContent = optionEl.classList.contains('selected') ? '☑' : '☐'
       } else {
+        // Single-select: clicking the already-selected option clears it (deselect),
+        // otherwise it becomes the sole selection. This lets a user undo a mis-tap
+        // without being forced to pick another option.
+        const wasSelected = optionEl.classList.contains('selected')
         const siblings = optionEl.parentElement!.querySelectorAll('.ask-question-option')
         for (const s of siblings) {
           s.classList.remove('selected')
           const ind = s.querySelector('.ask-option-indicator')
           if (ind) ind.textContent = '◯'
         }
-        optionEl.classList.add('selected')
-        const indicator = optionEl.querySelector('.ask-option-indicator')
-        // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
-        // so the filled state does not render smaller than the hollow one.
-        if (indicator) indicator.textContent = '●'
+        if (!wasSelected) {
+          optionEl.classList.add('selected')
+          const indicator = optionEl.querySelector('.ask-option-indicator')
+          // Use ● (U+25CF BLACK CIRCLE) — same glyph box/width as the unselected ◯ (U+25EF LARGE CIRCLE),
+          // so the filled state does not render smaller than the hollow one.
+          if (indicator) indicator.textContent = '●'
+        }
       }
 
       updateAskSubmitState(view)
