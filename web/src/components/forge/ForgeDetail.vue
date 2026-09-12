@@ -1,0 +1,385 @@
+<template>
+  <div class="forge-detail">
+    <!-- Standard drill-down header: var(--header-height) with a round icon
+         button, matching every other detail page. -->
+    <div class="forge-detail-header">
+      <button class="forge-back" @click="emit('back')">
+        <ChevronLeft :size="18" />
+        <span>{{ t('forge.detail.back') }}</span>
+      </button>
+      <div class="forge-detail-actions">
+        <a
+          v-if="detail.item.value"
+          class="forge-icon-btn"
+          :href="detail.item.value.url"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="t('forge.detail.openBrowser')"
+        >
+          <ExternalLink :size="15" />
+        </a>
+      </div>
+    </div>
+
+    <div v-if="detail.loading.value" class="forge-loading">
+      <LoadingIndicator size="md" :label="t('forge.loading')" />
+    </div>
+
+    <div v-else-if="detail.error.value" class="forge-error-card">
+      <AlertCircle :size="18" class="forge-error-icon" />
+      <div class="forge-error-text">
+        <div class="forge-error-title">{{ t('forge.error.generic') }}</div>
+        <div class="forge-error-body">{{ detail.error.value.message }}</div>
+      </div>
+    </div>
+
+    <template v-else-if="detail.item.value">
+      <div class="forge-detail-body">
+        <!-- Title + meta -->
+        <div class="forge-detail-title-row">
+          <span class="forge-state-dot" :class="`state-${detail.item.value.state}`"></span>
+          <div class="forge-detail-title-main">
+            <h2 class="forge-detail-title">{{ detail.item.value.title }}</h2>
+            <div class="forge-detail-meta">
+              <span class="forge-detail-number">#{{ detail.item.value.number }}</span>
+              <span class="forge-meta-sep">·</span>
+              <span>{{ detail.item.value.author }}</span>
+              <span class="forge-meta-sep">·</span>
+              <span>{{ formatTime(detail.item.value.createdAt) }}</span>
+              <span class="forge-state-badge" :class="`state-${detail.item.value.state}`">
+                {{ t(`forge.state.${stateKey(detail.item.value.state)}`) }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Body rendered through the shared markdown pipeline -->
+        <div
+          v-if="detail.item.value.body"
+          class="forge-detail-content markdown-body"
+          v-html="renderedBody"
+        ></div>
+
+        <!-- Comments -->
+        <div class="forge-comments">
+          <div v-if="detail.comments.value.length" class="forge-comments-title">
+            <MessageSquare :size="14" />
+            <span>{{ detail.comments.value.length }}</span>
+          </div>
+          <button
+            v-if="detail.hasMoreComments.value"
+            class="forge-load-more-comments"
+            :disabled="detail.loadingComments.value"
+            @click="detail.loadOlderComments()"
+          >
+            {{ detail.loadingComments.value ? t('forge.loading') : t('forge.detail.loadOlder') }}
+          </button>
+          <div v-for="c in detail.comments.value" :key="c.id" class="forge-comment">
+            <div class="forge-comment-meta">
+              <span class="forge-comment-author">{{ c.author }}</span>
+              <span class="forge-comment-time">{{ formatTime(c.createdAt) }}</span>
+            </div>
+            <div class="forge-comment-body markdown-body" v-html="renderComment(c.body)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Primary action pinned to the bottom bar -->
+      <div class="forge-detail-footer">
+        <button class="fbtn fbtn-primary forge-analyze-btn" @click="onAnalyze">
+          <Sparkles :size="15" />
+          <span>{{ t('forge.detail.analyze') }}</span>
+        </button>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { ChevronLeft, ExternalLink, Sparkles, MessageSquare, AlertCircle } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useForgeDetail } from '@/composables/useForge'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'ForgeDetail'
+const props = defineProps<{
+  type: 'issue' | 'pr'
+  number: number
+}>()
+const emit = defineEmits<{
+  (e: 'back'): void
+  (e: 'analyze', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string; body: string } }): void
+}>()
+
+const { t } = useI18n()
+const detail = useForgeDetail()
+
+onMounted(() => {
+  void detail.open(props.type, props.number)
+})
+
+const renderedBody = computed(() => {
+  const body = detail.item.value?.body ?? ''
+  return body ? renderMarkdownHtml(body) : ''
+})
+
+function renderComment(body: string): string {
+  try {
+    return renderMarkdownHtml(body || '')
+  } catch (err) {
+    appLog.w(TAG, 'render comment failed', err)
+    return ''
+  }
+}
+
+function onAnalyze() {
+  const it = detail.item.value
+  if (!it) return
+  emit('analyze', {
+    item: { type: it.type, number: it.number, title: it.title, url: it.url, slug: it.slug, body: it.body ?? '' },
+  })
+}
+
+// Map the normalized state to its i18n key. "merged" only exists under
+// forge.state; open/closed are shared with the list filter labels.
+function stateKey(state: string): string {
+  return state === 'merged' ? 'merged' : state === 'closed' ? 'closed' : 'open'
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString()
+}
+</script>
+
+<style scoped>
+.forge-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+/* ── Header — same 36px bar as every other drill-down page ── */
+.forge-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--header-height);
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.forge-back {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+@media (hover: hover) {
+  .forge-back:hover { background: var(--bg-secondary); }
+}
+.forge-back:active { background: var(--bg-tertiary); }
+.forge-detail-actions { display: flex; align-items: center; gap: 4px; }
+/* Round icon button matching .header-btn used across the app. */
+.forge-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+@media (hover: hover) {
+  .forge-icon-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
+}
+
+.forge-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Error ── */
+.forge-error-card {
+  margin: 12px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
+}
+.forge-error-icon { color: var(--color-red); flex-shrink: 0; }
+.forge-error-text { flex: 1; min-width: 0; }
+.forge-error-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.forge-error-body { color: var(--text-secondary); font-size: 12px; }
+
+/* ── Body ── */
+.forge-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+}
+.forge-detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.forge-detail-title-main { flex: 1; min-width: 0; }
+.forge-detail-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.forge-detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.forge-detail-number {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.forge-meta-sep { opacity: 0.5; }
+/* State badge — tinted pill instead of bare coloured text. */
+.forge-state-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.forge-state-badge.state-open {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+.forge-state-badge.state-closed {
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
+}
+.forge-state-badge.state-merged {
+  color: var(--color-purple);
+  background: color-mix(in srgb, var(--color-purple) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple) 35%, transparent);
+}
+.forge-detail-content {
+  margin-top: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+/* ── Comments ── */
+.forge-comments {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.forge-comments-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.forge-load-more-comments {
+  align-self: center;
+  padding: 5px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent-color);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+@media (hover: hover) {
+  .forge-load-more-comments:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    background: var(--bg-secondary);
+  }
+}
+.forge-load-more-comments:disabled { opacity: 0.5; cursor: not-allowed; }
+.forge-comment {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+.forge-comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.forge-comment-author { font-weight: 600; color: var(--text-primary); }
+.forge-comment-body {
+  padding: 10px 12px;
+  background: var(--bg-primary);
+}
+
+/* ── Footer action ── */
+.forge-detail-footer {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+.forge-analyze-btn {
+  width: 100%;
+  height: 36px;
+  border-radius: 18px;
+  font-size: 14px;
+}
+
+/* Status dot — baseline-aligned with the title's first line. */
+.forge-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  margin-top: 6px;
+}
+.forge-state-dot.state-open { background: var(--color-success); }
+.forge-state-dot.state-closed { background: var(--color-red); }
+.forge-state-dot.state-merged { background: var(--color-purple); }
+</style>

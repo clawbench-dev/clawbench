@@ -18,7 +18,7 @@ import (
 
 // setupPersistTestEnv sets up a test environment with DataDir configured
 // so that writeConfigYAML actually writes to disk.
-func setupPersistTestEnv(t *testing.T) (*testEnv, func()) { //nolint:unparam // test helper: testEnv used implicitly via global state
+func setupPersistTestEnv(t *testing.T) (*testEnv, func()) {
 	t.Helper()
 	env, teardown := setupTestEnv(t)
 

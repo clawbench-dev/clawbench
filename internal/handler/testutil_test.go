@@ -131,6 +131,9 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
 			session_id TEXT,
+			trigger_mode TEXT NOT NULL DEFAULT 'cron',
+			event_types TEXT NOT NULL DEFAULT '',
+			event_repo TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active',
 			repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 			max_runs INTEGER DEFAULT 0,
@@ -149,6 +152,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			status TEXT NOT NULL DEFAULT 'completed',
 			read_at DATETIME,
 			summary TEXT,
+			event_url TEXT NOT NULL DEFAULT '',
+			event_summary TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
@@ -313,6 +318,13 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	// Create file share tables
 	if _, err := db.Exec(service.FileSharesDDL); err != nil {
 		t.Fatalf("failed to create file share tables: %v", err)
+	}
+
+	// Create forge binding + sync tables
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("failed to create forge tables: %v", err)
+		}
 	}
 
 	service.SetDBForTest(db, db)

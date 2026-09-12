@@ -67,6 +67,8 @@ InvalidPortInQuery: 查询中的端口号无效
 TaskIdRequired: 任务ID为必填项
 TaskNotFound: 任务未找到
 TaskFieldsRequired: 名称、cron表达式、智能体ID和提示词为必填项
+TaskEventTypesInvalid: 事件任务至少需订阅一个有效事件类型
+TaskCronRequired: 定时任务需提供 cron 表达式
 TaskAlreadyRunning: 任务正在执行中，请等待完成后再触发
 TaskExecutionIdRequired: 执行实例ID为必填项
 TaskExecutionNotFound: 执行实例未找到或已结束

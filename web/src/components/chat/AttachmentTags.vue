@@ -17,8 +17,22 @@
       </span>
     </template>
 
+    <!-- External URL attachment (e.g. a GitHub issue / PR reference). Rendered
+         as a link chip; clicking opens the address instead of a file preview. -->
+    <a v-for="fileEntry in urlEntries"
+      :key="'url-' + fileEntry.url"
+      class="chat-file-attachment attachment-ref attachment-url"
+      :href="fileEntry.url"
+      target="_blank"
+      rel="noopener noreferrer"
+      :title="fileEntry.url">
+      <LinkIcon :size="16" class="attachment-file-icon" />
+      <span class="attachment-filename">{{ fileEntry.path || fileEntry.url }}</span>
+      <button class="attachment-close-btn" @click.stop.prevent="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
+    </a>
+
     <!-- Attached file reference cards -->
-    <span v-for="fileEntry in files" :key="'att-' + entryKey(fileEntry)"
+    <span v-for="fileEntry in fileEntries" :key="'att-' + entryKey(fileEntry)"
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': showsThumb(fileEntry) }"
       @click="$emit('file-click', fileEntry)"
@@ -39,13 +53,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { isImageFile, isUrlEntry, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { Link as LinkIcon } from 'lucide-vue-next'
 import { baseName } from '@/utils/path'
 import type { PendingFile } from '@/composables/useFileUpload'
 
@@ -65,6 +80,11 @@ defineEmits<{
 
 const { t } = useI18n()
 const thumbUrl = buildPathThumbUrl
+
+// URL attachments render as links; local entries render as file cards. Keeping
+// them in separate lists avoids branching inside the file-card markup.
+const urlEntries = computed(() => (props.files ?? []).filter(f => isUrlEntry(f)))
+const fileEntries = computed(() => (props.files ?? []).filter(f => !isUrlEntry(f)))
 
 /** Composite key so distinct line-range references of one file stay separate. */
 function entryKey(entry: FileEntry): string {

@@ -11,6 +11,7 @@ import (
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- ServeAgents ----------
@@ -193,6 +194,105 @@ func TestServeTasks_Post(t *testing.T) {
 	var result map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &result)
 	assert.Equal(t, true, result["ok"])
+}
+
+// TestServeTasks_PostEventTask verifies an event-triggered task can be created
+// without a cron expression, which the cron path would reject.
+func TestServeTasks_PostEventTask(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":         "On new PR",
+		"agent_id":     "coder",
+		"prompt":       "Review it",
+		"trigger_mode": "event",
+		"event_types":  "opened,commented",
+		"event_repo":   "github|github.com|acme/widgets",
+		// Deliberately no cron_expr.
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	task, _ := result["task"].(map[string]any)
+	require.NotNil(t, task)
+	assert.Equal(t, "event", task["triggerMode"])
+	assert.Equal(t, "opened,commented", task["eventTypes"])
+	assert.Equal(t, "github|github.com|acme/widgets", task["eventRepo"])
+}
+
+// TestServeTasks_PostEventTaskNeedsEventTypes guards the validation: an event
+// task with no subscription must be rejected rather than silently never firing.
+func TestServeTasks_PostEventTaskNeedsEventTypes(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":         "Bad",
+		"agent_id":     "coder",
+		"prompt":       "x",
+		"trigger_mode": "event",
+		// No event_types.
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	// A bad subscription is a client error, not a server fault.
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskEventTypesInvalid")
+}
+
+// TestServeTasks_PostEventTaskRejectsUnknownEventType covers the other half of
+// the validation: an unrecognized type must not be persisted.
+func TestServeTasks_PostEventTaskRejectsUnknownEventType(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	req := newRequest(t, http.MethodPost, "/api/tasks", map[string]any{
+		"name":         "Bad",
+		"agent_id":     "coder",
+		"prompt":       "x",
+		"trigger_mode": "event",
+		"event_types":  "opened,not_a_real_event",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTasks, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskEventTypesInvalid")
 }
 
 func TestServeTasks_PostMissingFields(t *testing.T) {
@@ -1395,4 +1495,45 @@ func TestServeTasks_Get_HasUnreadFalse(t *testing.T) {
 	var result map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &result)
 	assert.Equal(t, false, result["hasUnread"], "hasUnread should be false when no tasks have unread executions")
+}
+
+// TestServeTaskByID_EventToCronWithoutCronRejected guards the mode switch-back:
+// an event task has no stored cron expression, so switching it to cron without
+// supplying one must be a 400 rather than a 500 from cron.ParseStandard("").
+func TestServeTaskByID_EventToCronWithoutCronRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "Event Task",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+		TriggerMode: "event",
+		EventTypes:  "opened",
+	}
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask: %v", err)
+	}
+
+	// Switch to cron with no cron expression supplied.
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
+		"trigger_mode": "cron",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assert.Contains(t, w.Body.String(), "TaskCronRequired")
 }

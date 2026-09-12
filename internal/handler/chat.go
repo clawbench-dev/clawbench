@@ -366,9 +366,18 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate file entries are within project and determine isDir via os.Stat
+	// Validate file entries are within project and determine isDir via os.Stat.
+	// URL entries carry an external address, not a local path: they are passed
+	// through untouched and never resolved against the filesystem.
 	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
 	for _, fEntry := range req.Files {
+		if fEntry.IsURL() {
+			validatedFileEntries = append(validatedFileEntries, model.FileEntry{
+				Kind: "url",
+				URL:  fEntry.URL,
+			})
+			continue
+		}
 		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return
@@ -396,6 +405,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	fileEntryFileLabels := make([]string, 0) // "path" or "path:startLine-endLine"
 	fileEntryDirPaths := make([]string, 0)
 	for _, f := range validatedFileEntries {
+		// URL entries are not filesystem paths and must not be prefixed onto
+		// the prompt as if they were local files.
+		if f.IsURL() {
+			continue
+		}
 		if _, exists := filePathsSet[f.Path]; exists {
 			continue // already covered by filePaths
 		}

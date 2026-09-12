@@ -1,7 +1,22 @@
 # GitHub / GitLab 集成（Issue + PR/MR）设计方案
 
 日期：2026-09-11
-状态：需求冻结 + 评审修正完成，**分 4 阶段实施**
+状态：**P1–P4 已实施完成**（需求冻结 + 评审修正 + 编码）
+
+## 实施状态
+
+| 阶段 | 状态 | 提交 |
+|---|---|---|
+| P1 可见性 | 已完成 | `76322c7`、`d5f7b22`、`fa02379` |
+| P2 感知 | 已完成 | `f8e9aad` |
+| P3 自动化 | 已完成 | `310ac61` |
+| P4 AI 分析 | 已完成 | `fa02379`（URL 附件）、`310ac61`（溯源） |
+
+实施期补充说明（与设计一致，非偏差）：
+
+- **事件触发任务复用同一 `taskRunning` 防重入**：为消除 R6 的静默丢弃，队列在 `ForgeTaskTrigger` 内实现；`triggerTaskWithContext` 在任务忙时返回 `false`，由队列按退避重试，而非丢弃。
+- **IM 通道**：`dingtalk`/`feishu` 各新增 `PushForgeEvent(title, body)`，消息文案由 service 层 `FormatForgeEventMessage` 统一生成，main.go 通过 `forgeNotifierAdapter` 接入，与 `emitTaskEvent` 的分发方式一致。
+- **溯源**：`task_executions` 增 `event_url`/`event_summary` 列，执行记录 API 返回，任务执行详情页展示「事件触发，查看来源」链接。
 
 ## 概述
 

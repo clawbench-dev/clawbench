@@ -211,6 +211,16 @@
                   />
                 </TabPanel>
 
+                <!-- Issues & PRs Tab -->
+                <TabPanel tabId="forge" :activeTab="leftPanelActive" :noHeader="true">
+                  <ForgePanelContent
+                    :active="panelIsActive('forge')"
+                    :project-path="store.state.projectRoot"
+                    @request-project="switchTab('chat')"
+                    @analyze="handleForgeAnalyze"
+                  />
+                </TabPanel>
+
                 <!-- Tasks Tab -->
                 <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
@@ -373,6 +383,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -455,7 +466,7 @@ import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3 } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, GitPullRequest, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -466,6 +477,7 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
+import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
@@ -540,6 +552,9 @@ import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { useForgeUnread } from './composables/useForgeUnread.ts'
+import { useForgeBinding } from './composables/useForgeBinding.ts'
+import { injectChatInput } from './utils/chatInputInjection.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -796,6 +811,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab, force = false) {
+  // Opening the Issues & PRs tab clears its unread badge.
+  if (tab === 'forge') {
+    void markForgeRead()
+  }
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -1859,7 +1878,7 @@ function handleDockTerminal() {
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
 const overflowTabs = computed(() => {
-  const tabs = ['tasks']
+  const tabs = ['forge', 'tasks']
   if (!isTerminalDisabled.value) tabs.push('terminal')
   if (!isSSHDisabled.value) tabs.push('proxy')
   tabs.push('stats')
@@ -1867,6 +1886,7 @@ const overflowTabs = computed(() => {
   return tabs
 })
 const overflowTabMeta = {
+  forge:   { icon: GitPullRequest, titleKey: 'nav.forge' },
   tasks:   { icon: Clock, titleKey: 'nav.tasks' },
   proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
@@ -1918,6 +1938,14 @@ watch(() => localConfig.uiScale, () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
+  // The forge tab serves both GitHub and GitLab, so its icon follows the bound
+  // platform instead of always showing one brand. Falls back to the neutral
+  // pull-request glyph when nothing is bound.
+  if (tab === 'forge') {
+    if (forgePlatform.value === 'github') return Github
+    if (forgePlatform.value === 'gitlab') return Gitlab
+    return GitPullRequest
+  }
   return overflowTabMeta[tab]?.icon ?? Clock
 }
 function dockTabTitle(tab) {
@@ -2007,7 +2035,22 @@ function handleWideDockTabClick(tab) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile } = useChatContext()
+const { addAttachedFile, addUrlAttachment } = useChatContext()
+const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+// The forge dock icon reflects the bound platform (GitHub vs GitLab).
+const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
+
+// "Analyze with AI" from the Issues & PRs tab. Reuses the quote-input flow: the
+// issue/PR URL becomes a URL attachment chip, and the body is injected into the
+// input as a fenced markdown block so the user can add their own instruction.
+function handleForgeAnalyze(payload) {
+  const it = payload?.item
+  if (!it) return
+  addUrlAttachment(it.url, `${it.slug}#${it.number}`)
+  switchTab('chat')
+  const fence = '```' + (it.type === 'pr' ? 'pr' : 'issue') + ' ' + it.slug + '#' + it.number + '\n' + (it.body || '') + '\n```'
+  injectChatInput(fence)
+}
 const { uploadAndAttach } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
@@ -2071,6 +2114,7 @@ const wideScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
   view: { icon: FileText, titleKey: 'nav.fileView' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
+  forge: overflowTabMeta.forge,
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
   terminal: overflowTabMeta.terminal,
@@ -2098,6 +2142,7 @@ function wideDockBtnClass(tab) {
 function wideDockBadgeCount(tab) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
+    case 'forge': return forgeUnreadCount.value
     case 'tasks': return store.state.taskUnreadCount
     case 'terminal': return store.state.terminalSessionCount
     case 'proxy': return store.state.portForwardEnabledCount
@@ -2462,6 +2507,10 @@ function playQuoteEmitAnimation(e) {
 
 onMounted(async () => {
     applyTheme(theme.value)
+    // Prime the forge unread badge (server-authoritative; independent of the
+    // notification toggles) and the bound platform (drives the dock icon).
+    void refreshForgeUnread()
+    void refreshForgePlatform()
     let resp
     try {
         resp = await fetch('/api/me')

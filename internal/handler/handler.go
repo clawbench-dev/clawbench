@@ -276,6 +276,18 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/upload/recent", middleware.Auth(UploadRecent))
 	register("/api/share-in/recent", middleware.Auth(ShareInRecent))
 
+	// GitHub / GitLab integration (read-only issue & PR browsing).
+	register("/api/forge/credentials", middleware.Auth(ServeForgeCredentials))
+	register("/api/forge/verify-token", middleware.Auth(ServeForgeVerifyToken))
+	register("/api/forge/items", middleware.Auth(ServeForgeItems))
+	register("/api/forge/item", middleware.Auth(ServeForgeItem))
+	register("/api/forge/comments", middleware.Auth(ServeForgeComments))
+	register("/api/forge/binding", middleware.Auth(ServeForgeBinding))
+	register("/api/forge/remotes", middleware.Auth(ServeForgeRemotes))
+	register("/api/forge/test", middleware.Auth(ServeForgeTest))
+	register("/api/forge/unread", middleware.Auth(ServeForgeUnread))
+	register("/api/forge/read", middleware.Auth(ServeForgeMarkRead))
+
 	// Public file-share links. Management endpoints are auth-protected; the
 	// public data endpoints (/api/share/{token}/...) and the share SPA page
 	// (/share/{token}) are intentionally unauthenticated — the capability token

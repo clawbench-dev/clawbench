@@ -461,5 +461,30 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// Keep Feishu.Enabled in sync with PushMode
 	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
 
+	// --- Forge (GitHub / GitLab integration) ---
+	// Notification toggles default to ENABLED. Go's bool zero value is false, so
+	// without this block every flag would silently default to off — the opposite
+	// of the documented behavior. Presence is used to distinguish "user wrote
+	// false" from "user omitted the field": an absent key means default (true),
+	// a present key means respect the parsed value.
+	applyForgeNotifyDefaults(cfg, presence)
+
 	return autoPassword
+}
+
+// applyForgeNotifyDefaults fills the forge notification toggles, defaulting each
+// absent flag to true. A flag explicitly present in the config file (even as
+// false) is left untouched.
+func applyForgeNotifyDefaults(cfg *Config, presence map[string]bool) {
+	defaultTrue := func(key string, target *bool) {
+		if _, present := presence[key]; !present {
+			*target = true
+		}
+	}
+	defaultTrue("forge.notify.opened", &cfg.Forge.Notify.Opened)
+	defaultTrue("forge.notify.closed", &cfg.Forge.Notify.Closed)
+	defaultTrue("forge.notify.merged", &cfg.Forge.Notify.Merged)
+	defaultTrue("forge.notify.reopened", &cfg.Forge.Notify.Reopened)
+	defaultTrue("forge.notify.commented", &cfg.Forge.Notify.Commented)
+	defaultTrue("forge.notify.pipeline", &cfg.Forge.Notify.Pipeline)
 }

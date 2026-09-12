@@ -36,7 +36,11 @@
               <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
             </div>
             <div class="task-item-meta">
-              <div class="meta-item cron" :title="task.cronExpr">
+              <div v-if="task.triggerMode === 'event'" class="meta-item cron" :title="task.eventTypes">
+                <Zap class="meta-icon" :size="12" />
+                <span>{{ eventTriggerLabel(task) }}</span>
+              </div>
+              <div v-else class="meta-item cron" :title="task.cronExpr">
                 <Clock class="meta-icon" :size="12" />
                 <span>{{ humanizeCron(task.cronExpr) }}</span>
               </div>
@@ -48,7 +52,8 @@
             </div>
             <div class="task-item-next">
               <Clock class="meta-icon" :size="12" />
-              <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
+              <span v-if="task.triggerMode === 'event'">{{ t('task.list.eventTriggered') }}</span>
+              <span v-else-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
@@ -62,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -90,6 +95,24 @@ interface TaskItem {
   runningCount: number
   unreadCount: number
   nextRunAt?: string
+  // Trigger mode: 'cron' (default/absent) or 'event'.
+  triggerMode?: string
+  eventTypes?: string
+}
+
+// eventTriggerLabel renders the subscribed event types as a compact list.
+function eventTriggerLabel(task: TaskItem): string {
+  const types = (task.eventTypes || '').split(',').map(s => s.trim()).filter(Boolean)
+  if (types.length === 0) return t('task.form.triggerEvent')
+  const labels: Record<string, string> = {
+    opened: t('task.form.eventOpened'),
+    closed: t('task.form.eventClosed'),
+    merged: t('task.form.eventMerged'),
+    reopened: t('task.form.eventReopened'),
+    commented: t('task.form.eventCommented'),
+    pipeline_done: t('task.form.eventPipeline'),
+  }
+  return types.map(x => labels[x] || x).join(' · ')
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])

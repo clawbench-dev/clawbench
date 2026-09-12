@@ -254,4 +254,76 @@ describe('useTaskForm', () => {
       expect(Object.keys(form.errors.value)).toHaveLength(0)
     })
   })
+
+  // ── Event-triggered tasks ──
+
+  describe('event trigger payload', () => {
+    it('sends trigger_mode and event fields, and no cron expression', async () => {
+      const { form } = createForm({ mode: 'create' })
+      form.form.value.name = 'On new PR'
+      form.form.value.agentId = 'agent-1'
+      form.form.value.prompt = 'Review it'
+      form.form.value.triggerMode = 'event'
+      form.form.value.eventTypes = 'opened,commented'
+      form.form.value.eventRepo = 'github|github.com|acme/widgets'
+      // A leftover cron value must NOT be sent for an event task.
+      form.form.value.cronExpr = '0 9 * * *'
+
+      mockApiPost.mockResolvedValue({ task: { id: 'task-9' } })
+      await form.submit()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/tasks', expect.objectContaining({
+        trigger_mode: 'event',
+        event_types: 'opened,commented',
+        event_repo: 'github|github.com|acme/widgets',
+        cron_expr: '',
+      }))
+    })
+
+    it('cron task omits event fields and keeps its cron expression', async () => {
+      const { form } = createForm({ mode: 'create' })
+      form.form.value.name = 'Daily'
+      form.form.value.agentId = 'agent-1'
+      form.form.value.prompt = 'Report'
+      form.form.value.triggerMode = 'cron'
+      form.form.value.cronExpr = '0 9 * * *'
+      form.form.value.eventTypes = 'opened' // stale value must be cleared
+
+      mockApiPost.mockResolvedValue({ task: { id: 'task-10' } })
+      await form.submit()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/tasks', expect.objectContaining({
+        trigger_mode: 'cron',
+        cron_expr: '0 9 * * *',
+        event_types: '',
+        event_repo: '',
+      }))
+    })
+
+    it('init reads trigger fields from task data', () => {
+      const { form } = createForm({ mode: 'edit' })
+      form.init({
+        id: 5,
+        name: 'Event task',
+        cronExpr: '',
+        agentId: 'agent-1',
+        prompt: 'go',
+        repeatMode: 'unlimited',
+        maxRuns: 0,
+        triggerMode: 'event',
+        eventTypes: 'merged',
+        eventRepo: 'github|github.com|a/b',
+      })
+
+      expect(form.form.value.triggerMode).toBe('event')
+      expect(form.form.value.eventTypes).toBe('merged')
+      expect(form.form.value.eventRepo).toBe('github|github.com|a/b')
+    })
+
+    it('defaults triggerMode to cron when task data omits it', () => {
+      const { form } = createForm({ mode: 'edit' })
+      form.init({ id: 6, name: 'Legacy', cronExpr: '0 9 * * *', agentId: 'a', prompt: 'p' })
+      expect(form.form.value.triggerMode).toBe('cron')
+    })
+  })
 })

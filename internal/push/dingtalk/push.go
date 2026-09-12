@@ -196,3 +196,16 @@ func sendToAllSubscribers(title, markdown string) bool {
 	slog.Debug("dingtalk: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
 	return sent > 0
 }
+
+// PushForgeEvent sends a DingTalk notification for a GitHub/GitLab event.
+// title/body are provided by the service layer, which owns the event wording;
+// this function only owns the transport and the push-mode gate.
+func PushForgeEvent(title, markdown string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || markdown == "" {
+		return false
+	}
+	return sendToAllSubscribers(title, markdown)
+}

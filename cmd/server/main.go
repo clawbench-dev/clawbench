@@ -37,6 +37,7 @@ import (
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/cli"
+	"clawbench/internal/forge"
 	"clawbench/internal/frontend"
 	"clawbench/internal/frp"
 	"clawbench/internal/handler"
@@ -62,6 +63,24 @@ const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
 )
+
+// forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
+// the IM push backends, avoiding an import cycle (service → push → service).
+// It mirrors how emitTaskEvent dispatches to dingtalk/feishu.
+type forgeNotifierAdapter struct{}
+
+// PushForgeEvent renders the event and sends it to the active IM backend.
+func (forgeNotifierAdapter) PushForgeEvent(event service.ForgeEvent, item forge.Item) bool {
+	title, body := service.FormatForgeEventMessage(event, item)
+	switch {
+	case dingtalk.IsStarted():
+		return dingtalk.PushForgeEvent(title, body)
+	case feishu.IsStarted():
+		return feishu.PushForgeEvent(title, body)
+	default:
+		return false
+	}
+}
 
 // dingtalkDBAdapter bridges the dingtalk package's DB interface to service package
 // functions, avoiding import cycles between service → dingtalk → service.
@@ -792,6 +811,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopForgePoller()
 	defer service.StopBingWallpaperWorker()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
@@ -934,6 +954,41 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the GitHub/GitLab change poller. It is read-only and only runs when
+	// at least one project is bound to a repository; the provider factory is
+	// supplied by the handler package (which owns credential + TLS policy).
+	{
+		limiter := forge.NewLimiter(2, 5, 4)
+		// Broadcast forge events over the existing WS channel, and push to the
+		// active IM robot (dingtalk/feishu) when one is running.
+		dispatcher := service.NewForgeEventDispatcher(
+			func() model.Config { return model.ConfigInstance },
+			func(msg any) {
+				if m := ws.GetManager(); m != nil {
+					m.BroadcastEvent(ws.ServerMessage{
+						Type:  ws.MessageTypeEvent,
+						ID:    ws.GenerateEventID(),
+						Event: "forge_event",
+						Data:  msg,
+					})
+				}
+			},
+			forgeNotifierAdapter{},
+		)
+		// Event-triggered AI tasks run off the same derived events. The trigger
+		// owns queueing/debounce/kill-switch and the anti-recursion check; it is
+		// wired as a second sink so notification and automation stay independent.
+		trigger := service.NewForgeTaskTrigger(
+			service.GlobalScheduler,
+			func() model.Config { return model.ConfigInstance },
+			func(repo service.ForgeRepoRef) string {
+				return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
+			},
+		)
+		syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger))
+		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
+	}
 
 	// Initialize proxy service (port forwarding) and SSH tunnel server.
 	// ProxyRegistry is only created when SSH tunnel is enabled — it has no
