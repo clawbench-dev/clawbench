@@ -38,30 +38,37 @@ const { total } = useCrossProjectSessions()
 <style scoped>
 /* Rendered by the wrapper so it can live outside the scroll area — in the
    pinned sidebar it sits at the bottom of the list column, and in the mobile
-   drawer it goes into BottomSheet's #footer slot (which is flex-shrink:0 and
-   therefore stays pinned instead of being pushed off-screen by auto height).
-   width:100% makes it fill the footer too, whose flex row otherwise packs
-   children to the right. */
+   drawer it goes into BottomSheet's #footer slot, which stays pinned instead of
+   being pushed off-screen by auto height. */
 .session-tabs {
   display: flex;
-  flex-shrink: 0;
+  /* Never grow/shrink vertically: in the sidebar this is the last row of the
+     list column, so growing would steal height from the session list. */
+  flex: 0 0 auto;
+  /* Stretch across the available width in both hosts: sidebar (column flex,
+     so align-self governs width) and the BottomSheet footer (row flex, where
+     width:100% fills the content box). */
+  align-self: stretch;
   width: 100%;
   border-top: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #fff);
 }
 
 .session-tab {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 9px 8px;
+  gap: 4px;
+  /* Compact vertical rhythm — the bar is a secondary control, not content. */
+  padding: 6px 6px;
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
   font-size: 12px;
   font-weight: 500;
+  line-height: 1.4;
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }

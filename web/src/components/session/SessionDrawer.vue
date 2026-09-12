@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet ref="bottomSheetRef" :open="open" auto :title="t('session.title')" @close="$emit('close')">
+  <BottomSheet ref="bottomSheetRef" :open="open" auto panel-class="session-drawer-sheet" :title="t('session.title')" @close="$emit('close')">
     <template #header>
       <SessionListHeader
         :session-count="sessionCount"
@@ -133,13 +133,26 @@ watch(() => store.state.sessionCount, async () => {
 </script>
 
 <style scoped>
-/* Zero out BottomSheet's default footer padding so the tab bar spans the full
-   panel width edge-to-edge. The tabs component draws its own top border, so the
-   footer's border-top is dropped too (otherwise the divider doubles up).
-   Same approach as SessionSearchDrawer's compact footer override. */
-:deep(.bs-footer) {
+/* Footer padding is zeroed in the non-scoped block below. A scoped :deep rule
+   cannot reach it: BottomSheet renders inside <Teleport to="body">, so this
+   component's scope attribute never lands on .bs-footer's ancestors and the
+   selector fails to match. panelClass is bound on .bs-panel itself, so the
+   non-scoped selector can target it reliably. */
+</style>
+
+<style>
+/* Zero out BottomSheet's default footer padding/border so the tab bar spans the
+   full panel width edge-to-edge (the tabs component draws its own top border,
+   so the footer's would double up). Scoped to this drawer's panelClass so other
+   BottomSheet consumers (e.g. SessionSearchDrawer) keep their own footer.
+   .bs-panel is included in the selector to outrank the base
+   `.bs-panel > .bs-footer` rule regardless of stylesheet order. */
+.bs-panel.session-drawer-sheet > .bs-footer {
   padding: 0;
   border-top: none;
   gap: 0;
+  /* The bar is a full-width row of tabs; the base rule's flex-end alignment
+     would pack it to the right. */
+  justify-content: flex-start;
 }
 </style>
