@@ -1,6 +1,6 @@
 # API 文档
 
-`openapi.yaml` 是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部约 145 个路由 / 180 个操作。
+`openapi.yaml` 是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 143 个路径 / 181 个操作。
 
 ## 使用方式
 

@@ -125,7 +125,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  status:
+                  app:
+                    type: string
+                  version:
                     type: string
 
   /api/me:
@@ -151,7 +153,7 @@ paths:
             schema:
               type: object
               properties:
-                old_password:
+                current_password:
                   type: string
                 new_password:
                   type: string
@@ -160,6 +162,10 @@ paths:
           description: 修改成功
         "400":
           $ref: "#/components/responses/Error"
+        "401":
+          description: 当前密码错误
+        "429":
+          description: 尝试过于频繁
 
   # ── System ────────────────────────────────────────────────────────────────
   /api/system/resources:
@@ -185,17 +191,59 @@ paths:
     get:
       tags: [System]
       summary: 用量统计
-      description: 按维度聚合 `chat_metadata` 的 token/成本统计。
+      description: |
+        按维度聚合 `chat_metadata` 的 token/成本统计。`start`/`end` 为必填（RFC3339）。
+        项目范围通过项目 Cookie 传递，不是查询参数。
       operationId: usageStats
       parameters:
-        - name: dimension
+        - name: start
+          in: query
+          required: true
+          description: 起始时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          description: 结束时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: dims
+          in: query
+          description: 聚合维度，可重复传入（如 project / model / backend / agent）。
+          schema:
+            type: array
+            items:
+              type: string
+        - name: metrics
+          in: query
+          description: 指标，可重复传入。
+          schema:
+            type: array
+            items:
+              type: string
+        - name: sort
           in: query
           schema:
             type: string
-        - name: project_path
+        - name: order
           in: query
           schema:
             type: string
+        - name: trend
+          in: query
+          schema:
+            type: string
+        - name: top
+          in: query
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: 聚合结果
@@ -204,7 +252,23 @@ paths:
     get:
       tags: [System]
       summary: Git 仓库统计
+      description: 代码增量统计（时间窗内）。
       operationId: gitStats
+      parameters:
+        - name: start
+          in: query
+          required: true
+          description: 起始时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          description: 结束时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
       responses:
         "200":
           description: 提交数、贡献者等
@@ -246,7 +310,22 @@ paths:
               type: object
       responses:
         "200":
-          description: 更新后的配置
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  needs_restart:
+                    type: boolean
+                  changed_cold_fields:
+                    type: array
+                    items:
+                      type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
         "400":
           $ref: "#/components/responses/Error"
 
@@ -395,8 +474,12 @@ paths:
       description: 后台执行，结果轮询 `/api/theme/bing/status`。
       operationId: themeBingSync
       responses:
-        "200":
-          description: 已触发
+        "202":
+          description: 已受理，返回当前 Bing 状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BingStatus"
 
   /api/theme/bing/status:
     get:
@@ -440,6 +523,11 @@ paths:
       tags: [Projects]
       summary: 列出项目目录
       operationId: projectsList
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: 目录条目
@@ -447,6 +535,17 @@ paths:
       tags: [Projects]
       summary: 创建项目目录
       operationId: projectsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
       responses:
         "200":
           description: 创建结果
@@ -463,6 +562,15 @@ paths:
       tags: [Projects]
       summary: 设置当前项目
       operationId: projectSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 设置结果
@@ -484,8 +592,18 @@ paths:
           description: 结果
     delete:
       tags: [Projects]
-      summary: 清除最近项目
+      summary: 删除一条最近项目
+      description: 按请求体 `{path}` 删除单条记录。
       operationId: recentProjectsClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -495,7 +613,7 @@ paths:
     get:
       tags: [Chat]
       summary: 聊天历史与运行状态
-      description: 分页返回会话消息（`view=summary` 返回摘要视图），并附带运行状态与 ACP 状态。
+      description: 分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
       operationId: chatGet
       parameters:
         - name: session_id
@@ -511,13 +629,9 @@ paths:
           description: 整数游标，取该 id 之前的消息。
           schema:
             type: integer
-        - name: view
+        - name: before
           in: query
-          schema:
-            type: string
-            enum: [summary]
-        - name: project_path
-          in: query
+          description: 时间戳游标（legacy，兼容旧客户端；优先用 `before_id`）。
           schema:
             type: string
       responses:
@@ -528,7 +642,14 @@ paths:
       summary: 发送聊天消息
       description: |
         发送一条用户消息并启动 AI 流式响应。流式事件经 `/api/ai/events/ws` 推送。
+        会话由 `session_id` 查询参数（或会话 Cookie）决定，**不在请求体里**。
       operationId: chatSend
+      parameters:
+        - name: session_id
+          in: query
+          description: 目标会话；缺省时回退到会话 Cookie。
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -536,18 +657,31 @@ paths:
             schema:
               type: object
               properties:
-                prompt:
+                message:
                   type: string
-                session_id:
+                queueId:
                   type: string
-                agent_id:
-                  type: string
-                model:
-                  type: string
+                  description: 排队消息标识（忙碌时入队用）。
+                filePaths:
+                  type: array
+                  items:
+                    type: string
                 files:
                   type: array
                   items:
                     $ref: "#/components/schemas/FileEntry"
+                agentId:
+                  type: string
+                modelId:
+                  type: string
+                thinkingEffort:
+                  type: string
+                modeId:
+                  type: string
+                transport:
+                  type: string
+                clientId:
+                  type: string
       responses:
         "200":
           description: 已受理
@@ -586,7 +720,7 @@ paths:
     get:
       tags: [Chat]
       summary: 用户消息索引
-      description: 轻量返回 `{id, content, files, createdAt}`，供消息导航。
+      description: 轻量返回该会话的用户消息列表（`{messages:[...]}`），供消息导航。
       operationId: chatUserMessages
       parameters:
         - name: session_id
@@ -597,6 +731,16 @@ paths:
       responses:
         "200":
           description: 用户消息索引
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      description: 用户消息（含 id / content / files / createdAt / role 等）。
 
   /api/ai/chat/tool-call:
     get:
@@ -657,11 +801,15 @@ paths:
             schema:
               type: object
               properties:
-                session_id:
+                sessionId:
                   type: string
-                request_id:
+                toolCallId:
                   type: string
-                approved:
+                  description: ACP 工具调用 ID。
+                optionId:
+                  type: string
+                  description: 选中的权限选项；空字符串表示取消。
+                cancelled:
                   type: boolean
       responses:
         "200":
@@ -679,13 +827,40 @@ paths:
       tags: [Chat]
       summary: 新建聊天快捷发送
       operationId: quickSendCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                command:
+                  type: string
+                project_only:
+                  type: boolean
       responses:
         "200":
           description: 新建结果
+
+  /api/chat/quick-send/reorder:
     put:
       tags: [Chat]
       summary: 批量重排聊天快捷发送
+      description: 注意重排路径是 `/api/chat/quick-send/reorder`，不是 `/api/chat/quick-send`。
       operationId: quickSendReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
       responses:
         "200":
           description: 结果
@@ -729,12 +904,8 @@ paths:
     get:
       tags: [Chat]
       summary: 消息聚类结果
+      description: 返回全局聚类结果（不按会话过滤）。
       operationId: messageClusters
-      parameters:
-        - name: session_id
-          in: query
-          schema:
-            type: string
       responses:
         "200":
           description: 聚类
@@ -747,6 +918,8 @@ paths:
       responses:
         "200":
           description: 已触发
+        "409":
+          description: 已有计算在运行
 
   /api/chat/message-clusters/compute/cancel:
     post:
@@ -777,6 +950,10 @@ paths:
           in: query
           schema:
             type: string
+        - name: cursor_id
+          in: query
+          schema:
+            type: string
         - name: limit
           in: query
           schema:
@@ -797,7 +974,7 @@ paths:
               properties:
                 title:
                   type: string
-                agent_id:
+                agentId:
                   type: string
                 backend:
                   type: string
@@ -818,8 +995,13 @@ paths:
     patch:
       tags: [Sessions]
       summary: 即时持久化会话设置
-      description: 模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。
+      description: 模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
       operationId: sessionUpdate
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -827,15 +1009,17 @@ paths:
             schema:
               type: object
               properties:
-                session_id:
+                modeId:
                   type: string
-                mode:
+                thinkingEffort:
                   type: string
-                thinking_effort:
-                  type: string
-                model:
+                modelId:
                   type: string
                 transport:
+                  type: string
+                autoApprove:
+                  type: boolean
+                title:
                   type: string
       responses:
         "200":
@@ -880,6 +1064,15 @@ paths:
       tags: [Sessions]
       summary: 恢复会话
       operationId: sessionResume
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                session_id:
+                  type: string
       responses:
         "200":
           description: 恢复结果
@@ -890,6 +1083,17 @@ paths:
       summary: ACP 显式 LoadSession
       description: 强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。
       operationId: sessionACPLoad
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agentId:
+                  type: string
+                acpSessionId:
+                  type: string
       responses:
         "200":
           description: 回放结果
@@ -900,6 +1104,17 @@ paths:
       summary: ACP 会话同步
       description: 对比 ACP 回放消息与本地记录，仅补插缺失消息。
       operationId: sessionACPSync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agentId:
+                  type: string
+                sessionId:
+                  type: string
       responses:
         "200":
           description: 同步结果
@@ -908,7 +1123,21 @@ paths:
     post:
       tags: [Sessions]
       summary: 分叉会话
+      description: 请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
       operationId: sessionFork
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                beforeMessageId:
+                  type: integer
+                agentId:
+                  type: string
       responses:
         "200":
           description: 新会话
@@ -919,6 +1148,15 @@ paths:
       summary: 重置卡死会话
       description: 保留外部会话 ID 映射，仅回收 agent 进程，历史完整保留。
       operationId: sessionReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
       responses:
         "200":
           description: 重置结果
@@ -936,9 +1174,9 @@ paths:
             schema:
               type: object
               properties:
-                session_id:
+                sessionId:
                   type: string
-                message_id:
+                beforeMessageId:
                   type: integer
       responses:
         "200":
@@ -962,7 +1200,14 @@ paths:
     post:
       tags: [Queue]
       summary: 入队消息
+      description: 会话由 `session_id` 查询参数决定（不在请求体里）。
       operationId: queueEnqueue
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -970,11 +1215,25 @@ paths:
             schema:
               type: object
               properties:
-                session_id:
+                message:
                   type: string
-                prompt:
+                queueId:
                   type: string
-                queue_id:
+                filePaths:
+                  type: array
+                  items:
+                    type: string
+                files:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FileEntry"
+                agentId:
+                  type: string
+                modelId:
+                  type: string
+                transport:
+                  type: string
+                clientId:
                   type: string
       responses:
         "200":
@@ -982,7 +1241,9 @@ paths:
     delete:
       tags: [Queue]
       summary: 删除排队消息
-      description: 按 queue_id 删除（旧的按下标删除已不再支持）。
+      description: |
+        按 `queueId` 删除单条；**省略 `queueId` 时清空该会话的全部排队消息**。
+        旧的按下标删除已不再支持（会返回 400）。
       operationId: queueDelete
       parameters:
         - name: session_id
@@ -990,9 +1251,9 @@ paths:
           required: true
           schema:
             type: string
-        - name: queue_id
+        - name: queueId
           in: query
-          required: true
+          required: false
           schema:
             type: string
       responses:
@@ -1079,6 +1340,22 @@ paths:
       responses:
         "200":
           description: 分支信息
+    delete:
+      tags: [Git]
+      summary: 删除本地分支
+      operationId: gitBranchDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
 
   /api/git/branches:
     get:
@@ -1094,6 +1371,11 @@ paths:
       tags: [Git]
       summary: 项目提交历史
       operationId: gitProjectHistory
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: 提交列表
@@ -1106,6 +1388,7 @@ paths:
       parameters:
         - name: path
           in: query
+          required: true
           schema:
             type: string
       responses:
@@ -1120,10 +1403,13 @@ paths:
       parameters:
         - name: path
           in: query
+          required: true
           schema:
             type: string
-        - name: commit
+        - name: sha
           in: query
+          required: true
+          description: 提交哈希。
           schema:
             type: string
       responses:
@@ -1135,6 +1421,17 @@ paths:
       tags: [Git]
       summary: 差异
       operationId: gitDiff
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: commit
+          in: query
+          description: 可选提交哈希；省略则对比工作区。
+          schema:
+            type: string
       responses:
         "200":
           description: diff 文本
@@ -1144,6 +1441,12 @@ paths:
       tags: [Git]
       summary: 提交涉及的文件
       operationId: gitCommitFiles
+      parameters:
+        - name: sha
+          in: query
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: 文件列表
@@ -1175,10 +1478,11 @@ paths:
             schema:
               type: object
               properties:
-                hashes:
+                shas:
                   type: array
                   items:
                     type: string
+                  description: 待校验的提交哈希列表。
       responses:
         "200":
           description: 校验结果
@@ -1195,6 +1499,18 @@ paths:
       tags: [Git]
       summary: 删除 worktree
       operationId: gitWorktreeDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: 目标 worktree 路径（必填）。
+                force:
+                  type: boolean
       responses:
         "200":
           description: 结果
@@ -1204,6 +1520,20 @@ paths:
       tags: [Git]
       summary: 切换分支 / 检出
       operationId: gitCheckout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch:
+                  type: string
+                  description: 目标分支（必填）。
+                stash:
+                  type: boolean
+                force:
+                  type: boolean
       responses:
         "200":
           description: 结果
@@ -1216,6 +1546,22 @@ paths:
       responses:
         "200":
           description: 标签列表
+    delete:
+      tags: [Git]
+      summary: 删除标签
+      operationId: gitTagDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
 
   # ── Files ─────────────────────────────────────────────────────────────────
   /api/dir:
@@ -1238,6 +1584,17 @@ paths:
       tags: [Files]
       summary: 新建目录
       operationId: dirCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1251,12 +1608,25 @@ paths:
       parameters:
         - name: q
           in: query
+          required: true
           schema:
             type: string
         - name: path
           in: query
           schema:
             type: string
+        - name: recursive
+          in: query
+          schema:
+            type: boolean
+        - name: exact
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: SSE 流
@@ -1312,6 +1682,16 @@ paths:
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
+        - name: path
+          in: query
+          description: 绝对路径（外部文件）。
+          schema:
+            type: string
+        - name: forceText
+          in: query
+          description: 置 1 时强制按文本返回。
+          schema:
+            type: string
       responses:
         "200":
           description: 文件内容
@@ -1353,6 +1733,17 @@ paths:
       tags: [Files]
       summary: 写入文件
       operationId: fileWrite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                content:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1362,6 +1753,17 @@ paths:
       tags: [Files]
       summary: 新建文件
       operationId: fileCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1390,6 +1792,17 @@ paths:
       tags: [Files]
       summary: 重命名
       operationId: fileRename
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1399,6 +1812,17 @@ paths:
       tags: [Files]
       summary: 复制
       operationId: fileCopy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                dest:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1408,6 +1832,17 @@ paths:
       tags: [Files]
       summary: 移动
       operationId: fileMove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                dest:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1417,6 +1852,15 @@ paths:
       tags: [Files]
       summary: 打包为 zip
       operationId: fileArchive
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paths:
+                  type: array
       responses:
         "200":
           description: zip 字节
@@ -1488,6 +1932,17 @@ paths:
       summary: 文件变更监听（SSE）
       description: fsnotify 驱动的 Server-Sent Events 流，用于自动刷新。OpenAPI 不建模事件流。
       operationId: fileWatch
+      parameters:
+        - name: dir
+          in: query
+          description: 监听目录。
+          schema:
+            type: string
+        - name: file
+          in: query
+          description: 监听单个文件。
+          schema:
+            type: string
       responses:
         "200":
           description: SSE 流
@@ -1497,7 +1952,7 @@ paths:
                 type: string
 
   /api/file/watch/update:
-    post:
+    put:
       tags: [Files]
       summary: 更新监听目标
       operationId: fileWatchUpdate
@@ -1510,7 +1965,17 @@ paths:
     post:
       tags: [Share]
       summary: 创建分享链接
+      description: 需要目标路径（请求体 `{path}`）。
       operationId: shareCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 分享 token
@@ -1524,7 +1989,23 @@ paths:
     delete:
       tags: [Share]
       summary: 删除分享
+      description: 需要目标路径（请求体 `{path}` 或查询参数 `path`）。
       operationId: shareDelete
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1588,6 +2069,17 @@ paths:
       tags: [Forge]
       summary: 保存凭据
       operationId: forgeCredentialsSave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                token:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1595,6 +2087,12 @@ paths:
       tags: [Forge]
       summary: 删除凭据
       operationId: forgeCredentialsDelete
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: 结果
@@ -1604,6 +2102,17 @@ paths:
       tags: [Forge]
       summary: 校验令牌
       operationId: forgeVerifyToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                token:
+                  type: string
       responses:
         "200":
           description: 校验结果
@@ -1613,6 +2122,35 @@ paths:
       tags: [Forge]
       summary: 议题 / 合并请求列表
       operationId: forgeItems
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: mine
+          in: query
+          schema:
+            type: boolean
+        - name: mineScope
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: 条目列表
@@ -1622,6 +2160,17 @@ paths:
       tags: [Forge]
       summary: 议题 / 合并请求详情
       operationId: forgeItem
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
       responses:
         "200":
           description: 条目详情
@@ -1631,6 +2180,25 @@ paths:
       tags: [Forge]
       summary: 评论列表
       operationId: forgeComments
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: 评论列表
@@ -1647,6 +2215,25 @@ paths:
       tags: [Forge]
       summary: 保存项目绑定
       operationId: forgeBindingSave
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                platform:
+                  type: string
+                host:
+                  type: string
+                owner:
+                  type: string
+                repo:
+                  type: string
+                url:
+                  type: string
+                source:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -1655,8 +2242,8 @@ paths:
       summary: 解除绑定
       operationId: forgeBindingDelete
       responses:
-        "200":
-          description: 结果
+        "204":
+          description: 已解除（无响应体）
 
   /api/forge/remotes:
     get:
@@ -1733,7 +2320,9 @@ paths:
     get:
       tags: [Agents]
       summary: agent 子资源
-      description: 子路径：`/common-prompt`、`/refresh-models`、`/acp-sessions`、`/rescan`。
+      description: |
+        GET 子路径：`/api/agents/{id}/common-prompt`、`/api/agents/{id}/acp-sessions`。
+        （`/api/agents/{id}/refresh-models` 与 `/api/agents/rescan` 只接受 POST。）
       operationId: agentSubGet
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -1774,10 +2363,12 @@ paths:
               properties:
                 text:
                   type: string
-                engine:
+                language:
                   type: string
-                voice:
-                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+                messageId:
+                  type: integer
+                  description: 关联的 chat_history.id，用于 TTS 摘要缓存。
       responses:
         "200":
           description: 音频
@@ -1863,7 +2454,10 @@ paths:
     get:
       tags: [Terminal]
       summary: 终端可用状态
-      description: 返回 `enabled` 与 `platform_supported`。取代已移除的 `/api/terminal/config`。
+      description: |
+        返回 `enabled`、`platform_supported`、`sessions`、`session_count`；
+        带 `session` 查询参数时另返回 `hasSession`/`sessionId`/`cwd`/`running`。
+        取代已移除的 `/api/terminal/config`。
       operationId: terminalStatus
       responses:
         "200":
@@ -1931,6 +2525,14 @@ paths:
       tags: [Terminal]
       summary: 读取终端按键配置
       operationId: terminalKeyConfigGet
+      parameters:
+        - name: type
+          in: query
+          required: true
+          description: 配置类型，`key`（键位）或 `symbol`（符号）。
+          schema:
+            type: string
+            enum: [key, symbol]
       responses:
         "200":
           description: 按键配置
@@ -1938,6 +2540,20 @@ paths:
       tags: [Terminal]
       summary: 更新终端按键配置
       operationId: terminalKeyConfigPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [key, symbol]
+                items:
+                  type: array
+                  items:
+                    type: object
       responses:
         "200":
           description: 结果
@@ -1994,9 +2610,10 @@ paths:
       tags: [Tasks]
       summary: 更新任务 / 删除执行记录
       description: |
-        更新任务字段。另承担执行记录的删除操作（无独立 DELETE 路由）：请求体带
-        `action: "deleteExecution"` + `execution_id` 删除单条，或
-        `action: "deleteAllExecutions"` 清空该任务的执行历史。
+        更新任务字段，并承载多种动作（`action`）：`update`、`pause`、`resume`、
+        `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
+        删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
+        或 `action: "deleteAllExecutions"` 清空该任务执行历史。
         **注意**：对 `/api/tasks/{id}/executions` 直接发 DELETE 不会删除执行记录，
         而是删除整个任务。
       operationId: taskUpdate
@@ -2011,10 +2628,10 @@ paths:
               properties:
                 action:
                   type: string
-                  enum: [deleteExecution, deleteAllExecutions]
-                execution_id:
-                  type: integer
-                  description: 仅 `deleteExecution` 需要。
+                  enum: [update, pause, resume, read, trigger, cancel, deleteExecution, deleteAllExecutions]
+                executionId:
+                  type: string
+                  description: 仅 `deleteExecution` 需要（字符串形式）。
       responses:
         "200":
           description: 结果
@@ -2041,6 +2658,11 @@ paths:
           schema:
             type: integer
         - name: cursor
+          in: query
+          description: 游标；需与 `cursor_id` 同时提供才生效。
+          schema:
+            type: string
+        - name: cursor_id
           in: query
           schema:
             type: string
@@ -2093,10 +2715,23 @@ paths:
             schema:
               type: object
               properties:
-                query:
+                q:
                   type: string
+                  description: 搜索词（必填）。
                 limit:
                   type: integer
+                backend:
+                  type: string
+                role:
+                  type: string
+                session_id:
+                  type: string
+                exclude_session_id:
+                  type: string
+                from:
+                  type: string
+                to:
+                  type: string
       responses:
         "200":
           description: 匹配分块
@@ -2107,7 +2742,7 @@ paths:
       summary: 按 ID 取完整消息
       operationId: ragMessage
       parameters:
-        - name: message_id
+        - name: id
           in: query
           required: true
           schema:
@@ -2122,9 +2757,10 @@ paths:
       summary: 取会话全部消息
       operationId: ragSession
       parameters:
-        - name: session_id
+        - name: id
           in: query
           required: true
+          description: 会话 ID。
           schema:
             type: string
       responses:
@@ -2146,8 +2782,9 @@ paths:
       summary: 消息索引状态
       operationId: ragMessageIndexStatus
       parameters:
-        - name: message_id
+        - name: id
           in: query
+          required: true
           schema:
             type: integer
       responses:
@@ -2195,7 +2832,18 @@ paths:
             schema:
               type: object
               properties:
-                query:
+                q:
+                  type: string
+                  description: 搜索词（必填）。
+                archived:
+                  type: boolean
+                sort:
+                  type: string
+                cursor:
+                  type: string
+                cursor_id:
+                  type: string
+                prefer_mode:
                   type: string
       responses:
         "200":
@@ -2299,8 +2947,9 @@ paths:
       tags: [Proxy]
       summary: CORS 代理
       description: |
-        为 Swagger UI 的 "Try it out" 转发 API 请求以绕过浏览器 CORS。仅转发 HTTP/HTTPS，
-        过滤 hop-by-hop 头。生产可设 `AllowLocalProxy=false` 阻止私有 IP（防 SSRF）。
+        为 Swagger UI 的 "Try it out" 转发 API 请求以绕过浏览器 CORS。**透传任意 HTTP 方法**
+        （含 OPTIONS 预检与 POST），仅转发 HTTP/HTTPS，过滤 hop-by-hop 头。
+        生产可设 `AllowLocalProxy=false` 阻止私有 IP（防 SSRF）。
       operationId: openapiProxy
       responses:
         "200":
@@ -2376,6 +3025,7 @@ paths:
     post:
       tags: [Upload]
       summary: 上传文件
+      description: multipart 上传；除 `file` 外还支持 `dir`（目标目录）与 `relpath`（相对路径）。
       operationId: uploadFile
       requestBody:
         required: true
@@ -2401,8 +3051,18 @@ paths:
           description: 最近上传记录
     delete:
       tags: [Upload]
-      summary: 清除最近上传
+      summary: 删除一条最近上传记录
+      description: 按请求体 `{path}` 删除单条记录（不是清空全部；清空需逐条调用）。
       operationId: uploadRecentClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -2417,8 +3077,18 @@ paths:
           description: 记录
     delete:
       tags: [Upload]
-      summary: 清除最近接收记录
+      summary: 删除一条最近接收记录
+      description: 按请求体 `{path}` 删除单条记录（不是清空全部）。
       operationId: shareInRecentClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
       responses:
         "200":
           description: 结果
@@ -2529,7 +3199,10 @@ components:
 
     GalleryItem:
       type: object
-      description: 图库中的一张图片。
+      description: |
+        图库中的一张图片，由 `POST /api/theme/local/upload` 返回。
+        注意：绝对路径 `abs_path` 不在此响应中，只出现在 `GET /api/config` 的
+        `appearance.local.items[]` 里。
       properties:
         file:
           type: string
@@ -2541,9 +3214,6 @@ components:
           type: integer
         size:
           type: integer
-        abs_path:
-          type: string
-          description: 绝对路径，供 `/api/file/thumb` 使用。
 
     WallpaperState:
       type: object
@@ -2578,8 +3248,6 @@ components:
           type: string
         last_attempt_at:
           type: integer
-        abs_path:
-          type: string
 
     ClientLogEntry:
       type: object
