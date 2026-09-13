@@ -1976,7 +1976,7 @@ defineExpose({
 
 .chat-action-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   color: var(--text-muted, #999);
 }
 
@@ -1998,12 +1998,12 @@ defineExpose({
 }
 
 .chat-action-btn-archive.disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
 .acp-sync-btn.disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -2145,7 +2145,7 @@ defineExpose({
 }
 
 .chat-attach-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -2398,7 +2398,7 @@ defineExpose({
 }
 
 .chat-textarea:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .chat-send-btn {
@@ -2419,8 +2419,8 @@ defineExpose({
 @media (hover: hover) {
   .chat-send-btn:hover { background: #0055aa; }
 }
-.chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.chat-send-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-send-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
+.chat-send-btn.disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 
 /* Send button in queue mode: orange to distinguish from normal send */
 .chat-send-btn.queued {
@@ -2454,7 +2454,7 @@ defineExpose({
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   flex-shrink: 0;
 }
-.chat-stop-btn:active { opacity: 0.75; }
+.chat-stop-btn:active { opacity: var(--opacity-soft); }
 
 /* Light theme: boost stop button default visibility */
 :not([data-theme-base="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
@@ -2726,7 +2726,7 @@ defineExpose({
 
 .usage-popup-compact-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
 }
 
 .usage-popup-compact-btn:active:not(:disabled) {

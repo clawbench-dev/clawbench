@@ -244,7 +244,7 @@ watch(() => props.open, async (val) => {
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   transition: opacity var(--duration-base), background var(--duration-base);
 }
 
@@ -271,7 +271,7 @@ watch(() => props.open, async (val) => {
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   transition: opacity var(--duration-base), background var(--duration-base);
 }
 
@@ -289,7 +289,7 @@ watch(() => props.open, async (val) => {
   }
 
   .agent-option:hover .agent-set-default-btn {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
   }
 }
 

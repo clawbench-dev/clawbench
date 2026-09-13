@@ -669,7 +669,7 @@ onUnmounted(() => {
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

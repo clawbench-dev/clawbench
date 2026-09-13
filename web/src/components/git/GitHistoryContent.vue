@@ -867,7 +867,7 @@ onMounted(async () => {
 }
 
 .diff-nav-btn:disabled {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -961,7 +961,7 @@ onMounted(async () => {
 .git-file-dir {
   color: var(--text-muted, #999);
   font-size: var(--font-size-xs);
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

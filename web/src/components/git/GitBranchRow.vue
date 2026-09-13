@@ -86,7 +86,7 @@ function handleClick() {
 }
 
 .git-branch-row.switching {
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
   pointer-events: none;
 }
 

@@ -147,7 +147,7 @@ function onDiffClick(event: MouseEvent) {
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
@@ -165,7 +165,7 @@ function onDiffClick(event: MouseEvent) {
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
   font-family: var(--font-mono);
@@ -189,7 +189,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped) {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: var(--accent-color, #4a90d9);
 }
 
@@ -200,7 +200,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-hunk-linum-btn.is-on) {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: var(--accent-color, #4a90d9);
 }
 
@@ -281,7 +281,7 @@ function onDiffClick(event: MouseEvent) {
 }
 .git-diff-scroll :deep(.diff-line-del .diff-linum) {
   color: #dc2626;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-diff-scroll :deep(.diff-line-add) {
@@ -289,7 +289,7 @@ function onDiffClick(event: MouseEvent) {
 }
 .git-diff-scroll :deep(.diff-line-add .diff-linum) {
   color: #16a34a;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-diff-scroll :deep(.diff-line-ctx .diff-content) {

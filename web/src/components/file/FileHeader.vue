@@ -693,7 +693,7 @@ onBeforeUnmount(() => {
     height: 14px;
 }
 .file-header-btn:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
     pointer-events: none;
 }
@@ -793,7 +793,7 @@ onBeforeUnmount(() => {
     flex-shrink: 0;
 }
 .file-header-dropdown-menu .dropdown-item:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
     pointer-events: none;
 }

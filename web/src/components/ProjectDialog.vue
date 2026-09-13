@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
     color: var(--accent-color, #0066cc);
   }
 }
-.toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.toolbar-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* Content */
 .dialog-content {

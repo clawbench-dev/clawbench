@@ -594,7 +594,7 @@ function confirmEdit() {
 }
 
 .settings-item--disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   pointer-events: none;
 }
 

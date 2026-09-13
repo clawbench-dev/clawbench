@@ -264,7 +264,7 @@ onUnmounted(() => {
 
 .panel-empty-icon {
   color: var(--text-muted);
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .panel-empty-text {
@@ -309,7 +309,7 @@ onUnmounted(() => {
     transparent
   );
   border-radius: 1px;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .msg-item:first-child::before {
@@ -332,7 +332,7 @@ onUnmounted(() => {
 }
 
 .msg-item:active {
-  opacity: 0.75;
+  opacity: var(--opacity-soft);
 }
 
 .msg-item.active {
@@ -442,14 +442,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   transition: opacity var(--duration-slow), background var(--duration-slow), color var(--duration-slow);
   -webkit-tap-highlight-color: transparent;
 }
 
 @media (hover: hover) {
   .msg-item:hover .msg-fork-btn {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
   }
   .msg-fork-btn:hover {
     opacity: 1 !important;
@@ -479,7 +479,7 @@ onUnmounted(() => {
 }
 
 .panel-hint svg {
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 </style>
 

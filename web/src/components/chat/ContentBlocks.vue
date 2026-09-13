@@ -1449,7 +1449,7 @@ onUnmounted(() => {
 .placeholder-dots span:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes dot-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  0%, 80%, 100% { transform: scale(0.6); opacity: var(--opacity-disabled); }
   40% { transform: scale(1); opacity: 1; }
 }
 
@@ -2088,7 +2088,7 @@ onUnmounted(() => {
 }
 
 .scheduled-task-card.deleted {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   border-color: var(--border-color, #dee2e6);
   background: var(--bg-secondary);
   cursor: default;
@@ -2784,7 +2784,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-submit:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -3261,7 +3261,7 @@ onUnmounted(() => {
 /* Buttons keep their normal shape; disabled buttons get the shared .fbtn
    opacity treatment only (the JS no longer forces an extra inline opacity). */
 .content-blocks .tool-detail .permission-options .fbtn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* After a user responds (before the SSE result re-renders the badge), the

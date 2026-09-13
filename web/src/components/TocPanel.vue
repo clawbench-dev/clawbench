@@ -575,7 +575,7 @@ onBeforeUnmount(() => {
     flex-shrink: 0;
     margin-right: 5px;
     vertical-align: middle;
-    opacity: 0.75;
+    opacity: var(--opacity-soft);
 }
 .toc-item.active .toc-kind-icon { opacity: 1; }
 

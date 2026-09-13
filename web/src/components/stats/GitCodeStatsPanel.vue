@@ -515,7 +515,7 @@ onMounted(() => {
   font-size: var(--font-size-md);
 }
 .stats-empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* ── Detail table ── */

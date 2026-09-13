@@ -79,11 +79,11 @@ defineEmits(['switch', 'delete'])
 }
 
 .git-worktree-row.missing {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-worktree-row.locked {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .wt-row-main {

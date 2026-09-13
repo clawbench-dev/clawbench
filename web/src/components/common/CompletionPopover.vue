@@ -553,7 +553,7 @@ function handleSummaryClick(event: MouseEvent): void {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
 }
 
 .completion-popover-summary {
@@ -697,7 +697,7 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 .completion-popover-send.disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
 }
 
@@ -740,7 +740,7 @@ function handleSummaryClick(event: MouseEvent): void {
 
 @media (hover: hover) {
     .completion-popover-open:hover {
-        opacity: 0.88;
+        opacity: var(--opacity-hover);
     }
 }
 

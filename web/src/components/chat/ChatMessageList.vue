@@ -1381,7 +1381,7 @@ defineExpose({
 /* No agents empty state */
 .no-agents-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .no-agents-title {
@@ -1464,7 +1464,7 @@ defineExpose({
 }
 
 .chat-load-hint:active {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 @media (hover: hover) {
@@ -1545,7 +1545,7 @@ defineExpose({
   border-radius: 50%;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base), opacity var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }

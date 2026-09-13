@@ -492,7 +492,7 @@ defineExpose({ activeTab, handleFileDrop })
   background: var(--bg-hover);
 }
 .ad-file-attached {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
 }
 
 /* Icon container: holds icon or thumbnail.
@@ -555,7 +555,7 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-open {
   flex-shrink: 0;
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   transition: opacity var(--duration-base), color var(--duration-base);
 }
 .ad-file-row:active .ad-file-open {
@@ -589,7 +589,7 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-delete {
   flex-shrink: 0;
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: pointer;
   transition: opacity var(--duration-base), color var(--duration-base);
 }

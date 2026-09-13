@@ -342,7 +342,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .drilldown-refresh-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

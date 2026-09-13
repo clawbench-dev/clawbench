@@ -378,7 +378,7 @@ defineExpose({ open })
 
 @media (hover: hover) {
   .mc-btn.primary:hover {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 }
 

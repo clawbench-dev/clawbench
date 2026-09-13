@@ -333,7 +333,7 @@ function formatTime(iso: string): string {
 }
 
 .acp-session-resume-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

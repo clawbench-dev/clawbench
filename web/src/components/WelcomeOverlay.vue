@@ -328,7 +328,7 @@ onUnmounted(() => {
 }
 
 .backend-not-detected {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .backend-icon {
@@ -395,7 +395,7 @@ onUnmounted(() => {
 
 @media (hover: hover) {
   .btn-install:hover {
-    opacity: 0.85;
+    opacity: var(--opacity-hover);
   }
 }
 
@@ -433,7 +433,7 @@ onUnmounted(() => {
   }
 
   .btn-ok:hover {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 
   .btn-rescan:hover {
@@ -489,7 +489,7 @@ onUnmounted(() => {
 }
 
 .btn-rescan:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
   border-color: var(--accent-color);
   color: var(--accent-color);

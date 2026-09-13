@@ -599,7 +599,7 @@ function handleCopyMessage() {
 }
 
 .pending-action:disabled {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     cursor: default;
 }
 

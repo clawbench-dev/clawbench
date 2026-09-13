@@ -10,7 +10,7 @@
   border: none;
   border-radius: var(--radius-xs) 0 0 var(--radius-xs);
   cursor: pointer;
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   transition: opacity var(--duration-base);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
@@ -24,7 +24,7 @@
 
 .diff-marker:hover,
 .diff-marker:focus-visible {
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-color);
 }
@@ -57,12 +57,12 @@
 
 @keyframes diff-marker-highlight {
   0% { opacity: 1; }
-  100% { opacity: 0.45; }
+  100% { opacity: var(--opacity-disabled); }
 }
 
 @keyframes diff-marker-added-flash {
   0% { background: rgba(100, 200, 255, 0.9); opacity: 1; }
-  100% { background: rgba(80, 200, 80, 0.7); opacity: 0.45; }
+  100% { background: rgba(80, 200, 80, 0.7); opacity: var(--opacity-disabled); }
 }
 
 /* ─── Dark theme adjustments ─── */

@@ -58,7 +58,7 @@ withDefaults(
   inset: 0;
   z-index: 5;
   background: var(--bg-primary, #fff);
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
 }
 
 /* Full-screen overlay (covers the entire viewport) */
@@ -67,7 +67,7 @@ withDefaults(
   inset: 0;
   z-index: var(--z-popover);
   background: var(--bg-primary, #fff);
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
 }
 
 .loading-indicator.inline {

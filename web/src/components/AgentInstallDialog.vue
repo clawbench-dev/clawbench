@@ -184,7 +184,7 @@ function copyCmd() {
   transition: opacity var(--duration-base);
 }
 
-.dlg-btn:active { opacity: 0.7; }
+.dlg-btn:active { opacity: var(--opacity-soft); }
 
 .dlg-cancel {
   background: var(--bg-tertiary, #f0f0f0);

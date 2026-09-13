@@ -351,7 +351,7 @@ async function onDragEnd() {
 }
 
 .qs-empty-icon {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
 }
 
 /* PopupMenu teleports to body — these styles must be unscoped */

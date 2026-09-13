@@ -273,7 +273,7 @@ defineExpose({
 }
 
 .empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* ── Execution items ── */
@@ -509,7 +509,7 @@ defineExpose({
 
 @keyframes exec-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 6px 3px rgba(22, 163, 74, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 6px 3px rgba(22, 163, 74, 0.3); }
 }
 
 /* ── Just-completed execution flash ── */
@@ -518,7 +518,7 @@ defineExpose({
 }
 
 @keyframes exec-just-completed {
-  0% { background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--bg-secondary, #f8f9fa)); transform: translateX(8px); opacity: 0.7; }
+  0% { background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--bg-secondary, #f8f9fa)); transform: translateX(8px); opacity: var(--opacity-soft); }
   100% { background: var(--bg-secondary, #f8f9fa); transform: translateX(0); opacity: 1; }
 }
 
@@ -579,7 +579,7 @@ defineExpose({
 /* Touch devices: always visible but subtle */
 @media (hover: none) {
   .delete-exec-btn {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
   }
 }
 

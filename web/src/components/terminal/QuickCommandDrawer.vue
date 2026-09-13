@@ -215,7 +215,7 @@ async function onDragEnd() {
 }
 
 .qc-row.qc-hidden {
-  opacity: 0.55;
+  opacity: var(--opacity-muted);
 }
 
 @media (hover: hover) {
@@ -357,7 +357,7 @@ async function onDragEnd() {
 }
 
 .qc-empty-icon {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
 }
 
 /* PopupMenu teleports to body — these styles must be unscoped */

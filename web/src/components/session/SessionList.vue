@@ -824,7 +824,7 @@ onUnmounted(() => {
 
 @keyframes badge-breathe {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
+  50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
 @keyframes scan-bg {
