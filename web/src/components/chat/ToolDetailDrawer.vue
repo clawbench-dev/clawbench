@@ -1348,7 +1348,6 @@ function handleBodyInput(event) {
 .tool-detail-body .computer-use-icon { font-size: 14px; }
 .tool-detail-body .computer-use-action {
   font-weight: 600;
-  color: var(--text-primary);
   text-transform: uppercase;
   font-size: 10px;
   padding: 1px 5px;

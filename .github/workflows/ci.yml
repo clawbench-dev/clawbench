@@ -151,6 +151,10 @@ jobs:
         working-directory: web
         run: npx eslint src/
 
+      - name: Stylelint
+        working-directory: web
+        run: npx stylelint "src/**/*.{css,vue}" "css/**/*.css"
+
   typecheck-frontend:
     name: Typecheck (Frontend)
     runs-on: ubuntu-latest

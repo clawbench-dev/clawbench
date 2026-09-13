@@ -917,7 +917,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
    the content text and doesn't overlap the fixed line numbers. */
 .cm-viewer .sticky-line-code {
     position: absolute;
-    left: var(--sticky-left, 0px);
+    left: var(--sticky-left, 0);
     top: 0;
     height: 100%;
     overflow: hidden;

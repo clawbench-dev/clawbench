@@ -127,9 +127,6 @@ function toggleCollapse() {
   flex-shrink: 0;
 }
 
-.section-body {
-}
-
 .section-loading {
   display: flex;
   justify-content: center;

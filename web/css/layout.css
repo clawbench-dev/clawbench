@@ -28,7 +28,6 @@
     padding-left: 6px;
     padding-right: 6px;
     gap: 4px;
-    flex-shrink: 0;
     overflow: hidden;
     z-index: 1100;
 }

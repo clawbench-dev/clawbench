@@ -275,7 +275,6 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   width: 32px;
   height: 32px;
   padding: 0;
-  border: none;
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
   flex-shrink: 0;

@@ -2036,10 +2036,6 @@ defineExpose({
     background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
 }
 
-/* When both unread and running, keep running's background as-is */
-.chat-action-btn.has-unread.has-running {
-}
-
 .chat-action-btn.has-running:active {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
     transform: scale(0.92);

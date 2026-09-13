@@ -14,6 +14,8 @@
     "typecheck": "vue-tsc --noEmit -p web/tsconfig.json",
     "lint": "cd web && npx eslint src/",
     "lint:fix": "cd web && npx eslint src/ --fix",
+    "lint:css": "cd web && npx stylelint \"src/**/*.{css,vue}\" \"css/**/*.css\"",
+    "lint:css:fix": "cd web && npx stylelint \"src/**/*.{css,vue}\" \"css/**/*.css\" --fix",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "dependencies": {

@@ -1413,7 +1413,6 @@ onUnmounted(() => {
   top: 48px;
   left: 0;
   right: 0;
-  display: flex;
   justify-content: center;
   z-index: 10;
   max-width: 260px;

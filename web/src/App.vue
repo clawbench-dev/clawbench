@@ -3212,7 +3212,7 @@ onUnmounted(() => {
 }
 
 .dock-safe-area {
-    height: env(safe-area-inset-bottom, 0px);
+    height: env(safe-area-inset-bottom, 0);
 }
 
 .dock-center {
