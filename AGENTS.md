@@ -116,6 +116,17 @@ Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture�
 - **前端必须使用 appLog**：所有前端代码使用 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`（测试文件除外）。Tag 约定：短 PascalCase 模块名。
 - **Android 必须使用 AppLog**：所有 Android 代码使用 `AppLog.d/i/w/e()`，禁止原始 `android.util.Log`（`AppLog.java` 本身和测试除外）。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
+- **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、query 参数、请求体字段、响应字段、状态码）时，必须同步更新 `docs/spec/api/openapi.yaml`。
+
+  该文档是**手工维护**的，不会自动生成，因此极易与实际实现脱节。历史教训：曾出现 `POST /api/ai/chat` 的 `prompt` 实际是 `message`、`PATCH /api/ai/session/update` 的 `mode` 实际是 `modeId`、RAG 四个端点的 `message_id` 实际是 `id`、`/api/file/watch/update` 实为 PUT 却写成 POST、文档承诺 `view=summary` 但后端根本不读等 40+ 处不一致。
+
+  硬性要求：
+
+  - 字段名、参数名、方法**必须从 handler 代码里抄**（对照 `decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`），**禁止凭路由名望文生义**；
+  - 路径注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`；删除端点时须从文档移除，并留意通配路由（`/api/tasks/`、`/api/agents/`、`/api/file/` 等）的子路径分发；
+  - 鉴权变化须同步 `security` 标注（默认 `cookieAuth`，免鉴权端点显式写 `security: []`）；
+  - 改完必须自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。
+
 - **纯前端改动完成后必须自觉编译**：若本次改动只涉及前端（`web/src/`、`web/index.html` 等，未动 Go / Android），改完并跑通测试后**直接执行前端编译**，供用户立即在浏览器/App 中测试，无需用户再要求：
 
   ```bash

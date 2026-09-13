@@ -30,4 +30,13 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 
 ## 维护
 
-路由注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`。新增或删除端点时同步更新本文件；已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
+本文件是**手工维护**的，不会自动生成，因此极易与实际实现脱节。任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、query 参数、请求体字段、响应字段、状态码）都必须同步更新 `openapi.yaml` —— 这是 `AGENTS.md` 开发规则中的硬性要求。
+
+要点：
+
+- 路由注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`。
+- 字段名与参数名**必须从 handler 代码里抄**：对照 `decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`。**禁止凭路由名望文生义**——这是过去 40+ 处不一致的根因。
+- 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/file/`、`/api/share/`、`/api/chat/quick-send/` 等。
+- 鉴权变化须同步 `security` 标注（默认 `cookieAuth`，免鉴权端点显式写 `security: []`）。
+- 已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
+- 改完自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。
