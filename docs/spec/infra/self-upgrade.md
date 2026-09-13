@@ -20,12 +20,16 @@ sequenceDiagram
     前端->>Upgrade API: POST /api/upgrade/start
     Upgrade API->>Upgrade Service: 后台执行升级
     Upgrade Service-->>前端: upgrade_update 进度事件
-    Upgrade Service->>进程管理: 备份并替换二进制
+    alt 磁盘二进制已 ≥ 目标版本
+        Upgrade Service->>进程管理: 跳过下载，直接重启
+    else 磁盘二进制较旧
+        Upgrade Service->>进程管理: 备份并替换二进制
+    end
     进程管理-->>前端: 服务重启，客户端重连
     前端->>Upgrade API: GET /api/upgrade/status
 ```
 
-正常情况下进度通过统一 WebSocket 推送。服务替换导致连接中断时，前端每 2 秒查询状态，最多持续 5 分钟；新服务恢复后以版本和空状态确认升级完成。
+正常情况下进度通过统一 WebSocket 推送。服务替换导致连接中断时，前端每 2 秒查询状态，最多持续 5 分钟；新服务恢复后以版本和空状态确认升级完成。若重启未能触发（版本短路分支没有下载兜底），升级以 `restart_failed` 结束并提示手动重启，而不是无限停留在重启中。
 
 ## 功能与设计要点
 
@@ -37,12 +41,16 @@ sequenceDiagram
 - **断线恢复**：升级导致 WebSocket 断开后自动切换为状态轮询，服务恢复后重新同步状态。升级本身造成的重启不会被误判为普通网络故障
 - **版本跳过**：启动提示允许按版本记录"暂不提醒"，只跳过指定版本；出现更新版本后重新提示
 - **安装目录可写预检**：升级前先探测二进制所在目录是否可写（实际创建并删除临时文件，以反映 ACL、只读挂载和 MAC 而不只是 mode 位）——不可写时立即以 `install_dir_not_writable` 错误码给出可操作的提示，而非下载完约 40MB 压缩包后才在备份步骤报 `permission denied`。`/api/upgrade/check` 同时返回 `install_writable` 与 `install_dir`，让界面在用户开始升级前就能预警。约束在**目录**而非二进制：备份要新建 `.bak` 文件、`rename(2)` 也是目录操作
+- **自身路径固化**：启动时把 `os.Executable()` 的绝对路径写入 `{data-dir}/self-path`。升级与重启都以该记录解析「正在运行的二进制」，而非实时调用 `os.Executable()`——后者解析 `/proc/self/exe`，在包管理器（npm 覆盖安装走 retire：旧目录改名成 `.clawbench-<sha1 前 8 位>` 后删除）替换过运行中的包之后，会返回一个**已被删除的路径**且 `err == nil`，拿去 `os.Open` 就在备份步骤 ENOENT 失败。数据目录是包管理器不会触碰的位置，故记录在包被替换后仍然有效。记录失效（手动迁移过安装目录）时回退 `os.Executable()`，两者皆不可用才以 `self_path_unresolved` 报错
+- **版本短路**：升级前探测磁盘上二进制的版本，若已 ≥ 目标版本（典型场景：用户已通过 `npm install/update` 更新了包，只是进程还在跑旧版），跳过下载直接重启加载。避免为同一版本重复下载约 42MB。探测失败或重启函数未接线时**回退**正常下载流程，不做乐观假设；开发版（`dev` / git 短哈希）不参与比较
 - **Android 版本不匹配检测**：原生层在健康检查（`GET /api/health`）通过后、加载 WebView 之前对比 APK 版本与服务器版本（`VersionCompare.shouldShowMismatch`）。APK 落后时展示阻塞式原生 `AlertDialog`（`MainActivity.showVersionMismatchDialog`），提供「下载 APK」与「强制跳过」两个动作；点下载会启动 DownloadManager 下载并退回原生登录页，完成后自动拉起系统安装器。该弹窗**不记忆跳过**（每次冷启动都会重新提示）。任一侧版本不可解析（`dev`、短哈希、缺 `version` 字段）时一律 fail-open，不阻塞登录。服务端升级后客户端可能落后，检测确保版本一致性
 
 ### 设计要点
 
 - **单实例升级**：同一时间只允许一个升级任务，重复启动返回冲突，防止多个任务同时替换二进制
 - **检查与执行分离**：检查端点只提供版本决策，执行阶段重新完成必要校验，避免检查与替换之间的状态变化
+- **重启与升级共用同一路径解析**：哨兵重启（非托管部署下等待进程退出后重新拉起）与升级路径都经 `ResolveSelfBinary()` 取二进制路径。若哨兵用 `os.Executable()`，在包被替换后它会 re-exec 已删除的路径，5 次重试全部失败导致服务永久下线——即"修好升级反而触发假死"。容器与 systemd 走各自的重启策略，不经过哨兵
+- **失败必须可操作，不留无反馈的中间态**：升级失败以稳定的 `error_code` 结束，前端映射为本地化、可操作的文案，而非裸 ENOENT。已知码：`install_dir_not_writable`（安装目录不可写）、`self_path_unresolved`（找不到运行中的二进制，重启后自愈）、`restart_failed`（新版本已落盘但重启未能触发，需手动重启）。`restart_failed` 专门覆盖版本短路：该分支没有下载兜底，静默失败会让界面永远停在 "restarting" 转圈
 - **镜像 tarball URL 需归一化**：Nexus 等 npm 镜像在 `dist.tarball` 的包名段里保留 dist-tag（`.../@scope/pkg@latest/-/pkg-0.91.0.tgz`），而标准 npm 格式省略该 tag（`.../@scope/pkg/-/pkg-0.91.0.tgz`）。直接用镜像返回的 URL 会 404、下载步骤失败，因此下载前先归一化路径
 - **备份优先于替换**：升级状态暴露备份路径，使失败恢复和人工排障有明确落点
 - **WS 优先、轮询兜底**：正常阶段使用低延迟事件，进程重启阶段使用无状态 HTTP 查询，两种通道覆盖升级的完整生命周期

@@ -50,10 +50,14 @@ func SetUpgradeShutdownFunc(f func()) {
 // upgradeRestartFunc triggers a restart without replacing the binary. Used by
 // the version short-circuit, where the wanted binary is already on disk and
 // only needs to be re-executed. Wired to the server's restart function.
-var upgradeRestartFunc func()
+//
+// It returns an error when the restart could not be set in motion, so the
+// short-circuit can report a failure instead of waiting on a restart that will
+// never happen.
+var upgradeRestartFunc func() error
 
 // SetUpgradeRestartFunc sets the function called to restart without replacing.
-func SetUpgradeRestartFunc(f func()) {
+func SetUpgradeRestartFunc(f func() error) {
 	upgradeRestartFunc = f
 }
 
@@ -420,17 +424,8 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	// The probe is best-effort: if it fails, fall through to the normal path.
 	// Likewise when no restart function is wired: short-circuiting without a
 	// way to restart would leave the upgrade reported as restarting forever.
-	if diskVer, verErr := selfBinaryVersion(currentBin); verErr == nil {
-		if shouldShortCircuit(diskVer, info.LatestVersion) && upgradeRestartFunc != nil {
-			slog.Info("upgrade: disk binary already at target version — restarting without download",
-				"disk", diskVer, "target", info.LatestVersion)
-			setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
-			upgradeRestartFunc()
-			return
-		}
-	} else {
-		slog.Warn("upgrade: version probe failed, proceeding with download",
-			"path", currentBin, "error", verErr)
+	if tryShortCircuitRestart(currentBin, info.LatestVersion) {
+		return
 	}
 
 	// 1d. Preflight: the install directory (and the backup path) must be
@@ -548,6 +543,45 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	if upgradeShutdownFunc != nil {
 		upgradeShutdownFunc()
 	}
+}
+
+// tryShortCircuitRestart handles the case where the binary already on disk is at
+// (or ahead of) the target version — the normal outcome of updating through the
+// package manager instead of the UI. Downloading the same version again would
+// waste a full tarball transfer, so it restarts instead to load what is already
+// there.
+//
+// Returns true when it handled the upgrade (the caller must stop); false means
+// the caller should continue down the normal download path. The probe is
+// best-effort: a failure to read the disk version, or no wired restart function,
+// both fall through rather than guessing.
+func tryShortCircuitRestart(currentBin, targetVersion string) bool {
+	diskVer, verErr := selfBinaryVersion(currentBin)
+	if verErr != nil {
+		slog.Warn("upgrade: version probe failed, proceeding with download",
+			"path", currentBin, "error", verErr)
+		return false
+	}
+	if !shouldShortCircuit(diskVer, targetVersion) || upgradeRestartFunc == nil {
+		return false
+	}
+
+	slog.Info("upgrade: disk binary already at target version — restarting without download",
+		"disk", diskVer, "target", targetVersion)
+	setStateAndBroadcast(UpgradePhaseRestarting, 95, "Restarting...")
+
+	if restartErr := upgradeRestartFunc(); restartErr != nil {
+		// Nothing was triggered: this path has no fallback (there is nothing
+		// left to download — the binary on disk is already the target), so
+		// leaving the phase at "restarting" would spin forever. Report a
+		// failure the user can act on instead.
+		slog.Error("upgrade: restart failed after short-circuit", "error", restartErr)
+		SetUpgradeErrorCode(UpgradeErrRestartFailed,
+			fmt.Sprintf("The update is already on disk, but the service could not be restarted: %v. "+
+				"Restart ClawBench manually to finish the update.", restartErr))
+		broadcastUpgradeUpdate()
+	}
+	return true
 }
 
 // downloadAndExtract downloads the npm tarball and extracts the binary.

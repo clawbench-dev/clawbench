@@ -1,9 +1,12 @@
 # 自升级在「运行中被 npm 替换」后失败 — 根因分析与修复方案（E + 版本短路）
 
-> 状态：**方案待评审，尚未实施**
+> 状态：**已实施**（2026-09-13 合入 main）
 > 日期：2026-09-12
 > 分支：`fix/upgrade-self-path`
 > 关联：`docs/clawbench-upgrade-stuck-analysis.md`（2026-09-07，supervised 误判问题，与本文不同）
+>
+> **实施期偏离原方案之处**（详见 §7）：哨兵最初定为不改，实测发现不改会导致假死，
+> 最终一并改用 `ResolveSelfBinary()`；另新增 `restart_failed` 错误码处理短路重启失败。
 
 ---
 
@@ -202,8 +205,9 @@ else:
         走原有备份 → 替换 → 重启流程
 ```
 
-> **待评审点**：短路时"重启"的具体方式需要与现有 supervised / unsupervised / container 三条路径对齐，
-> 可能引入复杂度。**备选**：短路只跳过"下载"，仍执行备份+替换（因替换成本很低，且能保证一致性）。
+> **实施结论**：短路复用 `makeRestartFunc`（supervisor 感知），不引入第三条路径；
+> **不**执行备份+替换——磁盘已是目标版本，替换既无必要，又会在只读安装目录上失败。
+> 该分支没有下载兜底，故重启失败必须显式报错（`restart_failed`）。
 
 ### 4.7 边界场景
 
@@ -222,9 +226,11 @@ else:
 
 - **不采用方案 D**（argv[0] 回退）—— 理由见 §4.2
 - **不采用方案 B**（`/proc/self/exe` 备份）—— 治不了"替换目标消失"的根，且跨平台需分支
-- **不改动 sentinel 的路径获取逻辑**（`settings_sentinel_unix.go:17`）——
-  哨兵在**重启**场景运行，此时进程刚被替换、路径正常，风险低。
-  （若评审认为需要，可一并改用 `resolveSelfBinary()`，但会引入 `handler → service` 的依赖考量。）
+- ~~**不改动 sentinel 的路径获取逻辑**~~ —— **实施期推翻**。原判"哨兵在重启场景运行、
+  路径正常，风险低"是错的：哨兵同样在 npm 替换后的场景被调用，`os.Executable()`
+  给出的是已删除的 retire 路径，5 次 `exec` 重试全部失败，服务永久下线。
+  实测复刻确认后，unix + windows 两处哨兵一并改用 `ResolveSelfBinary()`，
+  与升级路径共享解析顺序。（`handler → service` 的依赖已存在，非新增循环。）
 
 ---
 
@@ -241,23 +247,36 @@ else:
    - self-path 不存在 → 回退 `os.Executable()`
    - 两者皆失效 → 返回错误
 3. **回归**：`performUpgrade` 在 self-path 有效时，备份/替换流程与改动前一致
-4. 版本短路：磁盘版本 ≥ latest 时跳过下载（或按 §4.6 的最终决定验证对应行为）
+4. 版本短路：磁盘版本 ≥ latest 时跳过下载；探测失败或无重启函数时回退下载；
+   重启失败时报 `restart_failed` 而非停留 restarting
 5. `CheckInstallDirWritable` 使用 `resolveSelfBinary` 后行为不变（回归）
+6. 哨兵：`launchSentinel` 生成的脚本使用 self-path 记录路径（回归测试改回
+   `os.Executable()` 即失败）
 
 ### 前端
 
-6. `error_code === 'self_path_unresolved'` 时渲染对应文案分支
-7. i18n key 在 zh/en 均存在（参照现有 `navKeys.test.ts` 风格的 key 完整性测试）
+7. `error_code === 'self_path_unresolved'` 时渲染对应文案分支
+8. `error_code === 'restart_failed'` 时渲染对应文案分支
+9. i18n key 在 zh/en 均存在（参照现有 `navKeys.test.ts` 风格的 key 完整性测试）
 
 ---
 
-## 7. 待评审确认的问题
+## 7. 评审问题的最终结论
 
-1. **版本短路时如何"重启"？** 三条重启路径（supervised / upgrade-replace / container）如何复用？
-   还是短路只跳过下载、仍走完整替换（更简单、更一致）？
-2. **升级成功后是否回写 self-path？** §4.5 认为应该，请确认。
-3. **哨兵是否一并改用 `resolveSelfBinary`？** §5 暂定不改，请确认。
-4. **`{data-dir}/self-path` 的文件名**是否合适？（备选：`self-bin-path`、`.self-path`）
+> 以下为实施期定论，不再是待确认项。
+
+1. **版本短路时如何"重启"？** 走现有 `makeRestartFunc`（supervisor 感知：受托管时优雅退出，
+   否则起哨兵）。**不**走完整替换——磁盘已是目标版本，备份/替换纯属多余，
+   且替换需要写安装目录，会在只读安装目录上无谓失败。
+   实施期补充：短路重启失败必须报错而非静默停留。`upgradeRestartFunc` 改为返回
+   `error`，失败时以新错误码 `restart_failed` 结束——此路径没有下载兜底，
+   不报错就会永远停在 "restarting"。
+2. **升级成功后是否回写 self-path？** 不需要。升级替换的是**同一路径**上的二进制，
+   self-path 记录仍然有效；仅 `mv` 安装目录等场景会使其失效，此时回退
+   `os.Executable()` 已足够，且这类迁移会重启进程、启动时自动重建记录。
+3. **哨兵是否一并改用 `resolveSelfBinary`？** **是**（原 §5 的"暂定不改"被实测推翻，
+   详见 §5）。
+4. **`{data-dir}/self-path` 的文件名**：维持 `self-path`。
 
 ---
 
@@ -267,3 +286,16 @@ else:
 2. `npm test`（前端）
 3. `./scripts/pre-push-checks.sh`
 4. **端到端手工验证**：服务运行中执行一次全局 npm 操作 → 点 UI 升级 → 应成功（这是本方案的核心验收）
+
+### 实施结果（2026-09-13）
+
+- Go：新增 `selfpath_test.go`（19）、`upgrade_shortcircuit_test.go`（7）、
+  `settings_sentinel_selfpath_test.go`（1）；`selfpath.go` 全部函数行覆盖 100%。
+- 前端：`UpgradeDialog.test.ts` 49 passed、`useUpgrade.test.ts` 46 passed、typecheck OK。
+- 回归有效性：把 `upgrade.go` / 哨兵改回 `os.Executable()`，对应新增测试如期失败；
+  恢复后转绿。
+- 端到端：`scripts/e2e-upgrade-npm-replace.sh` 复刻事故链路（npm retire 改名 →
+  装新版 → 删退休目录 → 走 HTTP 触发升级），修复版 14 passed / 0 failed，
+  临时回退 bug 版 9 passed / 3 failed。该脚本用 `unshare -rn` 隔离网络命名空间，
+  不触碰线上服务与真实 registry，**不进 CI**（依赖用户命名空间，且构建两个 ~90MB 二进制），
+  属人工验收脚本。

@@ -51,6 +51,9 @@ type shortCircuitHarness struct {
 	targetVersion string
 	tarballHits   int
 	restartCalls  int
+	// restartErr is what the stubbed restart function returns; nil means the
+	// restart was set in motion.
+	restartErr error
 }
 
 // setup installs the harness. The returned server serves registry metadata.
@@ -97,7 +100,7 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 	// Restart is the only action a short-circuit may take; replacing it keeps
 	// the test from shutting down or spawning a real sentinel.
 	origRestart := upgradeRestartFunc
-	upgradeRestartFunc = func() { h.restartCalls++ }
+	upgradeRestartFunc = func() error { h.restartCalls++; return h.restartErr }
 	t.Cleanup(func() { upgradeRestartFunc = origRestart })
 
 	ResetUpgradeState()
@@ -161,6 +164,26 @@ func TestPerformUpgrade_ShortCircuitSkippedWithoutRestartFunc(t *testing.T) {
 
 	assert.Equal(t, 0, h.restartCalls, "no restart func → no restart call")
 	assert.Equal(t, 1, h.tarballHits, "must fall through to the normal download path")
+}
+
+// TestPerformUpgrade_ShortCircuitRestartFailureReportsError covers the failure
+// branch of the short-circuit: the wanted binary is already on disk, but the
+// restart could not be triggered (e.g. the sentinel failed to launch). There is
+// nothing left to download, so the upgrade must report a failure rather than
+// sit at "restarting" forever with no way forward.
+func TestPerformUpgrade_ShortCircuitRestartFailureReportsError(t *testing.T) {
+	h := &shortCircuitHarness{targetVersion: "0.99.0"}
+	h.setup(t, "0.99.0")
+	h.restartErr = fmt.Errorf("sentinel launch failed")
+
+	performUpgrade(context.Background())
+
+	s := GetUpgradeState()
+	require.Equal(t, UpgradePhaseFailed, s.Phase, "a failed restart must not leave the phase at restarting")
+	assert.Equal(t, UpgradeErrRestartFailed, s.ErrorCode)
+	assert.Contains(t, s.Error, "Restart ClawBench manually")
+	assert.Equal(t, 0, h.tarballHits, "the disk binary is already the target — nothing to download")
+	assert.Equal(t, 1, h.restartCalls, "the restart was attempted")
 }
 
 // TestPerformUpgrade_SelfPathUnresolved verifies that when no usable path to

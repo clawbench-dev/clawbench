@@ -327,19 +327,37 @@ func generateBcryptHash(password string) []byte {
 // Under a supervisor (systemd/Docker), it just triggers graceful shutdown and
 // lets the supervisor restart the process. Otherwise, it launches a sentinel
 // process that waits for this process to exit, then starts a new one.
-func makeRestartFunc(shutdown func()) func() {
-	return func() {
+//
+// The returned function reports whether a restart was actually set in motion.
+// A nil error means the process is going down (or the supervisor will bring it
+// back); a non-nil error means nothing was triggered and the caller must not
+// assume the service will come back. The upgrade short-circuit depends on this
+// distinction: it has no other action to take, so silently returning on failure
+// would leave the upgrade stuck at "restarting" forever.
+func makeRestartFunc(shutdown func()) func() error {
+	return func() error {
 		if handler.IsRunningUnderSupervisor() {
 			slog.Info("running under supervisor, triggering graceful shutdown for restart")
 		} else {
 			cmd, err := handler.LaunchSentinelProcess()
 			if err != nil {
 				slog.Error("failed to launch sentinel process for restart", "err", err)
-				return
+				return fmt.Errorf("failed to launch sentinel process: %w", err)
 			}
 			slog.Info("sentinel process launched for restart", "sentinel_pid", cmd.Process.Pid)
 		}
 		shutdown()
+		return nil
+	}
+}
+
+// restartFuncAdapter adapts an error-returning restart function to the
+// fire-and-forget signature the settings handler expects, logging failures.
+func restartFuncAdapter(f func() error) func() {
+	return func() {
+		if err := f(); err != nil {
+			slog.Error("restart failed", "error", err)
+		}
 	}
 }
 
@@ -1178,7 +1196,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Wire up the restart function for POST /api/config/restart
 	// The sentinel process approach: launch a watcher that starts a new process
 	// after this one exits, then trigger graceful shutdown.
-	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
+	handler.SetRestartFunc(restartFuncAdapter(makeRestartFunc(selfSignalInterrupt)))
 
 	// Wire up the upgrade service functions
 	// upgradeShutdownFunc: just graceful shutdown, no sentinel.
