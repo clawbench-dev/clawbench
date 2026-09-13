@@ -1742,6 +1742,38 @@ describe('ChatInputBar', () => {
     mockRecentShares.value = []
   })
 
+  it('a late share/upload resolve must not resurrect the @ menu after blur', async () => {
+    // The first @ of the component's life starts the share/upload fetch. If the
+    // user blurs before it resolves, the late fileMenu.refresh() used to reopen
+    // the popup they had already dismissed.
+    let resolveFetch: () => void = () => {}
+    const gate = new Promise<void>(r => { resolveFetch = r })
+    mockRecentShares.value = [{ name: 'late.txt', path: '.clawbench/share-in/late.txt' }]
+    mockFetchRecentShares.mockImplementation(() => gate)
+    mockFetchRecentUploads.mockImplementation(() => gate)
+
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // User clicks away -> blur closes the menu while the fetch is still pending.
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    // The fetch now resolves; the dismissed menu must stay closed.
+    resolveFetch()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    mockRecentShares.value = []
+    mockFetchRecentShares.mockImplementation(async () => {})
+    mockFetchRecentUploads.mockImplementation(async () => {})
+  })
+
   it('@ menu browse mode ends when the user types plain text', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = 'src'

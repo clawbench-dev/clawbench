@@ -178,7 +178,16 @@ export function buildFileCandidates(
   for (const { source, list } of ordered) {
     for (const candidate of list) {
       const key = canonicalPath(candidate.path || '', projectRoot)
-      if (!key || attached.has(key) || byPath.has(key)) continue
+      if (!key || attached.has(key)) continue
+      const existing = byPath.get(key)
+      if (existing) {
+        // Same path from a lower-priority source: keep the winning source's
+        // label/description, but OR in isDir. Only some sources can know the
+        // entry is a directory (recent-open/upload/share carry no type), so a
+        // higher-priority source that lacks the flag must not erase it.
+        if (candidate.isDir === true) existing.isDir = true
+        continue
+      }
       byPath.set(key, {
         key,
         label: baseName(key),

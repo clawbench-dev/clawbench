@@ -174,6 +174,28 @@ describe('buildFileCandidates', () => {
     expect(items[0].source).toBe('recent-open')
     expect(items[0].isDir).toBe(true)
   })
+
+  it('keeps isDir when the WINNING source does not carry it', () => {
+    // The risky direction: recent-open outranks current-dir but cannot know an
+    // entry is a directory (it stores only a path). The lower-priority source's
+    // isDir must still win, or a directory gets attached as a file.
+    const items = buildFileCandidates({
+      recentOpen: [{ path: 'docs' }],                 // wins, no isDir
+      currentDir: [{ path: 'docs', isDir: true }],    // loses, knows it is a dir
+    }, '')
+    expect(items).toHaveLength(1)
+    expect(items[0].source).toBe('recent-open')
+    expect(items[0].isDir).toBe(true)
+  })
+
+  it('does not invent isDir when no source knows the entry is a directory', () => {
+    const items = buildFileCandidates({
+      recentOpen: [{ path: 'src/a.ts' }],
+      currentDir: [{ path: 'src/a.ts' }],
+    }, '')
+    expect(items).toHaveLength(1)
+    expect(items[0].isDir).toBe(false)
+  })
 })
 
 describe('parseAtQuery', () => {

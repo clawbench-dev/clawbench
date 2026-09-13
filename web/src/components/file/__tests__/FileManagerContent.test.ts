@@ -3062,7 +3062,7 @@ describe('FileManagerContent — context menu actions', () => {
     await nextTick()
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
     expect(mockToastShow).toHaveBeenCalled()
   })
 
@@ -3082,7 +3082,7 @@ describe('FileManagerContent — context menu actions', () => {
     const wrapper = mountContent()
     await wrapper.vm.toggleAttach('test.ts')
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
   })
 
   it('toggleAttach removes the file from chat when already attached', async () => {

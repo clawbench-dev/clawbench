@@ -937,13 +937,19 @@ const fileMenu = useCompletionMenu({
 // opens. After the fetch resolves the candidate list changes, so the menu is
 // refreshed — otherwise an @ typed while both sources (and the current dir)
 // were empty would leave the menu hidden until the next keystroke.
+//
+// The refresh is gated on the textarea still being focused: this fetch is slow
+// enough that the user can type "@", click away (blur closes the menu) and only
+// then have it resolve. Without the guard the late refresh would resurrect a
+// menu the user had already dismissed — refresh() has no way to tell "the menu
+// was never shown" from "the user just closed it".
 let fileSourcesPromise = null
 function ensureFileSourcesLoaded() {
   if (fileSourcesLoaded.value) return fileSourcesPromise
   fileSourcesLoaded.value = true
   fileSourcesPromise = Promise.all([fetchRecentShares(), fetchRecentUploads()])
     .then(() => {
-      fileMenu.refresh()
+      if (isTextareaFocused.value) fileMenu.refresh()
     })
     .catch(() => {
       // Allow a later attempt after a transient failure.

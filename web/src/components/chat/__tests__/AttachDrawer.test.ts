@@ -217,6 +217,32 @@ describe('AttachDrawer', () => {
     expect(wrapper.props('recentReferencedFiles')).toEqual([{ path: 'src/foo.ts', count: 3 }])
   })
 
+  it('attaches a referenced directory with isDir=true', async () => {
+    // A referenced directory must carry its isDir flag, otherwise it is attached
+    // as a file and shows a file icon instead of a folder.
+    const wrapper = mountDrawer({
+      recentReferencedFiles: [{ path: 'src/utils', count: 2, isDir: true }],
+    })
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
+    await nextTick()
+    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('utils'))
+    expect(row).toBeTruthy()
+    await row!.trigger('click')
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/utils', true])
+  })
+
+  it('attaches a referenced file with isDir=false', async () => {
+    const wrapper = mountDrawer({
+      recentReferencedFiles: [{ path: 'src/foo.ts', count: 1 }],
+    })
+    await wrapper.findAll('.ad-tab')[1].trigger('click')
+    await nextTick()
+    const row = wrapper.findAll('.ad-file-row').find(r => r.text().includes('foo.ts'))
+    expect(row).toBeTruthy()
+    await row!.trigger('click')
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/foo.ts', false])
+  })
+
   it('emits add-attached when clicking unattached file', async () => {
     const wrapper = mountDrawer({
       currentDir: 'src',

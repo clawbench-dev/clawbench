@@ -69,12 +69,12 @@
         <button
           v-for="item in recentReferencedFiles" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="toggleAttached(item.path)"
+          @click="toggleAttached(item.path, item.isDir === true)"
         >
           <div class="ad-icon-wrap">
-            <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
+            <img v-if="!item.isDir && isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
+            <FileIcon v-else :path="item.path" :is-dir="item.isDir === true" :size="28" class="ad-file-icon" />
             <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
@@ -185,6 +185,9 @@ import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 interface ReferencedFile {
   path: string
   count: number
+  /** Whether the referenced entry is a directory (drives the folder icon and
+   *  the isDir flag sent with the attachment). */
+  isDir?: boolean
 }
 
 const props = withDefaults(defineProps<{

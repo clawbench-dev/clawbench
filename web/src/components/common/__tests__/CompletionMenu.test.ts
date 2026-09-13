@@ -92,6 +92,45 @@ describe('CompletionMenu', () => {
     expect(wrapper.find('.file-icon-stub').exists()).toBe(true)
   })
 
+  it('passes is-dir to the row icon for directory candidates', () => {
+    // The folder icon is what tells the user a row will attach a directory.
+    const items: CompletionItem[] = [
+      { ...sample[0], key: 'src', label: 'src', icon: 'FileIcon', isDir: true },
+    ]
+    const wrapper = mount(CompletionMenu, {
+      props: { items, activeIndex: 0, show: true, targetElement: null },
+      global: {
+        plugins: [makeI18n()],
+        stubs: {
+          Teleport: { template: '<div><slot/></div>' },
+          FileIcon: {
+            props: ['path', 'isDir'],
+            template: '<span class="file-icon-stub" :data-is-dir="String(isDir)" />',
+          },
+        },
+      },
+    })
+    expect(wrapper.find('.file-icon-stub').attributes('data-is-dir')).toBe('true')
+  })
+
+  it('passes is-dir=false to the row icon for plain files', () => {
+    const items: CompletionItem[] = [{ ...sample[0], icon: 'FileIcon', isDir: false }]
+    const wrapper = mount(CompletionMenu, {
+      props: { items, activeIndex: 0, show: true, targetElement: null },
+      global: {
+        plugins: [makeI18n()],
+        stubs: {
+          Teleport: { template: '<div><slot/></div>' },
+          FileIcon: {
+            props: ['path', 'isDir'],
+            template: '<span class="file-icon-stub" :data-is-dir="String(isDir)" />',
+          },
+        },
+      },
+    })
+    expect(wrapper.find('.file-icon-stub').attributes('data-is-dir')).toBe('false')
+  })
+
   it('highlights the matched characters by position', () => {
     const items: CompletionItem[] = [
       { key: 'src/main.ts', label: 'main.ts', description: 'src', source: 'current-dir', positions: [0, 1] },
