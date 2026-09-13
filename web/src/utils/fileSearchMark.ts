@@ -11,7 +11,12 @@ import type { FileSearchResult } from '@/composables/useFileSearch'
  */
 export interface DisplayEntry {
   name: string
-  type: 'dir' | 'file'
+  /**
+   * Browse entries pass the backend type through verbatim, so 'image' is
+   * possible here. Search results are normalized to dir/file by
+   * toDisplayEntry(). Every consumer only distinguishes dir from non-dir.
+   */
+  type: 'dir' | 'file' | 'image'
   /** Project-relative path. In search mode this is independent of currentDir. */
   path: string
   /** Parent directory portion of path (shown as meta row for search results). */

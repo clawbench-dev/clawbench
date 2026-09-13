@@ -1525,22 +1525,48 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.showFileMenu).toBe(true)
     const items = wrapper.findAll('.completion-item')
-    expect(items).toHaveLength(1)
-    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+    // Directories are listed too (every entry type is offered).
+    expect(items).toHaveLength(2)
+    expect(items.map(i => i.find('.completion-label').text())).toEqual(['main.ts', 'sub'])
     expect(items[0].find('.completion-source').text()).toBe('Current dir')
     store.state.dirEntries = [] as any
     store.state.currentDir = ''
   })
 
-  it('@ menu excludes directories from the current dir', async () => {
+  it('@ menu lists directories from the current dir and attaches them as dirs', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''
     store.state.dirEntries = [{ name: 'only-dir', type: 'dir' }] as any
     const wrapper = mountBar()
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.showFileMenu).toBe(false)
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('only-dir')
+
+    await items[0].trigger('mousedown')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    // A directory must travel with isDir=true so the backend takes its dir path.
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['only-dir', true])
     store.state.dirEntries = [] as any
+  })
+
+  it('@ menu lists image-typed entries from the current dir', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'assets'
+    store.state.dirEntries = [
+      { name: 'logo.png', type: 'image' },
+      { name: 'manual.pdf', type: 'image' },
+    ] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels).toEqual(['logo.png', 'manual.pdf'])
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
   })
 
   it('@ menu fuzzy-filters by basename', async () => {

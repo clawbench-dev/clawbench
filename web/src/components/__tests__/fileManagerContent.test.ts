@@ -199,13 +199,26 @@ describe('FileManagerContent — doAttachToChat', () => {
 
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'success' }),
     )
     // Menu should close
     expect(wrapper.vm.ctxMenu.visible).toBe(false)
+  })
+
+  it('attaches a directory with isDir=true from the context menu', async () => {
+    const wrapper = mountContent()
+
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+
+    await wrapper.vm.doAttachToChat()
+
+    // The backend resolves directories differently, so the flag must be set.
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 
   it('shows info toast when file is already attached', async () => {
@@ -247,11 +260,20 @@ describe('FileManagerContent — toggleAttach', () => {
 
     await wrapper.vm.toggleAttach('test.ts')
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'success' }),
     )
+  })
+
+  it('attaches a directory with isDir=true', async () => {
+    mockHasAttachedFile.mockReturnValue(false)
+    const wrapper = mountContent()
+
+    await wrapper.vm.toggleAttach('src', true)
+
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 })
 

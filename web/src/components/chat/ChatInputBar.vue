@@ -892,10 +892,15 @@ const fileMenuItems = computed(() => {
   void caretVersion.value
   const sources = {
     recentOpen: recentFiles.entries.value.map(e => ({ path: e.path })),
-    currentDir: store.state.dirEntries
-      .filter(e => e.type === 'file')
-      .map(e => ({ path: joinPath(store.state.currentDir, e.name) })),
-    recentRef: recentReferencedFiles.value.map(r => ({ path: r.path })),
+    // Every entry type the listing can return — files, images AND directories.
+    // Filtering on `type === 'file'` silently dropped images/PDFs (the backend
+    // tags them 'image') and directories. isDir rides along so the select
+    // handler can attach a directory with the right flag.
+    currentDir: store.state.dirEntries.map(e => ({
+      path: joinPath(store.state.currentDir, e.name),
+      isDir: e.type === 'dir',
+    })),
+    recentRef: recentReferencedFiles.value.map(r => ({ path: r.path, isDir: r.isDir })),
     recentUpload: recentUploads.value.map(u => ({ path: u.path })),
     recentShare: recentShares.value.map(s => ({ path: s.path })),
   }
@@ -914,7 +919,7 @@ const fileMenu = useCompletionMenu({
   closeOnSelect: false,
   stickyAfterSelect: true,
   onSelect: (item) => {
-    emit('add-attached', item.key, false)
+    emit('add-attached', item.key, item.isDir === true)
   },
   applyText: (value, caret) => {
     inputText.value = value

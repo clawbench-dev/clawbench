@@ -149,6 +149,31 @@ describe('buildFileCandidates', () => {
     }, '')
     expect(items[0].key).toBe('/home/u/proj/src/a.ts')
   })
+
+  it('carries isDir through to the candidate', () => {
+    const items = buildFileCandidates({
+      currentDir: [
+        { path: 'src', isDir: true },
+        { path: 'src/a.ts' },
+        { path: 'assets/logo.png', isDir: false },
+      ],
+    }, '')
+    const byKey = new Map(items.map(i => [i.key, i.isDir]))
+    expect(byKey.get('src')).toBe(true)
+    expect(byKey.get('src/a.ts')).toBe(false)
+    expect(byKey.get('assets/logo.png')).toBe(false)
+  })
+
+  it('keeps isDir when the winning source is the one carrying it', () => {
+    // recent-open wins the dedupe; its isDir flag must survive.
+    const items = buildFileCandidates({
+      recentOpen: [{ path: 'docs', isDir: true }],
+      currentDir: [{ path: 'docs', isDir: true }],
+    }, '')
+    expect(items).toHaveLength(1)
+    expect(items[0].source).toBe('recent-open')
+    expect(items[0].isDir).toBe(true)
+  })
 })
 
 describe('parseAtQuery', () => {

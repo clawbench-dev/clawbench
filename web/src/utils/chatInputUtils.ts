@@ -26,15 +26,20 @@ export function computeRecentReferencedFiles(
   messages: { role: string; files?: (string | FileEntry)[] }[] | null,
   attachedFiles: FileEntry[],
   currentFilePath: string | null | undefined
-): { path: string; count: number }[] {
+): { path: string; count: number; isDir: boolean }[] {
   if (!messages || messages.length === 0) return []
   const countMap = new Map<string, number>()
+  // Whether any occurrence of the path was a directory. A path's entries are
+  // normally all the same kind; OR-ing keeps the flag if a legacy string entry
+  // (no isDir) is mixed with a directory entry.
+  const dirMap = new Map<string, boolean>()
   for (const msg of messages) {
     if (msg.role !== 'user' || !msg.files) continue
     for (const f of msg.files) {
       const p = typeof f === 'string' ? f : f?.path
       if (!p) continue
       countMap.set(p, (countMap.get(p) || 0) + 1)
+      if (typeof f !== 'string' && f?.isDir) dirMap.set(p, true)
     }
   }
   const exclude = new Set(attachedFiles.map(f => f.path))
@@ -43,7 +48,7 @@ export function computeRecentReferencedFiles(
     .filter(([path]) => !exclude.has(path))
     .sort((a, b) => b[1] - a[1])
     .slice(0, 20)
-    .map(([path, count]) => ({ path, count }))
+    .map(([path, count]) => ({ path, count, isDir: dirMap.get(path) === true }))
 }
 
 /**

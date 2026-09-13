@@ -275,7 +275,7 @@
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
             </span>
-            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry))">
+            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
               <Paperclip :size="12" />
             </span>
           </div>
@@ -347,7 +347,7 @@
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
           </span>
-          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry))">
+          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
             <Paperclip :size="12" />
           </span>
         </div>
@@ -2106,13 +2106,14 @@ function doBatchArchive() {
 
 function doAttachToChat() {
     const path = ctxMenu.entry.path
+    const isDir = ctxMenu.entry.type === 'dir'
     closeCtxMenu()
     if (hasAttachedFile(path)) {
         removeAttachedFileByPath(path)
         toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
         return
     }
-    addAttachedFile(path)
+    addAttachedFile(path, isDir)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
 
     // Fly-to-chat particle animation
@@ -2128,12 +2129,12 @@ function doAttachToChat() {
     }
 }
 
-function toggleAttach(path) {
+function toggleAttach(path, isDir = false) {
     if (hasAttachedFile(path)) {
         removeAttachedFileByPath(path)
         toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
     } else {
-        addAttachedFile(path)
+        addAttachedFile(path, isDir)
         toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
 }

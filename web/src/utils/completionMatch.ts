@@ -98,6 +98,8 @@ export const SOURCE_PRIORITY: CompletionSource[] = [
 
 export interface PathCandidate {
   path: string
+  /** True when the candidate is a directory (attachments carry this to the backend). */
+  isDir?: boolean
 }
 
 export interface FileCandidateSources {
@@ -114,6 +116,12 @@ export interface CompletionItem {
   label: string
   description: string
   source: CompletionSource
+  /**
+   * Whether the candidate is a directory. Preserved from the source so the
+   * select handler can attach it with the right isDir flag (the backend
+   * resolves dirs differently from files).
+   */
+  isDir?: boolean
   /** Optional row icon component (files pass FileIcon; commands omit it). */
   icon?: unknown
   /** Matched basename indices for per-character highlighting. */
@@ -176,6 +184,7 @@ export function buildFileCandidates(
         label: baseName(key),
         description: dirName(key),
         source,
+        isDir: candidate.isDir === true,
       })
     }
   }

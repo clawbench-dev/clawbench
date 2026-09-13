@@ -18,7 +18,7 @@
       @click.stop
     >
       <component :is="sourceMeta(item.source).icon" :size="14" class="completion-source-icon" :style="{ color: sourceMeta(item.source).color }" />
-      <component v-if="item.icon" :is="item.icon" :path="item.key" :size="14" class="completion-item-icon" />
+      <component v-if="item.icon" :is="item.icon" :path="item.key" :is-dir="item.isDir === true" :size="14" class="completion-item-icon" />
       <span class="completion-text">
         <span class="completion-label" v-html="renderLabel(item)"></span>
         <span v-if="item.description" class="completion-desc">{{ middleEllipsis(item.description, 34) }}</span>
