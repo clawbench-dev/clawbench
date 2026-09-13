@@ -28,7 +28,6 @@ vi.mock('lucide-vue-next', () => {
     ChevronLeft: stub('ChevronLeft'),
     ExternalLink: stub('ExternalLink'),
     MessageSquare: stub('MessageSquare'),
-    MessageSquarePlus: stub('MessageSquarePlus'),
     AlertCircle: stub('AlertCircle'),
   }
 })
@@ -244,6 +243,14 @@ describe('ForgeDetail quote action (header)', () => {
   it('offers a quote button in the detail header', () => {
     const wrapper = mountDetail()
     expect(quoteButton(wrapper), 'the header must expose a quote action').toBeTruthy()
+  })
+
+  it('uses the plain message bubble, not the plus variant', () => {
+    // MessageSquarePlus draws a "+" inside the bubble, which reads as a stray
+    // ring/cross next to the external-link icon. The plain bubble is intended.
+    const wrapper = mountDetail()
+    const icon = quoteButton(wrapper)!.find('svg')
+    expect(icon.attributes('data-icon')).toBe('MessageSquare')
   })
 
   it('emits quote without the full body, so nothing is quoted by default', () => {
