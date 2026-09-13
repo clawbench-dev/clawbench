@@ -273,6 +273,31 @@ describe('TocDock — drag highlight survives touch', () => {
     // Left-docked shift must apply while dragging, or the highlight sits off-centre.
     expect(style).toMatch(/\.toc-dock--left \.toc-dock-divider--dragging/)
   })
+
+  it('fills the divider with the line at rest, and narrows it while dragging', () => {
+    // Same two rules as SplitDivider. At rest the line must fill the divider —
+    // centring a 1px line in this 6px box left an uneven gap (2px left, 3px
+    // right) that read as stray padding. While dragging the divider widens to a
+    // 12px tinted band, so the line narrows to a 2px centre stripe (a 1px line
+    // cannot be centred on a whole pixel in 12px).
+    const src = readSource('file/TocDock.vue')
+    const style = src.slice(src.indexOf('<style'))
+
+    const resting = style.match(/\.toc-dock-divider__line \{([^}]*)\}/)
+    expect(resting, 'resting line rule must exist').not.toBeNull()
+    expect(resting![1], 'resting line must fill the divider').toContain('inset: 0')
+    expect(resting![1], 'resting line must not hard-code 1px').not.toMatch(
+      /\b(width|height):\s*1px/,
+    )
+
+    const dragging = style.match(
+      /\.toc-dock-divider--dragging \.toc-dock-divider__line \{([^}]*)\}/,
+    )
+    expect(dragging, 'drag stripe rule must exist').not.toBeNull()
+    expect(dragging![1], 'drag stripe must be centred on a whole pixel').toContain(
+      'calc((100% - 2px) / 2)',
+    )
+  })
 })
 
 /** Dispatch pointerdown on the divider with pointer-capture mocked (jsdom lacks it). */

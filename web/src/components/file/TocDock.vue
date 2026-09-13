@@ -187,24 +187,36 @@ onBeforeUnmount(() => {
 .toc-dock--left .toc-dock-divider:hover {
   margin-left: 3px;
 }
-/* The line must land on a whole device pixel, or the compositor antialiases it
-   across two columns and it reads as a double border. `left: 50%` in this fixed
-   6px box resolves to 3px, and translateX(-50%) then pulls it to 2.5px — hence
-   the explicit -1px instead. (SplitDivider uses `(100% - 1px) / 2` because its
-   box is 1px/3px wide, where this formula would land on a half pixel.) */
+/* The line fills the divider, so its thickness is the divider's own width.
+   Centring a 1px line inside this 6px box left an uneven gap either side
+   (2px left, 3px right), which read as stray padding — same fix as SplitDivider,
+   which is why both now use `inset: 0`. */
 .toc-dock-divider__line {
   position: absolute;
-  left: calc(50% - 1px);
-  top: 0;
-  bottom: 0;
-  width: 1px;
+  inset: 0;
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   transition: background var(--duration-base) ease;
 }
+/* While dragging, the divider widens into a tinted band and the line narrows to
+   a crisp centre stripe instead of filling that band. 2px rather than 1px
+   because a 12px band cannot centre a 1px line on a whole pixel. Mirrors
+   SplitDivider's drag rule. */
 .toc-dock-divider:active .toc-dock-divider__line,
-.toc-dock-divider--dragging .toc-dock-divider__line,
-.toc-dock-divider:hover .toc-dock-divider__line {
+.toc-dock-divider--dragging .toc-dock-divider__line {
+  right: auto;
+  left: calc((100% - 2px) / 2);
+  width: 2px;
+}
+.toc-dock-divider:active .toc-dock-divider__line,
+.toc-dock-divider--dragging .toc-dock-divider__line {
   background: var(--accent-color, #0066cc);
+}
+/* Hover is gated on a real pointer, matching SplitDivider: on touch a tap leaves
+   a sticky :hover that would keep the line accent-coloured after the drag ends. */
+@media (hover: hover) {
+  .toc-dock-divider:hover .toc-dock-divider__line {
+    background: var(--accent-color, #0066cc);
+  }
 }
 
 .toc-dock-header {
