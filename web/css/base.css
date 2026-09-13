@@ -80,14 +80,6 @@ html, body {
     background: var(--wallpaper-scrim);
 }
 
-/* Gaussian blur class: applied by App.vue only when blur radius > 0 so we
-   never create a filter layer needlessly. The scale factor lives in the
-   inline style (it must track the live radius); this class only needs to
-   exist as a stable hook. */
-.wallpaper-image--blurred {
-    will-change: filter, transform;
-}
-
 /* Edge fade via an alpha MASK on the image itself (not a colored overlay).
    Fading the image's own alpha toward 0 lets the .wallpaper-layer's
    --bg-primary base show through — the transition lives entirely in the alpha

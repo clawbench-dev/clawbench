@@ -18,7 +18,6 @@
           :src="wallpaperUrl"
           class="wallpaper-image"
           :class="{
-            'wallpaper-image--blurred': wallpaperBlurPx > 0,
             'wallpaper-image--edge-fade': wallpaperEdgeFade,
           }"
           :style="wallpaperImageStyle"
