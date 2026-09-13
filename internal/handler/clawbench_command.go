@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"clawbench/internal/api"
 	"clawbench/internal/model"
 )
 
@@ -16,38 +17,43 @@ const (
 	ClawbenchCmdTask       = "/cb-task"
 )
 
-// chatSearchInjectTemplate is the on-demand instruction template injected when
-// the user sends a message starting with "/cb-chatsearch ". It provides the AI
-// with RAG search command usage and output format requirements.
-// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{SESSION_ID}}, {{PORT}}, {{DATA_DIR}}
-const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to execute commands.]
+// The endpoint reference embedded in each template is rendered from the
+// embedded OpenAPI spec (internal/api), so the AI is always told the same
+// contract the server implements. Only behaviour rules — things that are not
+// part of the HTTP contract — are written by hand here.
+//
+// Placeholders: {{BASE_URL}}, {{PROJECT_PATH}}, {{SESSION_ID}}
+const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
-Search historical conversations: {{CLAWBENCH_BIN}} rag search -q "search terms" --project {{PROJECT_PATH}} --exclude-session-id {{SESSION_ID}} --port {{PORT}} --data-dir {{DATA_DIR}}
+Base URL: {{BASE_URL}} (no authentication needed from localhost)
 
-Command flags:
-- -q: Search query (required)
-- --limit: Number of results (default 5)
-- --project: Project path (required)
-- --exclude-session-id: Exclude current session (required)
-- --backend: Filter by backend
-- --role: Filter by role (user/assistant)
-- --from / --to: Time range
+Endpoints:
+{{ENDPOINTS}}
+
+Required parameters:
+- The search query (body field "q") is required.
+- Send the cookie "clawbench_project={{PROJECT_PATH}}" so results stay inside this project.
+- Set exclude_session_id to {{SESSION_ID}} to keep the current conversation out of the results.
 
 After searching, present the results in a natural, readable format (e.g. a summary paragraph or bullet list). Mention the session titles and key findings.
 If no results found, answer based on your own knowledge — do NOT mention the search process.
 `
 
 // taskInjectTemplate is the on-demand instruction template injected when
-// the user sends a message starting with "/cb-task ". It provides the AI
-// with scheduled task management command usage.
-// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{PORT}}, {{DATA_DIR}}
-const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to execute commands.]
+// the user sends a message starting with "/cb-task ".
+// Placeholders: {{BASE_URL}}, {{PROJECT_PATH}}
+const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
-Task management: {{CLAWBENCH_BIN}} task --project {{PROJECT_PATH}} --port {{PORT}} --data-dir {{DATA_DIR}}
+Base URL: {{BASE_URL}} (no authentication needed from localhost)
 
-Available subcommands: create / list / get / list-exec / update / delete / pause / resume / trigger / list-agents
+Endpoints:
+{{ENDPOINTS}}
 
-When creating a task, use the --agent-id flag. Run "{{CLAWBENCH_BIN}} task list-agents --project {{PROJECT_PATH}} --port {{PORT}} --data-dir {{DATA_DIR}}" to discover available agent IDs. You may use the current session's agent if appropriate.
+Project scope:
+- Send the cookie "clawbench_project={{PROJECT_PATH}}" on every request; task endpoints take the project from that cookie and reject requests without it.
+
+Discovering agent IDs:
+- Call "GET /api/agents" and use the "id" field of the returned agents. You may reuse the current session's agent when appropriate.
 
 After creating a task, you MUST include in your response: <scheduled-task id="task-id" />
 
@@ -75,6 +81,23 @@ func IsClawbenchCommand(rawMsg string) bool {
 		matchClawbenchCommand(rawMsg, ClawbenchCmdTask)
 }
 
+// clawbenchBaseURL is the absolute base URL an AI subprocess must use to reach
+// this server. The AI runs as a child process, so it has no notion of
+// "same origin" — the scheme and port have to be spelled out. localhost is
+// always correct: the child shares this machine, and localhost requests bypass
+// auth unconditionally.
+func clawbenchBaseURL() string {
+	scheme := "http"
+	if model.ConfigInstance.ResolveTLSActive() {
+		scheme = "https"
+	}
+	port := model.ServerPort
+	if port == 0 {
+		port = 20000
+	}
+	return fmt.Sprintf("%s://localhost:%d", scheme, port)
+}
+
 // processClawbenchCommand checks if the raw user message starts with a
 // ClawBench built-in command and returns the injected template (without the
 // original message) to be prepended to the prompt. The caller constructs the
@@ -84,28 +107,47 @@ func IsClawbenchCommand(rawMsg string) bool {
 //
 // Since `prompt` already contains the original user message (with file prefixes),
 // processClawbenchCommand returns only the template to avoid duplication.
-// For /cb-chatsearch with empty query, returns the raw message unchanged (caller
-// should handle the error response).
-func processClawbenchCommand(rawMsg, projectPath, sessionID string) string {
-	if matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) {
-		query := strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch))
-		if query == "" {
-			return rawMsg
+//
+// The error is returned when the endpoint reference cannot be rendered from the
+// embedded spec. That should be impossible (the spec is compiled in and covered
+// by tests), so a failure means the binary is corrupt: refusing the command is
+// safer than injecting a fragment that would send the AI to the wrong endpoint.
+func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, error) {
+	switch {
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch):
+		// A bare command has no query to search for. The primary HTTP path
+		// rejects this earlier with SearchQueryRequired, but the queue-drain
+		// path does not, so the guard belongs here: injecting a search
+		// template without a query would leave the AI nothing to search.
+		if strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch)) == "" {
+			return rawMsg, nil
 		}
-		tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
-		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
-		tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
-		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))
-		tmpl = strings.ReplaceAll(tmpl, "{{DATA_DIR}}", model.DataDir)
-		// Return only the template; the caller appends the original prompt separately
-		return tmpl
+		return renderChatSearchTemplate(projectPath, sessionID)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdTask):
+		return renderTaskTemplate(projectPath)
 	}
-	if matchClawbenchCommand(rawMsg, ClawbenchCmdTask) {
-		tmpl := strings.ReplaceAll(taskInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
-		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
-		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))
-		tmpl = strings.ReplaceAll(tmpl, "{{DATA_DIR}}", model.DataDir)
-		return tmpl
+	return rawMsg, nil
+}
+
+func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandChatSearch)
+	if err != nil {
+		return "", fmt.Errorf("render chat-search endpoints: %w", err)
 	}
-	return rawMsg
+	tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
+	return tmpl, nil
+}
+
+func renderTaskTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandTask)
+	if err != nil {
+		return "", fmt.Errorf("render task endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(taskInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	return tmpl, nil
 }

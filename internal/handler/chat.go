@@ -427,11 +427,21 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
 			return
 		}
-		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
-		prompt = atInjected + "\n\n" + prompt
+		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
+		if err != nil {
+			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		prompt = injected + "\n\n" + prompt
 	} else if matchClawbenchCommand(req.Message, ClawbenchCmdTask) {
-		atInjected := processClawbenchCommand(req.Message, projectPath, sessionID)
-		prompt = atInjected + "\n\n" + prompt
+		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
+		if err != nil {
+			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		prompt = injected + "\n\n" + prompt
 	}
 
 	// allFiles uses validated entries (with resolved absolute paths and isDir from os.Stat)
@@ -638,7 +648,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					Files:     msg.Files,
 					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 				}
-				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				if buildErr != nil {
+					return service.DrainResult{Err: buildErr.Error()}
+				}
 				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir, msg.QueueID)
 				return service.DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -1076,7 +1089,9 @@ func fileEntryLabel(f model.FileEntry) string {
 }
 
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
-func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) ai.ChatRequest {
+// It returns an error only when a ClawBench built-in command's endpoint
+// reference cannot be rendered from the embedded spec.
+func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
@@ -1131,9 +1146,15 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	}
 
 	// ClawBench built-in command injection for queued messages (same logic as
-	// the primary message path)
-	if atInjected := processClawbenchCommand(qMsg.Text, projectPath, sessionID); atInjected != qMsg.Text {
-		prompt = atInjected + "\n\n" + prompt
+	// the primary message path). A render failure means the embedded spec is
+	// unusable — surface it rather than sending the AI an incomplete contract.
+	injected, err := processClawbenchCommand(qMsg.Text, projectPath, sessionID)
+	if err != nil {
+		slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+		return ai.ChatRequest{}, err
+	}
+	if injected != qMsg.Text {
+		prompt = injected + "\n\n" + prompt
 	}
 
 	// Use session-persisted model (if user explicitly chose one) as modelOverride
@@ -1141,7 +1162,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	sessionModel := service.GetSessionModel(sessionID)
 	sessionTransport := service.GetSessionTransport(sessionID)
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments)
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments), nil
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.

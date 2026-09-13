@@ -2713,7 +2713,8 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 
 	// buildChatRequestFromQueue should use the session model
 	qMsg := model.QueuedMessage{Text: "next message", CreatedAt: time.Now().Format(time.RFC3339)}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
 }
@@ -2731,7 +2732,8 @@ func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
 		Files:     []model.FileEntry{{Path: "/some/path/file.go"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.True(t, req.HasAttachments)
 	assert.Contains(t, req.SystemPrompt, "Media File Handling")
 }
@@ -2748,7 +2750,8 @@ func TestBuildChatRequestFromQueue_HasAttachments_NoFiles(t *testing.T) {
 		Text:      "just text",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.False(t, req.HasAttachments)
 	assert.NotContains(t, req.SystemPrompt, "Media File Handling")
 }
@@ -3860,7 +3863,8 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
 	assert.Contains(t, req.Prompt, "/src/baz.rs", "prompt should include path without line info for baz.rs")

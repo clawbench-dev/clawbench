@@ -1,69 +1,102 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// withServerPort pins model.ServerPort for the duration of a test so the
+// rendered base URL is deterministic.
+func withServerPort(t *testing.T, port int) {
+	t.Helper()
+	orig := model.ServerPort
+	model.ServerPort = port
+	t.Cleanup(func() { model.ServerPort = orig })
+}
 
 // --- processClawbenchCommand tests ---
 
 func TestProcessClawbenchCommand_ChatSearchInjects(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-chatsearch fix login bug", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-chatsearch fix login bug", "/project", "session-123")
+	require.NoError(t, err)
 
-	// Must contain injection template
+	// The endpoint reference is rendered from the embedded spec.
 	assert.Contains(t, result, "historical conversation search")
-	assert.Contains(t, result, "/usr/local/bin/clawbench rag search")
-	assert.Contains(t, result, "--project /project")
-	assert.Contains(t, result, "--exclude-session-id session-123")
-	// processClawbenchCommand returns ONLY the template (no raw message duplication);
-	// the caller prepends the template to the prompt which already contains
-	// the user's original message.
+	assert.Contains(t, result, "POST /api/rag/search")
+	assert.Contains(t, result, "GET /api/rag/message")
+	assert.Contains(t, result, "http://localhost:20000")
+	// Project scoping and current-session exclusion are carried by the template.
+	assert.Contains(t, result, "clawbench_project=/project")
+	assert.Contains(t, result, "session-123")
+	// Returns ONLY the template; the caller prepends it to a prompt that already
+	// contains the user's original message.
 	assert.NotContains(t, result, "/cb-chatsearch fix login bug")
 }
 
 func TestProcessClawbenchCommand_TaskInjects(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-task daily build", "/project", "session-456")
+	result, err := processClawbenchCommand("/cb-task daily build", "/project", "session-456")
+	require.NoError(t, err)
 
 	assert.Contains(t, result, "scheduled task management")
-	assert.Contains(t, result, "/usr/local/bin/clawbench task")
-	assert.Contains(t, result, "--project /project")
-	// processClawbenchCommand returns ONLY the template (no raw message duplication)
+	assert.Contains(t, result, "POST /api/tasks")
+	assert.Contains(t, result, "GET /api/agents")
+	assert.Contains(t, result, "clawbench_project=/project")
 	assert.NotContains(t, result, "/cb-task daily build")
 }
 
+// TestProcessClawbenchCommand_NoCliReferences guards the core of the refactor:
+// the injected instructions must never tell the AI to shell out to the
+// clawbench binary again.
+func TestProcessClawbenchCommand_NoCliReferences(t *testing.T) {
+	withServerPort(t, 20000)
+
+	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily build"} {
+		result, err := processClawbenchCommand(msg, "/project", "sess-1")
+		require.NoError(t, err)
+		assert.NotContainsf(t, result, "clawbench rag", "%s must not reference the rag CLI", msg)
+		assert.NotContainsf(t, result, "clawbench task", "%s must not reference the task CLI", msg)
+		assert.NotContainsf(t, result, "--data-dir", "%s must not reference CLI flags", msg)
+		assert.NotContainsf(t, result, "--exclude-session-id", "%s must not reference CLI flags", msg)
+	}
+}
+
 func TestProcessClawbenchCommand_NoPrefixPassesThrough(t *testing.T) {
-	result := processClawbenchCommand("hello world", "/project", "session-123")
+	result, err := processClawbenchCommand("hello world", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Equal(t, "hello world", result)
 }
 
 func TestProcessClawbenchCommand_EmptyQueryReturnsRaw(t *testing.T) {
-	// /cb-chatsearch with only whitespace after should return the raw message
-	// (caller handles the error response)
-	result := processClawbenchCommand("/cb-chatsearch  ", "/project", "session-123")
+	// /cb-chatsearch with only whitespace after it is not a template case —
+	// the caller emits SearchQueryRequired. (The handler rejects it before
+	// reaching the renderer, so this only pins the pass-through.)
+	result, err := processClawbenchCommand("/cb-chatsearch  ", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Equal(t, "/cb-chatsearch  ", result)
 }
 
 func TestProcessClawbenchCommand_TaskEmptyDescReturnsInjected(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	// /cb-task with just a space still injects — task description can be short
-	result := processClawbenchCommand("/cb-task ", "/project", "session-123")
+	// /cb-task with just a space still injects — the task description can be
+	// short or absent.
+	result, err := processClawbenchCommand("/cb-task ", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Contains(t, result, "scheduled task management")
 }
 
 func TestProcessClawbenchCommand_PartialPrefixNoMatch(t *testing.T) {
-	// /cb-chat without "search" should not match
-	result := processClawbenchCommand("/cb-chat something", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-chat something", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Equal(t, "/cb-chat something", result)
 }
 
@@ -71,16 +104,16 @@ func TestProcessClawbenchCommand_BareChatSearchReturnsRaw(t *testing.T) {
 	// A bare /cb-chatsearch (no trailing space) — exactly what the frontend
 	// sends after trimming a menu selection — has an empty query and must
 	// return the raw message so the caller can emit SearchQueryRequired.
-	result := processClawbenchCommand("/cb-chatsearch", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-chatsearch", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Equal(t, "/cb-chatsearch", result)
 }
 
 func TestProcessClawbenchCommand_BareTaskInjects(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	// A bare /cb-task (no trailing space) must still inject the task template.
-	result := processClawbenchCommand("/cb-task", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-task", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Contains(t, result, "scheduled task management")
 	assert.NotContains(t, result, "/cb-task")
 }
@@ -88,7 +121,8 @@ func TestProcessClawbenchCommand_BareTaskInjects(t *testing.T) {
 func TestProcessClawbenchCommand_AgentSlashCommandPassesThrough(t *testing.T) {
 	// A regular agent slash command (no cb- namespace) must pass through
 	// untouched — it is forwarded to the agent, not injected locally.
-	result := processClawbenchCommand("/compact", "/project", "session-123")
+	result, err := processClawbenchCommand("/compact", "/project", "session-123")
+	require.NoError(t, err)
 	assert.Equal(t, "/compact", result)
 }
 
@@ -108,38 +142,51 @@ func TestIsClawbenchCommand(t *testing.T) {
 	assert.False(t, IsClawbenchCommand(""))
 }
 
-func TestProcessClawbenchCommand_ChatSearchPlaceholderReplacement(t *testing.T) {
-	model.ClawbenchBin = "/opt/clawbench/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+// TestProcessClawbenchCommand_PlaceholderReplacement asserts every placeholder
+// is substituted: a leftover "{{...}}" would reach the model verbatim.
+func TestProcessClawbenchCommand_PlaceholderReplacement(t *testing.T) {
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-chatsearch auth bug", "/my/project", "sess-abc")
-
-	assert.Contains(t, result, "/opt/clawbench/bin/clawbench rag search")
-	assert.Contains(t, result, "--project /my/project")
-	assert.Contains(t, result, "--exclude-session-id sess-abc")
-	// No unreplaced placeholders
-	assert.NotContains(t, result, "{{CLAWBENCH_BIN}}")
-	assert.NotContains(t, result, "{{PROJECT_PATH}}")
-	assert.NotContains(t, result, "{{SESSION_ID}}")
+	tests := []struct {
+		msg string
+	}{
+		{"/cb-chatsearch auth bug"},
+		{"/cb-task daily report"},
+	}
+	for _, tc := range tests {
+		result, err := processClawbenchCommand(tc.msg, "/my/project", "sess-abc")
+		require.NoError(t, err)
+		assert.NotContainsf(t, result, "{{", "%s left an unreplaced placeholder", tc.msg)
+		assert.Containsf(t, result, "/my/project", "%s must carry the project path", tc.msg)
+	}
 }
 
-func TestProcessClawbenchCommand_TaskPlaceholderReplacement(t *testing.T) {
-	model.ClawbenchBin = "/opt/clawbench/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+// TestProcessClawbenchCommand_BaseURLTracksPort verifies the injected base URL
+// follows the configured port: the AI runs as a child process and has no other
+// way to discover where the server listens.
+func TestProcessClawbenchCommand_BaseURLTracksPort(t *testing.T) {
+	for _, port := range []int{20000, 8080, 3000} {
+		withServerPort(t, port)
+		result, err := processClawbenchCommand("/cb-task daily build", "/project", "sess-1")
+		require.NoError(t, err)
+		assert.Containsf(t, result, "http://localhost:"+itoa(port),
+			"base URL must reflect port %d", port)
+	}
+}
 
-	result := processClawbenchCommand("/cb-task daily report", "/my/project", "sess-abc")
-
-	assert.Contains(t, result, "/opt/clawbench/bin/clawbench task")
-	assert.Contains(t, result, "--project /my/project")
-	assert.NotContains(t, result, "{{CLAWBENCH_BIN}}")
-	assert.NotContains(t, result, "{{PROJECT_PATH}}")
+// TestProcessClawbenchCommand_BaseURLDefaultPort covers the unset-port fallback.
+func TestProcessClawbenchCommand_BaseURLDefaultPort(t *testing.T) {
+	withServerPort(t, 0)
+	result, err := processClawbenchCommand("/cb-task test", "/project", "sess-1")
+	require.NoError(t, err)
+	assert.Contains(t, result, "http://localhost:20000")
 }
 
 func TestProcessClawbenchCommand_ChatSearchContainsNaturalFormat(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-chatsearch test", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-chatsearch test", "/project", "session-123")
+	require.NoError(t, err)
 
 	// Must instruct AI to present results naturally (no structured XML card format)
 	assert.Contains(t, result, "natural, readable format")
@@ -147,142 +194,83 @@ func TestProcessClawbenchCommand_ChatSearchContainsNaturalFormat(t *testing.T) {
 	assert.NotContains(t, result, "<rag-item>")
 }
 
-func TestProcessClawbenchCommand_TaskContainsScheduledTaskTag(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+// TestProcessClawbenchCommand_TaskKeepsBehaviourRules pins the hand-written
+// rules that are not derivable from the spec.
+func TestProcessClawbenchCommand_TaskKeepsBehaviourRules(t *testing.T) {
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-task test task", "/project", "session-123")
+	result, err := processClawbenchCommand("/cb-task test task", "/project", "session-123")
+	require.NoError(t, err)
 
-	assert.Contains(t, result, "<scheduled-task")
-	assert.Contains(t, result, "--agent-id")
+	assert.Contains(t, result, "<scheduled-task", "the completion marker must survive")
+	assert.Contains(t, result, "validate cron expression")
+	assert.Contains(t, result, "high frequency")
+	assert.Contains(t, result, "user's language")
 }
 
-// TestProcessClawbenchCommand_PortAndDataDirInjected verifies that --port and --data-dir
-// are injected into /cb-chatsearch and /cb-task templates so spawned CLI subprocesses
-// can connect to the server even with non-default configuration.
-func TestProcessClawbenchCommand_PortAndDataDirInjected(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	model.ServerPort = 8080
-	model.DataDir = "/custom/data"
-	defer func() {
-		model.ClawbenchBin = ""
-		model.ServerPort = 0
-		model.DataDir = ""
-	}()
+// TestProcessClawbenchCommand_TaskExcludesDestructiveAgentOps asserts the task
+// command never advertises agent mutation. Tag-based selection would have
+// leaked DELETE/PATCH/POST /api/agents into this prompt.
+func TestProcessClawbenchCommand_TaskExcludesDestructiveAgentOps(t *testing.T) {
+	withServerPort(t, 20000)
 
-	t.Run("chatsearch", func(t *testing.T) {
-		result := processClawbenchCommand("/cb-chatsearch auth bug", "/project", "sess-1")
-		assert.Contains(t, result, "--port 8080")
-		assert.Contains(t, result, "--data-dir /custom/data")
-		assert.NotContains(t, result, "{{PORT}}")
-		assert.NotContains(t, result, "{{DATA_DIR}}")
-	})
+	result, err := processClawbenchCommand("/cb-task something", "/project", "sess-1")
+	require.NoError(t, err)
 
-	t.Run("task", func(t *testing.T) {
-		result := processClawbenchCommand("/cb-task daily build", "/project", "sess-1")
-		assert.Contains(t, result, "--port 8080")
-		assert.Contains(t, result, "--data-dir /custom/data")
-		assert.NotContains(t, result, "{{PORT}}")
-		assert.NotContains(t, result, "{{DATA_DIR}}")
-	})
+	assert.Contains(t, result, "GET /api/agents")
+	assert.NotContains(t, result, "DELETE /api/agents")
+	assert.NotContains(t, result, "PATCH /api/agents")
+	assert.NotContains(t, result, "POST /api/agents")
 }
 
-// TestProcessClawbenchCommand_PortAndDataDirDefault verifies that default port (20000)
-// and default DataDir are correctly injected.
-func TestProcessClawbenchCommand_PortAndDataDirDefault(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	model.ServerPort = 20000
-	model.DataDir = "/home/user/.clawbench"
-	defer func() {
-		model.ClawbenchBin = ""
-		model.ServerPort = 0
-		model.DataDir = ""
-	}()
+// TestProcessClawbenchCommand_ChatSearchExcludesIndexMaintenance asserts the
+// search command never advertises index rebuild or summarization.
+func TestProcessClawbenchCommand_ChatSearchExcludesIndexMaintenance(t *testing.T) {
+	withServerPort(t, 20000)
 
-	result := processClawbenchCommand("/cb-task test", "/project", "sess-1")
-	assert.Contains(t, result, "--port 20000")
-	assert.Contains(t, result, "--data-dir /home/user/.clawbench")
-}
+	result, err := processClawbenchCommand("/cb-chatsearch auth bug", "/project", "sess-1")
+	require.NoError(t, err)
 
-// TestProcessClawbenchCommand_TaskListAgentsIncludesPortAndDataDir verifies that the
-// list-agents discovery command in the /cb-task template also includes --port and --data-dir.
-func TestProcessClawbenchCommand_TaskListAgentsIncludesPortAndDataDir(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	model.ServerPort = 3000
-	model.DataDir = "/tmp/cb"
-	defer func() {
-		model.ClawbenchBin = ""
-		model.ServerPort = 0
-		model.DataDir = ""
-	}()
-
-	result := processClawbenchCommand("/cb-task something", "/project", "sess-1")
-	// The template contains a list-agents command that must also have port/data-dir
-	assert.Contains(t, result, "list-agents --project /project --port 3000 --data-dir /tmp/cb")
+	assert.NotContains(t, result, "reset-vector")
+	assert.NotContains(t, result, "rebuild-fts")
+	assert.NotContains(t, result, "message/summarize")
 }
 
 // TestProcessClawbenchCommand_NoMessageDuplication verifies the fix for ISS-287:
 // processClawbenchCommand must return ONLY the template without appending the
 // original message, because the caller already prepends the result to a
-// prompt that contains the user's original message. This prevents the
-// user message from appearing twice in the AI prompt.
+// prompt that contains the user's original message.
 func TestProcessClawbenchCommand_NoMessageDuplication(t *testing.T) {
-	model.ClawbenchBin = "/usr/local/bin/clawbench"
-	defer func() { model.ClawbenchBin = "" }()
+	withServerPort(t, 20000)
 
-	// Simulate the full prompt construction flow:
-	// 1. prompt starts as the user message
-	// 2. processClawbenchCommand returns the template only
-	// 3. caller prepends: prompt = template + "\n\n" + prompt
 	userMsg := "/cb-chatsearch how to fix auth"
-	projectPath := "/project"
-	sessionID := "sess-1"
-
 	prompt := userMsg
-	atInjected := processClawbenchCommand(userMsg, projectPath, sessionID)
-	prompt = atInjected + "\n\n" + prompt
+	injected, err := processClawbenchCommand(userMsg, "/project", "sess-1")
+	require.NoError(t, err)
+	prompt = injected + "\n\n" + prompt
+	assert.Equal(t, 1, strings.Count(prompt, "/cb-chatsearch how to fix auth"),
+		"user message should appear exactly once in the final prompt (ISS-287)")
 
-	// Count occurrences of the user message in the final prompt
-	count := 0
-	idx := 0
-	for {
-		pos := indexOf(prompt, "/cb-chatsearch how to fix auth", idx)
-		if pos < 0 {
-			break
-		}
-		count++
-		idx = pos + 1
-	}
-	assert.Equal(t, 1, count, "user message should appear exactly once in the final prompt (ISS-287)")
-
-	// Same check for /cb-task
 	userMsgTask := "/cb-task daily build"
 	prompt = userMsgTask
-	atInjected = processClawbenchCommand(userMsgTask, projectPath, sessionID)
-	prompt = atInjected + "\n\n" + prompt
-
-	count = 0
-	idx = 0
-	for {
-		pos := indexOf(prompt, "/cb-task daily build", idx)
-		if pos < 0 {
-			break
-		}
-		count++
-		idx = pos + 1
-	}
-	assert.Equal(t, 1, count, "user message should appear exactly once in the final prompt for /cb-task (ISS-287)")
+	injected, err = processClawbenchCommand(userMsgTask, "/project", "sess-1")
+	require.NoError(t, err)
+	prompt = injected + "\n\n" + prompt
+	assert.Equal(t, 1, strings.Count(prompt, "/cb-task daily build"),
+		"user message should appear exactly once in the final prompt for /cb-task (ISS-287)")
 }
 
-// indexOf returns the index of substr in s starting at offset, or -1.
-func indexOf(s, substr string, offset int) int {
-	if offset > len(s) {
-		return -1
+// itoa avoids pulling strconv into the test's import list for one call.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
 	}
-	for i := offset; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
 	}
-	return -1
+	return string(b[i:])
 }
