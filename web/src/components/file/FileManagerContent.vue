@@ -961,6 +961,10 @@ function showDirPreview(dirPath) {
     codeLinkPreview.close()
     dirPreviewPath.value = dirPath
     previewPaneOpen.value = true
+    // Opening the pane shrinks the list to the top half of the split, which can
+    // push the just-clicked entry out of view — re-assert it once the split has
+    // relaid out (`nearest` leaves an entry that is still visible untouched).
+    scrollSelectedIntoView(selectedPath.value)
 }
 
 /** Show a file preview in the pane, dropping any directory listing. */
@@ -968,6 +972,7 @@ function showFilePreview(filePath, anchorEl) {
     dirPreviewPath.value = ''
     previewPaneOpen.value = true
     codeLinkPreview.showPreview({ filePath, anchorEl }, 'docked')
+    scrollSelectedIntoView(selectedPath.value)
 }
 
 /** Pane clicked a directory: navigate the main list into it and collapse the

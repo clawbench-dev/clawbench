@@ -3996,6 +3996,51 @@ describe('FileManagerContent — docked preview pane', () => {
     expect(split.props('ratio')).toBeCloseTo(0.35, 5)
     localStorage.removeItem('clawbench-fm-preview-split-ratio')
   })
+
+  it('scrolls the clicked file back into view after the pane opens', async () => {
+    // jsdom lacks scrollIntoView; install a spy so the re-assert path can run.
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      mockIsPC.value = true
+      mockLocalConfig.filePreviewMode = true
+      const wrapper = mountContent()
+      scrollSpy.mockClear()
+
+      const row = wrapper.find('.file-item[data-path="test.ts"]')
+      await row.trigger('click')
+      await nextTick()
+
+      // The docked pane shrinks the list, so the clicked entry is re-asserted
+      // into view with a `nearest` scroll that leaves visible rows alone.
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+      expect(scrollSpy.mock.instances).toContain(row.element)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('scrolls the clicked directory back into view after the pane opens', async () => {
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      mockIsPC.value = true
+      mockLocalConfig.filePreviewMode = true
+      const wrapper = mountContent()
+      scrollSpy.mockClear()
+
+      const row = wrapper.find('.dir-item[data-path="src"]')
+      await row.trigger('click')
+      await nextTick()
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+      expect(scrollSpy.mock.instances).toContain(row.element)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
 })
 
 describe('FileManagerContent — panel layout (search bar is its own region)', () => {
