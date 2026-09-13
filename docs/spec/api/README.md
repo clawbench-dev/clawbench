@@ -1,10 +1,14 @@
 # API 文档
 
-`openapi.yaml` 是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 143 个路径 / 181 个操作。
+规格源文件位于 **`internal/api/openapi.yaml`**（本目录不再存放 `openapi.yaml`）。
+
+> 移动原因：规格需通过 `go:embed` 编入二进制，用于渲染内置斜杠命令注入给 AI 的接口说明；而 `go:embed` 不能跨模块目录向上引用。**编辑规格请改 `internal/api/openapi.yaml`。**
+
+它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 143 个路径 / 181 个操作。
 
 ## 使用方式
 
-- **文件管理器内预览**：在 ClawBench 里打开 `docs/spec/api/openapi.yaml`，文件查看器以 Swagger UI 渲染，可直接用 "Try it out" 测试（CORS 代理见 `/api/openapi-proxy`）。
+- **文件管理器内预览**：在 ClawBench 里打开 `internal/api/openapi.yaml`，文件查看器以 Swagger UI 渲染，可直接用 "Try it out" 测试（CORS 代理见 `/api/openapi-proxy`）。
 - **外部工具**：任何 OpenAPI 3.0 工具（Swagger Editor、Postman、openapi-generator）都可直接读取本文件。
 
 ## 约定
@@ -27,6 +31,25 @@
 ## Tag 分组
 
 Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、Git、Files、Share、Forge、Agents、TTS、STT、Terminal、Tasks、RAG、Upgrade、Proxy、SSH/FRP、Fonts、Upload、ClientLogs、APK。
+
+## 与实现的同步
+
+除人工维护外，还有**双向漂移守卫**（`internal/handler/openapi_drift_test.go`）自动拦截脱节：
+
+- 规格声明了但未注册的路径 → 测试失败（否则 AI 会被指引调用 404）
+- 注册了但规格未记录的 `/api/` 路由 → 测试失败
+- 鉴权标注与路由的 `middleware.Auth` 包裹不一致 → 测试失败
+
+## 内置斜杠命令的接口注入
+
+两个内置斜杠命令的提示词片段由 `internal/api` 从规格渲染，**按 operationId 精确选取**（而非按 tag —— tag 过粗，会把删 agent、重建索引等破坏性操作一并注入）：
+
+| 命令 | 注入的 operationId |
+|------|-------------------|
+| `/cb-chatsearch` | `ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
+| `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList` |
+
+选取列表见 `internal/api/render.go` 的 `commandOperations`；`internal/api/render_test.go` 断言每个 operationId 存在且仍带预期 tag。
 
 ## 维护
 
