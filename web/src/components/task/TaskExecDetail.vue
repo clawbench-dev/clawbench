@@ -690,6 +690,15 @@ onUnmounted(() => {
   padding: var(--space-6) 0;
 }
 
+/* The event band belongs flush under the header — it is a header strip, not a
+   floating card — but the scroll container's top padding would otherwise leave
+   a 12px strip of page background above it, separating the band from the header
+   it annotates. Drop that padding only when the band is present; the
+   message-only case keeps its breathing room. */
+.exec-detail-content:has(> .exec-event-card) {
+  padding-top: 0;
+}
+
 /* Trigger source for event-triggered runs: a source link plus the collapsible
    context block the backend prepended to the prompt.
 
