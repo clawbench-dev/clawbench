@@ -127,7 +127,7 @@ function doInput() {
 }
 
 .ti-btn:disabled {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
   cursor: default;
   color: var(--text-muted, #999);
 }

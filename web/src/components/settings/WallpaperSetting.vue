@@ -641,7 +641,7 @@ onUnmounted(() => {
 
 /* Busy / unavailable rows fade out like standard disabled rows. */
 .wallpaper-setting > .settings-item--disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   pointer-events: none;
 }
 
@@ -749,7 +749,7 @@ onUnmounted(() => {
   color: #fff;
 }
 .wallpaper-mode__btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -814,7 +814,7 @@ onUnmounted(() => {
   justify-content: center;
 }
 .wallpaper-gallery__delete:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -874,10 +874,10 @@ onUnmounted(() => {
   font-weight: var(--font-weight-medium);
 }
 .settings-item__action:active {
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
 }
 .settings-item__action:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

@@ -77,6 +77,15 @@
     --z-popover: 9999;              /* menus, dropdowns, tooltips, toasts */
     --z-lightbox: 10000;            /* image lightbox — topmost */
 
+    /* ── Opacity for de-emphasised content. Named by *why* something is
+       faded rather than by the number, since that is what the value is
+       expressing. `0` (hidden) and `1` (fully shown) stay literal — they
+       are the two ends of the range, not a level of de-emphasis. ── */
+    --opacity-disabled: 0.4;  /* unusable: disabled, missing, locked */
+    --opacity-muted: 0.5;     /* secondary: ambient icons, line numbers */
+    --opacity-soft: 0.7;      /* lightly dimmed: inactive tabs, badges */
+    --opacity-hover: 0.9;     /* transient feedback on hover / press */
+
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.
        --wallpaper-scrim: translucent overlay color on top of the wallpaper

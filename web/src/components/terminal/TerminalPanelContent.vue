@@ -1265,7 +1265,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-empty-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .terminal-empty-text {
@@ -1432,7 +1432,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .terminal-tab-add.disabled {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -1722,7 +1722,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .toolbar-btn.modifier.locked { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
 .toolbar-btn.shortcut { background: transparent; color: var(--toolbar-key-text); font-weight: 800; font-size: var(--font-size-xs); }
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
-.toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
+.toolbar-btn.danger { color: var(--toolbar-key-text); opacity: var(--opacity-soft); }
 @media (hover: hover) {
   .toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
 }

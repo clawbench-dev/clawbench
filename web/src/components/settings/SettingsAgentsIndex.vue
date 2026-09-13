@@ -117,7 +117,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__rescan-row--disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
   pointer-events: none;
 }

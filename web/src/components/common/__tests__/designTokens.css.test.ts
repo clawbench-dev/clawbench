@@ -206,6 +206,38 @@ describe('shadow tokens (variables.css)', () => {
   })
 })
 
+describe('opacity tokens (variables.css)', () => {
+  it('defines the four de-emphasis levels, darkest first', () => {
+    // Ordered so a reader can tell "more disabled" from "less": disabled <
+    // muted < soft < hover, all below 1.
+    expect(token('--opacity-disabled')).toBe('0.4')
+    expect(token('--opacity-muted')).toBe('0.5')
+    expect(token('--opacity-soft')).toBe('0.7')
+    expect(token('--opacity-hover')).toBe('0.9')
+  })
+
+  it('keeps every level strictly between hidden and shown', () => {
+    // 0 and 1 stay literal at the call sites; a token that reached either end
+    // would mean the element is not de-emphasised at all.
+    for (const name of ['disabled', 'muted', 'soft', 'hover']) {
+      const v = parseFloat(token(`--opacity-${name}`))
+      expect(v, `--opacity-${name} should be > 0`).toBeGreaterThan(0)
+      expect(v, `--opacity-${name} should be < 1`).toBeLessThan(1)
+    }
+  })
+
+  it('increases monotonically with emphasis', () => {
+    const levels = ['disabled', 'muted', 'soft', 'hover'].map((n) =>
+      parseFloat(token(`--opacity-${n}`)),
+    )
+    for (let i = 1; i < levels.length; i++) {
+      expect(levels[i], `${levels[i]} should exceed ${levels[i - 1]}`).toBeGreaterThan(
+        levels[i - 1],
+      )
+    }
+  })
+})
+
 describe('token hygiene (variables.css)', () => {
   it('does not redeclare static tokens per theme', () => {
     // These are layout/typography values, not colours: they live once in

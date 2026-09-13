@@ -181,7 +181,7 @@ watch(visible, (v) => {
 }
 
 @media (hover: hover) {
-  .up-upgrade:hover { opacity: 0.9; }
+  .up-upgrade:hover { opacity: var(--opacity-hover); }
 }
 
 .up-skip {

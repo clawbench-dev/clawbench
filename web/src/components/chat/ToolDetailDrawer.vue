@@ -570,7 +570,7 @@ function handleBodyInput(event) {
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
@@ -591,14 +591,14 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .tool-content-copy-btn.is-copied {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: #16a34a;
   width: auto;
   padding:0 var(--space-2);
 }
 
 .tool-detail-body .tool-content-wrap-btn.is-wrapped {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: var(--accent-color, #4a90d9);
 }
 
@@ -1744,12 +1744,12 @@ function handleBodyInput(event) {
   transition: opacity var(--duration-base);
 }
 .tool-detail-body .ask-question-submit:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 @media (hover: hover) {
   .tool-detail-body .ask-question-submit:not(:disabled):hover {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 }
 
@@ -1819,7 +1819,7 @@ function handleBodyInput(event) {
   border-radius: var(--radius-sm);
 }
 .tool-detail-body .permission-options .fbtn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 /* Picked button stays in the same soft-tint family as the idle interactive
    button (baseline for alignment) — border saturates, tint deepens, label

@@ -431,7 +431,7 @@ function formatTime(iso: string): string {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
-.forge-meta-sep { opacity: 0.5; }
+.forge-meta-sep { opacity: var(--opacity-muted); }
 /* State badge — tinted pill instead of bare coloured text. */
 .forge-state-badge {
   font-size: var(--font-size-xs);
@@ -493,7 +493,7 @@ function formatTime(iso: string): string {
     background: var(--bg-secondary);
   }
 }
-.forge-load-more-comments:disabled { opacity: 0.5; cursor: not-allowed; }
+.forge-load-more-comments:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 .forge-comment {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);

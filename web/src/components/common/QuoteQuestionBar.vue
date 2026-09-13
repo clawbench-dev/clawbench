@@ -473,11 +473,11 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 }
 
 .qq-send-btn:active {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .qq-send-btn.disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

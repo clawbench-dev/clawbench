@@ -455,7 +455,7 @@
 }
 
 .table-row-nav-btn:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 
@@ -536,7 +536,7 @@
     margin-left: 1px;
     padding: var(--space-1);
     line-height: 1;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base), color var(--duration-base);
     outline: none;
     box-shadow: none;
@@ -565,7 +565,7 @@
     margin-left: 1px;
     padding: 0;
     line-height: 1;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base), color var(--duration-base);
     outline: none;
     box-shadow: none;
@@ -582,7 +582,7 @@
 .markdown-body .chat-file-open-btn.external,
 .chat-message.assistant .chat-file-open-btn.external,
 .table-row-value .chat-file-open-btn.external {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
     color: #e67e22;
 }
 

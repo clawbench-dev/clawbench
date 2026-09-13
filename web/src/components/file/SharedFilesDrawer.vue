@@ -253,7 +253,7 @@ defineExpose({ open: openDrawer })
 .shared-file-row.clickable:hover { background: var(--bg-tertiary, #eaeef2); }
 .shared-file-row.deleted .shared-file-name,
 .shared-file-row.deleted .shared-file-path {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .shared-file-main {
@@ -330,7 +330,7 @@ defineExpose({ open: openDrawer })
 }
 .shared-file-btn:hover { background: var(--bg-tertiary, #eaeef2); color: var(--accent-color, #0969da); }
 .shared-file-btn.danger:hover { color: #cf222e; background: #fef2f2; }
-.shared-file-btn:disabled { opacity: 0.4; cursor: default; }
+.shared-file-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .shared-files-clear {
   display: inline-flex;
   align-items: center;
@@ -347,7 +347,7 @@ defineExpose({ open: openDrawer })
   cursor: pointer;
   flex-shrink: 0;
 }
-.shared-files-clear:disabled { opacity: 0.5; cursor: default; }
+.shared-files-clear:disabled { opacity: var(--opacity-muted); cursor: default; }
 .shared-files-clear-spin { animation: shared-files-clear-spin 0.8s linear infinite; }
 @keyframes shared-files-clear-spin {
   from { transform: rotate(0deg); }

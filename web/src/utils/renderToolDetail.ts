@@ -1819,7 +1819,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
       if (supplementaryInput) {
         supplementaryInput.disabled = true
-        supplementaryInput.style.opacity = '0.6'
+        supplementaryInput.style.opacity = 'var(--opacity-muted)'
       }
       recommendBtn.textContent = gt('tool.askUser.recommended')
       recommendBtn.style.pointerEvents = 'none'
@@ -1859,12 +1859,12 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       for (const opt of allOptions) {
         ;(opt as HTMLElement).style.pointerEvents = 'none'
         if (!opt.classList.contains('selected')) {
-          ;(opt as HTMLElement).style.opacity = '0.4'
+          ;(opt as HTMLElement).style.opacity = 'var(--opacity-disabled)'
         }
       }
       if (supplementaryInput) {
         supplementaryInput.disabled = true
-        supplementaryInput.style.opacity = '0.6'
+        supplementaryInput.style.opacity = 'var(--opacity-muted)'
       }
       submitBtn.textContent = gt('tool.askUser.submitted')
       ;(submitBtn as HTMLButtonElement).disabled = true

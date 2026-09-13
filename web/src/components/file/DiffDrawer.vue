@@ -242,7 +242,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-action-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

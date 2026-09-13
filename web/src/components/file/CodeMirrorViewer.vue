@@ -101,7 +101,7 @@ const codeMirrorTheme = EditorView.theme({
     },
     '.cm-lineNumbers .cm-gutterElement': {
         color: 'var(--text-muted)',
-        opacity: '0.5',
+        opacity: 'var(--opacity-muted)',
         minWidth: '1.2em',
         padding:'0 var(--space-3) 0 var(--space-4)',
     },
@@ -792,7 +792,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   .editor-btn.primary:hover { filter: brightness(1.1); }
 }
 .editor-btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
-.editor-btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+.editor-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; pointer-events: none; }
 </style>
 
 <style>
@@ -900,7 +900,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     min-width: 0;
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
-    opacity: 0.94;
+    opacity: var(--opacity-hover);
     cursor: pointer;
     font-family: var(--font-mono);
     font-size: var(--font-size-md);
@@ -947,7 +947,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer .cm-completionIcon {
   width: 16px;
   font-size: var(--font-size-xs);
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 .cm-viewer .cm-completionIcon-class::after { color: var(--code-syntax-type); }
 .cm-viewer .cm-completionIcon-constant::after { color: var(--code-syntax-number); }

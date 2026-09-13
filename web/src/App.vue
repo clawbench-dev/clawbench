@@ -2899,7 +2899,7 @@ onUnmounted(() => {
 
 .view-empty-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .view-empty-no-recent-title {
@@ -3277,7 +3277,7 @@ onUnmounted(() => {
 }
 
 .dock-btn.disabled {
-    opacity: 0.3;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 

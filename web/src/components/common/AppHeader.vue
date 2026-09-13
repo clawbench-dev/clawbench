@@ -940,7 +940,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .current-file-badge:disabled {
     cursor: default;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transform: none;
 }
 
@@ -1069,7 +1069,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 @keyframes status-pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50% { opacity: var(--opacity-disabled); }
 }
 
 /* Pressure alert — red metric icon during blink */
@@ -1371,7 +1371,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .ht-dirty-btn:active {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
 }
 
 .ht-dirty-stash {

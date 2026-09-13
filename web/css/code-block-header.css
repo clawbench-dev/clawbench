@@ -69,7 +69,7 @@
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
@@ -90,7 +90,7 @@
 
 /* ─── Active wrap state ─── */
 .code-block-wrap-btn.is-wrapped {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     color: var(--accent-color);
 }
 
@@ -205,7 +205,7 @@
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
@@ -227,7 +227,7 @@
 
 /* ─── Active wrap state ─── */
 .table-block-wrap-btn.is-wrapped {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     color: var(--accent-color);
 }
 
@@ -262,7 +262,7 @@
 }
 
 .table-block-copy-btn svg:last-child {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
 }
 
 .table-block-copy-btn[aria-expanded="true"] {

@@ -760,7 +760,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-row--disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   pointer-events: none;
 }
 

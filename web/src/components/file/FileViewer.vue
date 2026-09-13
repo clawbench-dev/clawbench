@@ -778,7 +778,7 @@ defineExpose({
     display: flex;
     gap: var(--space-5);
     z-index: 5;
-    opacity: 0.55;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base);
     pointer-events: none;
 }
@@ -812,7 +812,7 @@ defineExpose({
 }
 
 .file-nav-float .file-nav-btn:disabled {
-    opacity: 0.35;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 

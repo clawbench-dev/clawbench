@@ -30,7 +30,7 @@
     user-select: none;
     cursor: pointer;
     border-right: 1px solid var(--border-color);
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transition: opacity var(--duration-base), color var(--duration-base);
     font-size: inherit;
     line-height: inherit;

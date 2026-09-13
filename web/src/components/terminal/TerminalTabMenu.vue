@@ -79,7 +79,7 @@ function onShowChange(val: boolean) {
 
 .tab-menu-icon {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 @media (hover: hover) {

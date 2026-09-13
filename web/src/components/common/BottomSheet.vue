@@ -293,7 +293,7 @@ defineExpose({
   height: 4px;
   border-radius: var(--radius-xs);
   background: var(--text-muted, #bbb);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* Handle-only header — compact, no box-shadow, centered handle */

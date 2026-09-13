@@ -2589,7 +2589,7 @@ function scrollSelectedIntoView(path) {
 /* ── Cut item half-transparent effect ── */
 .file-item.cut-item,
 .grid-item.cut-item {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
 }
 
 /* ── File list area ── */
@@ -2648,7 +2648,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-btn:disabled {
-    opacity: 0.35;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
 }
 @media (hover: hover) {
@@ -2901,7 +2901,7 @@ function scrollSelectedIntoView(path) {
     width: 48px;
     height: 48px;
     margin-bottom: var(--space-6);
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
 }
 
 /* Truncate hint */
@@ -3248,7 +3248,7 @@ function scrollSelectedIntoView(path) {
    user-operable. */
 .fs-toggle-btn:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
 }
 
 .fs-toggle-btn:disabled:hover {
@@ -3285,7 +3285,7 @@ function scrollSelectedIntoView(path) {
 
 .fs-search-empty-icon {
     color: var(--text-muted, #999);
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
 }
 
 .fs-search-empty-text {
@@ -3386,7 +3386,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-dropdown .toolbar-dropdown-item:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
 }
 

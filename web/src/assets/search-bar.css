@@ -176,7 +176,7 @@
   border-color: var(--accent-color);
 }
 .cm-search .cm-button:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: default;
 }
 

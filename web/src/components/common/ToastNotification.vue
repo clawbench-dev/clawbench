@@ -79,7 +79,7 @@ defineProps({
 }
 
 .toast:active {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     transform: scale(0.97);
 }
 

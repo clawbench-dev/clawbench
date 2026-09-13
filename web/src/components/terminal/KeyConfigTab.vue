@@ -248,7 +248,7 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-chip:active {
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 .kcf-chip-active {
@@ -267,7 +267,7 @@ defineExpose({ getSelectedIds })
 
 /* Drag animation states */
 .kcf-ghost {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
 }
 
 .kcf-chosen {
@@ -280,6 +280,6 @@ defineExpose({ getSelectedIds })
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   transform: scale(1.08);
   z-index: 10;
-  opacity: 0.9;
+  opacity: var(--opacity-hover);
 }
 </style>

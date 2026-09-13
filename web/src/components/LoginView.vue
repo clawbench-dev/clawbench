@@ -353,7 +353,7 @@ onMounted(() => {
     background-size: 48px 48px;
     mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
     -webkit-mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     pointer-events: none;
 }
 
@@ -404,8 +404,8 @@ onMounted(() => {
 }
 
 @keyframes ring-pulse {
-    0%, 100% { opacity: 0.4; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.04); }
+    0%, 100% { opacity: var(--opacity-disabled); transform: scale(1); }
+    50% { opacity: var(--opacity-hover); transform: scale(1.04); }
 }
 
 .login-title {
@@ -632,7 +632,7 @@ input:focus {
 }
 
 .login-btn:disabled {
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
     cursor: default;
 }
 

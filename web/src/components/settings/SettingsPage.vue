@@ -254,7 +254,7 @@ watch(() => props.active, (val) => {
 }
 
 .settings-restart-btn:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

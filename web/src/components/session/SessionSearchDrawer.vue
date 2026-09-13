@@ -691,7 +691,7 @@ defineExpose({ focusSearchInput })
 
 .filter-dropdown-caret {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 @media (hover: hover) {

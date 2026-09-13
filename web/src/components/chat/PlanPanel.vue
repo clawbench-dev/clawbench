@@ -378,12 +378,12 @@ watch(
 /* ── Animations ── */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: var(--opacity-disabled); }
 }
 
 @keyframes pulse-line {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: var(--opacity-disabled); }
 }
 
 @keyframes check-in {

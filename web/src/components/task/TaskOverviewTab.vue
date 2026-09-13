@@ -290,7 +290,7 @@ function handlePromptClick(event: MouseEvent) {
 
 @keyframes task-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 8px 3px rgba(34, 197, 94, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 8px 3px rgba(34, 197, 94, 0.3); }
 }
 
 .task-meta-row {

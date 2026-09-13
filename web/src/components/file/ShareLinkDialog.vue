@@ -346,7 +346,7 @@ async function revokeLink() {
 .share-dialog-link-btn + .share-dialog-link-btn {
   right: 38px;
 }
-.share-dialog-link-btn:disabled { opacity: 0.5; cursor: default; }
+.share-dialog-link-btn:disabled { opacity: var(--opacity-muted); cursor: default; }
 .share-dialog-spin {
   animation: share-dialog-spin 0.8s linear infinite;
 }

@@ -59,7 +59,7 @@
 }
 
 .context-menu-item.disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
     pointer-events: none;
 }

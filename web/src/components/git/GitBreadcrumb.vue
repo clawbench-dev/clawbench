@@ -125,7 +125,7 @@ const commitTarget = computed(() => {
   cursor: pointer;
   padding: 0;
   line-height: 1;
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   flex-shrink: 0;

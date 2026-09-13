@@ -553,7 +553,7 @@ async function handleRetryTunnel() {
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -634,7 +634,7 @@ async function handleRetryTunnel() {
 
 .tunnel-banner-detail {
   font-size: var(--font-size-xs);
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .tunnel-retry-btn {
@@ -659,7 +659,7 @@ async function handleRetryTunnel() {
 
 .tunnel-retry-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .proxy-loading,
@@ -677,14 +677,14 @@ async function handleRetryTunnel() {
 
 .proxy-empty-icon {
   color: var(--text-muted, #999);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .proxy-empty-hint {
   font-size: var(--font-size-xs);
   margin-top: var(--space-2);
   color: var(--text-muted, #999);
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 .proxy-list {
@@ -926,7 +926,7 @@ async function handleRetryTunnel() {
 }
 
 .port-scan-rescan-icon:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -1031,7 +1031,7 @@ async function handleRetryTunnel() {
   padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .port-add-content {
@@ -1071,7 +1071,7 @@ async function handleRetryTunnel() {
 }
 
 .port-add-input[readonly] {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
   background: var(--bg-tertiary, #f5f5f5);
 }

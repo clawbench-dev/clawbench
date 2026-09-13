@@ -185,7 +185,7 @@ const statusTitle = computed(() => {
 
 .port-status.disabled {
   background: #9ca3af;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 @keyframes pulse-red {
@@ -199,7 +199,7 @@ const statusTitle = computed(() => {
 
 @keyframes pulse-yellow {
   0%, 100% {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
   }
   50% {
@@ -233,7 +233,7 @@ const statusTitle = computed(() => {
 }
 
 .toggle-switch:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -349,6 +349,6 @@ const statusTitle = computed(() => {
 
 .port-action-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
 }
 </style>

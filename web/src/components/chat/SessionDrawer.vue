@@ -725,7 +725,7 @@ defineExpose({
 }
 
 .refresh-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -842,14 +842,14 @@ defineExpose({
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
   transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
   .model-item:hover .set-default-btn,
   .thinking-item:hover .set-default-btn {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 
   .set-default-btn:hover {

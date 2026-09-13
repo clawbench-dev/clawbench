@@ -532,7 +532,7 @@ function formatTime(iso: string): string {
 }
 .forge-card-icon {
   color: var(--text-muted);
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   margin-bottom: var(--space-1);
 }
 .forge-card-header {
@@ -702,7 +702,7 @@ function formatTime(iso: string): string {
 }
 .forge-empty-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 .forge-empty-title {
   font-size: var(--font-size-lg);
@@ -847,7 +847,7 @@ function formatTime(iso: string): string {
   background: var(--bg-tertiary);
 }
 .forge-remote-row:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 .forge-remote-icon {
