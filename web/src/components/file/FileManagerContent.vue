@@ -2446,7 +2446,10 @@ function scrollSelectedIntoView(path) {
   overflow: hidden;
 }
 
-/* The docked preview pane fills its half of the split. */
+/* The docked preview pane fills its half of the split. No top border: the
+   SplitView divider directly above already draws the 1px separator, and both
+   are shown/hidden by the same `previewPaneEnabled` — a border here stacked a
+   second line right under the divider's. */
 .fm-preview-pane {
   width: 100%;
   height: 100%;
@@ -2454,7 +2457,6 @@ function scrollSelectedIntoView(path) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
 }
 
 /* ── File manager specific ── */

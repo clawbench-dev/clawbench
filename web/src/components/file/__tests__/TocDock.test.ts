@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import TocDock from '@/components/file/TocDock.vue'
 
 // ── Mocks ──
@@ -223,10 +225,72 @@ describe('TocDock', () => {
   })
 })
 
+describe('TocDock — drag highlight survives touch', () => {
+  // Regression: the expanded highlight used to be driven by `:active` alone.
+  // On touch, `setPointerCapture` makes the browser drop `:active`, so a fast
+  // swipe showed no highlight while a held press did. The component now tracks
+  // the pointer session in a `dragging` ref and styles it too.
+  it('marks the divider as dragging for the whole pointer session', async () => {
+    const wrapper = mountDock()
+    const divider = wrapper.find('.toc-dock-divider')
+    const el = divider.element as HTMLElement
+
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+
+    pressDivider(divider, 300)
+    await nextTick()
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+
+    // Still marked mid-drag — the part `:active` failed to guarantee.
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 340 }))
+    await nextTick()
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    await nextTick()
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+  })
+
+  it('clears the dragging mark on pointercancel', async () => {
+    const wrapper = mountDock()
+    const divider = wrapper.find('.toc-dock-divider')
+    const el = divider.element as HTMLElement
+    pressDivider(divider, 300)
+    await nextTick()
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }))
+    await nextTick()
+    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+  })
+
+  it('styles the expanded state for both :active and --dragging', () => {
+    // Styling only `:active` is the bug this guards against.
+    const src = readSource('file/TocDock.vue')
+    const style = src.slice(src.indexOf('<style'))
+    expect(style).toMatch(/\.toc-dock-divider:active,\s*\.toc-dock-divider--dragging/)
+    // The inner line highlight must follow the drag too, not just :active.
+    expect(style).toMatch(/\.toc-dock-divider--dragging \.toc-dock-divider__line/)
+    // Left-docked shift must apply while dragging, or the highlight sits off-centre.
+    expect(style).toMatch(/\.toc-dock--left \.toc-dock-divider--dragging/)
+  })
+})
+
 /** Dispatch pointerdown on the divider with pointer-capture mocked (jsdom lacks it). */
 function pressDivider(divider: { element: Element | null }, clientX: number) {
   const el = divider.element as HTMLElement
   el.setPointerCapture = vi.fn()
   el.releasePointerCapture = vi.fn()
   el.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX }))
+}
+
+/** Read an SFC source; cwd differs between a bare vitest run and vitest-run.sh. */
+function readSource(relPath: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/' + relPath), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error(relPath + ' not found from cwd: ' + process.cwd())
 }

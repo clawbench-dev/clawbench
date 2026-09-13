@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import SplitDivider from '@/components/common/SplitDivider.vue'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -16,6 +17,22 @@ afterEach(() => {
 function mountDivider(props = {}) {
   wrapper = mount(SplitDivider, { props })
   return wrapper
+}
+
+/**
+ * Read the SFC source. jsdom does not load `<style>`, so style assertions have
+ * to inspect the file — and the cwd differs between a bare `vitest` run (web/)
+ * and scripts/vitest-run.sh (repo root), so probe both.
+ */
+function readSource(): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/common/SplitDivider.vue'), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error('SplitDivider.vue not found from cwd: ' + process.cwd())
 }
 
 describe('SplitDivider', () => {
@@ -115,10 +132,7 @@ describe('SplitDivider — touch target sizing', () => {
     // A 1px line is an unhittable touch target, and the hover-only growth never
     // fires on touch. jsdom does not load SFC <style>, so assert the source
     // declares a (pointer: coarse) block covering both orientations.
-    const src = readFileSync(
-      resolve(process.cwd(), 'src/components/common/SplitDivider.vue'),
-      'utf8',
-    )
+    const src = readSource()
     const style = src.slice(src.indexOf('<style'))
     expect(style).toMatch(/@media\s*\(pointer:\s*coarse\)/)
     const coarse = style.slice(style.indexOf('@media (pointer: coarse)'))
@@ -132,5 +146,93 @@ describe('SplitDivider — touch target sizing', () => {
     const el = wrapper!.find('.split-view__divider').element as HTMLElement
     // The divider itself does not carry the vars; the SplitView root does.
     expect(el.getAttribute('role')).toBe('separator')
+  })
+})
+
+describe('SplitDivider — drag highlight survives touch', () => {
+  // Regression: the expanded highlight used to be driven by `:active` alone.
+  // On touch, `setPointerCapture` makes the browser drop `:active`, so a fast
+  // swipe showed no highlight at all while a held press did. The component now
+  // tracks the pointer session in a `dragging` ref and styles it too.
+  it('marks the divider as dragging for the whole pointer session', async () => {
+    mountDivider()
+    const div = wrapper!.find('.split-view__divider').element as HTMLElement
+    div.setPointerCapture = vi.fn()
+    div.releasePointerCapture = vi.fn()
+
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 300 }))
+    await nextTick()
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+
+    // Still marked mid-drag — this is the part `:active` failed to guarantee.
+    window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 200 }))
+    await nextTick()
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
+    await nextTick()
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+  })
+
+  it('clears the dragging mark on pointercancel', async () => {
+    mountDivider()
+    const div = wrapper!.find('.split-view__divider').element as HTMLElement
+    div.setPointerCapture = vi.fn()
+    div.releasePointerCapture = vi.fn()
+    div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true }))
+    await nextTick()
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }))
+    await nextTick()
+    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+  })
+
+  it('styles the expanded state for both :active and --dragging', () => {
+    // The source must pair the two selectors; styling only `:active` is the
+    // bug this guards against.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    for (const dir of ['horizontal', 'vertical']) {
+      expect(style).toMatch(
+        new RegExp(
+          `\\.split-view__divider--${dir}:active,\\s*\\.split-view__divider--${dir}\\.split-view__divider--dragging`,
+        ),
+      )
+    }
+    // The inner line highlight must follow the drag too, not just :active.
+    expect(style).toMatch(
+      /\.split-view__divider--dragging \.split-view__gutter-line/,
+    )
+  })
+
+  it('keeps the resting line on the device pixel grid', () => {
+    // The divider is 1px wide at rest (3px under `pointer: coarse`). Centring
+    // with `left: 50%` + translateX(-50%) resolves to a 0.5px offset, which the
+    // compositor antialiases across two columns — the separator then looks like
+    // a double border. `(100% - 1px) / 2` centres it on whole pixels instead.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+
+    const ruleFor = (dir: string) => {
+      const m = style.match(
+        new RegExp(
+          `\\.split-view__divider--${dir} \\.split-view__gutter-line \\{([^}]*)\\}`,
+        ),
+      )
+      expect(m, `${dir} gutter-line rule must exist`).not.toBeNull()
+      return m![1]
+    }
+
+    for (const dir of ['horizontal', 'vertical']) {
+      const resting = ruleFor(dir)
+      expect(resting, `${dir} resting line must not use 50%`).not.toContain('50%')
+      expect(resting, `${dir} resting line must not be transformed`).not.toContain('transform')
+      expect(
+        resting,
+        `${dir} resting line must centre with (100% - 1px) / 2`,
+      ).toContain('calc((100% - 1px) / 2)')
+    }
   })
 })

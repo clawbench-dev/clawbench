@@ -481,6 +481,21 @@ beforeEach(() => {
 
 // ── Rendering ──
 
+
+/** Read the SFC source. jsdom does not load `<style>`, so style assertions must
+ *  inspect the file — and cwd differs between a bare `vitest` run (web/) and
+ *  scripts/vitest-run.sh (repo root), so probe both. */
+function readSource(): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/file/FileManagerContent.vue'), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error('FileManagerContent.vue not found from cwd: ' + process.cwd())
+}
+
 describe('FileManagerContent — rendering', () => {
   it('renders file list container', () => {
     const wrapper = mountContent()
@@ -3991,10 +4006,7 @@ describe('FileManagerContent — panel layout (search bar is its own region)', (
     // min-height:0` is inert, its height grows to the content height, and it
     // overflows the panel — painting over the resident search bar below.
     // jsdom does not load SFC <style>, so assert against the source.
-    const src = readFileSync(
-      resolve(process.cwd(), 'src/components/file/FileManagerContent.vue'),
-      'utf8',
-    )
+    const src = readSource()
     const m = src.match(/\.fm-split\s*\{([^}]*)\}/)
     expect(m).toBeTruthy()
     const body = m![1]

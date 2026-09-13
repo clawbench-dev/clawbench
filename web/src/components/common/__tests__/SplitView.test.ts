@@ -39,6 +39,21 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+
+/** Read the SFC source. jsdom does not load `<style>`, so style assertions must
+ *  inspect the file — and cwd differs between a bare `vitest` run (web/) and
+ *  scripts/vitest-run.sh (repo root), so probe both. */
+function readSource(): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/common/SplitView.vue'), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error('SplitView.vue not found from cwd: ' + process.cwd())
+}
+
 describe('SplitView', () => {
   it('enabled=false: no divider, panes render inline', () => {
     wrapper = mountSplit({ enabled: false })
@@ -240,10 +255,7 @@ describe('SplitView — nested splits (file manager inside App split)', () => {
     // also matched the INNER vertical pane, capping its width (696px pane
     // rendered at 375px). Every pane rule must use the child combinator.
     // jsdom does not load SFC <style>, so assert against the source.
-    const src = readFileSync(
-      resolve(process.cwd(), 'src/components/common/SplitView.vue'),
-      'utf8',
-    )
+    const src = readSource()
     const style = src.slice(src.indexOf('<style'))
     // Only SIZING rules are dangerous when unscoped: a leaked width/max-width
     // from the outer split would cap the inner pane. The base
@@ -313,10 +325,7 @@ describe('SplitView — min sizes drive both JS clamp and CSS floors', () => {
   })
 
   it('pane sizing rules consume the vars (not hard-coded pixel values)', () => {
-    const src = readFileSync(
-      resolve(process.cwd(), 'src/components/common/SplitView.vue'),
-      'utf8',
-    )
+    const src = readSource()
     const style = src.slice(src.indexOf('<style'))
     // Every min/max sizing rule on a pane must reference the vars.
     expect(style).toMatch(/min-height:\s*var\(--split-min-first/)
