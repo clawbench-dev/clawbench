@@ -17,7 +17,7 @@ export default {
     download: 'Download',
     retry: 'Retry',
     rename: 'Rename',
-    editSessionName: 'Edit session name',
+    renameSession: 'Rename session',
     open: 'Open',
     save: 'Save',
     create: 'Create',

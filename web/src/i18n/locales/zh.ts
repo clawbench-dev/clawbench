@@ -17,7 +17,7 @@ export default {
     download: '下载',
     retry: '重试',
     rename: '重命名',
-    editSessionName: '编辑会话名称',
+    renameSession: '重命名会话',
     open: '打开',
     save: '保存',
     create: '创建',

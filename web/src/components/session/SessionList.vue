@@ -145,7 +145,7 @@
         </div>
         <div class="context-menu-item" @click.stop="renameSessionFromMenu(contextMenu.sessionId)">
           <PencilLine :size="14" />
-          {{ t('common.editSessionName') }}
+          {{ t('common.renameSession') }}
         </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
