@@ -323,7 +323,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-primary, #212529);
 }
@@ -360,7 +360,7 @@ defineExpose({
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
@@ -371,7 +371,7 @@ defineExpose({
 
 .search-results-count {
   padding: 6px 14px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -384,8 +384,8 @@ defineExpose({
   gap: 10px;
   padding: 5px 14px;
   cursor: pointer;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   border-bottom: 1px solid var(--border-color, #f0f0f0);
   transition: background 0.1s;

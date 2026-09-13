@@ -69,7 +69,7 @@ function onShowChange(val: boolean) {
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s, color 0.12s;

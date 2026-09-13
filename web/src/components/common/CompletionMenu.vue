@@ -113,7 +113,7 @@ function renderLabel(item: CompletionItem): string {
 }
 
 .completion-label {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -135,7 +135,7 @@ function renderLabel(item: CompletionItem): string {
 /* Directory hint: muted, middle-ellipsised in JS so both the leading and
    trailing path segments stay visible on long paths. */
 .completion-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;
@@ -145,7 +145,7 @@ function renderLabel(item: CompletionItem): string {
 
 .completion-source {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   white-space: nowrap;
 }

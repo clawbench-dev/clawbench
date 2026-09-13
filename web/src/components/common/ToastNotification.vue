@@ -32,7 +32,7 @@ defineProps({
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     font-weight: 500;
     box-shadow: var(--shadow-md);
     cursor: pointer;
@@ -84,7 +84,7 @@ defineProps({
 }
 
 .toast-icon {
-    font-size: 16px;
+    font-size: var(--font-size-2xl);
 }
 
 .toast-text {

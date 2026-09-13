@@ -2903,12 +2903,12 @@ onUnmounted(() => {
 }
 
 .view-empty-no-recent-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted);
 }
 
 .view-empty-recent-title {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-align: left;
   color: var(--text-muted);
@@ -2944,7 +2944,7 @@ onUnmounted(() => {
 
 .view-empty-recent-name {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2983,7 +2983,7 @@ onUnmounted(() => {
 
 .view-empty-recent-dir {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3000,7 +3000,7 @@ onUnmounted(() => {
   border-radius: 10px;
   background: transparent;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -3094,7 +3094,7 @@ onUnmounted(() => {
     border: 1px solid var(--accent-color, #0066cc);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
     color: var(--accent-color, #0066cc);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 600;
     pointer-events: none;
     z-index: 11;
@@ -3309,7 +3309,7 @@ onUnmounted(() => {
     min-width: 16px;
     padding: 0 4px;
     border-radius: 8px;
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     font-weight: 700;
     line-height: 16px;
     text-align: center;
@@ -3437,7 +3437,7 @@ onUnmounted(() => {
     border-radius: 8px;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
     white-space: nowrap;
@@ -3467,7 +3467,7 @@ onUnmounted(() => {
     border-radius: 9px;
     background: var(--accent-color);
     color: #fff;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     font-weight: 700;
     line-height: 18px;
     text-align: center;

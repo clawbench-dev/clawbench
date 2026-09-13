@@ -81,7 +81,7 @@ function onDiffClick(event: MouseEvent) {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .git-diff-scroll {
@@ -109,7 +109,7 @@ function onDiffClick(event: MouseEvent) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
+  font-family: var(--font-mono);
   background: var(--bg-tertiary, #f0f0f0);
   padding: 3px 8px;
   user-select: none;
@@ -119,7 +119,7 @@ function onDiffClick(event: MouseEvent) {
 
 /* ─── Function name (left side) ─── */
 .git-diff-scroll :deep(.diff-hunk-func) {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary, #555);
   overflow: hidden;
@@ -166,9 +166,9 @@ function onDiffClick(event: MouseEvent) {
   cursor: pointer;
   padding: 0;
   opacity: 0.5;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 700;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
+  font-family: var(--font-mono);
   transition: opacity 0.15s, color 0.15s, background 0.15s;
   outline: none;
   box-shadow: none;
@@ -219,8 +219,8 @@ function onDiffClick(event: MouseEvent) {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -245,7 +245,7 @@ function onDiffClick(event: MouseEvent) {
   padding: 0 4px;
   text-align: right;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   user-select: none;
   white-space: nowrap;
   background: var(--bg-tertiary, #f8f8f8);
@@ -298,8 +298,8 @@ function onDiffClick(event: MouseEvent) {
 
 /* Fallback raw diff */
 .git-diff-scroll :deep(.diff-raw) {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;

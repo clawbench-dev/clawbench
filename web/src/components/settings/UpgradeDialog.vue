@@ -245,7 +245,7 @@ watch(visible, (v) => {
 
 .ug-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -274,7 +274,7 @@ watch(visible, (v) => {
   justify-content: center;
   gap: 10px;
   padding: 12px 16px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .ug-ver-current { color: var(--text-secondary); }
@@ -285,7 +285,7 @@ watch(visible, (v) => {
   display: block;
   text-align: center;
   margin: 0 16px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--accent-color);
   text-decoration: none;
@@ -321,7 +321,7 @@ watch(visible, (v) => {
 
 .ug-message {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
 }
 
@@ -332,14 +332,14 @@ watch(visible, (v) => {
 
 .ug-success {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--accent-color);
 }
 
 .ug-backup-path {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   word-break: break-all;
 }
@@ -351,13 +351,13 @@ watch(visible, (v) => {
 
 .ug-no-upgrade p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
 }
 
 .ug-error {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-danger, #e53e3e);
   word-break: break-word;
 }
@@ -374,21 +374,21 @@ watch(visible, (v) => {
 
 .ug-warn-title {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-warning, #d69e2e);
 }
 
 .ug-warn-body {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
 }
 
 .ug-warn-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
@@ -404,14 +404,14 @@ watch(visible, (v) => {
 
 .ug-hint-title {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--accent-color);
 }
 
 .ug-hint-body {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
 }
@@ -422,29 +422,29 @@ watch(visible, (v) => {
   border-radius: 6px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
   word-break: break-all;
   user-select: all;
 }
 
 .ug-hint-warn {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-warning, #d69e2e);
   line-height: 1.5;
 }
 
 .ug-error-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-danger, #e53e3e);
 }
 
 .ug-error-hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 

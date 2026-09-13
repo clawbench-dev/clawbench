@@ -322,7 +322,7 @@ defineExpose({
 
 .bs-header-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   flex-shrink: 0;
   white-space: nowrap;
@@ -334,7 +334,7 @@ defineExpose({
 .bs-header-description {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;

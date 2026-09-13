@@ -52,7 +52,7 @@ function close() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   line-height: 1.4;
 }
@@ -66,7 +66,7 @@ function close() {
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   flex-shrink: 0;
 }

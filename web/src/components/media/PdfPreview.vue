@@ -546,14 +546,14 @@ defineExpose({
 }
 
 .pdf-error-title {
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 500;
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
 .pdf-error-desc {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   margin-bottom: 20px;
   max-width: 400px;
   word-break: break-word;
@@ -569,7 +569,7 @@ defineExpose({
   border: none;
   border-radius: 14px;
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   gap: 6px;

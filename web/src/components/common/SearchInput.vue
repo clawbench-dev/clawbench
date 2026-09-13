@@ -97,7 +97,7 @@ defineExpose({ focus, inputRef, focused })
   border: none;
   background: none;
   outline: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   padding: 0;
   line-height: 1.4;

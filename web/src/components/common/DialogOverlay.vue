@@ -150,7 +150,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
 }
@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
 }
 
 .dlg-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #555);
   line-height: 1.5;
   margin-bottom: 14px;
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #ddd);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-family: inherit;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
 .dlg-btn {
   padding: 6px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   border: none;
   cursor: pointer;
@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: #d32f2f;
   border: 1px solid #d32f2f;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 5px 10px;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }

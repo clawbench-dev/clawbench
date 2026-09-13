@@ -103,7 +103,7 @@ const parts = computed(() => {
   align-items: center;
   gap: 4px;
   overflow-x: auto;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   scrollbar-width: none;
 }
@@ -143,7 +143,7 @@ const parts = computed(() => {
 
 .crumb-sep {
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .crumb-copy-btn {

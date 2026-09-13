@@ -215,7 +215,7 @@ const sampleEventType = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin: 0;
@@ -233,7 +233,7 @@ const sampleEventType = computed(() => {
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
   color: var(--color-yellow, #a16207);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 /* ── Trigger chips ── */
@@ -249,7 +249,7 @@ const sampleEventType = computed(() => {
   flex-wrap: wrap;
 }
 .event-chip-kind {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-muted, #999);
   flex-shrink: 0;
@@ -261,7 +261,7 @@ const sampleEventType = computed(() => {
   gap: 4px;
 }
 .event-chip {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding: 1px 8px;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -297,12 +297,12 @@ const sampleEventType = computed(() => {
   gap: 8px;
 }
 .overview-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
 .overview-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   text-align: right;
   word-break: break-word;
@@ -311,7 +311,7 @@ const sampleEventType = computed(() => {
 
 /* ── Context preview ── */
 .sample-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 500;
   padding: 1px 6px;
   border-radius: 999px;
@@ -330,7 +330,7 @@ const sampleEventType = computed(() => {
   gap: 3px;
 }
 .event-context-heading {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary, #4b5563);
   margin-bottom: 2px;
@@ -338,7 +338,7 @@ const sampleEventType = computed(() => {
 .event-context-row {
   display: flex;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .event-context-label {
@@ -352,7 +352,7 @@ const sampleEventType = computed(() => {
   word-break: break-word;
 }
 .form-hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #6b7280);
 }
 </style>

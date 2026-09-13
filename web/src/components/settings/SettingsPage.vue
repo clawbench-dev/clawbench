@@ -206,7 +206,7 @@ watch(() => props.active, (val) => {
 }
 
 .settings-page__title {
-  font-size: 17px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -221,7 +221,7 @@ watch(() => props.active, (val) => {
 
 .settings-page__version {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
   background: var(--bg-tertiary);

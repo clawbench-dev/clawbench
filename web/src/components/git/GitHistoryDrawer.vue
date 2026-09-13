@@ -680,7 +680,7 @@ watch(() => props.open, async (val) => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ─── Drill-down shared ────────────────────────────────────────────────── */
@@ -705,7 +705,7 @@ watch(() => props.open, async (val) => {
 }
 
 .drilldown-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
@@ -749,7 +749,7 @@ watch(() => props.open, async (val) => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ─── File list (project mode) ────────────────────────────────────────── */
@@ -762,7 +762,7 @@ watch(() => props.open, async (val) => {
 }
 
 .git-file-type-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   padding: 2px 5px;
   border-radius: 4px;
@@ -787,7 +787,7 @@ watch(() => props.open, async (val) => {
 
 .git-file-name {
   color: var(--text-primary, #212529);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -795,7 +795,7 @@ watch(() => props.open, async (val) => {
 
 .git-file-dir {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -803,7 +803,7 @@ watch(() => props.open, async (val) => {
 }
 
 .file-group-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-muted, #999);
   padding: 8px 14px 4px;

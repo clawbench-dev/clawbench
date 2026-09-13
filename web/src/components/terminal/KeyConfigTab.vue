@@ -140,7 +140,7 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-action-btn {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--accent, #4f8ef7);
   background: none;
   border: none;
@@ -160,13 +160,13 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-section-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-muted, #999);
 }
 
 .kcf-count {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #eee);
   border-radius: 10px;
@@ -188,7 +188,7 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-empty-hint {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   text-align: center;
   padding: 16px 0;
@@ -213,7 +213,7 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-group-title {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-muted, #999);
   margin-bottom: 6px;
@@ -239,7 +239,7 @@ defineExpose({ getSelectedIds })
   border-radius: 0;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-family: inherit;
   cursor: pointer;
   user-select: none;

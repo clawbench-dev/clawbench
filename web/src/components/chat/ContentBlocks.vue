@@ -1427,7 +1427,7 @@ onUnmounted(() => {
 
 .streaming-elapsed {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -1459,7 +1459,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #dc2626;
 }
 
@@ -1467,7 +1467,7 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, #ef4444 40%, var(--border-color));
   background: transparent;
   color: #dc2626;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding: 1px 8px;
   border-radius: 4px;
   cursor: pointer;
@@ -1481,7 +1481,7 @@ onUnmounted(() => {
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */
 .chat-cancelled-mark-inline {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
   padding: 1px 6px;
@@ -1509,7 +1509,7 @@ onUnmounted(() => {
 }
 
 .chat-error-card .error-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--color-red, #dc2626);
 }
@@ -1543,7 +1543,7 @@ onUnmounted(() => {
 }
 
 .chat-warning-card .warning-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--color-yellow, #d97706);
   white-space: pre-wrap;
@@ -1567,7 +1567,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   margin-left: 8px;
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   border-radius: 999px;
   line-height: 1.6;
@@ -1606,7 +1606,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   margin-left: auto;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: #fff;
   background: #f59e0b;
@@ -1628,7 +1628,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   margin-left: auto;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: #fff;
   background: #f59e0b;
@@ -1735,7 +1735,7 @@ onUnmounted(() => {
 .thinking-inline-content {
   overflow: hidden;
   min-height: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.65;
   color: var(--text-secondary);
   word-break: break-word;
@@ -1776,7 +1776,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
@@ -1788,7 +1788,7 @@ onUnmounted(() => {
 .thinking-label {
   font-weight: 600;
   color: var(--thinking-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   letter-spacing: 0.02em;
 }
 
@@ -1820,10 +1820,10 @@ onUnmounted(() => {
   padding: 6px 8px;
   border-radius: 4px;
   overflow-x: auto;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .thinking-inline-content code {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1839,7 +1839,7 @@ onUnmounted(() => {
 .thinking-inline-content h1,
 .thinking-inline-content h2,
 .thinking-inline-content h3 {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   margin: 0.5em 0 0.3em;
 }
@@ -1851,7 +1851,7 @@ onUnmounted(() => {
 .thinking-inline-content table {
   border-collapse: collapse;
   margin: 0.5em 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .thinking-inline-content th,
 .thinking-inline-content td {
@@ -1883,7 +1883,7 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
@@ -1920,7 +1920,7 @@ onUnmounted(() => {
 .chat-tool-call .tool-name {
   font-weight: 600;
   color: var(--tool-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .chat-tool-call .tool-summary {
@@ -1975,7 +1975,7 @@ onUnmounted(() => {
 }
 
 .subagent-group-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -2036,7 +2036,7 @@ onUnmounted(() => {
   width: 100%;
   margin-top: 6px;
   padding: 4px 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   background: none;
   border: none;
@@ -2053,7 +2053,7 @@ onUnmounted(() => {
 .tool-detail {
   margin: 2px 0 4px 0;
   padding: 6px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
   background: var(--bg-primary);
   border-radius: 4px;
@@ -2109,7 +2109,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
   color: var(--accent-color, #4a90d9);
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--border-color, #dee2e6));
   cursor: pointer;
 }
@@ -2121,7 +2121,7 @@ onUnmounted(() => {
 
 .stask-body {
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 
@@ -2146,13 +2146,13 @@ onUnmounted(() => {
   justify-content: center;
   gap: 4px;
   padding: 6px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
   font-weight: 500;
 }
 
 .stask-status-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   font-weight: 500;
@@ -2191,7 +2191,7 @@ onUnmounted(() => {
   border-radius: 10px;
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
   color: #0ea5e9;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   margin-right: 4px;
   vertical-align: baseline;
@@ -2255,7 +2255,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-output-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(34, 197, 94, 0.12);
@@ -2269,7 +2269,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-output-status {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 600;
@@ -2298,14 +2298,14 @@ onUnmounted(() => {
 .content-blocks .tool-detail .tool-output-body {
   max-height: 200px;
   overflow-y: auto;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
 .content-blocks .tool-detail .tool-output-body pre {
   margin: 0;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -2337,8 +2337,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent-color);
   word-break: break-all;
@@ -2349,12 +2349,12 @@ onUnmounted(() => {
 .content-blocks .tool-detail .edit-diff-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
 .content-blocks .tool-detail .edit-diff-replace-all {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(245, 158, 11, 0.12);
@@ -2369,8 +2369,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .edit-diff-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   min-width: max-content;
 }
@@ -2405,14 +2405,14 @@ onUnmounted(() => {
 .content-blocks .tool-detail .file-preview-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
 .content-blocks .tool-detail .file-preview-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -2425,12 +2425,12 @@ onUnmounted(() => {
 .content-blocks .tool-detail .file-write-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
 .content-blocks .tool-detail .file-write-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(59, 130, 246, 0.12);
@@ -2446,8 +2446,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .file-write-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -2459,8 +2459,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-json-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -2474,7 +2474,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .bash-terminal-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   margin-bottom: 4px;
   white-space: pre-wrap;
@@ -2482,8 +2482,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .bash-terminal-body {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   background: var(--bg-tertiary);
   border-radius: 4px;
@@ -2532,7 +2532,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 12%, var(--border-color));
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
   overflow: hidden;
@@ -2552,7 +2552,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-name {
   font-weight: 600;
   color: var(--tool-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   flex-shrink: 0;
 }
 
@@ -2601,7 +2601,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-empty {
   color: var(--text-muted, #999);
   font-style: italic;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-invalid {
@@ -2624,7 +2624,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: #f97316;
 }
@@ -2634,7 +2634,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -2677,7 +2677,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-option-indicator {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1.3;
   color: var(--text-muted, #999);
   user-select: none;
@@ -2701,7 +2701,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-option-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-primary);
   white-space: pre-wrap;
@@ -2709,7 +2709,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-option-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   line-height: 1.4;
   white-space: pre-wrap;
@@ -2728,7 +2728,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: transparent;
   color: #8b5cf6;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -2771,7 +2771,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: #f97316;
   color: white;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
@@ -2818,7 +2818,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-supplementary-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   color: var(--text-secondary);
 }
@@ -2830,7 +2830,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.4;
   outline: none;
   transition: border-color 0.15s;
@@ -2839,7 +2839,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-supplementary-input::placeholder {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .content-blocks .tool-detail .ask-supplementary-input:focus {
@@ -2855,7 +2855,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -2867,7 +2867,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .grep-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -2885,8 +2885,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .grep-pattern-text,
 .content-blocks .tool-detail .grep-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -2904,7 +2904,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .grep-mode-tag {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.08);
@@ -2922,7 +2922,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -2934,7 +2934,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .glob-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -2952,8 +2952,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .glob-pattern-text,
 .content-blocks .tool-detail .glob-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -2961,7 +2961,7 @@ onUnmounted(() => {
 
 /* ── WebSearch view ── */
 .content-blocks .tool-detail .web-search-view {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -2974,7 +2974,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .web-search-icon {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.4;
 }
 
@@ -2988,7 +2988,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -2999,7 +2999,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .web-fetch-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -3016,8 +3016,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .web-fetch-link {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--accent-color);
   text-decoration: none;
   word-break: break-all;
@@ -3028,8 +3028,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .web-fetch-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -3037,7 +3037,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .web-fetch-prompt {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -3047,7 +3047,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -3059,7 +3059,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .agent-type-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(236, 72, 153, 0.12);
@@ -3080,7 +3080,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .agent-call-prompt {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: normal;
   word-break: break-word;
   padding: 6px 8px;
@@ -3099,7 +3099,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt h2,
 .content-blocks .tool-detail .agent-call-prompt h3,
 .content-blocks .tool-detail .agent-call-prompt h4 {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   margin: 8px 0 4px;
   color: var(--text-primary);
@@ -3113,8 +3113,8 @@ onUnmounted(() => {
   margin: 2px 0;
 }
 .content-blocks .tool-detail .agent-call-prompt code {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
@@ -3129,7 +3129,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt pre code {
   background: none;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt strong {
   font-weight: 600;
@@ -3146,7 +3146,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -3157,15 +3157,15 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .skill-call-icon {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-shrink: 0;
 }
 
 .content-blocks .tool-detail .skill-call-name {
   font-weight: 600;
   color: #0891b2;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .skill-call-name {
@@ -3174,13 +3174,13 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .skill-call-args {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   padding: 4px 8px;
   background: var(--bg-tertiary);
   border-radius: 4px;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   line-height: 1.5;
 }
 
@@ -3192,10 +3192,10 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .permission-tool-name {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   letter-spacing: 0.2px;
   text-transform: uppercase;
 }
@@ -3212,7 +3212,7 @@ onUnmounted(() => {
    content height. */
 .content-blocks .tool-detail .permission-detail-label {
   align-self: flex-start;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
@@ -3230,8 +3230,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-tool-detail code {
   display: block;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-tertiary);
@@ -3301,7 +3301,7 @@ onUnmounted(() => {
   display: inline-block;
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   margin-top: 6px;
 }
@@ -3330,7 +3330,7 @@ onUnmounted(() => {
   display: inline-block;
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   background: #dcfce7;
   color: #15803d;

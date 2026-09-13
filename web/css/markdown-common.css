@@ -373,7 +373,7 @@
 }
 
 .table-row-label {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     font-weight: 600;
     color: var(--text-muted, #888);
     margin-bottom: 4px;
@@ -382,7 +382,7 @@
 }
 
 .table-row-value {
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     color: var(--text-primary, #1a1a1a);
     word-break: break-word;
     cursor: text;
@@ -391,7 +391,7 @@
 }
 
 .table-row-value code {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     padding: 1px 4px;
 }
 
@@ -418,9 +418,9 @@
     font-weight: 600;
 }
 
-.table-row-value h1 { font-size: 16px; }
-.table-row-value h2 { font-size: 14px; }
-.table-row-value h3 { font-size: 13px; }
+.table-row-value h1 { font-size: var(--font-size-2xl); }
+.table-row-value h2 { font-size: var(--font-size-lg); }
+.table-row-value h3 { font-size: var(--font-size-md); }
 
 .table-row-value img {
     margin: 6px 0;
@@ -445,7 +445,7 @@
     border-radius: 6px;
     background: var(--bg-tertiary, #f0f0f0);
     color: var(--text-primary, #1a1a1a);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     transition: background 0.15s, opacity 0.15s;
 }
@@ -513,7 +513,7 @@
 .markdown-body .chat-file-path,
 .chat-message.assistant .chat-file-path,
 .table-row-value .chat-file-path {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     background: var(--bg-secondary);
     border-radius: 3px;
     padding: 0 3px;
@@ -544,7 +544,7 @@
 
 /* User message file path annotation & open button */
 .chat-message.user .chat-file-path {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     background: rgba(0, 0, 0, 0.15);
     border-radius: 3px;
     padding: 0 3px;

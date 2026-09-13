@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
   z-index: 9999;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.4;
   color: var(--text-primary);
   opacity: 0;

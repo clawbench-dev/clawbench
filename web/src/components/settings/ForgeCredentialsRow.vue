@@ -212,7 +212,7 @@ onMounted(loadHosts)
 }
 .forge-cred-desc {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
 }
 .forge-cred-host {
@@ -233,7 +233,7 @@ onMounted(loadHosts)
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -249,7 +249,7 @@ onMounted(loadHosts)
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   min-width: 0;
 }
 .forge-cred-result.ok { color: var(--color-success); }
@@ -273,7 +273,7 @@ onMounted(loadHosts)
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
@@ -296,7 +296,7 @@ onMounted(loadHosts)
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .forge-cred-input:focus {
   outline: none;
@@ -308,6 +308,6 @@ onMounted(loadHosts)
   align-items: center;
   gap: 6px;
   color: var(--color-red);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 </style>

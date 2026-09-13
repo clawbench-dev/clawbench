@@ -366,7 +366,7 @@ onBeforeUnmount(() => {
 .dialog-item.selected .item-name { color: #fff; }
 
 .item-icon { flex-shrink: 0; width: 28px; height: 28px; }
-.item-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item-name { flex: 1; font-size: var(--font-size-md); font-weight: 500; color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Item action buttons */
 .item-action-btn {
@@ -407,6 +407,6 @@ onBeforeUnmount(() => {
   text-align: center;
   padding: 40px 20px;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 </style>

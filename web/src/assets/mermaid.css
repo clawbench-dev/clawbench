@@ -21,7 +21,7 @@
   padding: 12px;
   background: var(--code-bg);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   overflow-x: auto;
   margin: 0;
 }
@@ -42,7 +42,7 @@
   border-radius: 6px;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.15s;
 }

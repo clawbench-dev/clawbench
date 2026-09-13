@@ -623,7 +623,7 @@ watch(localValues, () => {
 
 /* Panel title inside the card, distinct from card body and page background */
 .group-panel__header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 5px 16px;
   text-transform: uppercase;
@@ -688,7 +688,7 @@ watch(localValues, () => {
 }
 
 .group-panel__enable-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
 }
 
@@ -775,7 +775,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   flex-shrink: 1;
   min-width: 0;
@@ -792,7 +792,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-value {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -807,7 +807,7 @@ watch(localValues, () => {
 
 /* Section header */
 .group-panel__section-header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 5px 16px 3px;
   text-transform: uppercase;
@@ -844,7 +844,7 @@ watch(localValues, () => {
 }
 
 .group-panel__restart-hint {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   text-align: center;
   margin-bottom: 6px;
@@ -857,7 +857,7 @@ watch(localValues, () => {
 
 /* Test results */
 .group-panel__test-result {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   margin: 6px 16px 0;
   padding: 6px 10px;
   border-radius: 6px;
@@ -876,14 +876,14 @@ watch(localValues, () => {
 
 /* Server error */
 .group-panel__error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #ef4444;
   margin-bottom: 6px;
 }
 
 /* Hot-reload warning */
 .group-panel__warning {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #f59e0b;
   margin-bottom: 6px;
   white-space: pre-line;
@@ -931,12 +931,12 @@ watch(localValues, () => {
 }
 
 .group-panel__option-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
 }
 
 .group-panel__option-check {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--accent-color);
   font-weight: 600;
 }

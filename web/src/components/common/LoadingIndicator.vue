@@ -39,7 +39,7 @@ withDefaults(
   justify-content: center;
   gap: 10px;
   box-sizing: border-box;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .li-label {

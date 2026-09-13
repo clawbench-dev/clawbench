@@ -109,7 +109,7 @@ const sections = computed<HelpSection[]>(() => {
 
 .th-section-title {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 700;
   color: var(--text-secondary, #495057);
   letter-spacing: 0.02em;
@@ -129,7 +129,7 @@ const sections = computed<HelpSection[]>(() => {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.4;
 }
 
@@ -137,8 +137,8 @@ const sections = computed<HelpSection[]>(() => {
   flex-shrink: 0;
   font-weight: 700;
   color: var(--text-primary, #1a1a1a);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   padding: 2px 8px;
   border-radius: 6px;
   background: var(--bg-tertiary, #f1f3f5);

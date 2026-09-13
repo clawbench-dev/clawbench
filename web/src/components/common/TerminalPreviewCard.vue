@@ -66,7 +66,7 @@ const fileStyle = computed(() => {
   height: 100%;
   border-radius: 6px;
   overflow: hidden;
-  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace);
+  font-family: var(--font-mono);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
 }
@@ -105,7 +105,7 @@ const fileStyle = computed(() => {
 }
 
 .tpc-line {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;

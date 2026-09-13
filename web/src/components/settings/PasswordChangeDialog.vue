@@ -320,7 +320,7 @@ function onModalClose() {
 
 .password-dialog__label {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   margin-bottom: 4px;
 }
@@ -335,7 +335,7 @@ function onModalClose() {
   width: 100%;
   min-width: 0;
   padding: 10px 40px 10px 12px;
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   background: var(--bg-secondary);
@@ -372,7 +372,7 @@ function onModalClose() {
 }
 
 .password-dialog__hint {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   margin-top: 2px;
   padding-left: 2px;
 }
@@ -418,13 +418,13 @@ function onModalClose() {
 }
 
 .password-dialog__strength-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .password-dialog__error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--color-red, #e74c3c);
   margin-bottom: 12px;
   padding: 8px 12px;

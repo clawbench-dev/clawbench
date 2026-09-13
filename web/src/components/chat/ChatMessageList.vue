@@ -1287,7 +1287,7 @@ defineExpose({
   text-align: center;
   padding: 32px 16px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1329,13 +1329,13 @@ defineExpose({
 }
 
 .agent-welcome-name {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .agent-welcome-specialty {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   line-height: 1.4;
   overflow: hidden;
@@ -1352,7 +1352,7 @@ defineExpose({
 }
 
 .agent-welcome-tag {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 500;
@@ -1374,7 +1374,7 @@ defineExpose({
 }
 
 .agent-welcome-hint {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: color-mix(in srgb, var(--text-muted) 70%, transparent);
 }
 
@@ -1385,13 +1385,13 @@ defineExpose({
 }
 
 .no-agents-title {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .no-agents-desc {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   max-width: 240px;
   text-align: center;
@@ -1407,7 +1407,7 @@ defineExpose({
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
   -webkit-tap-highlight-color: transparent;
@@ -1446,7 +1446,7 @@ defineExpose({
   justify-content: center;
   gap: 6px;
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));

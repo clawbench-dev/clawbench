@@ -268,7 +268,7 @@ onUnmounted(() => {
 
 .welcome-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -295,7 +295,7 @@ onUnmounted(() => {
 
 .welcome-desc {
   margin: 0 16px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -344,14 +344,14 @@ onUnmounted(() => {
 }
 
 .backend-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.3;
 }
 
 .backend-specialty {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   line-height: 1.3;
   margin-top: 1px;
@@ -361,7 +361,7 @@ onUnmounted(() => {
   position: absolute;
   right: 6px;
   bottom: 4px;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   padding: 1px 5px;
   border-radius: 6px;
@@ -382,7 +382,7 @@ onUnmounted(() => {
   position: absolute;
   right: 6px;
   top: 4px;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   padding: 2px 6px;
   border: none;
@@ -421,7 +421,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary));
   border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
   color: var(--accent-color);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s;
@@ -467,7 +467,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--accent-color);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s;
@@ -480,7 +480,7 @@ onUnmounted(() => {
   background: none;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
   padding: 4px 10px;
@@ -499,7 +499,7 @@ onUnmounted(() => {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   padding: 4px 8px;
   transition: color 0.2s;

@@ -146,8 +146,8 @@ function onEntryClick(entry: DirPreviewEntry) {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   overflow: hidden;
 }
@@ -178,7 +178,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   justify-content: center;
   padding: 3px 6px;
   height: 24px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
@@ -207,7 +207,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   height: 100%;
   min-height: 60px;
   color: var(--text-secondary, #888);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .dir-preview-error {
@@ -232,7 +232,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   border-radius: 4px;
   background: transparent;
   color: var(--text-primary, #222);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
 }

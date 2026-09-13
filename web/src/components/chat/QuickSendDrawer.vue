@@ -214,7 +214,7 @@ async function onDragEnd() {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   transition: background 0.12s;
 }
@@ -228,7 +228,7 @@ async function onDragEnd() {
 .qs-drag-handle {
   cursor: grab;
   color: var(--text-muted, #999);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   user-select: none;
   padding: 0 2px;
@@ -251,8 +251,8 @@ async function onDragEnd() {
   flex: 1;
   min-width: 0;
   color: var(--text-muted, #999);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -287,7 +287,7 @@ async function onDragEnd() {
   gap: 8px;
   padding: 6px 10px 6px 28px;
   background: color-mix(in srgb, #e53e3e 8%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
 
@@ -295,7 +295,7 @@ async function onDragEnd() {
   padding: 3px 10px;
   border: 1px solid var(--border-color, #ddd);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
@@ -347,7 +347,7 @@ async function onDragEnd() {
   gap: 8px;
   padding: 20px;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .qs-empty-icon {
@@ -363,7 +363,7 @@ async function onDragEnd() {
   padding: 8px 12px;
   border: none;
   background: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;

@@ -77,7 +77,7 @@ const commitTarget = computed(() => {
   align-items: center;
   gap: 4px;
   overflow-x: auto;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   scrollbar-width: none;
   flex: 1;
@@ -110,7 +110,7 @@ const commitTarget = computed(() => {
 }
 .git-crumb-sep {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .git-file-open-btn {
   display: inline-flex;

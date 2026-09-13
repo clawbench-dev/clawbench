@@ -64,7 +64,7 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   user-select: none;

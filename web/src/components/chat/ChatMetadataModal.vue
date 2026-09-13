@@ -295,7 +295,7 @@ function copyValue(value, event) {
 }
 
 .metadata-label {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     font-weight: 500;
     color: var(--text-secondary);
     min-width: 90px;
@@ -303,20 +303,20 @@ function copyValue(value, event) {
 }
 
 .metadata-value {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-primary);
     word-break: break-all;
 }
 
 .metadata-relative-time {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #9ca3af);
     margin-left: 6px;
 }
 
 .metadata-session-id {
-    font-family: var(--font-mono, monospace);
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: 3px;
@@ -396,6 +396,6 @@ function copyValue(value, event) {
     padding: 1px 6px;
     margin-right: 6px;
     margin-bottom: 2px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
 }
 </style>

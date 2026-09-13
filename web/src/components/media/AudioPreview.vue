@@ -97,7 +97,7 @@ function onLoaded() {
 }
 
 .audio-name {
-    font-size: 15px;
+    font-size: var(--font-size-xl);
     font-weight: 500;
     color: var(--text-primary);
     word-break: break-all;
@@ -105,7 +105,7 @@ function onLoaded() {
 }
 
 .audio-size {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
     margin-top: 4px;
 }

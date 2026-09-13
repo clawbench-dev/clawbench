@@ -162,7 +162,7 @@ watch(() => props.open, async (val) => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .agent-option {
@@ -227,7 +227,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-option-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   font-weight: 500;
 }
@@ -250,7 +250,7 @@ watch(() => props.open, async (val) => {
 
 .agent-default-badge-pill {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: #fff;
   background: var(--accent-color, #0066cc);
@@ -294,7 +294,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-option-specialty {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -308,7 +308,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-tag {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 0;
   font-weight: 500;

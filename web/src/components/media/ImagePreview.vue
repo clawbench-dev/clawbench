@@ -195,7 +195,7 @@ watch(() => props.file, () => {
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.5);
     color: rgba(255, 255, 255, 0.85);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     padding: 2px 10px;
     border-radius: 10px;
     backdrop-filter: blur(4px);

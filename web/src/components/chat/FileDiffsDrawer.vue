@@ -226,7 +226,7 @@ function handleBodyInput(event) {
   padding: 4px 8px 8px;
   overflow-y: auto;
   overflow-x: clip;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   flex: 1;
   cursor: default;
@@ -249,8 +249,8 @@ function handleBodyInput(event) {
 }
 
 .fd-file-info-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #888);
   min-width: 0;
   overflow: hidden;
@@ -295,7 +295,7 @@ function handleBodyInput(event) {
 .fd-empty {
   padding: 16px 8px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
 }
 
@@ -304,7 +304,7 @@ function handleBodyInput(event) {
   align-items: center;
   gap: 8px;
   padding: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #888);
 }
 
@@ -313,7 +313,7 @@ function handleBodyInput(event) {
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--accent-color, #0066cc);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 2px 10px;
   cursor: pointer;
 }
@@ -353,8 +353,8 @@ function handleBodyInput(event) {
 }
 
 .fd-header-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
   min-width: 0;
@@ -365,7 +365,7 @@ function handleBodyInput(event) {
 
 .fd-header-badge {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
@@ -376,7 +376,7 @@ function handleBodyInput(event) {
 
 .fd-header-count {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: var(--bg-tertiary);

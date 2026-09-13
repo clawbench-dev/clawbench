@@ -103,7 +103,7 @@ const sessionBarColor = computed(() => {
 .session-counter-text {
   position: relative;
   z-index: 1;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: #fff;
   line-height: 1;

@@ -178,7 +178,7 @@ watch(
 
 .plan-chip__text {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
   white-space: nowrap;
   overflow: hidden;
@@ -187,7 +187,7 @@ watch(
 
 .plan-chip__count {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #6c757d);
   white-space: nowrap;
 }
@@ -215,13 +215,13 @@ watch(
 
 .plan-expanded__title {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary, #212529);
 }
 
 .plan-expanded__count {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #6c757d);
   white-space: nowrap;
 }
@@ -313,7 +313,7 @@ watch(
 }
 
 .plan-entry__check {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: #fff;
   line-height: 1;
 }
@@ -340,7 +340,7 @@ watch(
 /* Entry text */
 .plan-entry__text {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
   line-height: 1.4;
   padding-top: 2px;

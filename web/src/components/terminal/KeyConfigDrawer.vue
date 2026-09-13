@@ -113,7 +113,7 @@ function handleClose() {
   padding: 10px 0;
   border: none;
   background: none;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 500;
   color: var(--text-muted, #999);
   cursor: pointer;

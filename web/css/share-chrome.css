@@ -43,7 +43,7 @@
 }
 
 .share-file-name {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
   white-space: nowrap;
@@ -108,7 +108,7 @@
 }
 
 .share-toc-title {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-muted, #656d76);
   text-transform: uppercase;
@@ -123,7 +123,7 @@
   border: none;
   background: none;
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #57606a);
   cursor: pointer;
   border-radius: 5px;

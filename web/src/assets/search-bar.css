@@ -34,8 +34,8 @@
   width: 100%;
   box-sizing: border-box;
   padding: 5px 8px 6px;
-  font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -83,7 +83,7 @@
   padding: 4px 10px;
   outline: none;
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   min-height: var(--search-ctrl-h);
   box-sizing: border-box;
 }
@@ -128,8 +128,8 @@
   border: none;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
-  font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
   line-height: 1;
   border-radius: 3px;
   cursor: pointer;
@@ -165,7 +165,7 @@
   color: var(--text-primary);
   padding: 4px 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   min-height: var(--search-ctrl-h);
   box-sizing: border-box;
   line-height: 1;
@@ -216,7 +216,7 @@
 .cm-search .cm-button[name='prev']::before {
   content: '';
   display: inline-block;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1;
   border: solid var(--text-primary);
   border-width: 0 1.5px 1.5px 0;
@@ -234,7 +234,7 @@
 /* ── Match counter ── */
 .cm-search .cm-search-match-info {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

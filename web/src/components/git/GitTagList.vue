@@ -90,12 +90,12 @@ function shortDate(dateStr: string) {
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--danger-color, #dc3545);
 }
 
 .retry-btn {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 3px 10px;
   border: 1px solid var(--accent-color, #4a90d9);
   border-radius: 4px;
@@ -105,7 +105,7 @@ function shortDate(dateStr: string) {
 }
 
 .section-empty {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   padding: 24px 12px;
   text-align: center;
@@ -175,7 +175,7 @@ function shortDate(dateStr: string) {
 }
 
 .tag-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
@@ -184,7 +184,7 @@ function shortDate(dateStr: string) {
 }
 
 .tag-msg {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   margin-top: 2px;
   margin-left: 20px;
@@ -202,7 +202,7 @@ function shortDate(dateStr: string) {
 }
 
 .tag-date {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 

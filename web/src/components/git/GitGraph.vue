@@ -312,7 +312,7 @@ const tooltipStyle = computed(() => {
 }
 
 .tooltip-ref-item {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary, #212529);
   display: flex;

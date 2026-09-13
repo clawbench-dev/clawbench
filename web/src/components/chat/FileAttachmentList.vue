@@ -134,7 +134,7 @@ watch(() => props.files.length, (len) => {
   height: 40px;
   padding: 0 10px;
   max-width: 150px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -147,8 +147,8 @@ watch(() => props.files.length, (len) => {
 }
 
 .attachment-filename {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

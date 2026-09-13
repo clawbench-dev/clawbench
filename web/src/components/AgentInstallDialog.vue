@@ -105,7 +105,7 @@ function copyCmd() {
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 10px;
 }
@@ -123,7 +123,7 @@ function copyCmd() {
 }
 
 .install-hint {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #555);
   margin-bottom: 8px;
 }
@@ -141,8 +141,8 @@ function copyCmd() {
 
 .install-cmd {
   flex: 1;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', 'Cascadia Code', monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
   min-width: 0;
@@ -177,7 +177,7 @@ function copyCmd() {
 .dlg-btn {
   padding: 6px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   border: none;
   cursor: pointer;

@@ -713,7 +713,7 @@ onUnmounted(() => {
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
   color: var(--text-secondary, #4b5563);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   max-width: 100%;
   overflow: hidden;
@@ -735,7 +735,7 @@ onUnmounted(() => {
   background: transparent;
   padding: 0;
   color: var(--text-muted, #6b7280);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
@@ -757,13 +757,13 @@ onUnmounted(() => {
   border: 1px dashed var(--border-color, #d1d5db);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-primary, #fff);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.6;
   color: var(--text-secondary, #4b5563);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 /* Fixed bottom action bar */
@@ -789,7 +789,7 @@ onUnmounted(() => {
   text-align: center;
   padding: 40px 12px;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .exec-cancelled-notice {
@@ -797,6 +797,6 @@ onUnmounted(() => {
   text-align: center;
   color: var(--text-muted, #999);
   font-style: italic;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 </style>

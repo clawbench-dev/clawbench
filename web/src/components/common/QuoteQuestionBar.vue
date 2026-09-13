@@ -325,7 +325,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 }
 
 .qq-copied-text {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -378,7 +378,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 /* Quote text: single line by default; expand on click to show full content.
    Right padding keeps the text clear of the floating copy button. */
 .qq-quoted-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   color: var(--text-secondary);
   white-space: nowrap;
@@ -425,7 +425,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   line-height: 20px;
   outline: none;
   resize: none;

@@ -143,7 +143,8 @@ describe('CompletionPopover', () => {
         const styles = window.getComputedStyle(el)
         expect(styles.display).toBe('inline-flex')
         expect(styles.maxWidth).toBe('100%')
-        expect(styles.fontSize).toBe('12px')
+        // jsdom 不解析 var()，断言 token 名（值为 12px，见 variables.css）
+        expect(styles.fontSize).toBe('var(--font-size-sm)')
 
         // 元信息行无负 margin（引用块不铺满卡片宽度）
         const cssRow = Array.from(document.styleSheets)
@@ -792,10 +793,11 @@ describe('CompletionPopover', () => {
         await nextTick()
 
         expect(document.querySelector('.completion-popover-input')).toBeTruthy()
-        // textarea 与聊天输入框对齐：16px 字号、行高 20px、上下 padding 4px
+        // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
+        // jsdom 不解析 var()，字号断言 token 名；16px 由 variables.css 的 token 定义保证
         const ta = document.querySelector('.completion-popover-textarea')!
         const taStyles = window.getComputedStyle(ta)
-        expect(taStyles.fontSize).toBe('16px')
+        expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
         expect(taStyles.lineHeight).toBe('20px')
         expect(taStyles.paddingTop).toBe('4px')
         expect(taStyles.paddingBottom).toBe('4px')

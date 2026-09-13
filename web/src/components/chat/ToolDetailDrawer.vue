@@ -174,13 +174,13 @@ function handleBodyInput(event) {
 .tool-detail-header-name {
   font-weight: 600;
   color: var(--tool-accent);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
 .tool-detail-header-summary {
   color: var(--text-tertiary, #888);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -195,7 +195,7 @@ function handleBodyInput(event) {
 
 .tool-detail-duration {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   font-weight: 500;
@@ -210,7 +210,7 @@ function handleBodyInput(event) {
   padding: 12px 14px;
   overflow-y: auto;
   overflow-x: clip;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   flex: 1;
   cursor: default;
@@ -247,7 +247,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .tool-output-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(34, 197, 94, 0.12);
@@ -261,7 +261,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .tool-output-status {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 600;
@@ -290,7 +290,7 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-output-body {
   overflow-y: auto;
   overflow-x: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   min-width: 0;
 }
@@ -300,7 +300,7 @@ function handleBodyInput(event) {
    BottomSheet's 12px base font-size for better readability. */
 .tool-detail-body .tool-output-body .agent-call-prompt {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: normal;
   word-break: break-word;
   padding: 6px 8px;
@@ -319,7 +319,7 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-output-body .agent-call-prompt h2,
 .tool-detail-body .tool-output-body .agent-call-prompt h3,
 .tool-detail-body .tool-output-body .agent-call-prompt h4 {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   margin: 8px 0 4px;
   color: var(--text-primary);
@@ -333,8 +333,8 @@ function handleBodyInput(event) {
   margin: 2px 0;
 }
 .tool-detail-body .tool-output-body .agent-call-prompt code {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
@@ -349,7 +349,7 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-output-body .agent-call-prompt pre code {
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .tool-detail-body .tool-output-body .agent-call-prompt strong {
   font-weight: 600;
@@ -368,7 +368,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .agent-call-header {
@@ -378,7 +378,7 @@ function handleBodyInput(event) {
   flex-wrap: wrap;
 }
 .tool-detail-body .agent-type-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(236, 72, 153, 0.12);
@@ -410,19 +410,19 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .tool-detail-body .codex-agent-path code,
 .tool-detail-body .codex-agent-thread code,
 .tool-detail-body .wait-call-sender code {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   word-break: break-all;
 }
 .tool-detail-body .codex-agent-path-label {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   flex-shrink: 0;
@@ -433,7 +433,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .tool-detail-body .wait-call-header {
   display: flex;
@@ -441,7 +441,7 @@ function handleBodyInput(event) {
   gap: 6px;
 }
 .tool-detail-body .wait-call-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(107, 114, 128, 0.12);
@@ -450,11 +450,11 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .wait-call-status {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .tool-detail-body .wait-call-agents {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body {
@@ -474,8 +474,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .tool-output-body pre {
   margin: 0;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -508,8 +508,8 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .tool-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--accent-color);
   word-break: break-all;
@@ -521,12 +521,12 @@ function handleBodyInput(event) {
 .tool-detail-body .edit-diff-view {
   display: flex;
   flex-direction: column;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 
 .tool-detail-body .edit-diff-replace-all {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(245, 158, 11, 0.12);
@@ -609,7 +609,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .tool-content-copied-text {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: #16a34a;
   white-space: nowrap;
@@ -655,8 +655,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .edit-diff-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 
@@ -691,14 +691,14 @@ function handleBodyInput(event) {
 .tool-detail-body .file-preview-view {
   display: flex;
   flex-direction: column;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 
 .tool-detail-body .file-preview-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   overflow-x: auto;
   min-width: 0;
@@ -713,12 +713,12 @@ function handleBodyInput(event) {
 .tool-detail-body .file-write-view {
   display: flex;
   flex-direction: column;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 
 .tool-detail-body .file-write-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(59, 130, 246, 0.12);
@@ -734,8 +734,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .file-write-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   overflow-x: auto;
   min-width: 0;
@@ -749,8 +749,8 @@ function handleBodyInput(event) {
 /* JSON fallback */
 .tool-detail-body .tool-json-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   overflow-x: auto;
 }
@@ -772,7 +772,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .bash-terminal-desc {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   margin-bottom: 6px;
   white-space: pre-wrap;
@@ -780,8 +780,8 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .bash-terminal-body {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   background: var(--bg-tertiary);
   border-radius: 6px;
@@ -817,7 +817,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -829,7 +829,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .grep-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -847,8 +847,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .grep-pattern-text,
 .tool-detail-body .grep-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -866,7 +866,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .grep-mode-tag {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.08);
@@ -884,7 +884,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -896,7 +896,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .glob-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -914,8 +914,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .glob-pattern-text,
 .tool-detail-body .glob-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -923,7 +923,7 @@ function handleBodyInput(event) {
 
 /* WebSearch */
 .tool-detail-body .web-search-view {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -936,7 +936,7 @@ function handleBodyInput(event) {
 
 .tool-detail-body .web-search-icon {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1.4;
 }
 
@@ -950,7 +950,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -961,7 +961,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .web-fetch-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
@@ -978,8 +978,8 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .web-fetch-link {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--accent-color);
   text-decoration: none;
   word-break: break-all;
@@ -990,8 +990,8 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .web-fetch-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -999,7 +999,7 @@ function handleBodyInput(event) {
 
 .tool-detail-body .web-fetch-prompt {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1009,7 +1009,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -1021,7 +1021,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .agent-type-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(236, 72, 153, 0.12);
@@ -1042,7 +1042,7 @@ function handleBodyInput(event) {
 
 .tool-detail-body .agent-call-prompt {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: normal;
   word-break: break-word;
   padding: 6px 10px;
@@ -1061,7 +1061,7 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-prompt h2,
 .tool-detail-body .agent-call-prompt h3,
 .tool-detail-body .agent-call-prompt h4 {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   margin: 8px 0 4px;
   color: var(--text-primary);
@@ -1075,8 +1075,8 @@ function handleBodyInput(event) {
   margin: 2px 0;
 }
 .tool-detail-body .agent-call-prompt code {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
   padding: 1px 4px;
   border-radius: 3px;
@@ -1091,7 +1091,7 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-prompt pre code {
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .tool-detail-body .agent-call-prompt strong {
   font-weight: 600;
@@ -1108,7 +1108,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -1119,15 +1119,15 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-body .skill-call-icon {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   flex-shrink: 0;
 }
 
 .tool-detail-body .skill-call-name {
   font-weight: 600;
   color: #0891b2;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
 }
 
 :root[data-theme-base="dark"] .tool-detail-body .skill-call-name {
@@ -1136,21 +1136,21 @@ function handleBodyInput(event) {
 
 .tool-detail-body .skill-call-args {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   padding: 6px 10px;
   background: var(--bg-tertiary);
   border-radius: 6px;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   line-height: 1.5;
 }
 
 /* Thinking content in overlay — plain text (legacy) */
 .tool-detail-body .thinking-overlay-text {
   margin: 0;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1171,7 +1171,7 @@ function handleBodyInput(event) {
 
 /* LS directory view */
 .tool-detail-body .ls-dir-view {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .ls-dir-header {
@@ -1180,12 +1180,12 @@ function handleBodyInput(event) {
   gap: 6px;
 }
 .tool-detail-body .ls-dir-icon {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   flex-shrink: 0;
 }
 .tool-detail-body .ls-dir-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--accent-color);
   word-break: break-all;
@@ -1193,7 +1193,7 @@ function handleBodyInput(event) {
 
 /* Todo write */
 .tool-detail-body .todo-write-view {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 .tool-detail-body .todo-write-list {
@@ -1209,7 +1209,7 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .todo-icon {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
 }
 .tool-detail-body .todo-content {
@@ -1227,10 +1227,10 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
-.tool-detail-body .todo-read-icon { font-size: 14px; }
+.tool-detail-body .todo-read-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .todo-read-label {
   font-weight: 500;
   color: var(--text-secondary);
@@ -1241,7 +1241,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .task-tool-field {
@@ -1250,7 +1250,7 @@ function handleBodyInput(event) {
   gap: 6px;
 }
 .tool-detail-body .task-field-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(245, 158, 11, 0.12);
@@ -1278,14 +1278,14 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .mode-switch-icon { font-size: 14px; }
+.tool-detail-body .mode-switch-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .mode-switch-mode {
   font-weight: 600;
   color: var(--accent-color);
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
 }
 
 /* Worktree switch */
@@ -1293,12 +1293,12 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .worktree-switch-icon { font-size: 14px; }
+.tool-detail-body .worktree-switch-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .worktree-switch-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--accent-color);
   word-break: break-all;
@@ -1309,7 +1309,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .send-message-header {
@@ -1317,14 +1317,14 @@ function handleBodyInput(event) {
   align-items: center;
   gap: 6px;
 }
-.tool-detail-body .send-message-icon { font-size: 14px; }
+.tool-detail-body .send-message-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .send-message-recipient {
   font-weight: 500;
   color: var(--text-primary);
 }
 .tool-detail-body .send-message-content {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   padding: 6px 10px;
@@ -1337,7 +1337,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .computer-use-header {
@@ -1345,11 +1345,11 @@ function handleBodyInput(event) {
   align-items: center;
   gap: 6px;
 }
-.tool-detail-body .computer-use-icon { font-size: 14px; }
+.tool-detail-body .computer-use-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .computer-use-action {
   font-weight: 600;
   text-transform: uppercase;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(236, 72, 153, 0.12);
@@ -1357,7 +1357,7 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .computer-use-desc {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1367,9 +1367,9 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .team-tool-icon { font-size: 14px; }
+.tool-detail-body .team-tool-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .team-tool-name {
   font-weight: 600;
   color: var(--text-primary);
@@ -1380,7 +1380,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .chat-reply-header {
@@ -1388,14 +1388,14 @@ function handleBodyInput(event) {
   align-items: center;
   gap: 6px;
 }
-.tool-detail-body .chat-reply-icon { font-size: 14px; }
+.tool-detail-body .chat-reply-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .chat-reply-recipient {
   font-weight: 500;
   color: var(--text-primary);
 }
 .tool-detail-body .chat-reply-message {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   padding: 6px 10px;
@@ -1408,14 +1408,14 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
-.tool-detail-body .save-memory-icon { font-size: 14px; }
+.tool-detail-body .save-memory-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .save-memory-key {
   font-weight: 600;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: #0891b2;
 }
 :root[data-theme-base="dark"] .tool-detail-body .save-memory-key {
@@ -1423,7 +1423,7 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .save-memory-value {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   padding: 6px 10px;
@@ -1436,7 +1436,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .deep-think-thinking {
@@ -1452,9 +1452,9 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .structured-output-icon { font-size: 14px; }
+.tool-detail-body .structured-output-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .structured-output-prompt {
   font-weight: 500;
   color: var(--text-primary);
@@ -1466,11 +1466,11 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .skill-manage-icon { font-size: 14px; }
+.tool-detail-body .skill-manage-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .skill-manage-action {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(6, 182, 212, 0.12);
@@ -1484,8 +1484,8 @@ function handleBodyInput(event) {
 .tool-detail-body .skill-manage-name {
   font-weight: 600;
   color: #0891b2;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
 }
 :root[data-theme-base="dark"] .tool-detail-body .skill-manage-name {
   color: #22d3ee;
@@ -1496,17 +1496,17 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
-.tool-detail-body .monitor-icon { font-size: 14px; }
+.tool-detail-body .monitor-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .monitor-target {
   font-weight: 500;
   color: var(--text-primary);
 }
 .tool-detail-body .monitor-command-body {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   background: var(--bg-tertiary);
   border-radius: 6px;
@@ -1520,17 +1520,17 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-wrap: wrap;
 }
-.tool-detail-body .image-gen-icon { font-size: 14px; }
+.tool-detail-body .image-gen-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .image-gen-prompt {
   font-weight: 500;
   color: var(--text-primary);
   word-break: break-word;
 }
 .tool-detail-body .image-gen-size {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   background: rgba(6, 182, 212, 0.12);
@@ -1547,22 +1547,22 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-wrap: wrap;
 }
-.tool-detail-body .lsp-icon { font-size: 14px; }
+.tool-detail-body .lsp-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .lsp-method {
   font-weight: 600;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: #0891b2;
 }
 :root[data-theme-base="dark"] .tool-detail-body .lsp-method {
   color: #22d3ee;
 }
 .tool-detail-body .lsp-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--accent-color);
   word-break: break-all;
 }
@@ -1572,12 +1572,12 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
-.tool-detail-body .git-tool-icon { font-size: 14px; }
+.tool-detail-body .git-tool-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .git-tool-body {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   background: var(--bg-tertiary);
   border-radius: 6px;
@@ -1593,7 +1593,7 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .ask-question-empty {
@@ -1609,7 +1609,7 @@ function handleBodyInput(event) {
   border-radius: 6px;
 }
 .tool-detail-body .ask-question-header {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -1646,7 +1646,7 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .ask-option-indicator {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1.4;
   color: var(--text-muted);
 }
@@ -1664,7 +1664,7 @@ function handleBodyInput(event) {
   color: var(--text-primary);
 }
 .tool-detail-body .ask-option-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
 }
 .tool-detail-body .ask-question-supplementary {
@@ -1674,7 +1674,7 @@ function handleBodyInput(event) {
   padding-top: 4px;
 }
 .tool-detail-body .ask-supplementary-label {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -1687,7 +1687,7 @@ function handleBodyInput(event) {
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-family: inherit;
   outline: none;
   transition: border-color 0.15s;
@@ -1711,7 +1711,7 @@ function handleBodyInput(event) {
   border: 1px solid var(--accent-color);
   background: transparent;
   color: var(--accent-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
@@ -1738,7 +1738,7 @@ function handleBodyInput(event) {
   border: 1px solid var(--accent-color);
   background: var(--accent-color);
   color: white;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -1758,13 +1758,13 @@ function handleBodyInput(event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .tool-detail-body .permission-tool-name {
   font-weight: 600;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   letter-spacing: 0.2px;
   text-transform: uppercase;
@@ -1777,7 +1777,7 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .permission-detail-label {
   align-self: flex-start;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 4px;
   background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
@@ -1794,8 +1794,8 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .permission-tool-detail code {
   display: block;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-tertiary);
@@ -1856,7 +1856,7 @@ function handleBodyInput(event) {
   display: inline-block;
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   margin-top: 6px;
 }
@@ -1885,7 +1885,7 @@ function handleBodyInput(event) {
   display: inline-block;
   padding: 4px 12px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   background: #dcfce7;
   color: #15803d;
@@ -1906,7 +1906,7 @@ function handleBodyInput(event) {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;

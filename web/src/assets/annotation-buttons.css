@@ -8,7 +8,7 @@
 /* ── File path annotation ── */
 
 .chat-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   font-size: 0.95em;
   background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
   padding: 1px 4px;
@@ -39,7 +39,7 @@
   align-items: center;
   justify-content: center;
   transition: color 0.15s, background 0.15s;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1;
   vertical-align: baseline;
 }
@@ -62,14 +62,14 @@
 
 /* Pending state — neutral styling, no interactive affordance until verified */
 .chat-commit-hash-pending {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   font-size: 0.95em;
   color: inherit;
 }
 
 /* Verified state — accent color + clickable */
 .chat-commit-hash {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   font-size: 0.95em;
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
@@ -88,7 +88,7 @@
   align-items: center;
   justify-content: center;
   transition: color 0.15s, background 0.15s;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1;
   vertical-align: baseline;
 }
@@ -111,7 +111,7 @@
   align-items: center;
   justify-content: center;
   transition: color 0.15s, background 0.15s;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1;
   vertical-align: baseline;
 }
@@ -156,7 +156,7 @@
   width: 18px;
   height: 18px;
   border-radius: 3px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1;
   vertical-align: baseline;
   transition: color 0.15s, background 0.15s;

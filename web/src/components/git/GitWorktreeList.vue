@@ -108,13 +108,13 @@ function toggleCollapse() {
 }
 
 .section-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
 }
 
 .section-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
@@ -138,12 +138,12 @@ function toggleCollapse() {
   align-items: center;
   justify-content: space-between;
   padding: 8px 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--danger-color, #dc3545);
 }
 
 .retry-btn {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 3px 10px;
   border: 1px solid var(--accent-color, #4a90d9);
   border-radius: 4px;
@@ -153,7 +153,7 @@ function toggleCollapse() {
 }
 
 .section-empty {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   padding: 8px 0;
 }

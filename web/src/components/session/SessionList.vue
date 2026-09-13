@@ -684,7 +684,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .session-item {
@@ -797,7 +797,7 @@ onUnmounted(() => {
 }
 
 .session-item-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   font-weight: 500;
   flex: 1;
@@ -866,7 +866,7 @@ onUnmounted(() => {
 }
 
 .session-item-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;
@@ -874,7 +874,7 @@ onUnmounted(() => {
 }
 
 .session-item-agent {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 500;
@@ -890,7 +890,7 @@ onUnmounted(() => {
 }
 
 .session-item-model {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 500;
@@ -942,7 +942,7 @@ onUnmounted(() => {
 }
 
 .session-section-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary, #495057);
   text-transform: uppercase;
@@ -950,7 +950,7 @@ onUnmounted(() => {
 }
 
 .session-section-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #e9ecef);
   border-radius: 8px;
@@ -1003,7 +1003,7 @@ onUnmounted(() => {
 }
 
 .cross-group-name {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary, #495057);
   white-space: nowrap;
@@ -1014,7 +1014,7 @@ onUnmounted(() => {
 }
 
 .cross-group-path {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;

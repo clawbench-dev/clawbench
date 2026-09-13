@@ -82,7 +82,7 @@ const displayFields = computed(() =>
 }
 
 .settings-restart-dialog__header {
-  font-size: 17px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
@@ -90,7 +90,7 @@ const displayFields = computed(() =>
 }
 
 .settings-restart-dialog__message {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   margin: 0 0 12px;
   text-align: center;
@@ -99,7 +99,7 @@ const displayFields = computed(() =>
 .settings-restart-dialog__list {
   margin: 0 0 20px;
   padding-left: 20px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   line-height: 1.6;
 }

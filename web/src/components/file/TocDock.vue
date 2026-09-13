@@ -209,7 +209,7 @@ onBeforeUnmount(() => {
 
 .toc-dock-header-title {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary);
   overflow: hidden;

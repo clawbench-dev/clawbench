@@ -265,7 +265,7 @@ defineExpose({
 
 /* Excel overrides: small font, limit cell width, hide toolbar */
 .office-preview-body :deep(.x-spreadsheet table) {
-  font-size: 11px !important;
+  font-size: var(--font-size-xs) !important;
 }
 
 .office-preview-body :deep(.x-spreadsheet td),
@@ -325,14 +325,14 @@ defineExpose({
 }
 
 .office-error-title {
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 500;
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
 .office-error-desc {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   margin-bottom: 20px;
   max-width: 400px;
   word-break: break-word;
@@ -352,7 +352,7 @@ defineExpose({
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
   border-radius: 14px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   gap: 6px;
@@ -376,7 +376,7 @@ defineExpose({
   border: none;
   border-radius: 14px;
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   gap: 6px;

@@ -614,7 +614,7 @@ function confirmEdit() {
 }
 
 .settings-item__label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -622,7 +622,7 @@ function confirmEdit() {
 }
 
 .settings-item__badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding: 1px 6px;
   border-radius: 4px;
   background: transparent;
@@ -634,7 +634,7 @@ function confirmEdit() {
 /* Inline description (always visible below label row) */
 .settings-item__desc {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: 1.5;
   word-break: break-word;
@@ -649,7 +649,7 @@ function confirmEdit() {
 }
 
 .settings-item__value {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -668,7 +668,7 @@ function confirmEdit() {
 .settings-item__info-detail {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   word-break: break-all;
   line-height: 1.4;
@@ -739,7 +739,7 @@ function confirmEdit() {
 
 /* Section header */
 .settings-item__header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 16px 16px 4px;
   text-transform: uppercase;
@@ -794,7 +794,7 @@ function confirmEdit() {
 
 /* Slider */
 .settings-item__slider-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   min-width: 36px;
   text-align: right;
@@ -807,7 +807,7 @@ function confirmEdit() {
 }
 
 .settings-item__slider-reset {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-muted);
   background: none;
   border: none;
@@ -840,7 +840,7 @@ function confirmEdit() {
   flex: 1;
   min-width: 0;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -860,7 +860,7 @@ function confirmEdit() {
   border: none;
   border-radius: 8px;
   background: var(--bg-tertiary);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   cursor: pointer;
   line-height: 1;
 }
@@ -872,7 +872,7 @@ function confirmEdit() {
   border-radius: 8px;
   background: var(--accent-color);
   color: #fff;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 500;
   cursor: pointer;
 }
@@ -899,7 +899,7 @@ function confirmEdit() {
   width: 100%;
   min-height: 120px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-family: inherit;
   line-height: 1.5;
   border: 1px solid var(--border-color);
@@ -920,7 +920,7 @@ function confirmEdit() {
 }
 
 .settings-item__textarea-warning {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 4px 16px 8px;
   line-height: 1.4;
@@ -968,14 +968,14 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
 }
 
 .settings-item__option-check {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--accent-color);
   font-weight: 600;
   flex-shrink: 0;
@@ -984,7 +984,7 @@ function confirmEdit() {
 
 /* Group header inside the select option list (font picker). */
 .settings-item__option-group {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -995,7 +995,7 @@ function confirmEdit() {
 
 /* Small badge (e.g. "内置" for bundled fonts). */
 .settings-item__option-badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
   padding: 3px 6px;
   border-radius: 6px;
@@ -1031,7 +1031,7 @@ function confirmEdit() {
 }
 
 .theme-picker-error-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #ef4444;
   line-height: 1.4;
 }
@@ -1043,7 +1043,7 @@ function confirmEdit() {
   border-radius: 6px;
   background: var(--accent-color);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
 }
@@ -1103,7 +1103,7 @@ function confirmEdit() {
 }
 
 .theme-picker-swatch-label-text {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   line-height: 1.3;
   color: inherit;
@@ -1124,7 +1124,7 @@ function confirmEdit() {
 }
 
 .theme-picker-cell-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   text-align: center;
   white-space: nowrap;
@@ -1141,7 +1141,7 @@ function confirmEdit() {
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 700;
   display: flex;
   align-items: center;

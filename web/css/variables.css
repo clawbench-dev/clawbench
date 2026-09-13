@@ -45,6 +45,20 @@
        Values here must mirror DEFAULT_UI_STACK / DEFAULT_MONO_STACK. ── */
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
     --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+
+    /* ── Type scale. Fixed px rather than rem on purpose: the appearance
+       "缩放" setting scales the whole UI through `html { zoom }` (see
+       useSettingsConfig.applyUIScale), so px values already follow it.
+       Seven steps cover the sizes the UI actually uses; every one of them
+       maps to a distinct role, so prefer picking the closest step over
+       introducing an eighth. ── */
+    --font-size-2xs: 10px;   /* badges, corner marks, diff gutters */
+    --font-size-xs: 11px;    /* dense meta: tool cards, file paths, diffs */
+    --font-size-sm: 12px;    /* compact body: tool detail, list rows */
+    --font-size-md: 13px;    /* default UI text: chat messages, settings */
+    --font-size-lg: 14px;    /* tool icons, dialog titles, primary buttons */
+    --font-size-xl: 15px;    /* reading text — matches the html/body base */
+    --font-size-2xl: 16px;   /* page/section headings */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

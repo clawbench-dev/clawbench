@@ -602,7 +602,7 @@ onBeforeUnmount(() => {
     background: var(--bg-secondary);
     border: none;
     border-bottom: 1px solid var(--border-color);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     position: sticky;
     top: 0;
     left: 0;
@@ -636,8 +636,8 @@ onBeforeUnmount(() => {
     flex: 0 0 auto;
     max-width: 100%;
     color: var(--text-muted);
-    font-family: var(--font-mono, monospace);
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -675,7 +675,7 @@ onBeforeUnmount(() => {
     border: none;
     border-radius: 4px;
     background: transparent;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     cursor: pointer;
     color: var(--text-secondary);
     flex-shrink: 0;
@@ -746,7 +746,7 @@ onBeforeUnmount(() => {
 .wrap-check {
     margin-left: auto;
     color: var(--accent-color);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 700;
 }
 </style>
@@ -774,7 +774,7 @@ onBeforeUnmount(() => {
     border: none;
     background: none;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     text-decoration: none;
     white-space: nowrap;
@@ -815,7 +815,7 @@ onBeforeUnmount(() => {
 .file-header-dropdown-menu .wrap-check {
     margin-left: auto;
     color: var(--accent-color);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 700;
 }
 </style>

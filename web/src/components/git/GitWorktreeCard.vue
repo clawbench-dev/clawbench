@@ -98,7 +98,7 @@ defineEmits(['switch', 'delete'])
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
 }
@@ -109,7 +109,7 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-row-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   word-break: break-all;
   line-height: 1.4;
@@ -161,7 +161,7 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   padding: 1px 6px;
   border-radius: 4px;

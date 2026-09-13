@@ -525,7 +525,7 @@ onBeforeUnmount(() => {
     text-align: center;
     padding: 32px 16px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-size-md);
 }
 
 .toc-item {
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
     padding: 6px 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-secondary);
     transition: background 0.15s, color 0.15s;
     border-left: 2px solid transparent;
@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
 
 .toc-page-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     font-weight: 600;
     background: var(--bg-tertiary);
     color: var(--text-muted);

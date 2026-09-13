@@ -864,7 +864,7 @@ onUnmounted(() => {
 
 .lb-filename {
     color: rgba(255,255,255,0.85);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     user-select: none;
     pointer-events: none;
     background: rgba(0,0,0,0.5);
@@ -899,7 +899,7 @@ onUnmounted(() => {
 
 .lb-counter {
     color: rgba(255,255,255,0.7);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     min-width: 40px;
     text-align: center;
     user-select: none;

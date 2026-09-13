@@ -27,7 +27,7 @@ const message = computed(() => props.label || '组件加载失败，请点击重
   min-height: 120px;
   padding: 32px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .async-component-error .li-retry {
@@ -36,7 +36,7 @@ const message = computed(() => props.label || '组件加载失败，请点击重
   border-radius: 6px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 

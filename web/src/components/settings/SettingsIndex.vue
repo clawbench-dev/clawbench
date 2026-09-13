@@ -127,7 +127,7 @@ const categories = computed(() =>
 }
 
 .settings-index__label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;

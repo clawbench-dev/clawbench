@@ -253,7 +253,7 @@ function formatTime(iso: string): string {
   justify-content: center;
   gap: 8px;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .acp-session-item {
@@ -274,7 +274,7 @@ function formatTime(iso: string): string {
 }
 
 .acp-session-item-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   font-weight: 500;
   line-height: 1.4;
@@ -290,18 +290,18 @@ function formatTime(iso: string): string {
 }
 
 .acp-session-item-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
 .acp-session-item-id {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
   font-weight: 500;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   word-break: break-all;
 }
 
@@ -349,13 +349,13 @@ function formatTime(iso: string): string {
   justify-content: center;
   gap: 6px;
   padding: 8px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
 }
 
 .acp-session-hidden-hint {
   padding: 8px 14px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   text-align: center;
 }

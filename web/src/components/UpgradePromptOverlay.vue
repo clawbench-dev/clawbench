@@ -106,14 +106,14 @@ watch(visible, (v) => {
 
 .up-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .up-body {
   margin: 0 16px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   line-height: 1.6;
 }
@@ -125,7 +125,7 @@ watch(visible, (v) => {
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   color: var(--accent-color);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -133,7 +133,7 @@ watch(visible, (v) => {
 .up-release-link {
   display: block;
   margin: 0 16px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--accent-color);
   text-decoration: none;
@@ -146,7 +146,7 @@ watch(visible, (v) => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: 1.5;
 }
@@ -174,7 +174,7 @@ watch(visible, (v) => {
   border-radius: 8px;
   background: var(--accent-color);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   cursor: pointer;
   transition: opacity 0.2s;
@@ -190,7 +190,7 @@ watch(visible, (v) => {
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
@@ -209,7 +209,7 @@ watch(visible, (v) => {
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 

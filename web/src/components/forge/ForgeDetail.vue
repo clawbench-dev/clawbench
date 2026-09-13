@@ -301,7 +301,7 @@ function formatTime(iso: string): string {
   border: none;
   color: var(--accent-color);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   padding: 4px 6px;
   border-radius: var(--radius-sm);
   transition: background 0.15s ease;
@@ -359,8 +359,8 @@ function formatTime(iso: string): string {
 }
 .forge-error-icon { color: var(--color-red); flex-shrink: 0; }
 .forge-error-text { flex: 1; min-width: 0; }
-.forge-error-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
-.forge-error-body { color: var(--text-secondary); font-size: 12px; }
+.forge-error-title { font-size: var(--font-size-md); font-weight: 600; margin-bottom: 2px; }
+.forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
 
 /* ── Body ── */
 .forge-detail-body {
@@ -375,7 +375,7 @@ function formatTime(iso: string): string {
 }
 .forge-detail-title-main { flex: 1; min-width: 0; }
 .forge-detail-title {
-  font-size: 17px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   margin: 0;
   line-height: 1.35;
@@ -388,7 +388,7 @@ function formatTime(iso: string): string {
   gap: 6px;
   margin-top: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .forge-detail-number {
   font-family: var(--font-mono);
@@ -397,7 +397,7 @@ function formatTime(iso: string): string {
 .forge-meta-sep { opacity: 0.5; }
 /* State badge — tinted pill instead of bare coloured text. */
 .forge-state-badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   padding: 1px 8px;
   border-radius: 999px;
@@ -435,7 +435,7 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -446,7 +446,7 @@ function formatTime(iso: string): string {
   border-radius: 999px;
   background: transparent;
   color: var(--accent-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -469,7 +469,7 @@ function formatTime(iso: string): string {
   gap: 8px;
   padding: 7px 12px;
   border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 .forge-comment-author { font-weight: 600; color: var(--text-primary); }

@@ -216,12 +216,12 @@ async function revokeLink() {
   gap: 10px;
 }
 .share-dialog-hint {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #57606a);
   line-height: 1.5;
 }
 .share-dialog-error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #cf222e;
   word-break: break-word;
 }
@@ -235,7 +235,7 @@ async function revokeLink() {
   padding-bottom: 2px;
 }
 .share-dialog-file-name {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
   line-height: 1.4;
@@ -244,9 +244,9 @@ async function revokeLink() {
   white-space: nowrap;
 }
 .share-dialog-file-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #8b949e);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--font-mono);
   line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -318,8 +318,8 @@ async function revokeLink() {
   padding: 7px 84px 7px 10px; /* right padding clears the two embedded buttons */
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-md);
+  font-family: var(--font-mono);
   background: var(--bg-primary);
   color: var(--text-primary);
   outline: none;

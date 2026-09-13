@@ -202,15 +202,15 @@ const segments = computed<Segment[]>(() => {
 <style scoped>
 .diff-drawer-body {
   overflow: auto;
-  font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
 .diff-drawer-title {
   flex: 1;
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
 }
 
@@ -225,7 +225,7 @@ const segments = computed<Segment[]>(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
   background: none;

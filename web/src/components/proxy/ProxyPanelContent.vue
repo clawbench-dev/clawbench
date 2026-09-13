@@ -503,7 +503,7 @@ async function handleRetryTunnel() {
 }
 
 .proxy-header-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   flex: 1;
@@ -628,12 +628,12 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-banner-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
 }
 
 .tunnel-banner-detail {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   opacity: 0.8;
 }
 
@@ -667,7 +667,7 @@ async function handleRetryTunnel() {
   padding: 24px 12px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -681,7 +681,7 @@ async function handleRetryTunnel() {
 }
 
 .proxy-empty-hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   margin-top: 4px;
   color: var(--text-muted, #999);
   opacity: 0.7;
@@ -723,7 +723,7 @@ async function handleRetryTunnel() {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -758,7 +758,7 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-intro {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
   line-height: 1.4;
 }
@@ -770,7 +770,7 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-step {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
   line-height: 1.4;
 }
@@ -782,7 +782,7 @@ async function handleRetryTunnel() {
   align-items: center;
   gap: 4px 6px;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
@@ -807,8 +807,8 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-install-code {
-  font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
   line-height: 1.5;
@@ -826,8 +826,8 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-command code {
-  font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
   line-height: 1.5;
@@ -844,7 +844,7 @@ async function handleRetryTunnel() {
   border-radius: 4px;
   background: none;
   color: var(--text-secondary, #666);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   cursor: pointer;
   transition: all 0.15s;
   align-self: flex-end;
@@ -861,7 +861,7 @@ async function handleRetryTunnel() {
   display: flex;
   align-items: baseline;
   gap: 4px;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   margin-top: 2px;
 }
 
@@ -871,7 +871,7 @@ async function handleRetryTunnel() {
 }
 
 .fingerprint-value {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   color: var(--text-muted, #999);
   word-break: break-all;
 }
@@ -895,7 +895,7 @@ async function handleRetryTunnel() {
   gap: 12px;
   padding: 40px 12px;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 
@@ -931,7 +931,7 @@ async function handleRetryTunnel() {
 }
 
 .port-scan-count {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-secondary, #666);
   flex-shrink: 0;
@@ -976,14 +976,14 @@ async function handleRetryTunnel() {
 }
 
 .port-scan-item-port {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   flex-shrink: 0;
 }
 
 .port-scan-item-proto {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1000,8 +1000,8 @@ async function handleRetryTunnel() {
 }
 
 .port-scan-item-process {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
   color: var(--text-muted, #999);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1030,7 +1030,7 @@ async function handleRetryTunnel() {
   gap: 8px;
   padding: 40px 12px;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   opacity: 0.8;
 }
 
@@ -1048,7 +1048,7 @@ async function handleRetryTunnel() {
 }
 
 .port-add-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary, #666);
 }
@@ -1058,7 +1058,7 @@ async function handleRetryTunnel() {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   font-family: inherit;
@@ -1081,7 +1081,7 @@ async function handleRetryTunnel() {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 6px;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   font-family: inherit;
@@ -1095,7 +1095,7 @@ async function handleRetryTunnel() {
 }
 
 .port-add-error {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #dc2626;
   background: rgba(239, 68, 68, 0.08);
   padding: 6px 10px;

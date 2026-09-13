@@ -15,8 +15,8 @@
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
   color: var(--text-primary, #202124);
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
   overflow: hidden;
   transition: box-shadow 0.15s ease;
 }
@@ -73,8 +73,8 @@ body.code-preview-dragging * {
   flex-wrap: wrap;
   align-items: center;
   gap: 2px 4px;
-  font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.35;
   max-height: 38px;
   overflow: hidden;
@@ -112,7 +112,7 @@ body.code-preview-dragging * {
   justify-content: center;
   padding: 3px 6px;
   height: 24px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
@@ -154,7 +154,7 @@ body.code-preview-dragging * {
 
 .code-preview-notice {
   padding: 4px 10px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
   border-bottom: 1px solid var(--border-color, #e0e0e0);
 }
@@ -212,8 +212,8 @@ body.code-preview-dragging * {
   min-height: 0;
   position: relative;
   line-height: 20px;
-  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, Consolas, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   background: var(--code-bg, #1e1e1e);
   tab-size: 2;
   -moz-tab-size: 2;
@@ -260,11 +260,11 @@ body.code-preview-dragging * {
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-family: var(--font-mono);
   background: var(--code-bg, var(--bg-primary, #ffffff));
   border-right: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
   color: var(--text-muted, #8c8c8c);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 20px;
   align-self: stretch;
 }
@@ -319,7 +319,7 @@ body.code-preview-dragging * {
   background: var(--bg-secondary, #f8f9fa);
   border-top: 1px dashed var(--border-color, #e0e0e0);
   border-bottom: 1px dashed var(--border-color, #e0e0e0);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   user-select: none;
   gap: 8px;
@@ -339,8 +339,8 @@ body.code-preview-dragging * {
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
-  font-size: 11px;
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-ui);
   color: var(--primary-color, #1a73e8);
   background: transparent;
   border: 1px solid transparent;
@@ -359,7 +359,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-expand-hint {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #8c8c8c);
   font-weight: normal;
 }
@@ -417,8 +417,8 @@ body.code-preview-dragging * {
 .code-preview-meta-info {
   display: flex;
   align-items: center;
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -440,7 +440,7 @@ body.code-preview-dragging * {
   padding: 4px 8px;
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-shrink: 0;
 }
 
@@ -449,7 +449,7 @@ body.code-preview-dragging * {
   min-width: 0;
   height: 24px;
   padding: 2px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   border: 1px solid var(--border-color, #ccc);
   border-radius: 4px;
   background: var(--bg-primary, #ffffff);
@@ -463,7 +463,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-search-count {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   white-space: nowrap;
 }
@@ -491,7 +491,7 @@ body.code-preview-dragging * {
 .code-preview-line-ref {
   font-size: 0.92em;
   line-height: inherit;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-family: var(--font-mono);
   font-weight: 400;
   color: var(--text-tertiary, #80868b);
   flex-shrink: 0;
@@ -544,7 +544,7 @@ body.code-preview-dragging * {
    .bs-header so it wins over the base .bs-header-title (flex-shrink:0,
    inline-flex) regardless of stylesheet injection order. */
 .bs-header .code-preview-sheet-title {
-  font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
+  font-family: var(--font-mono);
   flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
@@ -553,14 +553,14 @@ body.code-preview-dragging * {
 }
 
 .bs-header .code-preview-sheet-title .code-preview-line-ref {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 400;
   margin-left: 4px;
 }
 
 .code-preview-sheet-dir-marquee {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #80868b);
 }
 
@@ -578,7 +578,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-sheet-meta-info {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-tertiary, #80868b);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -662,7 +662,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-btn.icon-only.close {
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
   line-height: 1;
 }
 
@@ -683,9 +683,9 @@ body.code-preview-dragging * {
   z-index: 1300;
   pointer-events: none;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 14px;
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-family: var(--font-ui);
   font-weight: 500;
   letter-spacing: 0.2px;
   color: #ffffff;
@@ -769,7 +769,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-media-audio-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--text-primary, #202124);
   max-width: 100%;
@@ -887,12 +887,12 @@ body.code-preview-dragging * {
   gap: 6px;
   flex: 1 1 auto;
   min-width: 84px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   overflow: hidden;
 }
 .code-link-preview-floating.is-compact .code-preview-compact-name {
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #202124);
   overflow: hidden;

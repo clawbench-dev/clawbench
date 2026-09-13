@@ -126,7 +126,7 @@ const detailItems = computed(() => {
 <style scoped>
 .details-title {
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
 }
 
@@ -146,7 +146,7 @@ const detailItems = computed(() => {
 .details-label {
   width: 80px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
 }
 
@@ -160,7 +160,7 @@ const detailItems = computed(() => {
 
 .details-value {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
 }

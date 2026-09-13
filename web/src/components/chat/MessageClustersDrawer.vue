@@ -249,7 +249,7 @@ defineExpose({ open })
 }
 
 .mc-phase-text {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
   flex: 1;
   min-width: 0;
@@ -259,7 +259,7 @@ defineExpose({ open })
 }
 
 .mc-progress-detail {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   flex-shrink: 0;
 }
@@ -270,7 +270,7 @@ defineExpose({ open })
   gap: 12px;
   padding: 16px 0;
   color: #e53e3e;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .mc-empty {
@@ -280,7 +280,7 @@ defineExpose({ open })
   gap: 12px;
   padding: 24px 0;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .mc-results {
@@ -295,7 +295,7 @@ defineExpose({ open })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
 }
 
@@ -318,7 +318,7 @@ defineExpose({ open })
   gap: 6px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -346,7 +346,7 @@ defineExpose({ open })
   background: var(--bg-tertiary, #e5e5e5);
   border-radius: 8px;
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
 }
 
@@ -354,7 +354,7 @@ defineExpose({ open })
   padding: 4px 10px;
   border: 1px solid var(--border-color, #ddd);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
@@ -390,7 +390,7 @@ defineExpose({ open })
   align-items: center;
   gap: 2px;
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {
@@ -410,7 +410,7 @@ defineExpose({ open })
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
 }
 

@@ -1778,7 +1778,7 @@ defineExpose({
   justify-content: flex-start;
   gap: 4px;
   padding: 4px 8px 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
   color: var(--text-muted, #999);
   overflow: hidden;
@@ -1880,7 +1880,7 @@ defineExpose({
    action bar can be measured with labels forced on (see .measure-labels);
    hidden unless the container proves it has room for them. */
 .chat-action-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
@@ -1926,7 +1926,7 @@ defineExpose({
     pointer-events: none;
     user-select: none;
     border-right: 1px solid var(--border-color, #e5e5e5);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     line-height: 1.3;
 }
 
@@ -1944,7 +1944,7 @@ defineExpose({
   color: var(--text-muted, #999);
   padding: 5px 8px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
   transition: color 0.15s, background 0.15s, transform 0.1s;
   -webkit-tap-highlight-color: transparent;
@@ -2097,7 +2097,7 @@ defineExpose({
   gap: 8px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
   color: var(--accent-color, #0066cc);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   border-radius: 20px;
   pointer-events: none;
@@ -2214,7 +2214,7 @@ defineExpose({
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
 
@@ -2244,7 +2244,7 @@ defineExpose({
   color: #fff;
   border-radius: 8px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -2260,7 +2260,7 @@ defineExpose({
   flex-shrink: 0;
   max-width: 150px;
   position: relative;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -2272,8 +2272,8 @@ defineExpose({
 }
 
 .attachment-filename {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2281,7 +2281,7 @@ defineExpose({
 }
 
 .attachment-filesize {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2320,7 +2320,7 @@ defineExpose({
   border: none;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -2383,7 +2383,7 @@ defineExpose({
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   line-height: 20px;
   outline: none;
   resize: none;
@@ -2541,7 +2541,7 @@ defineExpose({
 /* Quick-send menu content styles */
 .quick-send-title {
   padding: 6px 14px 2px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   font-weight: 500;
   letter-spacing: 0.3px;
@@ -2556,7 +2556,7 @@ defineExpose({
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s, color 0.12s;
@@ -2589,8 +2589,8 @@ defineExpose({
   flex: 1;
   min-width: 0;
   color: var(--text-muted, #999);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2636,14 +2636,14 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
 .usage-popup-section-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-secondary);
   margin-top: 8px;
@@ -2674,7 +2674,7 @@ defineExpose({
 }
 
 .usage-popup-pct {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   flex-shrink: 0;
   min-width: 36px;
@@ -2686,7 +2686,7 @@ defineExpose({
   justify-content: space-between;
   align-items: center;
   padding: 3px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .usage-popup-label {
@@ -2717,7 +2717,7 @@ defineExpose({
   cursor: pointer;
   padding: 5px 12px;
   color: var(--text-secondary, #6c757d);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.4;
   transition: color 0.15s, border-color 0.15s;
   user-select: none;

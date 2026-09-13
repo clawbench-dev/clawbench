@@ -198,7 +198,7 @@ async function onRefresh() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   padding: 2px 0;
@@ -213,7 +213,7 @@ async function onRefresh() {
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
   padding: 4px 8px;

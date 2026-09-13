@@ -290,7 +290,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #212529);
   overflow: hidden;
@@ -299,7 +299,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .drilldown-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
@@ -409,7 +409,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-commit-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -420,7 +420,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-commit-meta {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   margin-top: 2px;
   white-space: nowrap;
@@ -453,7 +453,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
     align-items: center;
     justify-content: center;
     color: var(--text-muted, #999);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
 }
 
 .empty-state-card {
@@ -466,18 +466,18 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .empty-state-title {
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 500;
     color: var(--text-primary);
 }
 
 .empty-state-desc {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
 }
 
 .empty-state-hint {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted);
     margin-top: 4px;
 }
@@ -486,8 +486,8 @@ defineExpose({ observeList, unobserveList, commitSearch })
     background: var(--bg-tertiary);
     padding: 2px 6px;
     border-radius: 4px;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
 }
 
 /* Selected commit highlight */
@@ -516,8 +516,8 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 /* Short SHA tag */
 .git-commit-sha {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
   padding: 1px 4px;
@@ -532,7 +532,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   margin-right: 4px;
 }
 .git-ref-tag {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   padding: 1px 5px;
   border-radius: 3px;

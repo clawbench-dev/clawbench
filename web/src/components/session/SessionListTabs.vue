@@ -77,7 +77,7 @@ watch(total, (n) => {
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   line-height: 1.4;
   cursor: pointer;
@@ -99,7 +99,7 @@ watch(total, (n) => {
   border-radius: 8px;
   background: var(--accent-color, #0066cc);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 16px;
   text-align: center;
 }

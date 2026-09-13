@@ -74,7 +74,7 @@ const dirty = ref(false)
 // Appearance). EditorView.theme emits these as real CSS rules, so a
 // var(--font-mono) reference resolves live against <html> and re-renders
 // automatically when the user changes the font — no watcher needed.
-const MONO_FONT = "var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace)"
+const MONO_FONT = "var(--font-mono)"
 
 const codeMirrorTheme = EditorView.theme({
     '&': {
@@ -83,7 +83,7 @@ const codeMirrorTheme = EditorView.theme({
     },
     '.cm-content': {
         fontFamily: MONO_FONT,
-        fontSize: '13px',
+        fontSize: 'var(--font-size-md)',
         lineHeight: '1.6',
         caretColor: 'var(--accent-color)',
         padding: '0 0 24px 0',
@@ -783,7 +783,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     border-radius: 14px;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     font-weight: 500;
     cursor: pointer;
 }
@@ -843,7 +843,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     display: inline-block;
     min-width: 16px;
     text-align: center;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     font-weight: 600;
     line-height: 1.6;
     cursor: pointer;
@@ -902,8 +902,8 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     border-bottom: 1px solid var(--border-color);
     opacity: 0.94;
     cursor: pointer;
-    font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-md);
     line-height: 20.8px;
     pointer-events: auto;
 }
@@ -937,8 +937,8 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .cm-viewer .cm-tooltip-autocomplete {
-  font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
   max-height: 200px;
 }
 .cm-viewer .cm-tooltip-autocomplete ul li {
@@ -946,7 +946,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 }
 .cm-viewer .cm-completionIcon {
   width: 16px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   opacity: 0.7;
 }
 .cm-viewer .cm-completionIcon-class::after { color: var(--code-syntax-type); }

@@ -672,7 +672,7 @@ defineExpose({ focusSearchInput })
   border-radius: 6px;
   background: var(--bg-primary, #fff);
   color: var(--text-muted, #999);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
@@ -729,7 +729,7 @@ defineExpose({ focusSearchInput })
   border-radius: 11px;
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #666);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -744,7 +744,7 @@ defineExpose({ focusSearchInput })
 .time-range-sep {
   flex-shrink: 0;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .time-date-input {
@@ -754,7 +754,7 @@ defineExpose({ focusSearchInput })
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 6px;
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {
@@ -773,7 +773,7 @@ defineExpose({ focusSearchInput })
   border: none;
   background: none;
   color: var(--text-primary, #1a1a1a);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
@@ -809,7 +809,7 @@ defineExpose({ focusSearchInput })
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
@@ -817,7 +817,7 @@ defineExpose({ focusSearchInput })
   padding: 24px;
   text-align: center;
   color: var(--color-error, #e74c3c);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
@@ -836,12 +836,12 @@ defineExpose({ focusSearchInput })
   padding: 12px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .session-search-count {
   padding: 6px 14px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -849,7 +849,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-mode {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 3px;
   background: rgba(124, 58, 237, 0.08);
@@ -885,7 +885,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
@@ -896,13 +896,13 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-meta {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   flex-shrink: 0;
 }
 
 .session-search-item-preview {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
   color: var(--text-secondary, #666);
   margin-bottom: 4px;
@@ -924,12 +924,12 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
 .session-search-item-archived {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: rgba(230, 162, 60, 0.12);
@@ -937,7 +937,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-backend {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
   background: var(--bg-tertiary, #eee);
@@ -945,7 +945,7 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-chunks {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
 }
 
 /* ── Drilldown detail view ── */
@@ -988,7 +988,7 @@ defineExpose({ focusSearchInput })
   align-items: center;
   gap: 4px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   transition: background 0.15s, color 0.15s;
   margin-left: auto;
   flex-shrink: 0;
@@ -1009,7 +1009,7 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-archived-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 3px;
   background: rgba(230, 162, 60, 0.12);
@@ -1037,7 +1037,7 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-meta-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 2px 7px;
   border-radius: 4px;
   font-weight: 500;
@@ -1054,7 +1054,7 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-meta-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   margin-left: auto;
 }
@@ -1068,14 +1068,14 @@ defineExpose({ focusSearchInput })
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .detail-chunk-role {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   padding: 2px 0;
   letter-spacing: 0.3px;
@@ -1090,7 +1090,7 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-chunk-text {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.6;
   padding: 4px 0 0;
   word-break: break-word;

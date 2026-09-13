@@ -417,7 +417,7 @@ onMounted(() => {
 }
 
 .login-slogan {
-    font-size: 18px;
+    font-size: var(--font-size-2xl);
     font-weight: 500;
     color: var(--accent-color);
     margin: 0 0 4px;
@@ -425,7 +425,7 @@ onMounted(() => {
 }
 
 .login-subtitle {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
     margin: 0;
 }
@@ -456,7 +456,7 @@ onMounted(() => {
 }
 
 .server-list-header {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-secondary);
     margin-bottom: 6px;
     letter-spacing: 0.02em;
@@ -478,7 +478,7 @@ onMounted(() => {
     border: 1.5px solid var(--border-color);
     cursor: pointer;
     transition: background 0.1s, border-color 0.1s;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     background: transparent;
 }
 
@@ -589,7 +589,7 @@ input[type="url"] {
     padding: 13px 14px 13px 42px;
     border: 1.5px solid var(--border-color);
     border-radius: 10px;
-    font-size: 15px;
+    font-size: var(--font-size-xl);
     outline: none;
     background: var(--bg-primary);
     color: var(--text-primary);
@@ -610,7 +610,7 @@ input:focus {
     border-radius: 10px;
     background: var(--accent-color);
     color: #fff;
-    font-size: 15px;
+    font-size: var(--font-size-xl);
     font-weight: 600;
     cursor: pointer;
     transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
@@ -649,7 +649,7 @@ input:focus {
     border-radius: 10px;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     cursor: pointer;
     transition: background 0.15s;
 }
@@ -677,7 +677,7 @@ input:focus {
     background: color-mix(in srgb, var(--color-red, #dc2626) 8%, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--color-red, #dc2626) 20%, var(--border-color));
     color: var(--color-red, #dc2626);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -694,7 +694,7 @@ input:focus {
     border-radius: 6px;
     background: color-mix(in srgb, var(--color-red, #dc2626) 10%, transparent);
     color: var(--color-red, #dc2626);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
@@ -715,7 +715,7 @@ input:focus {
     border-radius: 10px;
     background: transparent;
     color: color-mix(in srgb, var(--accent-color) 70%, var(--text-secondary));
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -761,13 +761,13 @@ input:focus {
 }
 
 .install-label {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     font-weight: 600;
     color: var(--text-primary);
 }
 
 .install-desc {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted);
 }
 

@@ -154,7 +154,7 @@ watch(() => props.files, (files) => {
   flex-shrink: 0;
   max-width: 150px;
   position: relative;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
   transition: opacity 0.15s;
@@ -166,8 +166,8 @@ watch(() => props.files, (files) => {
 }
 
 .attachment-filename {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -199,7 +199,7 @@ watch(() => props.files, (files) => {
   border: none;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -256,7 +256,7 @@ watch(() => props.files, (files) => {
 }
 
 .attachment-progress-text {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: #ffffff;
   line-height: 1;

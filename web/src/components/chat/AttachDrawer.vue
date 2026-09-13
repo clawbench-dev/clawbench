@@ -423,7 +423,7 @@ defineExpose({ activeTab, handleFileDrop })
   background: var(--bg-hover);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
 .ad-upload-label {
@@ -446,7 +446,7 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-tab {
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   border: none;
   background: none;
@@ -471,7 +471,7 @@ defineExpose({ activeTab, handleFileDrop })
   padding: 24px 16px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 /* File row */
@@ -529,7 +529,7 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-file-name {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -537,7 +537,7 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-file-meta {
   display: block;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -607,7 +607,7 @@ defineExpose({ activeTab, handleFileDrop })
 /* Current item label */
 .ad-label {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
@@ -627,7 +627,7 @@ defineExpose({ activeTab, handleFileDrop })
   border-radius: 6px;
 }
 .ad-upload-pct {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   color: var(--accent-color);
   letter-spacing: -0.3px;

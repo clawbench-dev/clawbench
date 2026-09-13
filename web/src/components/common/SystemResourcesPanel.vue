@@ -172,7 +172,7 @@ defineExpose({ startPolling, stopPolling })
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .server-info-icon {
@@ -201,7 +201,7 @@ defineExpose({ startPolling, stopPolling })
   cursor: pointer;
   border-radius: var(--radius-sm, 4px);
   color: var(--color-red, #ef4444);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
@@ -233,7 +233,7 @@ defineExpose({ startPolling, stopPolling })
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.2;
 }
 
@@ -318,7 +318,7 @@ defineExpose({ startPolling, stopPolling })
 }
 
 .connection-status-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary);
 }

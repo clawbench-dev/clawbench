@@ -1269,7 +1269,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .terminal-empty-text {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-muted);
   margin: 0;
 }
@@ -1283,7 +1283,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -1348,7 +1348,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .terminal-tab-title {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
@@ -1503,7 +1503,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   gap: 8px;
   background: rgba(0, 0, 0, 0.6);
   color: rgba(255, 255, 255, 0.8);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   z-index: 8;
   user-select: none;
   -webkit-user-select: none;
@@ -1564,7 +1564,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   background: transparent;
   color: #fff;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 @media (hover: hover) {
@@ -1703,7 +1703,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   border-radius: 0;
   background: transparent;
   color: var(--toolbar-key-text);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 700;
   letter-spacing: 0.01em;
   cursor: pointer;
@@ -1720,7 +1720,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .toolbar-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--text-primary) 36%, transparent); outline-offset: 2px; }
 .toolbar-btn.modifier.active { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
 .toolbar-btn.modifier.locked { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
-.toolbar-btn.shortcut { background: transparent; color: var(--toolbar-key-text); font-weight: 800; font-size: 11px; }
+.toolbar-btn.shortcut { background: transparent; color: var(--toolbar-key-text); font-weight: 800; font-size: var(--font-size-xs); }
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
 .toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
 @media (hover: hover) {
@@ -1735,7 +1735,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   line-height: 1;
   padding: 3px 5px;
 }
-.shift-tab-label { font-size: 9px; font-weight: 700; line-height: 1.3; }
+.shift-tab-label { font-size: var(--font-size-2xs); font-weight: 700; line-height: 1.3; }
 
 @media (max-width: 768px) {
   .main-toolbar-row { padding-bottom: max(4px, env(safe-area-inset-bottom)); }
@@ -1774,7 +1774,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
-.toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 15px; font-weight: 700; }
+.toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: var(--font-mono); font-size: var(--font-size-xl); font-weight: 700; }
 
 /* WebView bold compensation — same mechanism as chat markdown bold
  * (markdown-common.css): font-weight alone renders lighter/softer in Android
@@ -1801,7 +1801,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent-color) 90%, black);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   z-index: 20;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
 }
@@ -1817,14 +1817,14 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   color: #fff;
   padding: 4px 14px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 .selection-copy-close {
   border: none;
   background: transparent;
   color: rgba(255, 255, 255, 0.85);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1;
   padding: 4px 6px;
   border-radius: 6px;
@@ -1865,8 +1865,8 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   flex: 1;
   min-width: 0;
   color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1878,16 +1878,16 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
    both are global, so they must stay in sync (kept here so the terminal
    picker renders identically even if the AppHeader styles are not loaded). */
 .theme-picker { min-width: 160px; }
-.theme-picker-status { padding: 10px 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
+.theme-picker-status { padding: 10px 12px; text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 .theme-picker-error { display: flex; flex-direction: column; gap: 8px; align-items: center; }
-.theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: 12px; }
+.theme-retry-btn { padding: 4px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }
 .theme-item + .theme-item { border-top: 1px solid var(--border-color); }
 .theme-item {
   display: flex; align-items: center; gap: 6px;
   width: 100%; padding: 5px 10px; border: none; border-radius: 0;
   background: var(--tterm-preview-bg, transparent);
   color: var(--tterm-preview-fg, var(--text-primary));
-  font-size: 12px; text-align: left; cursor: pointer;
+  font-size: var(--font-size-sm); text-align: left; cursor: pointer;
   transition: background 0.1s, box-shadow 0.1s;
 }
 /* 预览底色不变，hover 加 accent 全边框高亮 */
@@ -1898,7 +1898,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   }
 }
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
-.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
+.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
 .theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
 .theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }

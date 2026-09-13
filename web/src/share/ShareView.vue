@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
    .share-toc/.share-btn/…) lives in css/share-chrome.css — the SAME source the
    markdown HTML export embeds. Only page-specific rules stay below. */
 
-.share-status { font-size: 12px; color: var(--text-muted, #656d76); }
+.share-status { font-size: var(--font-size-sm); color: var(--text-muted, #656d76); }
 .share-error { color: #cf222e; }
 
 /* Active (rendered preview shown) state for the view toggle */
@@ -534,8 +534,8 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.share-error-title { font-size: 16px; font-weight: 600; color: var(--text-primary, #1f2328); }
-.share-error-desc { font-size: 13px; max-width: 480px; word-break: break-word; }
+.share-error-title { font-size: var(--font-size-2xl); font-weight: 600; color: var(--text-primary, #1f2328); }
+.share-error-desc { font-size: var(--font-size-md); max-width: 480px; word-break: break-word; }
 
 .share-html-iframe {
   width: 100%;
@@ -566,7 +566,7 @@ onBeforeUnmount(() => {
   background: var(--accent-color, #0969da);
   color: #fff;
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   cursor: pointer;
 }
 

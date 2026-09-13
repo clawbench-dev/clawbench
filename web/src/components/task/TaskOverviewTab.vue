@@ -239,7 +239,7 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .task-name {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin: 0;
@@ -253,7 +253,7 @@ function handlePromptClick(event: MouseEvent) {
   gap: 6px;
   padding: 4px 8px;
   border-radius: 12px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -297,12 +297,12 @@ function handlePromptClick(event: MouseEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
 
 .task-id-value {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
   cursor: pointer;
   padding: 2px 6px;
   border-radius: 4px;
@@ -335,7 +335,7 @@ function handlePromptClick(event: MouseEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin: 0;
@@ -417,29 +417,29 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .overview-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
 
 .overview-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   text-align: right;
   word-break: break-word;
 }
 
 .overview-value.font-mono {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
   background: var(--bg-primary, #fff);
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--border-color, #e5e5e5);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .overview-subtext {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
@@ -451,7 +451,7 @@ function handlePromptClick(event: MouseEvent) {
   padding: 6px 0 0;
   margin: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 </style>

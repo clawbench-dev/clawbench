@@ -269,7 +269,7 @@ defineExpose({
   gap: 12px;
   padding: 24px 0;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .empty-icon {
@@ -356,7 +356,7 @@ defineExpose({
 
 /* ── Trigger type badges ── */
 .exec-trigger-type {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: 600;
@@ -378,7 +378,7 @@ defineExpose({
 
 /* ── Status badges ── */
 .exec-status-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: 600;
@@ -405,7 +405,7 @@ defineExpose({
 
 /* ── Start time (top row, before the right-aligned duration) ── */
 .exec-start-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #9ca3af);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -414,7 +414,7 @@ defineExpose({
 
 /* ── Duration (top row, right-aligned next to trigger type) ── */
 .exec-duration {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary, #111827);
   background: rgba(0, 102, 204, 0.05);
@@ -446,7 +446,7 @@ defineExpose({
 }
 
 .exec-event-source {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #4b5563);
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
@@ -456,11 +456,11 @@ defineExpose({
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 .exec-summary {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #4b5563);
   line-height: 1.4;
   overflow: hidden;
@@ -485,7 +485,7 @@ defineExpose({
 }
 
 .exec-meta-tag {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--bg-primary, #ffffff);
@@ -599,6 +599,6 @@ defineExpose({
   gap: 6px;
   padding: 8px;
   color: var(--text-muted, #9ca3af);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 </style>

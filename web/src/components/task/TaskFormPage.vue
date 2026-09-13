@@ -574,7 +574,7 @@ onMounted(() => {
   color: #16a34a;
   padding: 6px 12px;
   border-radius: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   margin-bottom: 4px;
 }
@@ -610,7 +610,7 @@ onMounted(() => {
 
 .section-title {
   margin: 0 0 2px 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
 }
@@ -626,7 +626,7 @@ onMounted(() => {
 }
 
 .form-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary, #4b5563);
 }
@@ -642,7 +642,7 @@ onMounted(() => {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   box-sizing: border-box;
@@ -652,7 +652,7 @@ onMounted(() => {
 }
 
 .form-input.font-mono {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 .form-input:focus,
@@ -707,7 +707,7 @@ onMounted(() => {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   box-sizing: border-box;
@@ -738,7 +738,7 @@ onMounted(() => {
 }
 
 .agent-display-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   font-weight: 500;
 }
@@ -749,7 +749,7 @@ onMounted(() => {
 }
 
 .agent-display-tag {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 0;
   font-weight: 500;
@@ -774,7 +774,7 @@ onMounted(() => {
 .agent-display-placeholder {
   flex: 1;
   color: var(--text-muted, #9ca3af);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .agent-display-icon {
@@ -793,7 +793,7 @@ onMounted(() => {
 }
 
 .form-hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #6b7280);
 }
 
@@ -802,7 +802,7 @@ onMounted(() => {
 }
 
 .form-error {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: #ef4444;
   display: flex;
   align-items: center;
@@ -829,7 +829,7 @@ onMounted(() => {
 }
 
 .event-type-group-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: 6px;
@@ -845,7 +845,7 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #4b5563);
   cursor: pointer;
 }
@@ -858,7 +858,7 @@ onMounted(() => {
   background: var(--bg-secondary, #f9fafb);
   border: 1px dashed var(--border-color, #d1d5db);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   color: var(--text-secondary, #4b5563);
   white-space: pre-wrap;
@@ -872,7 +872,7 @@ onMounted(() => {
   border-radius: 16px;
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -915,14 +915,14 @@ onMounted(() => {
 }
 
 .time-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--text-secondary, #4b5563);
   flex-shrink: 0;
 }
 
 .time-sep {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-secondary, #4b5563);
 }
@@ -941,7 +941,7 @@ onMounted(() => {
   border-radius: 6px;
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
   display: flex;
@@ -975,14 +975,14 @@ onMounted(() => {
 }
 
 .cron-display code {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--accent-color, #0066cc);
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 .cron-humanize {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #6b7280);
 }
 
@@ -998,7 +998,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   cursor: pointer;
 }

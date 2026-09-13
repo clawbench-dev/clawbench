@@ -653,7 +653,7 @@ defineExpose({
   border: none;
   background: none;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -689,7 +689,7 @@ defineExpose({
   border-radius: 8px;
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -754,7 +754,7 @@ defineExpose({
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
@@ -814,7 +814,7 @@ defineExpose({
 }
 
 .default-text {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -863,14 +863,14 @@ defineExpose({
   padding: 24px 14px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .tab-empty-hint {
   padding: 32px 14px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .auto-approve-section {
@@ -893,13 +893,13 @@ defineExpose({
 }
 
 .auto-approve-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .auto-approve-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   line-height: 1.3;
 }
@@ -962,7 +962,7 @@ defineExpose({
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;

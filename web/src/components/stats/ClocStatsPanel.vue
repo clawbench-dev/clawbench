@@ -233,7 +233,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -248,7 +248,7 @@ onMounted(() => {
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .stats-loading,
 .stats-empty {
@@ -259,7 +259,7 @@ onMounted(() => {
   gap: 10px;
   padding: 48px 0;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .stats-empty-icon {
   opacity: 0.5;
@@ -282,14 +282,14 @@ onMounted(() => {
   min-width: 0;
 }
 .stats-total-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .stats-total-value {
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -309,7 +309,7 @@ onMounted(() => {
 .stats-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .stats-table th,
 .stats-table td {
@@ -340,7 +340,7 @@ onMounted(() => {
   user-select: none;
 }
 .stats-sort-arrow {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .stats-td-num {
   color: var(--text-primary);

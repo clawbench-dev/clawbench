@@ -216,7 +216,7 @@ defineExpose({ open: openDrawer })
 .shared-files-hint {
   padding: 24px 0;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
   display: flex;
   flex-direction: column;
@@ -231,7 +231,7 @@ defineExpose({ open: openDrawer })
   border: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-tertiary, #f0f0f0);
   color: var(--text-secondary, #666);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -278,7 +278,7 @@ defineExpose({ open: openDrawer })
 }
 
 .shared-file-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
   white-space: nowrap;
@@ -288,7 +288,7 @@ defineExpose({ open: openDrawer })
 
 .shared-file-badge {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 8px;
   background: rgba(128,128,128,.15);
@@ -297,7 +297,7 @@ defineExpose({ open: openDrawer })
 .deleted-badge { color: #cf222e; }
 
 .shared-file-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
   white-space: nowrap;
   overflow: hidden;
@@ -305,7 +305,7 @@ defineExpose({ open: openDrawer })
 }
 
 .shared-file-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
 }
 
@@ -343,7 +343,7 @@ defineExpose({ open: openDrawer })
   border-radius: 6px;
   background: transparent;
   color: #cf222e;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   flex-shrink: 0;
 }

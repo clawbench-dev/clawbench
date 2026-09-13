@@ -243,7 +243,7 @@ onMounted(refresh)
   gap: 12px;
   height: 100%;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .empty-icon {
@@ -302,7 +302,7 @@ onMounted(refresh)
 }
 
 .task-item-name {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
@@ -313,7 +313,7 @@ onMounted(refresh)
 }
 
 .task-item-unread {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 10px;
   font-weight: 600;
@@ -346,7 +346,7 @@ onMounted(refresh)
 }
 
 .task-item-status {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 3px 6px;
   border-radius: 4px;
   font-weight: 600;
@@ -398,7 +398,7 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   min-width: 0;
   flex-wrap: wrap;
@@ -431,7 +431,7 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-primary, #fff);
   padding: 4px 8px;

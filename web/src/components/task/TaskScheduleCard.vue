@@ -58,7 +58,7 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin: 0;
@@ -86,26 +86,26 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
   font-weight: 500;
 }
 .overview-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
 .overview-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   text-align: right;
   word-break: break-word;
 }
 .overview-value.font-mono {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
   background: var(--bg-primary, #fff);
   padding: 2px 6px;
   border-radius: 4px;
   border: 1px solid var(--border-color, #e5e5e5);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .overview-subtext {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 </style>

@@ -438,7 +438,7 @@ function formatTime(iso: string): string {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -455,7 +455,7 @@ function formatTime(iso: string): string {
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -479,7 +479,7 @@ function formatTime(iso: string): string {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: pointer;
 }
@@ -536,13 +536,13 @@ function formatTime(iso: string): string {
   margin-bottom: 2px;
 }
 .forge-card-header {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: var(--text-primary);
 }
 .forge-card-body {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
 }
 .forge-card-options {
@@ -575,7 +575,7 @@ function formatTime(iso: string): string {
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   cursor: pointer;
   user-select: none;
@@ -634,7 +634,7 @@ function formatTime(iso: string): string {
   border: 1px solid var(--border-color);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 18px;
   white-space: nowrap;
   cursor: pointer;
@@ -676,14 +676,14 @@ function formatTime(iso: string): string {
 }
 .forge-error-text { flex: 1; min-width: 0; }
 .forge-error-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
 }
 .forge-error-body {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 /* ── Loading / empty ── */
@@ -705,7 +705,7 @@ function formatTime(iso: string): string {
   opacity: 0.5;
 }
 .forge-empty-title {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-muted);
 }
 
@@ -745,13 +745,13 @@ function formatTime(iso: string): string {
 .forge-row-number {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .forge-row-text {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -764,7 +764,7 @@ function formatTime(iso: string): string {
   gap: 10px;
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .forge-row-comments {
   display: inline-flex;
@@ -808,7 +808,7 @@ function formatTime(iso: string): string {
   flex-direction: column;
 }
 .forge-bind-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-muted);
   margin-bottom: 8px;
@@ -862,7 +862,7 @@ function formatTime(iso: string): string {
   min-width: 0;
 }
 .forge-remote-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -894,7 +894,7 @@ function formatTime(iso: string): string {
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .forge-input::placeholder {
   color: var(--text-muted);

@@ -104,7 +104,7 @@ function handleClick() {
 }
 
 .branch-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
@@ -118,12 +118,12 @@ function handleClick() {
   gap: 4px;
   flex-shrink: 0;
   margin-left: 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 
 .branch-default-badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   background: var(--accent-color, #4a90d9);
   color: #fff;

@@ -72,7 +72,7 @@ function navigate(target) {
   scrollbar-width: none;
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #6c757d);
 }
 
@@ -123,7 +123,7 @@ function navigate(target) {
 /* ── Separator ── */
 .crumb-sep {
   color: var(--text-muted, #6c757d);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   margin: 0 1px;
   user-select: none;
 }

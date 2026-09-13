@@ -661,7 +661,7 @@ onUnmounted(() => {
 }
 
 .settings-item__label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -669,14 +669,14 @@ onUnmounted(() => {
 }
 
 .settings-item__meta {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
 }
 
 /* Photographer credit for the Bing image — panel-only attribution. */
 .wallpaper-credit {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   line-height: 1.4;
   word-break: break-word;
@@ -692,14 +692,14 @@ onUnmounted(() => {
 /* Description folds onto its own line below label+control (flex-wrap). */
 .settings-item__desc {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: 1.5;
   word-break: break-word;
 }
 
 .settings-item__slider-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   min-width: 36px;
   text-align: right;
@@ -712,7 +712,7 @@ onUnmounted(() => {
 }
 
 .settings-item__slider-reset {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-muted);
   background: none;
   border: none;
@@ -737,7 +737,7 @@ onUnmounted(() => {
   border: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -806,7 +806,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -826,7 +826,7 @@ onUnmounted(() => {
   border-radius: 6px;
   background: var(--accent-color);
   color: #fff;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 16px;
 }
 
@@ -834,7 +834,7 @@ onUnmounted(() => {
   width: 100%;
   padding: 12px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
@@ -861,7 +861,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   margin-left: 4px;
   white-space: nowrap;
@@ -887,7 +887,7 @@ onUnmounted(() => {
 
 .wallpaper-error {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-red);
   line-height: 1.4;
   word-break: break-word;

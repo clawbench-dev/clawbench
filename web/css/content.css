@@ -7,7 +7,7 @@
     max-width: min(900px, 100%);
     margin: 0 auto;
     padding: 10px;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     border-radius: 0;
     background: transparent;
     flex: 1;
@@ -74,7 +74,7 @@
 }
 
 .markdown-body code {
-    font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, monospace);
+    font-family: var(--font-mono);
     font-size: 0.875em;
     padding: 0.2em 0.4em;
 }
@@ -83,7 +83,7 @@
     margin: 1em 0;
     padding: 12px;
     border: none;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     line-height: 1.5;
 }
 
@@ -92,7 +92,7 @@
 }
 
 .markdown-body table {
-    font-size: 14px;
+    font-size: var(--font-size-lg);
 }
 
 /* Tables NOT inside a table-block-wrapper keep max-content width for scroll */

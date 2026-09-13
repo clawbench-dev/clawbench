@@ -28,7 +28,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 14px;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     color: var(--text-primary);
     transition: background 0.1s;

@@ -461,7 +461,7 @@ defineExpose({
   justify-content: center;
   gap: 5px;
   padding: 10px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   color: var(--text-secondary, #666);
   background: transparent;
@@ -485,7 +485,7 @@ defineExpose({
 }
 
 .tab-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
@@ -537,7 +537,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   font-weight: 600;
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
@@ -556,7 +556,7 @@ defineExpose({
 }
 
 .modal-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
   margin: 0 0 16px;
   line-height: 1.5;

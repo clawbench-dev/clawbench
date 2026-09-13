@@ -16,7 +16,7 @@
   gap: 4px;
   opacity: 1;
   transition: background 0.2s;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {

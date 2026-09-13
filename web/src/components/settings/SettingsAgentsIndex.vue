@@ -107,7 +107,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__rescan-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
 }
 
@@ -182,7 +182,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__name {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -191,7 +191,7 @@ async function handleRescan() {
 
 .settings-agents-index__default-badge {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   line-height: 1;
   padding: 1px 5px;
@@ -202,7 +202,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__specialty {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -219,6 +219,6 @@ async function handleRescan() {
   padding: 24px 16px;
   text-align: center;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 </style>

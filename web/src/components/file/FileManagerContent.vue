@@ -2471,7 +2471,7 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2546,7 +2546,7 @@ function scrollSelectedIntoView(path) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-secondary, #666);
 }
 
@@ -2556,7 +2556,7 @@ function scrollSelectedIntoView(path) {
     padding: 3px 10px;
     border: none;
     border-radius: 10px;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     background: var(--bg-secondary, #e0e0e0);
     color: var(--text-secondary, #666);
     cursor: pointer;
@@ -2686,7 +2686,7 @@ function scrollSelectedIntoView(path) {
     transition: background 0.15s;
     gap: 8px;
     color: var(--text-secondary, #666);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     user-select: none;
     -webkit-user-select: none;
 }
@@ -2867,7 +2867,7 @@ function scrollSelectedIntoView(path) {
 
 /* Containing directory shown under a search hit (global / recursive search). */
 .file-parent-dir {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     white-space: nowrap;
     overflow: hidden;
@@ -2880,7 +2880,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .file-meta {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     flex-shrink: 0;
 }
@@ -2908,7 +2908,7 @@ function scrollSelectedIntoView(path) {
 .truncate-hint {
     text-align: center;
     padding: 10px 16px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f5f5f5);
     border-top: 1px solid var(--border-color, #e5e5e5);
@@ -3026,7 +3026,7 @@ function scrollSelectedIntoView(path) {
 
 .grid-name {
     margin-top: 4px;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3043,7 +3043,7 @@ function scrollSelectedIntoView(path) {
 /* Containing directory shown under a search hit in grid view. */
 .grid-parent-dir {
     margin-top: 1px;
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     line-height: 1.2;
     text-align: center;
     overflow: hidden;
@@ -3130,7 +3130,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .dir-upload-progress-count {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-secondary, #666);
     white-space: nowrap;
     line-height: 1.2;
@@ -3147,7 +3147,7 @@ function scrollSelectedIntoView(path) {
     gap: 10px;
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
     color: var(--accent-color, #4a90d9);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 500;
     pointer-events: none;
     border-radius: 4px;
@@ -3168,7 +3168,7 @@ function scrollSelectedIntoView(path) {
     gap: 10px;
     background: color-mix(in srgb, var(--success-color, #22c55e) 10%, var(--bg-primary, #fff));
     color: var(--success-color, #22c55e);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     font-weight: 500;
     pointer-events: none;
     border-radius: 4px;
@@ -3257,7 +3257,7 @@ function scrollSelectedIntoView(path) {
 
 .fs-results-count {
     padding: 6px 14px;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-secondary, #f8f9fa);
@@ -3268,7 +3268,7 @@ function scrollSelectedIntoView(path) {
     padding: 10px 14px;
     text-align: center;
     color: var(--text-muted, #999);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     background: var(--bg-secondary, #f8f9fa);
     border-top: 1px solid var(--border-color, #e5e5e5);
 }
@@ -3289,13 +3289,13 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-search-empty-text {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-secondary, #666);
     margin: 0;
 }
 
 .fs-search-empty-sub {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     margin: 0;
     white-space: nowrap;
@@ -3361,7 +3361,7 @@ function scrollSelectedIntoView(path) {
     border-radius: 6px;
     background: none;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     white-space: nowrap;
 }

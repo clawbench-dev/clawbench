@@ -58,7 +58,7 @@ function doConfirm() {
   padding: 8px 10px;
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--bg-primary);
   color: var(--text-primary);
   outline: none;

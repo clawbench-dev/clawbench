@@ -58,7 +58,7 @@ const overlayText = computed(() =>
 }
 
 .connection-overlay__text {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 500;
   color: var(--text-primary);
   white-space: nowrap;

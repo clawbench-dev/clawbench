@@ -27,7 +27,7 @@ defineProps<{
 
 /* Group title inside the card, distinct from card body and page background */
 .settings-card__header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 5px 16px;
   text-transform: uppercase;

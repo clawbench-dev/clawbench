@@ -1406,7 +1406,7 @@ onUnmounted(() => {
   background: var(--bg-primary);
   color: var(--text-primary);
   border-radius: 24px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-weight: 500;
   letter-spacing: 0.3px;
   position: absolute;
@@ -1488,7 +1488,7 @@ onUnmounted(() => {
 
 /* Numeric label */
 .session-position-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-tertiary, rgba(128, 128, 128, 0.6));
   white-space: nowrap;
   min-width: 24px;
@@ -1571,11 +1571,11 @@ onUnmounted(() => {
   color: var(--text-muted, #9ca3af);
 }
 .tool-call-empty-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-style: italic;
 }
 .tool-call-retry-btn {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 4px 12px;
   border-radius: 6px;
   border: 1px solid var(--border-color, #e5e7eb);

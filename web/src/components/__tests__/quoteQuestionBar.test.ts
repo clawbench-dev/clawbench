@@ -170,10 +170,11 @@ describe('QuoteQuestionBar component', () => {
     await wrapper.find('.quote-bar-row').trigger('click')
     const container = wrapper.find('.qq-input-container')
     expect(container.exists()).toBe(true)
-    // textarea 与聊天输入框对齐：16px 字号、行高 20px、上下 padding 4px
+    // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
+    // jsdom 不解析 var()，字号断言 token 名；16px 由 variables.css 的 token 定义保证
     const ta = wrapper.find('.qq-textarea')
     const taStyles = window.getComputedStyle(ta.element)
-    expect(taStyles.fontSize).toBe('16px')
+    expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
     expect(taStyles.lineHeight).toBe('20px')
     expect(taStyles.paddingTop).toBe('4px')
     expect(taStyles.paddingBottom).toBe('4px')

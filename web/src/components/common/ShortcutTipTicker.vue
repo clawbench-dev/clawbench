@@ -163,7 +163,7 @@ watch(effectiveTips, () => {
 .stt-hscroll {
   display: inline-block;
   will-change: transform;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   line-height: 1;
   vertical-align: middle;
@@ -182,9 +182,9 @@ watch(effectiveTips, () => {
   border-radius: 4px;
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   vertical-align: middle;
   white-space: nowrap;
 }

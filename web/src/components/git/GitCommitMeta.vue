@@ -92,7 +92,7 @@ function formatDate(dateStr) {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .diff-meta-label {
@@ -108,8 +108,8 @@ function formatDate(dateStr) {
 }
 
 .diff-meta-sha {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
   border-radius: 3px;
@@ -125,7 +125,7 @@ function formatDate(dateStr) {
 
 .sha-copied-text {
   color: var(--color-green, #16a34a);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 400;
 }
 
@@ -141,8 +141,8 @@ function formatDate(dateStr) {
 }
 
 .diff-meta-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #555);
   overflow: hidden;
   text-overflow: ellipsis;

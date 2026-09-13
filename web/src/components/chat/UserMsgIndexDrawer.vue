@@ -189,7 +189,7 @@ onUnmounted(() => {
 /* ── Count badge ── */
 .panel-count {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
@@ -268,13 +268,13 @@ onUnmounted(() => {
 }
 
 .panel-empty-text {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--text-secondary, #495057);
 }
 
 .panel-empty-hint {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: 1.5;
   max-width: 260px;
@@ -370,7 +370,7 @@ onUnmounted(() => {
 }
 
 .msg-index {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--text-secondary);
   line-height: 1;
@@ -395,7 +395,7 @@ onUnmounted(() => {
 }
 
 .msg-text {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   line-height: 1.5;
   word-break: break-word;
@@ -471,7 +471,7 @@ onUnmounted(() => {
   justify-content: center;
   gap: 6px;
   padding: 8px 12px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   border-top: 1px solid var(--border-color);
   background: color-mix(in srgb, var(--bg-tertiary) 40%, transparent);
