@@ -68,11 +68,13 @@ describe('FileAttachmentList', () => {
     expect(card.classes()).toContain('attachment-image-only')
   })
 
-  it('emits file-tag-click on card click', async () => {
+  it('emits file-tag-click with the normalized FileEntry on card click', async () => {
     const wrapper = mountComponent(['src/main.go'])
     await wrapper.find('.chat-file-attachment').trigger('click')
     expect(wrapper.emitted('file-tag-click')).toBeTruthy()
-    expect(wrapper.emitted('file-tag-click')[0][0]).toBe('src/main.go')
+    // The component emits the full normalized FileEntry (not a bare path string)
+    // so consumers receive isDir/line-range metadata alongside the path.
+    expect(wrapper.emitted('file-tag-click')[0][0]).toEqual({ path: 'src/main.go', isDir: false })
   })
 
   it('supports {path} object format', () => {

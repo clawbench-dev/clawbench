@@ -50,7 +50,7 @@ describe('enqueueAndMaybeStart', () => {
     expect(Number.isFinite(msg.seq)).toBe(true)
   })
 
-  it('dedupes pending and attached files into the pending message files', async () => {
+  it('keeps distinct line ranges of one path and dedupes exact duplicates', async () => {
     const pending: FileEntry[] = [{ path: '/a', isDir: false }]
     const attached: FileEntry[] = [
       { path: '/a', isDir: false, startLine: 1, endLine: 5 },
@@ -59,11 +59,14 @@ describe('enqueueAndMaybeStart', () => {
     const opts = makeOpts({ pendingFiles: pending, attachedFiles: attached })
     await enqueueAndMaybeStart(opts)
     const msg = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    // dedupeFiles keeps the richer entry (with line range) for /a
+    // Attachment identity is the composite key (path, startLine, endLine): the
+    // whole-file /a and the ranged /a are distinct references and both survive,
+    // while an exact duplicate would collapse.
     const paths = msg.files.map((f: FileEntry) => f.path)
-    expect(paths).toEqual(['/a', '/b'])
-    const a = msg.files.find((f: FileEntry) => f.path === '/a')
-    expect(a.startLine).toBe(1)
+    expect(paths).toEqual(['/a', '/a', '/b'])
+    const ranged = msg.files.find((f: FileEntry) => f.path === '/a' && f.startLine === 1)
+    expect(ranged).toBeTruthy()
+    expect(ranged.endLine).toBe(5)
   })
 
   it('calls enqueue with sessionId, text, attachments and queueId', async () => {
