@@ -402,16 +402,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 	}
 
-	// Task subcommand dispatch (e.g., "clawbench task create --name ...")
-	if len(os.Args) > 1 && os.Args[1] == "task" {
-		os.Exit(cli.RunTaskCommand(os.Args[2:]))
-	}
-
-	// RAG subcommand dispatch (e.g., "clawbench rag search -q ...")
-	if len(os.Args) > 1 && os.Args[1] == "rag" {
-		os.Exit(cli.RunRAGCommand(os.Args[2:]))
-	}
-
 	// Upgrade-replace subcommand dispatch (launched by upgrade service)
 	if len(os.Args) > 1 && os.Args[1] == "upgrade-replace" {
 		os.Exit(cli.RunUpgradeReplaceCommand(os.Args[2:]))
@@ -483,7 +473,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
 	// 2. config/config.yaml (CWD-relative, standard layout)
-	configPath := cli.FindConfigPath(model.DataDir)
+	configPath := platform.FindConfigPath(model.DataDir)
 
 	data, err := os.ReadFile(configPath)
 	if err == nil {
@@ -869,9 +859,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Set global port for cookie name scoping (multi-instance on same hostname)
 	model.ServerPort = port
-
-	// Load agent configurations (set ClawbenchBin first for placeholder replacement)
-	model.ClawbenchBin = absBinPath
 
 	// 1. Detect installed CLIs and write new agents to DB
 	model.SyncDiscoverAgentsDB(service.WriteDB())

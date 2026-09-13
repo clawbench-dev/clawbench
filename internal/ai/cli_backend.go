@@ -139,12 +139,6 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	// any processes left behind by a crashed server instance.
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
-	// Inject CLAWBENCH_SCHEDULED=1 for anti-recursion: prevents AI from
-	// creating new scheduled tasks during a scheduled execution.
-	if req.ScheduledExecution {
-		cmd.Env = append(cmd.Env, "CLAWBENCH_SCHEDULED=1")
-	}
-
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 

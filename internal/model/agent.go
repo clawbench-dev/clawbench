@@ -115,9 +115,8 @@ func (a *Agent) SupportsACP() bool {
 }
 
 var (
-	Agents       map[string]*Agent // indexed by ID
-	AgentList    []*Agent          // ordered list for API responses
-	ClawbenchBin string            // absolute path to clawbench binary for {{CLAWBENCH_BIN}} replacement
+	Agents    map[string]*Agent // indexed by ID
+	AgentList []*Agent          // ordered list for API responses
 )
 
 // GetDefaultAgentID returns the default agent ID for new sessions.

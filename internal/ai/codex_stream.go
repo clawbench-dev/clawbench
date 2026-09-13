@@ -461,13 +461,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 
 	cmd := exec.CommandContext(ctx, cmdBinary, fullArgs...)
 	cmd.Dir = req.WorkDir
-	// Inject CLAWBENCH_SCHEDULED=1 for anti-recursion (ISS-085):
-	// prevents AI from creating new scheduled tasks during a scheduled execution.
-	if req.ScheduledExecution {
-		cmd.Env = append(os.Environ(), "CLAWBENCH_SCHEDULED=1")
-	} else {
-		cmd.Env = os.Environ() // inherit current environment
-	}
+	cmd.Env = os.Environ() // inherit current environment
 
 	isResume := req.Resume && req.SessionID != ""
 
