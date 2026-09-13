@@ -167,11 +167,11 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Create button in header toolbar */
@@ -179,7 +179,7 @@ onMounted(refresh)
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--accent-color, #0066cc);
   color: #fff;
   cursor: pointer;
@@ -187,7 +187,7 @@ onMounted(refresh)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 /* Header icon button (refresh, etc.) */
@@ -195,7 +195,7 @@ onMounted(refresh)
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -203,11 +203,11 @@ onMounted(refresh)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -242,13 +242,13 @@ onMounted(refresh)
 .task-list-body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-4);
 }
 
 .task-items-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .task-loading,
@@ -257,26 +257,26 @@ onMounted(refresh)
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
 }
 
 .empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .task-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px;
+  padding: var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   position: relative;
   overflow: hidden;
 }
@@ -294,7 +294,7 @@ onMounted(refresh)
 }
 
 .task-item.completed {
-  opacity: 0.65;
+  opacity: var(--opacity-soft);
   background: var(--bg-tertiary, #f1f3f5);
 }
 
@@ -302,14 +302,14 @@ onMounted(refresh)
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .task-item-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -357,8 +357,8 @@ onMounted(refresh)
 
 .task-item-unread {
   font-size: var(--font-size-2xs);
-  padding: 2px 6px;
-  border-radius: 10px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
   font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #0066cc);
   color: #fff;
@@ -390,8 +390,8 @@ onMounted(refresh)
 
 .task-item-status {
   font-size: var(--font-size-2xs);
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   text-transform: uppercase;
@@ -424,7 +424,7 @@ onMounted(refresh)
 
 @keyframes task-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.3); }
 }
 
 .task-item.is-running {
@@ -440,7 +440,7 @@ onMounted(refresh)
 .task-item-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   min-width: 0;
@@ -450,7 +450,7 @@ onMounted(refresh)
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .meta-icon {

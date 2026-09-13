@@ -548,9 +548,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
@@ -559,24 +559,24 @@ onMounted(() => {
 .form-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .saving-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   background: rgba(34, 197, 94, 0.1);
   color: #16a34a;
-  padding: 6px 12px;
+  padding: var(--space-3) var(--space-6);
   border-radius: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 /* Accent (green) saving strip keeps its own tint; the primary button's
@@ -593,10 +593,10 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-section.flex-fill {
@@ -604,12 +604,12 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
-  padding: 10px;
-  gap: 10px;
+  padding: var(--space-5);
+  gap: var(--space-5);
 }
 
 .section-title {
-  margin: 0 0 2px 0;
+  margin:0 0 var(--space-1) 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -618,7 +618,7 @@ onMounted(() => {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .prompt-group {
@@ -636,10 +636,9 @@ onMounted(() => {
 }
 
 .form-input,
-.form-select,
 .form-textarea {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 0;
   font-size: var(--font-size-md);
@@ -647,7 +646,7 @@ onMounted(() => {
   color: var(--text-primary, #1a1a1a);
   box-sizing: border-box;
   outline: none;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   font-family: inherit;
 }
 
@@ -667,46 +666,15 @@ onMounted(() => {
   color: var(--text-muted, #9ca3af);
 }
 
-.select-wrapper {
-  position: relative;
-  display: block;
-}
-
-.select-wrapper.inline {
-  display: inline-block;
-}
-
-.select-wrapper .form-select {
-  appearance: none;
-  padding-right: 32px;
-  cursor: pointer;
-}
-
-.select-wrapper.inline .form-select {
-  padding-right: 24px;
-  padding-left: 8px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-}
-
-.select-icon {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-muted, #9ca3af);
-  pointer-events: none;
-}
-
 /* Agent display button */
 .agent-display {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -714,7 +682,7 @@ onMounted(() => {
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .agent-display:focus {
@@ -733,7 +701,7 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -745,12 +713,12 @@ onMounted(() => {
 
 .agent-display-tags {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .agent-display-tag {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
+  padding:1px var(--space-2);
   border-radius: 0;
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
@@ -806,39 +774,39 @@ onMounted(() => {
   color: #ef4444;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-error-general {
   background: rgba(239, 68, 68, 0.1);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border-radius: 0;
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 /* Preset buttons */
 .preset-buttons {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 /* Event trigger configuration */
 .event-type-group + .event-type-group {
-  margin-top: 10px;
+  margin-top: var(--space-5);
 }
 
 .event-type-group-label {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 .event-type-checks {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: var(--space-3) 14px;
 }
 
 .checkbox-label {
@@ -854,10 +822,10 @@ onMounted(() => {
    user can tell it will be injected verbatim and cannot be changed. */
 .event-context-block {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-secondary, #f9fafb);
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   color: var(--text-secondary, #4b5563);
@@ -867,15 +835,15 @@ onMounted(() => {
 }
 
 .preset-btn {
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-6);
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -895,18 +863,18 @@ onMounted(() => {
 .time-selectors {
   background: var(--bg-tertiary, #f3f4f6);
   border-radius: 0;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color, #e5e7eb);
 }
 
 .time-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .mt-2 {
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 .time-column {
@@ -930,7 +898,7 @@ onMounted(() => {
 /* Weekday buttons */
 .weekday-buttons {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -938,7 +906,7 @@ onMounted(() => {
   width: 32px;
   height: 32px;
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
   font-size: var(--font-size-sm);
@@ -947,7 +915,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -967,8 +935,8 @@ onMounted(() => {
 .cron-display {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-tertiary, #f3f4f6);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 0;
@@ -990,14 +958,14 @@ onMounted(() => {
 .radio-group {
   display: flex;
   flex-direction: row;
-  gap: 16px;
+  gap: var(--space-7);
   flex-wrap: wrap;
 }
 
 .radio-label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   cursor: pointer;
@@ -1015,8 +983,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
