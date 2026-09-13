@@ -190,24 +190,29 @@ onBeforeUnmount(() => {
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   transition: background var(--duration-base) ease;
 }
-/* The line must sit on the device pixel grid, or it antialiases across two
-   columns and reads as a double border. `left: 50%` + translateX(-50%) can't do
-   that: the divider is 1px wide at rest (3px under `pointer: coarse`), so 50%
-   resolves to a half pixel and the line straddles two columns.
-   `(100% - 1px) / 2` centres it on whole pixels for both those widths — and it
-   keeps working while dragging, where the divider widens and the line rides on
-   the tinted band anyway. */
-.split-view__divider--horizontal .split-view__gutter-line {
-  left: calc((100% - 1px) / 2);
-  top: 0;
-  bottom: 0;
-  width: 1px;
-}
+/* The line fills the divider, so its thickness is the divider's: 1px on
+   desktop, 3px under `pointer: coarse` (which widens the divider precisely so
+   the resting line reads as draggable on touch). Centring a 1px line inside a
+   3px divider left a 1px gap on either side, which read as stray padding.
+   `inset: 0` also keeps it on the pixel grid for both widths. */
+.split-view__divider--horizontal .split-view__gutter-line,
 .split-view__divider--vertical .split-view__gutter-line {
-  top: calc((100% - 1px) / 2);
-  left: 0;
-  right: 0;
-  height: 1px;
+  inset: 0;
+}
+/* While dragging, the divider widens into a tinted band and the line narrows to
+   a crisp centre stripe instead of filling that band. 2px rather than 1px
+   because a 12px band cannot centre a 1px line on a whole pixel. */
+.split-view__divider--horizontal:active .split-view__gutter-line,
+.split-view__divider--horizontal.split-view__divider--dragging .split-view__gutter-line {
+  right: auto;
+  left: calc((100% - 2px) / 2);
+  width: 2px;
+}
+.split-view__divider--vertical:active .split-view__gutter-line,
+.split-view__divider--vertical.split-view__divider--dragging .split-view__gutter-line {
+  bottom: auto;
+  top: calc((100% - 2px) / 2);
+  height: 2px;
 }
 .split-view__divider:active .split-view__gutter-line,
 .split-view__divider--dragging .split-view__gutter-line {

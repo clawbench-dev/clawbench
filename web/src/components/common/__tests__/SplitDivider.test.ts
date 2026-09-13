@@ -207,32 +207,41 @@ describe('SplitDivider — drag highlight survives touch', () => {
     )
   })
 
-  it('keeps the resting line on the device pixel grid', () => {
-    // The divider is 1px wide at rest (3px under `pointer: coarse`). Centring
-    // with `left: 50%` + translateX(-50%) resolves to a 0.5px offset, which the
-    // compositor antialiases across two columns — the separator then looks like
-    // a double border. `(100% - 1px) / 2` centres it on whole pixels instead.
+  it('fills the divider with the line at rest (no stray gap, no half pixel)', () => {
+    // The divider is 1px wide on desktop and 3px under `pointer: coarse`, where
+    // the widening exists so the line reads as draggable on touch. Centring a
+    // 1px line inside a 3px divider leaves a 1px gap either side — which reads
+    // as stray padding. Filling the box gives the line the divider's own width
+    // and keeps it on the pixel grid at both widths.
     const src = readSource()
     const style = src.slice(src.indexOf('<style'))
 
-    const ruleFor = (dir: string) => {
-      const m = style.match(
-        new RegExp(
-          `\\.split-view__divider--${dir} \\.split-view__gutter-line \\{([^}]*)\\}`,
-        ),
-      )
-      expect(m, `${dir} gutter-line rule must exist`).not.toBeNull()
-      return m![1]
-    }
+    // The two orientations share one rule (they differ only in which axis
+    // `inset` covers), so match the combined selector.
+    const m = style.match(
+      /\.split-view__divider--horizontal \.split-view__gutter-line,\s*\.split-view__divider--vertical \.split-view__gutter-line \{([^}]*)\}/,
+    )
+    expect(m, 'resting gutter-line rule must exist').not.toBeNull()
+    const resting = m![1]
+    expect(resting, 'resting line must fill the divider').toContain('inset: 0')
+    expect(resting, 'resting line must not use 50%').not.toContain('50%')
+    expect(resting, 'resting line must not be transformed').not.toContain('transform')
+    // A fixed width/height would reintroduce the gap on touch.
+    expect(resting, 'resting line must not hard-code its thickness').not.toMatch(
+      /\b(width|height):\s*1px/,
+    )
+  })
 
-    for (const dir of ['horizontal', 'vertical']) {
-      const resting = ruleFor(dir)
-      expect(resting, `${dir} resting line must not use 50%`).not.toContain('50%')
-      expect(resting, `${dir} resting line must not be transformed`).not.toContain('transform')
-      expect(
-        resting,
-        `${dir} resting line must centre with (100% - 1px) / 2`,
-      ).toContain('calc((100% - 1px) / 2)')
-    }
+  it('centres the drag stripe on a whole pixel', () => {
+    // While dragging the divider widens to 12px; a 1px stripe cannot be centred
+    // there on a whole pixel, so the rule widens it to 2px.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+    expect(style).toMatch(
+      /\.split-view__divider--horizontal\.split-view__divider--dragging \.split-view__gutter-line \{[^}]*calc\(\(100% - 2px\) \/ 2\)/,
+    )
+    expect(style).toMatch(
+      /\.split-view__divider--vertical\.split-view__divider--dragging \.split-view__gutter-line \{[^}]*calc\(\(100% - 2px\) \/ 2\)/,
+    )
   })
 })
