@@ -2,6 +2,8 @@
 
 任务让 AI 按计划自动执行——每天凌晨跑代码审查、每周一生成文档、每小时检查 GitHub Issues。任务由 cron 调度器驱动，到点后启动 AI 后端执行，完成后推送摘要通知。执行结果可以续接为交互式对话，让用户从 AI 的自动执行结果直接进入追问模式。这套机制让 AI 从"被动应答"变为"主动执行"，是 ClawBench 区别于普通聊天界面的核心能力。
 
+任务有两种触发方式（`triggerMode`）：**cron**（默认，按表达式定时）与 **event**（由 GitHub/GitLab 事件唤起，见 [Forge 集成](forge-integration.md)）。两者共用同一套执行、摘要、通知与续接链路，只在"何时触发"和"prompt 是否注入事件上下文"上分叉。
+
 ## 流程图
 
 ### 任务从创建到执行
@@ -38,11 +40,25 @@ flowchart LR
     B -->|trigger| E
 ```
 
+### 两种触发方式
+
+```mermaid
+flowchart TD
+    A[创建任务] --> B{触发方式?}
+    B -->|cron| C[解析 cron 表达式 + 算 NextRunAt]
+    B -->|event| D[校验事件订阅 + 注册事件匹配]
+    C --> E[cron 到点执行]
+    D --> F[仓库事件到达执行]
+    E --> G[共用执行/摘要/通知链路]
+    F --> G
+```
+
 ## 功能与设计要点
 
 ### 功能清单
 
 - **cron 调度**：支持标准 cron 表达式定义执行计划（如 `0 10 * * 1` 每周一 10:00）。这是最灵活的调度方式，覆盖了从"每小时"到"每月"的各种需求
+- **事件触发**：任务可选「触发方式：事件」，订阅 GitHub/GitLab 事件（`issue.opened`、`pr.merged` 等，按 kind 分域，merged 仅 PR）。事件到达即执行，prompt 前置只读的事件上下文块（按事件类型条件渲染适用变量）。让任务从"按时间跑"扩展到"仓库有事就跑"，是 [Forge 集成](forge-integration.md) 的自动化出口
 - **手动触发**：`trigger` 命令立即执行一次任务，不影响 cron 计划。适合"我想现在跑一次看看效果"的场景。仅适用于 cron 任务——事件触发任务的 prompt 依赖触发时注入的事件上下文（`{{TITLE}}` / `{{URL}}` 等），手动执行没有事件可注入，后端对这类任务返回 409 `TaskEventTriggerUnsupported`，前端也不展示执行按钮
 - **暂停与恢复**：暂停任务不删除 cron 条目，恢复后继续按计划执行。用户临时不需要某个任务时可以暂停而非删除
 - **执行限制**：`maxRuns` 限制任务最大执行次数，`repeatMode` 控制重复模式。避免任务无限执行消耗资源
@@ -54,7 +70,8 @@ flowchart LR
 
 ### 设计要点
 
-- **防递归靠提示词层**：任务管理指令只在用户显式使用 `/cb-task` 时注入（`internal/handler/clawbench_command.go`），因此定时执行期间 AI 的上下文中不含创建任务的用法说明。历史上还依赖过 `CLAWBENCH_SCHEDULED=1` 环境变量与 CLI 内的守卫，二者随 `clawbench task` 子命令移除而失效；`ScheduledExecution` 标志仍传给后端，但仅用于 pi 的 `--no-session`，**不承担防递归职责**（`scheduler.go` 中声称它在 handler 层防递归的注释已过时）
+- **防递归靠提示词层**：任务管理指令只在用户显式使用 `/cb-task` 时注入（`internal/handler/clawbench_command.go`），因此定时执行期间 AI 的上下文中不含创建任务的用法说明。历史上还依赖过 `CLAWBENCH_SCHEDULED=1` 环境变量与 CLI 内的守卫，二者随 `clawbench task` 子命令移除而失效；`ScheduledExecution` 标志仍传给后端，但仅用于 pi 的 `--no-session`，**不承担防递归职责**（`scheduler.go` 中声称它在 handler 层防递归的注释已过时）。事件触发任务另有身份级防递归——抑制 AI 自身账号产生的写操作事件（见 [Forge 集成](forge-integration.md)）
+- **触发方式在调度器入口分叉**：`triggerMode` 为 `event` 的任务跳过 cron 解析与 `NextRunAt` 计算，改为注册到事件匹配表；加载时排除出 cron 注册、恢复时重新加入事件监听。两种任务共用 `SessionExecutor` 执行，差异仅在于 prompt 是否注入事件上下文
 - **执行摘要由 AI 生成**：任务执行完成后，系统调用 summarizer 将 AI 回复压缩为摘要，用于推送通知和历史记录。摘要保留 Markdown 格式（与 TTS 摘要不同），约 30% 原文长度
 - **续接对话继承会话身份**：续接的新会话继承源会话的 Agent、模型、思考深度和 `external_session_id`，保证对话上下文和 CLI 会话连续性。已存在的续接会话会被复用（已归档的自动恢复），避免重复创建
 - **硬删除而非归档**：与聊天会话不同，任务使用硬删除。任务定义是用户主动管理的配置项，删除意味着"我不再需要这个任务"

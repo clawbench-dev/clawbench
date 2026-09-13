@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、任务系统。
+ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
 
 规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。
 
@@ -62,7 +62,7 @@ npm test                                              # Vitest 前端测试
 | `internal/handler/` | 全部 `/api/` HTTP 端点（经 `middleware.Auth` 鉴权）+ WebSocket 聊天流式推送 |
 | `internal/api/` | `go:embed` OpenAPI 规格，按 operationId 渲染内置斜杠命令注入给 AI 的接口提示片段 |
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
-| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；含 SessionCleanupWorker / BingWallpaperWorker 等后台 worker |
+| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）等后台 worker |
 | `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；14 个后端子包；CLI/ACP 均支持无进度看门狗 |
 | `internal/model/` | 数据模型、后端注册表、模型发现、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
@@ -70,6 +70,7 @@ npm test                                              # Vitest 前端测试
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
 | `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放 |
 | `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发 |
+| `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析、SSRF 防护、per-host 令牌桶限流、事件推导引擎 |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
 | `internal/summarize/` | 摘要与推荐的底层引擎（多后端 provider、多 pass 压缩、`StripMarkdown`、`RecommendNextStep`） |
