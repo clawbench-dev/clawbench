@@ -2,52 +2,34 @@
 
 ## 项目概述
 
-ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、定时任务系统。
+ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、定时任务系统。
 
-规格文档：`docs/spec/`
+规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。
 
 ## 构建与运行
 
 ```bash
-./build.sh                # 完整构建（Go 二进制 + Vue 前端 + Excalidraw 独立构建）
-./build.sh --windows      # 交叉编译：Windows amd64
-./build.sh --linux        # 交叉编译：Linux amd64
-./build.sh --linux-arm64  # 交叉编译：Linux arm64
-./build.sh --darwin       # 交叉编译：macOS arm64
+# 构建
+./build.sh                                            # Go 二进制 + Vue 前端 + Excalidraw
+./build.sh --windows|--linux|--linux-arm64|--darwin   # 交叉编译
+go build -o clawbench ./cmd/server                    # 仅 Go 二进制
 
-./dev-server.sh           # 开发模式（Vite HMR 代理到后端）
-./dev-server.sh --fg      #   前台运行
-./dev-server.sh --stop    #   停止
-./dev-server.sh --restart #   重启
+# 开发
+./dev-server.sh [--fg|--stop|--restart]               # Vite HMR 代理到后端
+./clawbench [--port 8080] [--data-dir /data/.clawbench]   # 直接运行，默认端口 20000
 
-./clawbench               # 直接运行（前台，默认端口 20000）
-./clawbench --port 8080   #   指定端口
-./clawbench --data-dir /data/.clawbench  #   自定义数据目录
+# 测试与检查
+go test ./...                                         # 单包：go test ./internal/ai/...
+npm test                                              # Vitest 前端测试
+./scripts/pre-push-checks.sh [--skip-coverage|--skip-android]   # 推送前全量检查
 
-go build -o clawbench ./cmd/server   # 仅构建 Go 二进制
-go test ./...                        # 所有 Go 测试
-go test ./internal/ai/...            # 指定包测试
-npm test                             # Vitest 前端测试
-
-./scripts/pre-push-checks.sh              # 推送前全量检查（lint + test + build + typecheck + 覆盖率）
-./scripts/pre-push-checks.sh --skip-coverage  # 跳过覆盖率门槛
-./scripts/pre-push-checks.sh --skip-android   # 跳过 Android 覆盖率
-
-./build.sh --restart              # 编译 + 后台重启 ClawBench（可在 Web 终端内执行）
-./build.sh --restart-skip-build   # 跳过编译，仅重启
-./build.sh --restart --restart-port=8080  # 重启并指定端口
+# 编译并后台重启（可在 Web 终端内执行）
+./build.sh --restart [--restart-skip-build] [--restart-port=8080]
 ```
 
 ### 运维：僵尸进程清理
 
-`./scripts/kill-zombies.sh` 清理僵尸（defunct）进程及其孤儿进程树。僵尸进程无法直接 kill，只能靠父进程 reap 或杀掉父进程后由 init 收养清理。
-
-```bash
-./scripts/kill-zombies.sh                  # dry-run：列出僵尸与将要杀的进程树
-./scripts/kill-zombies.sh --kill           # 实际清理（带确认）
-./scripts/kill-zombies.sh --kill --force   # 跳过确认
-./scripts/kill-zombies.sh --port 8080      # 额外保护 8080 端口的服务器
-```
+`./scripts/kill-zombies.sh` 清理僵尸（defunct）进程及其孤儿进程树。默认 dry-run 列出僵尸与将要杀的进程树；`--kill` 实际清理（`--force` 跳过确认）；`--port 8080` 额外保护 8080 端口的服务器。
 
 **安全规则（脚本默认强制执行）：**
 
@@ -60,42 +42,36 @@ npm test                             # Vitest 前端测试
 
 前端 JS 与 Android 原生日志统一回传服务器，汇入**单文件** `{data-dir}/logs/client.log`，行内用 `[js]` / `[android]` 标记区分来源。
 
-- **开启设置**：设置 → 调试（Debug）→「调试日志捕获」（`logCapture`，默认关）。开启后：
-  - **App 模式（Android）**：前端 JS 日志跳过 console 与 native 桥，仅 HTTP 上报一份（单份，无 `WebView:LOG` 重复与 `[object Object]` 失真）；
-  - **网页模式**：console 照常输出 + HTTP 上报；
-  - 关闭时日志只在本地可见（logcat / console），不发服务器。
+- **开关**：设置 → 调试 →「调试日志捕获」（`logCapture`，默认关）。开启后 App 模式（Android）的 JS 日志仅 HTTP 上报一份（跳过 console 与 native 桥，避免 `WebView:LOG` 重复与 `[object Object]` 失真），网页模式则 console + HTTP 双份；关闭时日志只在本地（logcat / console）可见。
 - **JS（`web/src/utils/appLog.ts`）**：批量 POST `/api/client-log`（2s / 200 条缓冲 / 200 条每请求），`source="js"` → `[js]` 行。
 - **Android（`android/app/.../AppLog.java`）**：捕获开启时每 3s POST `/api/client-log`，`source="android"` → `[android]` 行。
 - **服务端（`internal/handler/android_log.go`）**：`ServeClientLog` 统一写 `{LogDir}/logs/client.log`，行格式 `2006-01-02T15:04:05.000 [js] I/ChatStream: msg`（换行转义为 `\n`），50MiB 轮转到 `client.log.1`。端点无鉴权（仅写日志、不入库）。
-- **查看**：`tail -f {data-dir}/logs/client.log`、`grep '\[js\]' {data-dir}/logs/client.log`（例：`tail -f /opt/clawbench-green-data/logs/client.log`）。
+- **查看**：`tail -f {data-dir}/logs/client.log`、`grep '\[js\]' {data-dir}/logs/client.log`。
 
 ## 架构
 
 ### 后端（Go）
 
-入口：`cmd/server/main.go`
-
-核心包：
+入口：`cmd/server/main.go`。各包深度设计见 `docs/spec/`。
 
 | 包 | 职责 |
 |---|------|
-| `internal/handler/` | HTTP 端点，所有 `/api/` 路由经 `middleware.Auth` 鉴权，聊天通过 WebSocket 流式传输；含用量统计（`/api/usage/stats`）、主题壁纸（`/api/theme/local/*` 多图图库、`/api/theme/bing/*` 每日壁纸）等端点 |
-| `internal/wallpaper/` | 壁纸图片处理与磁盘布局：`Process`/`ProcessWithMaxEdge`（白名单校验/缩放/编码，PNG 保透明、JPEG 重编码、GIF/WebP/SVG 原样 + `SVGLooksSafe`；缩放上限按调用方指定——上传用 `MaxLongEdge`=2048，Bing 用 `BingMaxLongEdge`=3840 保留原生 4K，因为从 4K 缩到 2048 比直接编码更费 CPU/内存且更糊）、`FilePath`（裸名 + 扩展白名单 + symlink 安全 containment）、`ResolveActive`（mode/enabled/选中项 → 生效文件）、`BingMktForLocale`。handler 与 service worker 共用，避免 service→handler 反向依赖 |
-| `internal/service/` | 业务逻辑：聊天持久化、自动摘要、对话推荐、调度器、SQLite、Schema 迁移、Agent 存储、会话归档留存期自动清理（SessionCleanupWorker）、Bing 每日壁纸抓取（BingWallpaperWorker，常驻 + Trigger 立即同步，Trigger 可绕过启动延迟；抓取失败沿用上次缓存且**不剪枝**，剪枝保留集含配置仍引用的文件）、用量聚合（`usage_stats.go`：按维度 GROUP BY `chat_metadata`）、会话截断（Rewind/TruncateSessionAfterMessage + RAG 范围清理） |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）。14 个后端子包通过 `ai.RegisterBackend()` 注册。CLI/ACP 均支持无进度看门狗（NoProgressTimeout/stallTimeout），防止进程挂起。CodeBuddy ACP 含 Plugin Skills 竞态修复（预扫描+延迟重发）与 `~/.codebuddy/skills/` 技能扫描（YAML frontmatter 解析 → 斜杠命令 + 系统提示词注入）。ACP 子智能体内容经 `_meta` 父工具调用 id 归属（`acp_parent_link.go`，CodeBuddy 扁平键 / Claude·Qoder 嵌套键），子块按父边界隔离（累加不跨父合并），随 `ParentToolCallID` 贯穿到前端分组渲染 |
+| `internal/handler/` | 全部 `/api/` HTTP 端点（经 `middleware.Auth` 鉴权）+ WebSocket 聊天流式推送 |
+| `internal/api/` | `go:embed` OpenAPI 规格，按 operationId 渲染内置斜杠命令注入给 AI 的接口提示片段 |
+| `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
+| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；含 SessionCleanupWorker / BingWallpaperWorker 等后台 worker |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；14 个后端子包；CLI/ACP 均支持无进度看门狗 |
 | `internal/model/` | 数据模型、后端注册表、模型发现、27 个 LLM Provider |
-| `internal/speech/` | TTS：Edge TTS、Piper、Kokoro、MOSS-TTS-Nano |
-| `internal/stt/` | STT（语音输入）：vLLM Whisper，流式/非流式双端点 |
-| `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类分析（ClusterWorker：Union-Find + Sørensen-Dice） |
+| `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
+| `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
-| `internal/ws/` | WebSocket 事件通道，StreamHub 会话级扇出，Manager 广播+重连缓冲回放 |
-| `internal/ssh/` | SSH 隧道服务器 |
-| `internal/push/` | IM 机器人推送：`common/`（共享接口+会话命令）、`dingtalk/`（钉钉 Stream API）、`feishu/`（飞书 Lark SDK WebSocket+互动卡片） |
-| `internal/proxy/` | HTTP 反向代理+端口转发 |
+| `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放 |
+| `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发 |
+| `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
-| `internal/summarize/` | 文本摘要、对话推荐（next-step recommendation） |
-| `internal/system/` | 系统资源监控：CPU、内存、磁盘、网络实时采集与推送 |
-| `internal/cli/` | AI Agent 自助命令：task、rag、migrate |
+| `internal/summarize/` | 摘要与推荐的底层引擎（多后端 provider、多 pass 压缩、`StripMarkdown`、`RecommendNextStep`） |
+| `internal/system/` | 系统资源监控：CPU / 内存 / 磁盘 / 网络实时采集与推送 |
+| `internal/cli/` | AI Agent 自助命令：task、rag、upgrade-replace |
 | `internal/middleware/` | 鉴权、请求日志、panic 恢复、请求 ID |
 | `internal/platform/` | 跨平台路径解析、Shell 检测 |
 
@@ -103,43 +79,27 @@ npm test                             # Vitest 前端测试
 
 源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。
 
-Composable 按域分组：Chat、Session、Terminal、File、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。数据统计（`useUsageStats` + `web/src/components/stats/`）与壁纸主题（`web/src/utils/themeBackground.ts` + `components/settings/WallpaperSetting.vue`）是相对独立的功能分组。
+Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
-组件按域分组：Chat、File、Terminal、Git、Session/Agent、Task、Settings、Common。
-
-`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `public/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载它，Vue 主包不包含 React 依赖。
+`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `public/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
 
 `web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
 ## 开发规则
 
-- **前端必须使用 appLog**：所有前端代码使用 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`（测试文件除外）。Tag 约定：短 PascalCase 模块名。
-- **Android 必须使用 AppLog**：所有 Android 代码使用 `AppLog.d/i/w/e()`，禁止原始 `android.util.Log`（`AppLog.java` 本身和测试除外）。
+- **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
-- **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、query 参数、请求体字段、响应字段、状态码）时，必须同步更新 `docs/spec/api/openapi.yaml`。
-
-  该文档是**手工维护**的，不会自动生成，因此极易与实际实现脱节。历史教训：曾出现 `POST /api/ai/chat` 的 `prompt` 实际是 `message`、`PATCH /api/ai/session/update` 的 `mode` 实际是 `modeId`、RAG 四个端点的 `message_id` 实际是 `id`、`/api/file/watch/update` 实为 PUT 却写成 POST、文档承诺 `view=summary` 但后端根本不读等 40+ 处不一致。
-
-  硬性要求：
-
-  - 字段名、参数名、方法**必须从 handler 代码里抄**（对照 `decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`），**禁止凭路由名望文生义**；
-  - 路径注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`；删除端点时须从文档移除，并留意通配路由（`/api/tasks/`、`/api/agents/`、`/api/file/` 等）的子路径分发；
-  - 鉴权变化须同步 `security` 标注（默认 `cookieAuth`，免鉴权端点显式写 `security: []`）；
-  - 改完必须自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。
-
-- **纯前端改动完成后必须自觉编译**：若本次改动只涉及前端（`web/src/`、`web/index.html` 等，未动 Go / Android），改完并跑通测试后**直接执行前端编译**，供用户立即在浏览器/App 中测试，无需用户再要求：
+- **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、参数、请求 / 响应字段、状态码）都必须同步更新 `internal/api/openapi.yaml`（已从 `docs/spec/api/` 迁入以支持 `go:embed`）。
+  - 字段名、参数名、方法**必须从 handler 代码里抄**（`decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`），**禁止凭路由名望文生义**。
+  - 路由唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`；`internal/handler/openapi_drift_test.go` 双向校验路径与鉴权（**不校验字段名**）。
+  - 完整维护清单见 `docs/spec/api/README.md`。
+- **纯前端改动完成后必须自觉编译**：若只涉及 `web/src/`、`web/index.html` 等（未动 Go / Android），跑通测试后直接构建并同步 embed 目录，供用户立即在浏览器 / App 中测试，无需用户再要求：
 
   ```bash
-  cd web && npm run build          # 或项目根目录：npm run build
-  ```
-
-  产物输出到 `public/`，并同步到 Go embed 目录（服务端从 `internal/frontend/dist` 读取内嵌资源，不同步则运行中的服务看不到改动）：
-
-  ```bash
+  cd web && npm run build        # 或项目根目录：npm run build
   rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
   ```
 
-  注意：`internal/frontend/dist` 是 gitignore 的构建产物，只影响本地/部署运行，不进提交。
-- **覆盖率门槛**：每 PR/推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
+  `internal/frontend/dist` 是 gitignore 的构建产物，不同步则运行中的服务看不到改动，不进提交。
+- **覆盖率门槛**：每 PR / 推送到 main 强制执行——包级覆盖率不低于基线、变更行覆盖率 ≥ 80%。
 - **推送前必须运行本地检查**：`./scripts/pre-push-checks.sh`
-

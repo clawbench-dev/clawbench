@@ -210,7 +210,7 @@ func requireSessionID(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 // Route describes one registered HTTP route. The route table is built once by
 // RegisterRoutes and exposed via RegisteredRoutes so tests can assert that the
-// OpenAPI spec (docs/spec/api/openapi.yaml) and the live mux stay in sync.
+// OpenAPI spec (internal/api/openapi.yaml) and the live mux stay in sync.
 //
 // Pattern keeps the http.ServeMux form: an exact path ("/api/tasks") or a
 // subtree prefix ending in "/" ("/api/tasks/"). Authenticated records whether
