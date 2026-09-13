@@ -873,13 +873,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.Error("failed to write user message for task", slog.String("err", err.Error()))
 	}
 
-	// Build chat request — no session resume, standalone execution
-	// ScheduledExecution flag prevents recursive task creation at the
-	// handler level: even if the AI outputs a <schedule-proposal> tag,
-	// the handler will not create a task from it.
-	// Anti-recursion is also enforced by the /cb-task on-demand injection
-	// mechanism: task instructions are only injected when the user
-	// explicitly uses /cb-task, so they never appear during scheduled execution.
+	// Build chat request — no session resume, standalone execution.
+	//
+	// Anti-recursion relies on the prompt layer alone: the task-management
+	// instructions are injected only when the user explicitly types /cb-task,
+	// so they never appear in a scheduled execution's context. ScheduledExecution
+	// is still set below, but it only controls backend session handling (pi's
+	// --no-session) — it is NOT a handler-level guard.
 	systemPrompt := agent.SystemPrompt
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {

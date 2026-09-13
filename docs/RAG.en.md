@@ -10,7 +10,7 @@ ClawBench continuously chunks chat messages into the main SQLite database. FTS5 
 Chat → Indexer → text extraction → chunks → SQLite chat_chunks + FTS5
                                           └→ OpenAI-compatible embeddings → vec0
 
-Agent → clawbench rag / RAG API → RRF hybrid search → history snippets
+AI agents → RAG API (HTTP) → RRF hybrid search → history snippets
 ```
 
 All RAG data lives in `<data-dir>/ClawBench.db`. ClawBench does not create `rag.duckdb` or a separate vector database.
@@ -66,23 +66,23 @@ The Indexer reads unindexed messages, extracts user text and assistant `text` bl
 
 Search fuses FTS5 and vector candidates. When embeddings are unavailable, only full-text search runs. Changing to a model with a different vector dimension rebuilds the vector index but preserves SQLite text chunks for automatic backfill.
 
-Use the CLI for local agent access:
+Call the HTTP API directly:
 
 ```bash
-clawbench rag search --project /path/to/project --query "SSH tunnel keepalive" --limit 20 --exclude-session-id abc-123
-clawbench rag message --project /path/to/project --id 42
-clawbench rag session --project /path/to/project --session-id abc-123
+# Semantic / full-text hybrid search (POST; the query field is named q)
+curl -X POST http://localhost:20000/api/rag/search \
+  -H 'Content-Type: application/json' \
+  -b 'clawbench_project=/path/to/project' \
+  -d '{"q":"SSH tunnel keepalive","limit":20,"exclude_session_id":"abc-123"}'
+
+# Fetch a full message by ID (includes thinking / tool_use blocks)
+curl 'http://localhost:20000/api/rag/message?id=42'
+
+# Fetch every message in a session
+curl 'http://localhost:20000/api/rag/session?id=abc-123'
 ```
 
-The corresponding HTTP endpoints are:
-
-```text
-GET /api/rag/search?q=...&limit=20
-GET /api/rag/message?id=42
-GET /api/rag/session?session_id=abc-123
-```
-
-Search accepts `project`, `backend`, `role`, `session_id`, `exclude_session_id`, `from`, and `to` filters. HTTP endpoints require authentication, with the normal localhost bypass.
+`POST /api/rag/search` accepts `q`, `limit`, `backend`, `role`, `session_id`, `exclude_session_id`, `from`, and `to`. Project scope travels in the `clawbench_project` cookie; localhost requests skip authentication per the auth middleware rules.
 
 ## Deletion and Maintenance
 

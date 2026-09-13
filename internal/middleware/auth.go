@@ -11,7 +11,8 @@ import (
 )
 
 // IsLocalhost returns true if the request originates from the local machine.
-// CLI subcommands (clawbench task, clawbench rag) always connect from localhost.
+// The AI subprocesses that serve built-in slash commands always connect from
+// localhost, as does any locally-run tool.
 func IsLocalhost(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

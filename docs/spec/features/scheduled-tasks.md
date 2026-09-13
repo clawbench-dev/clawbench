@@ -18,7 +18,7 @@ sequenceDiagram
     handler->>scheduler: 添加 cron 条目
     Note over scheduler: cron 触发
     scheduler->>scheduler: 检查 repeatMode/maxRuns
-    scheduler->>AI后端: ExecuteStream(prompt, CLAWBENCH_SCHEDULED=1)
+    scheduler->>AI后端: ExecuteStream(prompt, ScheduledExecution=true)
     AI后端-->>scheduler: 流式执行
     Note over AI后端: 执行完成
     scheduler->>scheduler: 记录执行结果
@@ -54,7 +54,7 @@ flowchart LR
 
 ### 设计要点
 
-- **CLAWBENCH_SCHEDULED=1 防递归**：定时执行的 AI 会话设置此环境变量，AI 识别后直接执行任务而非尝试创建新的定时任务——这是提示词层面而非代码层面的防递归机制
+- **防递归靠提示词层**：任务管理指令只在用户显式使用 `/cb-task` 时注入（`internal/handler/clawbench_command.go`），因此定时执行期间 AI 的上下文中不含创建任务的用法说明。历史上还依赖过 `CLAWBENCH_SCHEDULED=1` 环境变量与 CLI 内的守卫，二者随 `clawbench task` 子命令移除而失效；`ScheduledExecution` 标志仍传给后端，但仅用于 pi 的 `--no-session`，**不承担防递归职责**（`scheduler.go` 中声称它在 handler 层防递归的注释已过时）
 - **执行摘要由 AI 生成**：任务执行完成后，系统调用 summarizer 将 AI 回复压缩为摘要，用于推送通知和历史记录。摘要保留 Markdown 格式（与 TTS 摘要不同），约 30% 原文长度
 - **续接对话继承会话身份**：续接的新会话继承源会话的 Agent、模型、思考深度和 `external_session_id`，保证对话上下文和 CLI 会话连续性。已存在的续接会话会被复用（已归档的自动恢复），避免重复创建
 - **硬删除而非归档**：与聊天会话不同，定时任务使用硬删除。任务定义是用户主动管理的配置项，删除意味着"我不再需要这个任务"

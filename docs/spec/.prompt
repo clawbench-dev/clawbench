@@ -43,7 +43,7 @@ docs/spec/
 │   ├── self-upgrade.md             # 应用自升级
 │   ├── local-file-serving.md       # 本地文件服务
 │   ├── docker-deployment.md        # Docker 部署
-│   ├── cli-reference.md            # CLI 子命令
+│   ├── cli-reference.md            # CLI 子命令（仅 upgrade-replace）
 │   └── bugfix-workflow.md          # Bugfix 工作流
 └── client/                          # 客户端
     ├── frontend-architecture.md    # 前端架构
