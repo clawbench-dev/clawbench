@@ -28,6 +28,12 @@ func setupRecentProjectsDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
+	// A :memory: database is per-connection: without pinning the pool to one
+	// connection, a second pooled connection opens a *fresh empty* database and
+	// the schema created below is invisible to it. That surfaced as a flaky
+	// "no such table: recent_projects" once a query landed on another
+	// connection.
+	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(recentProjectsSchema)
 	assert.NoError(t, err)
