@@ -1009,6 +1009,13 @@ watch(inputText, () => {
 let lastCaret = -1
 function onTextareaSelectionChange() {
   if (historyNavSuppressMenu) return
+  // selectionchange is a document-level event: it also fires when the user
+  // selects text anywhere else — e.g. clicking a chat message to select a word.
+  // The caret is only meaningful while the textarea owns focus. Refreshing on
+  // an unfocused change reopens the menu that the blur just closed, so a click
+  // on chat text appeared to "not close" the menu (it closed, then immediately
+  // reopened) and needed several clicks to win.
+  if (!isTextareaFocused.value) return
   const caret = currentCaret()
   if (caret !== lastCaret) {
     lastCaret = caret

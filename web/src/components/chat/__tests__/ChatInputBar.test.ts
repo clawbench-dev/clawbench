@@ -1589,6 +1589,51 @@ describe('ChatInputBar', () => {
     store.state.currentDir = ''
   })
 
+  it('a stray document selectionchange after blur must not reopen the @ menu', async () => {
+    // selectionchange is document-level: clicking chat message text to select a
+    // word fires it. Refreshing then reopened the menu the blur had just closed,
+    // which read as "clicking blank space does not close the menu".
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // Blur closes it (as an outside click would).
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    // A document-level selectionchange (text selected elsewhere) must not reopen.
+    document.dispatchEvent(new Event('selectionchange'))
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('a stray document selectionchange after blur must not reopen the slash menu', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+
+    document.dispatchEvent(new Event('selectionchange'))
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
   it('blur closes both completion menus together', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = 'src'
