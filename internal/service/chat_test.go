@@ -362,7 +362,7 @@ func TestCreateSession_DoesNotLockGeneratedTitle(t *testing.T) {
 }
 
 // TestAddChatMessage_AutoTitleSkippedForScheduledSession verifies that a
-// scheduled task session keeps its created title (⏰ <task name>) instead of
+// task session keeps its created title (⏰ <task name>) instead of
 // being overwritten by the task prompt on the first message.
 func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
 	setupDB(t)

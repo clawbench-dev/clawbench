@@ -955,7 +955,7 @@ In `web/src/components/chat/ContentBlocks.vue`, replace the summary-mode `<templ
         <span v-if="toolCallSummary(tc)" class="tool-summary">{{ toolCallSummary(tc) }}</span>
         <CheckCircle2 :size="14" color="#22c55e" class="tool-check" />
       </div>
-      <!-- Scheduled task cards (real-time data fetched on demand) -->
+      <!-- Task cards (real-time data fetched on demand) -->
       <template v-if="summaryCards.taskIDs && summaryCards.taskIDs.length">
         <!-- For each taskID, resolve the task via blockTasks/scheduledTaskKeys; render the card -->
       </template>
@@ -968,7 +968,7 @@ In `web/src/components/chat/ContentBlocks.vue`, replace the summary-mode `<templ
     </template>
 ```
 
-For scheduled task cards, reuse the existing `blockTasks` machinery: since `summaryCards.taskIDs` are known, call the same batch-fetch (`fetchBatchTaskData` via `chatRender`) in an `onMounted`/`watch` when summary mode is active, then render using the existing scheduled-task card markup. To keep this task focused, add a helper in the script that, when `summaryCards` is present and has taskIDs, dispatches the same `extractScheduledTasks`-style fetch. Reuse the `taskKeyIndex`/`scheduledTaskKeys` utilities with keys derived from `summaryCards.taskIDs`.
+For task cards, reuse the existing `blockTasks` machinery: since `summaryCards.taskIDs` are known, call the same batch-fetch (`fetchBatchTaskData` via `chatRender`) in an `onMounted`/`watch` when summary mode is active, then render using the existing scheduled-task card markup. To keep this task focused, add a helper in the script that, when `summaryCards` is present and has taskIDs, dispatches the same `extractScheduledTasks`-style fetch. Reuse the `taskKeyIndex`/`scheduledTaskKeys` utilities with keys derived from `summaryCards.taskIDs`.
 
 Remove the old block-traversal summary branch. Keep the `v-show` summary text div.
 

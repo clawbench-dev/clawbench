@@ -2,7 +2,7 @@
 
 > Task ID: 17 | Agent: codebuddy
 
-你已在定时执行中，直接执行以下步骤，不要创建新的计划任务。
+你已在定时执行中，直接执行以下步骤，不要创建新的任务。
 
 **项目根目录：** 运行 `cd` 到 Git 仓库根目录（即本文件所在仓库的根目录），后续所有命令均基于该目录执行。
 
@@ -12,8 +12,8 @@
 - 如果正在修复自己的 PR（author=xulongzhe）的 CI 问题，则暂不评审其他人的 PR，优先把自己的 PR 修好。
 - 本仓库 owner 是 xulongzhe。
 - **对其他人的 PR，不要对已有 review 评论的 PR 重复评论**（见下方去重逻辑）。
-- **自己的 PR 合并策略**：用 `gh pr merge --auto --squash` 启用 GitHub 原生 auto-merge，CI 通过后由 GitHub 自动合并。计划任务不直接执行 merge。
-- **其他人的 PR 合并策略**：计划任务 review + approve 后，直接 `gh pr merge --squash --delete-branch`。
+- **自己的 PR 合并策略**：用 `gh pr merge --auto --squash` 启用 GitHub 原生 auto-merge，CI 通过后由 GitHub 自动合并。任务不直接执行 merge。
+- **其他人的 PR 合并策略**：任务 review + approve 后，直接 `gh pr merge --squash --delete-branch`。
 
 ## 步骤
 

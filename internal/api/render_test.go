@@ -197,7 +197,7 @@ func TestRenderCommand_TaskDocumentsEventSemantics(t *testing.T) {
 	out, err := RenderCommand(CommandTask)
 	require.NoError(t, err)
 
-	assert.Contains(t, out, "事件任务忽略此字段",
+	assert.Contains(t, out, "`trigger_mode=event` 时忽略此字段",
 		"repeat_mode must state it is ignored for event tasks")
 	assert.Contains(t, out, "已绑定仓库",
 		"the repository-binding precondition must be documented")

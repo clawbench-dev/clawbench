@@ -11,7 +11,7 @@ import (
 )
 
 // ForgeTaskTrigger matches freshly derived forge events against event-triggered
-// scheduled tasks and fires them.
+// tasks and fires them.
 //
 // It exists because the plain TriggerTask path drops events: taskRunning is a
 // load-or-store flag, so an event arriving while its task is already running is

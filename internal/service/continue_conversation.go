@@ -63,7 +63,7 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 	return true, existingID, nil
 }
 
-// ContinueFromExecution creates a new chat session from a scheduled task execution,
+// ContinueFromExecution creates a new chat session from a task execution,
 // copying the original session's chat_history and summaries. If a continued session
 // already exists (and is not archived), it returns the existing session ID with
 // alreadyExists=true.

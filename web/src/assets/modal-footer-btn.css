@@ -93,7 +93,7 @@
   color: #b91c1c;
 }
 
-/* Warn: amber-tinted pill (e.g. pause a scheduled task). */
+/* Warn: amber-tinted pill (e.g. pause a task). */
 .fbtn-warn {
   background: color-mix(in srgb, #ca8a04 15%, var(--bg-tertiary, #f1f3f5));
   border-color: color-mix(in srgb, #ca8a04 55%, #b45309);

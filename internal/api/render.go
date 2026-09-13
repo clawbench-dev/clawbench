@@ -12,7 +12,7 @@ type Command string
 const (
 	// CommandChatSearch backs /cb-chatsearch — searching past conversations.
 	CommandChatSearch Command = "chatsearch"
-	// CommandTask backs /cb-task — managing scheduled tasks.
+	// CommandTask backs /cb-task — managing tasks.
 	CommandTask Command = "task"
 	// CommandUsage backs /cb-usage — token / cost usage statistics.
 	CommandUsage Command = "usage"

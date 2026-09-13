@@ -46,7 +46,7 @@ If no results found, answer based on your own knowledge — do NOT mention the s
 // taskInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "/cb-task ".
 // Placeholders: {{BASE_URL}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
-const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+const taskInjectTemplate = `[You have access to task management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
 Base URL: {{BASE_URL}} (no authentication needed from localhost)
 

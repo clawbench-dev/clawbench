@@ -473,7 +473,7 @@ public class BackgroundServiceNativeWsTest {
             if ("session_update".equals(eventType)) {
                 return "completed".equals(status) ? "AI 任务完成" : "AI 会话通知";
             } else if ("task_update".equals(eventType)) {
-                return "completed".equals(status) ? "计划任务完成" : "计划任务通知";
+                return "completed".equals(status) ? "任务完成" : "任务通知";
             }
             return null;
         }
@@ -547,7 +547,7 @@ public class BackgroundServiceNativeWsTest {
     @Test
     public void eventNotification_taskCompletedTitle() {
         EventNotificationState state = new EventNotificationState();
-        assertEquals("计划任务完成",
+        assertEquals("任务完成",
                 state.buildNotificationTitle("task_update", "completed"));
     }
 

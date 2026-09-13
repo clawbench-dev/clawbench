@@ -1170,7 +1170,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	MigrateMetadataFromContent()
 
 	// Migrate: convert task_execution summaries to chat_message summaries.
-	// Scheduled tasks now store summaries as target_type='chat_message' keyed by
+	// Tasks now store summaries as target_type='chat_message' keyed by
 	// the assistant message ID (chat_history.id), same as interactive sessions.
 	// This converts any existing 'task_execution' summaries to the new format.
 	MigrateTaskExecutionSummaries()

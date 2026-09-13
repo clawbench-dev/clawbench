@@ -341,7 +341,7 @@ export function forceCleanupStreamingState(
         }
       }
     }
-    // Extract scheduled tasks from the just-finished message
+    // Extract tasks from the just-finished message
     // (this path doesn't go through loadHistory, so we must call it explicitly)
     callbacks.onExtractScheduledTasks?.(messages)
 

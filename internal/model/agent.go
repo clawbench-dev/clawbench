@@ -79,7 +79,7 @@ func (a *Agent) DefaultModelID() string {
 }
 
 // BaseModelID returns the base default model ID without considering user preference.
-// Used by scheduled tasks which should always use the agent's original default model.
+// Used by tasks which should always use the agent's original default model.
 // Priority: first model with Default:true > first model in list > empty string.
 func (a *Agent) BaseModelID() string {
 	for _, m := range a.Models {

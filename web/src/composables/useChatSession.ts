@@ -241,7 +241,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       updatePlanEntries(planState.entries as Array<{ content: string; priority: 'high' | 'medium' | 'low'; status: 'pending' | 'in_progress' | 'completed' }>)
     }
 
-    // ── Scheduled tasks + render ──
+    // ── Tasks + render ──
     onExtractScheduledTasks(messages.value)
     onRenderUpdate(forceScrollBottom)
 

@@ -174,7 +174,7 @@ func TestLocalizerForLocale_English(t *testing.T) {
 func TestLocalizerForLocale_Chinese(t *testing.T) {
 	loc := LocalizerForLocale("zh")
 	msg := T(loc, "PushTaskCompleted")
-	assert.Equal(t, "计划任务已完成", msg)
+	assert.Equal(t, "任务已完成", msg)
 }
 
 func TestLocalizerForLocale_EmptyDefaultsToEnglish(t *testing.T) {

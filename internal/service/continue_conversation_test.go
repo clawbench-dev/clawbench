@@ -432,7 +432,7 @@ func TestContinueFromExecution_TitleSurvivesFirstMessage(t *testing.T) {
 
 // ========== Test Helpers ==========
 
-// helperCreateScheduledTask creates a scheduled task and returns its ID.
+// helperCreateScheduledTask creates a task and returns its ID.
 func helperCreateScheduledTask(t *testing.T, projectPath, name, agentID string) int64 {
 	t.Helper()
 	result, err := service.UnsafeDBForTest().Exec(
@@ -490,7 +490,7 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	var sourceAssistantID int64
 	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&sourceAssistantID)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, 'Scheduled task summary', CURRENT_TIMESTAMP)", sourceAssistantID)
+	_, err = service.UnsafeDBForTest().Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, 'Task summary', CURRENT_TIMESTAMP)", sourceAssistantID)
 	assert.NoError(t, err)
 
 	// Continue
@@ -507,7 +507,7 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	var copiedSummary string
 	err = service.UnsafeDBForTest().QueryRow("SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?", lastAssistantID).Scan(&copiedSummary)
 	assert.NoError(t, err)
-	assert.Equal(t, "Scheduled task summary", copiedSummary)
+	assert.Equal(t, "Task summary", copiedSummary)
 }
 
 // ========== ContinueFromExecution: copies chat_tool_calls and chat_thinking ==========

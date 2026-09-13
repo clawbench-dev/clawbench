@@ -377,7 +377,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("Usage: clawbench [options]")
 		fmt.Println()
 		fmt.Println("Runs the ClawBench server. There are no user-facing subcommands;")
-		fmt.Println("scheduled tasks and conversation search are driven by the built-in")
+		fmt.Println("tasks and conversation search are driven by the built-in")
 		fmt.Println("slash commands in the web UI.")
 		fmt.Println()
 		fmt.Println("Server options:")
@@ -909,7 +909,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Load all tasks from all projects
 	if err := scheduler.LoadTasksFromDB(""); err != nil {
-		slog.Warn("failed to load scheduled tasks", slog.String("err", err.Error()))
+		slog.Warn("failed to load tasks", slog.String("err", err.Error()))
 	}
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -1280,7 +1280,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		})
 	}
 
-	// Count scheduled tasks
+	// Count tasks
 	taskCount := scheduler.TaskCount()
 
 	// Determine SSH port
@@ -1348,7 +1348,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		<-ctx.Done()
 		slog.Info("received shutdown signal, draining connections...")
 
-		// 1. Cancel running scheduled tasks and all interactive session contexts
+		// 1. Cancel running tasks and all interactive session contexts
 		//    so their executors can finalize. Must happen before the stream waits,
 		//    or an executor kept alive by a long-running prompt would never reach
 		//    Finalize before the DB closes. CancelAllSessions unblocks CLI streams

@@ -8,7 +8,7 @@
          algorithm fails to correctly transition between different Fragment
          structures (summary div vs blocks template v-for). -->
     <div v-if="!nested" v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
-    <!-- Summary mode: render structured cards (tools / scheduled tasks / ask-questions)
+    <!-- Summary mode: render structured cards (tools / tasks / ask-questions)
          directly from summaryCards — NOT by traversing blocks (which may be empty in
          summary-first loading). -->
     <template v-if="!nested && showingSummary && summary">
@@ -79,7 +79,7 @@
           </div>
         </template>
       </template>
-      <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->
+      <!-- Task cards from summaryCards.taskIDs (task data fetched in real time) -->
       <template v-for="tid in summaryTaskIDs" :key="'sum-task-' + tid">
         <div class="scheduled-task-card" :class="{ deleted: summaryTaskData[tid]?.deleted }" @click="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task && $emit('task-card-click', tid)">
           <div class="stask-header">
@@ -318,7 +318,7 @@
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
-      <!-- Scheduled task card(s) — simplified: click navigates to Tasks tab -->
+      <!-- Task card(s) — simplified: click navigates to Tasks tab -->
       <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
@@ -764,15 +764,15 @@ function askCardPending(bi: number, block: any): boolean {
   return showAskPending(block)
 }
 
-// Pre-computed index: block index → sorted array of scheduled task keys.
+// Pre-computed index: block index → sorted array of task keys.
 const taskKeyIndex = computed(() => buildTaskKeyIndex(props.msgId, props.blockTasks))
 
-// Check if a block has any scheduled tasks
+// Check if a block has any tasks
 function hasScheduledTasks(bi: number) {
   return hasScheduledTasksUtil(taskKeyIndex.value, bi)
 }
 
-// Return all scheduled task keys for a block, sorted by tag index
+// Return all task keys for a block, sorted by tag index
 function scheduledTaskKeys(bi: number) {
   return scheduledTaskKeysUtil(taskKeyIndex.value, bi)
 }

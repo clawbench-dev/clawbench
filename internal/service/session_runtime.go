@@ -792,7 +792,7 @@ func ForceCancelSession(sessionID string) {
 // triggerChatSummarization triggers summarization for every assistant message
 // in a session that does not yet have a summary.
 // Skipped for cancelled/disconnected sessions (those use skipEvent=true in SetSessionRunning).
-// Reading summaries always extract the conclusion (no AI), matching scheduled tasks.
+// Reading summaries always extract the conclusion (no AI), matching tasks.
 //
 // Summarizing all (not just the last) assistant messages is important because
 // queued/drained messages share the same session goroutine: when a long reply

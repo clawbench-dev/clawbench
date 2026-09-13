@@ -2610,10 +2610,10 @@ public class BackgroundService extends Service {
      *     cancelled:          title=会话已取消, alert=plainPreview || 会话已取消
      *     permission_pending: title=操作需批准, alert=toolName || 操作需批准
      *   task_update:
-     *     running:            title=定时任务已启动, alert=sessionTitle || 定时任务已启动
-     *     completed:          title=定时任务已完成, alert=plainPreview || 定时任务已完成
-     *     failed:             title=定时任务失败, alert=plainPreview || 定时任务失败
-     *     cancelled:          title=定时任务已取消, alert=plainPreview || 定时任务已取消
+     *     running:            title=任务已启动, alert=sessionTitle || 任务已启动
+     *     completed:          title=任务已完成, alert=plainPreview || 任务已完成
+     *     failed:             title=任务失败, alert=plainPreview || 任务失败
+     *     cancelled:          title=任务已取消, alert=plainPreview || 任务已取消
      */
     private void postEventNotification(String eventType, JSONObject data) {
         // Suppress notifications when app is in the foreground

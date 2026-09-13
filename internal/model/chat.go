@@ -222,7 +222,7 @@ type ChatSession struct {
 	AgentSource     string     `json:"agentSource,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	SessionType     string     `json:"sessionType,omitempty"`     // "chat" | "scheduled"
-	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from scheduled task
+	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from task
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`

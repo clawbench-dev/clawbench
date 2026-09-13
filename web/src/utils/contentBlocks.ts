@@ -99,7 +99,7 @@ export function statusClass(task: { status: string }): string {
 }
 
 /**
- * Get detailed status label for a scheduled task.
+ * Get detailed status label for a task.
  */
 export function statusLabel(
   task: { status: string; runCount: number; runningCount: number },
@@ -116,7 +116,7 @@ export function statusLabel(
 }
 
 /**
- * Get simple (short) status label for a scheduled task badge.
+ * Get simple (short) status label for a task badge.
  */
 export function statusLabelSimple(
   task: { status: string },
@@ -216,7 +216,7 @@ export function blockTaskKey(msgId: string | number, bi: number): string {
 }
 
 /**
- * Build an index: block index → sorted array of scheduled task keys.
+ * Build an index: block index → sorted array of task keys.
  * This pre-computes the mapping to avoid O(n) scan per block per render.
  */
 export function buildTaskKeyIndex(
@@ -240,7 +240,7 @@ export function buildTaskKeyIndex(
 }
 
 /**
- * Check if a block has any scheduled tasks based on the pre-computed index.
+ * Check if a block has any tasks based on the pre-computed index.
  */
 export function hasScheduledTasks(
   taskKeyIndex: Record<string, string[]>,
@@ -250,7 +250,7 @@ export function hasScheduledTasks(
 }
 
 /**
- * Return all scheduled task keys for a block, sorted by tag index.
+ * Return all task keys for a block, sorted by tag index.
  */
 export function scheduledTaskKeys(
   taskKeyIndex: Record<string, string[]>,

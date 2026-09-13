@@ -680,7 +680,7 @@ func titleSourceRank(source string) int {
 
 // maybeAutoTitleSessionTx sets the session title from the first user message,
 // unless the title was deliberately chosen (title_source='custom'): a manual
-// rename, or a meaningful title supplied at creation (scheduled task, fork,
+// rename, or a meaningful title supplied at creation (task, fork,
 // continue, imported session). No-op when this is not the session's first
 // message.
 func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
@@ -1589,7 +1589,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 // GetLatestUserModel returns the most recent model the user explicitly chose
 // for the given agent+project. Returns "" if no user preference exists
 // (caller should fall back to agent defaults).
-// Used by scheduled tasks to respect the user's global model preference.
+// Used by tasks to respect the user's global model preference.
 func GetLatestUserModel(agentID, projectPath string) string {
 	var modelID string
 	err := dbRead.QueryRow(
@@ -1621,7 +1621,7 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 }
 
 // CreateSessionWithLockedTitle creates a session whose title was deliberately
-// chosen by the caller (e.g. a scheduled task name, a fork/continue title, or a
+// chosen by the caller (e.g. a task name, a fork/continue title, or a
 // user-supplied name at creation). It marks chat_sessions.title_source='custom'
 // so the first-message auto-title does not overwrite it.
 func CreateSessionWithLockedTitle(projectPath, backend, title, agentID, modelName, agentSource, sessionType string) (string, error) {

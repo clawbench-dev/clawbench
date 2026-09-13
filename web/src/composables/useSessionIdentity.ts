@@ -230,7 +230,7 @@ export function resetIdentity(): void {
 // ───────────────────────────────────────────────────────────
 // Agent preference persistence — stored in agent YAML files via PATCH /api/agents.
 // preferredModel / preferredThinkingEffort are the source of truth for
-// interactive sessions. Scheduled tasks use BaseModelID() and ThinkingEffort
+// interactive sessions. Tasks use BaseModelID() and ThinkingEffort
 // (the agent's original defaults) instead.
 // ───────────────────────────────────────────────────────────
 

@@ -116,10 +116,10 @@
     <string name="push_session_completed">会话已完成</string>
     <string name="push_session_cancelled">会话已取消</string>
     <string name="push_action_required">操作需批准</string>
-    <string name="push_task_started">计划任务已启动</string>
-    <string name="push_task_completed">计划任务已完成</string>
-    <string name="push_task_failed">计划任务失败</string>
-    <string name="push_task_cancelled">计划任务已取消</string>
+    <string name="push_task_started">任务已启动</string>
+    <string name="push_task_completed">任务已完成</string>
+    <string name="push_task_failed">任务失败</string>
+    <string name="push_task_cancelled">任务已取消</string>
     <string name="splash_cancel">取消连接</string>
     <string name="splash_status_connecting">正在连接…</string>
     <string name="splash_status_loading">正在加载页面…</string>

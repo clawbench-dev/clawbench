@@ -67,7 +67,7 @@ describe('renderTextBlock deferred rendering', () => {
     expect(result.ranPathAnnotation).toBe(true)
   })
 
-  it('streaming=false detects scheduled tasks', () => {
+  it('streaming=false detects tasks', () => {
     const text = 'Created <scheduled-task id="42" />'
     const result = renderTextBlockDeferred(text, 'msg1', 0, false)
     expect(result.taskIds).toEqual(['42'])

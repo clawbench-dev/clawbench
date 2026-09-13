@@ -144,7 +144,7 @@ interface AppState {
     // Task unread count (for dock badge)
     taskUnreadCount: number
 
-    // Task running indicator (scheduled task is executing)
+    // Task running indicator (task is executing)
     taskRunning: boolean
 
     // Task just completed (brief flash for dock button animation)

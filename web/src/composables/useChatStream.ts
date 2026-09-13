@@ -683,7 +683,7 @@ export function useChatStream(options: UseChatStreamOptions) {
             ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
           ]
           dispatch({ type: 'ws_queue_drain', queueId: drainData.queueId || '', text: drainText, files: drainFiles, dbMessageId: drainData.messageId || undefined, backend: currentBackend.value })
-          // Extract scheduled tasks from the newly added message(s).
+          // Extract tasks from the newly added message(s).
           onExtractScheduledTasks?.(messages.value)
 
           if (isOpen.value) {

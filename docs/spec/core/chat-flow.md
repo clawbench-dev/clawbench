@@ -1,6 +1,6 @@
 # 聊天流程
 
-聊天是 ClawBench 的核心业务——用户发送一条消息，系统启动对应的 AI 后端执行，流式输出结果到前端，同时持久化到 SQLite 并建立 RAG 索引。会话完成后自动生成摘要，计划任务的执行结果可以续接为交互式对话。ACP 后端还支持模式切换、计划审批和权限管理，让 AI 从纯文本输出扩展为结构化的交互体验。这条链路贯穿了 handler、SessionExecutor、AI 后端、WebSocket 和前端五个层，是理解整个系统的入口。
+聊天是 ClawBench 的核心业务——用户发送一条消息，系统启动对应的 AI 后端执行，流式输出结果到前端，同时持久化到 SQLite 并建立 RAG 索引。会话完成后自动生成摘要，任务的执行结果可以续接为交互式对话。ACP 后端还支持模式切换、计划审批和权限管理，让 AI 从纯文本输出扩展为结构化的交互体验。这条链路贯穿了 handler、SessionExecutor、AI 后端、WebSocket 和前端五个层，是理解整个系统的入口。
 
 ## 流程图
 
@@ -24,7 +24,7 @@ sequenceDiagram
     handler-->>前端: WS 连接建立（subscribe + 推送）
 ```
 
-用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；SessionExecutor 负责创建会话、管理运行时状态，然后将执行委托给 AI 后端。SessionExecutor 统一处理交互式聊天和计划任务执行两种模式，差异化行为（i18n 错误、取消原因）通过 RunConfig 控制；事件推送统一走 WebSocket StreamHub。
+用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；SessionExecutor 负责创建会话、管理运行时状态，然后将执行委托给 AI 后端。SessionExecutor 统一处理交互式聊天和任务执行两种模式，差异化行为（i18n 错误、取消原因）通过 RunConfig 控制；事件推送统一走 WebSocket StreamHub。
 
 ### WebSocket 推送链路：流式事件到前端渲染
 
@@ -100,7 +100,7 @@ sequenceDiagram
 - **快捷发送**：预设常用 prompt 通过输入栏行尾图标一键加入输入框（点击注入后可直接编辑再发送），避免重复输入。移动端打字成本高，这个功能显著降低了常用操作的交互开销
 - **聊天自动摘要**：会话完成后自动为助手消息生成摘要，通过 WebSocket 实时推送（含 SummaryCards 结构化卡片元数据）。`summarizeMessage` 统一调度入口固定提取最后回答文本（`ExtractLastAnswerFromBlocks`，无需 AI 调用）。前端 `SummaryToggle` 组件提供按钮模式（聊天中切换）和标签页模式（任务执行详情中切换）。**消息展示模式**（`messageDisplayMode` 设置，默认 mixed）决定有摘要消息的默认呈现：混合模式下最近一条 AI 回复展示原文、其余展示摘要，摘要/原文模式则全局统一；单条消息仍可独立切换，切换逻辑用归一化后的模式加位置判断。摘要视图复用原回复的 warning/error 横幅。用户快速浏览 AI 回复的核心内容，不必逐行阅读长输出
 - **推荐回复**：会话完成后自动生成一条下一步建议（`chat_recommendation` WS 事件），前端在输入框上方展示推荐横幅，用户可一键采纳或忽略。推荐由 LLM 基于 stable/rolling 分离的 payload 生成，支持 prompt caching。详见 [推荐回复](../features/chat-recommendation.md)
-- **续接对话**：计划任务的执行结果可以续接为新的交互式聊天会话，继承原始会话的消息、摘要和 `external_session_id`。用户看到计划任务结果后想继续追问，无需从头描述上下文
+- **续接对话**：任务的执行结果可以续接为新的交互式聊天会话，继承原始会话的消息、摘要和 `external_session_id`。用户看到任务结果后想继续追问，无需从头描述上下文
 - **消息详情弹窗**：点击助手消息可查看元数据弹窗，展示消息的后端原生会话 ID（`external_session_id` 注入 response metadata）、时间、token 等上下文信息，帮助用户理解消息来源与消耗。弹窗字段与上下文面板对齐——从 `chat_metadata` 读取缓存的 _meta 扩展信息（缓存命中/额度/追踪标识等）
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
@@ -126,7 +126,7 @@ sequenceDiagram
 - **Compact 按钮**：上下文使用率 ≥ 75% 时显示 Compact 按钮，一键发送 `/compact` 命令压缩上下文。降低用户手动管理上下文的认知负担
 - **模式长按切换自动审批**：长按模式芯片切换自动审批，无需每次工具调用都手动确认。适合信任 AI 操作的进阶用户
 - **会话重置**：AI 错误/警告横幅上的"重置会话"按钮（`POST /api/ai/session/reset`）解决 ACP 会话卡死——当一轮交互以"工具已批准但从未执行"的悬挂状态结束时，后续 prompt 会毫秒级空响应。重置**刻意保留外部会话 ID 映射**，只回收卡死的 agent 进程，下一次 prompt 通过 ResumeSession 重新附着同一 agent 会话，对话上下文与聊天历史完整保留；前端确认后自动重发最后一条用户消息
-- **完成弹窗**：会话或计划任务完成时，若聊天界面不在前台（用户在看其他 Tab 或当前会话不是目标会话），顶部弹出 Android 通知风格的完成卡片——展示摘要全文、项目名/路径、最近一条用户消息和 agent 后端图标，内置快捷输入框可直接追问，标记已读按钮和跳转按钮（跳转会话/任务执行详情）。发送追问或点标记已读会清空该会话的未读徽标（`POST /api/ai/chat/read`，支持 `project_path` 参数使外部项目弹窗也能通过归属校验）；点击空白处关闭弹窗（展示不足 1 秒时防误触忽略）；发送成功弹出确认气泡。用户消息以引用式样块展示（左侧 accent 竖线 + 淡色底），点击可展开完整内容。多个完成事件排队依次展示，取代了旧的会话结束 Toast 气泡。详见[完成通知弹窗](../features/completion-popup.md)。用户专注其他工作区时也能感知 AI 已完成并直接跟进，无需时刻盯着聊天窗口
+- **完成弹窗**：会话或任务完成时，若聊天界面不在前台（用户在看其他 Tab 或当前会话不是目标会话），顶部弹出 Android 通知风格的完成卡片——展示摘要全文、项目名/路径、最近一条用户消息和 agent 后端图标，内置快捷输入框可直接追问，标记已读按钮和跳转按钮（跳转会话/任务执行详情）。发送追问或点标记已读会清空该会话的未读徽标（`POST /api/ai/chat/read`，支持 `project_path` 参数使外部项目弹窗也能通过归属校验）；点击空白处关闭弹窗（展示不足 1 秒时防误触忽略）；发送成功弹出确认气泡。用户消息以引用式样块展示（左侧 accent 竖线 + 淡色底），点击可展开完整内容。多个完成事件排队依次展示，取代了旧的会话结束 Toast 气泡。详见[完成通知弹窗](../features/completion-popup.md)。用户专注其他工作区时也能感知 AI 已完成并直接跟进，无需时刻盯着聊天窗口
 - **未读自动清除**：当前会话执行结束（completed/cancelled）自动标记已读，切回前台时也自动标记当前会话已读——未读徽标只为"用户没在看"的会话保留（后台完成时跳过 mark-read，把未读留给悬浮窗/Live Updates 展示），用户回到该会话后徽标立即消失，无需手动操作
 - **错误码透传与展示**：AI 后端返回的错误携带结构化错误码（`error_code`/`http_status`/`error_source`），从 StreamEvent 透传到前端 warning/error 卡片——错误码后缀（`[code xxx]`/`[HTTP xxx]`）+ 来源 chip（agent/clawbench/network）标注错误出处。ACP 后端把上游错误归类为 refusal 时（如钉住过期模型），系统识别 `stopReason=refusal` 发出 ReasonRefused 警告事件而非误判为"无内容返回"，refused 加入可重置会话的原因集合。用户能一眼判断"是 Agent 的问题还是平台/网络的问题"，而不是面对一条笼统的失败提示
 - **Mermaid SVG 灯箱导航**：Mermaid 渲染后的 SVG 图表加入图片灯箱导航序列，与 `<img>` 按文档顺序排列，支持 prev/next 切换浏览所有视觉媒体
@@ -138,7 +138,7 @@ sequenceDiagram
 - **单 WS 通道统一推送**：聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）和系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）共用 `/api/ai/events/ws`，由 `StreamHub`（`internal/ws/stream_hub.go`）做会话级扇出。同一 session 可被多客户端同时订阅；客户端通过 `subscribe` 消息加入，`unsubscribe` 退出
 - **前端 Block 合并**：连续的 text/thinking 事件在 `AccumulateBlock` 中向后搜索同类型块进行合并，tool_use 作为自然边界——减少 DOM 更新频率，提升渲染性能。ACP 子代理完整重放产生的重复文本块通过前缀匹配去重，避免子代理回放时在 UI 中出现重复内容。父工具调用 id 是合并的硬边界：子 thinking 不并入父、连续 thinking 合并不跨父——否则子智能体的思考会被缝进父的思考块，分组信息丢失
 - **子智能体归属用精确键而非窗口推断**：Agent 在 `_meta` 上主动标记父工具调用 id，是协议层给的可信归属信号；若靠"某段内容出现在某工具调用之后"推断，长回合中并行子智能体的内容会互相错配。因此后端只在标记存在时分组，缺失时回退扁平渲染——宁可少分组，不可错分组
-- **自动摘要固定提取结论**：`summarizeMessage` 统一调度入口从消息 Block 中直接提取最后回答文本（`ExtractLastAnswerFromBlocks`，同步、无 AI 调用），聊天与计划任务行为一致。摘要结果存入统一的 `summaries` 表（含 `summary_cards` 列），通过 WS `summary_update` 事件推送（含 SummaryCards 结构化卡片元数据）——摘要生成与聊天流解耦，不影响流式体验
-- **SessionExecutor 统一执行引擎**：交互式聊天和计划任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑
+- **自动摘要固定提取结论**：`summarizeMessage` 统一调度入口从消息 Block 中直接提取最后回答文本（`ExtractLastAnswerFromBlocks`，同步、无 AI 调用），聊天与任务行为一致。摘要结果存入统一的 `summaries` 表（含 `summary_cards` 列），通过 WS `summary_update` 事件推送（含 SummaryCards 结构化卡片元数据）——摘要生成与聊天流解耦，不影响流式体验
+- **SessionExecutor 统一执行引擎**：交互式聊天和任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑
 - **分叉上下文仅截断工具输出**：`buildForkContext` 从原始消息读取（`GetMessagesBySessionIDRaw`——不走会剥离已摘要 assistant 回复 content blocks 的路径），仅截断工具调用的输出（`truncateRunes` 截断到 500 runes），避免工具输出过长撑爆分叉会话的上下文窗口。分叉标题由源会话标题 + emoji 前缀派生
 - **触摸防抖避免阅读干扰**：用户在阅读历史消息时，自动滚动应暂停，等用户停止触摸后恢复。这是移动端场景的关键体验——AI 持续输出时用户常需要回看上方内容，自动滚动会打断阅读。防抖机制通过检测触摸事件暂停自动滚动，在触摸结束后延迟恢复，平衡了"实时追踪新输出"和"自由回看历史"两个需求

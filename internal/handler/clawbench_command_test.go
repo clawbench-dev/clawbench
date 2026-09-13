@@ -50,7 +50,7 @@ func TestProcessClawbenchCommand_TaskInjects(t *testing.T) {
 	result, err := processClawbenchCommand("/cb-task daily build", "/project", "session-456")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, "scheduled task management")
+	assert.Contains(t, result, "task management")
 	assert.Contains(t, result, "POST /api/tasks")
 	assert.Contains(t, result, "GET /api/agents")
 	assert.Contains(t, result, "clawbench_project=/project")
@@ -95,7 +95,7 @@ func TestProcessClawbenchCommand_TaskEmptyDescReturnsInjected(t *testing.T) {
 	// short or absent.
 	result, err := processClawbenchCommand("/cb-task ", "/project", "session-123")
 	require.NoError(t, err)
-	assert.Contains(t, result, "scheduled task management")
+	assert.Contains(t, result, "task management")
 }
 
 func TestProcessClawbenchCommand_PartialPrefixNoMatch(t *testing.T) {
@@ -118,7 +118,7 @@ func TestProcessClawbenchCommand_BareTaskInjects(t *testing.T) {
 
 	result, err := processClawbenchCommand("/cb-task", "/project", "session-123")
 	require.NoError(t, err)
-	assert.Contains(t, result, "scheduled task management")
+	assert.Contains(t, result, "task management")
 	assert.NotContains(t, result, "/cb-task")
 }
 

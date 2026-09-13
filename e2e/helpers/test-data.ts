@@ -56,11 +56,11 @@ export async function clearQuickSendItems(baseURL: string): Promise<void> {
 }
 
 // ───────────────────────────────────────────────────────
-// Task (scheduled task) helpers
+// Task (task) helpers
 // ───────────────────────────────────────────────────────
 
 /**
- * Create a scheduled task via API.
+ * Create a task via API.
  */
 export async function createTask(
   baseURL: string,
@@ -77,7 +77,7 @@ export async function createTask(
 }
 
 /**
- * Trigger a scheduled task immediately via API.
+ * Trigger a task immediately via API.
  */
 export async function triggerTask(baseURL: string, taskId: number): Promise<void> {
   const resp = await fetch(`${baseURL}/api/tasks/${taskId}`, {
@@ -89,7 +89,7 @@ export async function triggerTask(baseURL: string, taskId: number): Promise<void
 }
 
 /**
- * Delete a scheduled task via API.
+ * Delete a task via API.
  */
 export async function deleteTask(baseURL: string, taskId: number): Promise<void> {
   const resp = await fetch(`${baseURL}/api/tasks/${taskId}`, { method: 'DELETE' })

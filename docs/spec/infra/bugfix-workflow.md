@@ -1,6 +1,6 @@
 # Bugfix 工作流（GitHub Issues）
 
-ClawBench 的自动化 bugfix 工作流通过计划任务扫描 GitHub Issues，自动分类、修复、验证并提交 PR。AI 修复在独立 worktree 中隔离进行，每次只修一个 bug，修复必须附带测试用例并通过 CI 覆盖率门禁。这个工作流是项目质量保障体系的关键一环，与人工 review 互补。
+ClawBench 的自动化 bugfix 工作流通过任务扫描 GitHub Issues，自动分类、修复、验证并提交 PR。AI 修复在独立 worktree 中隔离进行，每次只修一个 bug，修复必须附带测试用例并通过 CI 覆盖率门禁。这个工作流是项目质量保障体系的关键一环，与人工 review 互补。
 
 ## 流程图
 

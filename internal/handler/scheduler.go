@@ -13,7 +13,7 @@ import (
 	"clawbench/internal/service"
 )
 
-// ServeTasks handles GET (list) and POST (create) for scheduled tasks.
+// ServeTasks handles GET (list) and POST (create) for tasks.
 func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method task list handler
 	projectPath, ok := requireProject(w, r)
 	if !ok {

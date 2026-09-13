@@ -23,7 +23,7 @@
 const SCHEDULED_TASK_RE = /<scheduled-task\s+id="(\d+)"\s*\/>/gi
 
 /**
- * Extract scheduled task IDs from text.
+ * Extract task IDs from text.
  * Resets the module-level regex lastIndex before use (required due to 'g' flag).
  * Only called post-streaming.
  */
@@ -173,7 +173,7 @@ export function stripAskQuestionTag(text: string, result: AskQuestionResult): st
 // Task semantic comparison (for blockTasks watcher)
 // ────────────────────────────────────────────────────────────
 
-/** Key fields to compare for semantic equality of a scheduled task. */
+/** Key fields to compare for semantic equality of a task. */
 const TASK_COMPARE_KEYS = [
   'status', 'name', 'cronExpr', 'runCount',
   'lastRunAt', 'nextRunAt', 'runningCount',

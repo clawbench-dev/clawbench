@@ -300,7 +300,7 @@ func (s *Scheduler) cleanZombieExecutions() {
 	}
 }
 
-// AddTask creates a new scheduled task, persists it, and registers it with cron.
+// AddTask creates a new task, persists it, and registers it with cron.
 func (s *Scheduler) AddTask(task *model.ScheduledTask) error {
 	now := time.Now()
 	task.CreatedAt = now
@@ -748,7 +748,7 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 }
 
-// executeTask runs a scheduled task by invoking the AI backend and inserting
+// executeTask runs a task by invoking the AI backend and inserting
 // the result as an assistant message in the original session.
 //
 // eventCtx, when non-nil, carries the forge event that triggered this run: its
@@ -797,14 +797,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error(
-				"scheduled task execution panicked",
+				"task execution panicked",
 				slog.Int64("task_id", task.ID),
 				slog.String("session_id", sessionID),
 				slog.Any("panic", r),
 				slog.String("stack", string(debug.Stack())),
 			)
 			// Finalize the streaming placeholder message to prevent streaming=1 leak
-			errMsg := "Scheduled task internal error, please retry"
+			errMsg := "Task internal error, please retry"
 			errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg}}})
 			if _, finalizeErr := FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent)); finalizeErr != nil {
 				slog.Warn("failed to finalize streaming message on panic", slog.String("error", finalizeErr.Error()))
@@ -817,7 +817,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	}()
 
 	// Mark session as running so ACP idle sweep does not close the connection
-	// while the scheduled task is still executing. Without this, the 5-minute
+	// while the task is still executing. Without this, the 5-minute
 	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
 	// sweep closing connection" after ~5m, causing "peer disconnected").
 	// skipEvent=true because the scheduler emits its own task events.
@@ -829,13 +829,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	}()
 
 	slog.Info(
-		"executing scheduled task",
+		"executing task",
 		slog.Int64("task_id", task.ID),
 		slog.String("session_id", sessionID),
 		slog.String("name", task.Name),
 	)
 
-	// ACP scheduled tasks have no user present to approve permission requests.
+	// ACP tasks have no user present to approve permission requests.
 	// Enable auto-approve so the ACP client automatically selects the first
 	// allow option, preventing indefinite blocking on permission dialogs.
 	if agent.Transport == "acp-stdio" {
@@ -1152,7 +1152,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	)
 
 	// Generate summary asynchronously — use the shared summarizeMessage so that
-	// scheduled tasks follow the exact same strategy as interactive chat
+	// tasks follow the exact same strategy as interactive chat
 	// (respecting chatSummaryMode, AI with simple fallback). Keyed by the
 	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
 	// This unifies the summary storage model so ContinueFromExecution no longer

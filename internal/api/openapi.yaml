@@ -52,7 +52,7 @@ tags:
   - name: Terminal
     description: Web 终端
   - name: Tasks
-    description: 定时任务
+    description: 任务
   - name: RAG
     description: 检索增强
   - name: Upgrade
@@ -2606,17 +2606,17 @@ paths:
   /api/tasks:
     get:
       tags: [Tasks]
-      summary: 定时任务列表
+      summary: 任务列表
       operationId: tasksList
       responses:
         "200":
           description: 任务列表
     post:
       tags: [Tasks]
-      summary: 新建定时任务
+      summary: 新建任务
       operationId: tasksCreate
       description: |
-        创建定时任务。两种触发模式由 `trigger_mode` 决定：
+        创建任务。两种触发模式由 `trigger_mode` 决定：
 
         - `cron`（默认）：由 `cron_expr` 驱动，必填。
         - `event`：由 Forge（GitHub/GitLab）事件驱动，不需要 `cron_expr`，
@@ -2629,14 +2629,14 @@ paths:
         **cron 表达式**按服务器本地时区解释（5 字段，支持 `@daily` 等描述符）。
         没有单独的 cron 校验端点：非法表达式在创建时返回 400，这是唯一的验证方式。
 
-        **事件任务的额外语义**（与 cron 任务不同，配置时务必知晓）：
+        **`trigger_mode=event` 的额外语义**（与 `cron` 不同，配置时务必知晓）：
 
-        - `repeat_mode` 与 `max_runs` 被忽略：事件任务不参与 cron 完成语义，
+        - `repeat_mode` 与 `max_runs` 被忽略：按事件触发时不参与 cron 完成语义，
           每次匹配到事件都会执行，也不会因次数耗尽而停止。停止需 `pause` 或删除。
         - 任务只在**其项目已绑定仓库**（见 `GET /api/forge/binding`）时才会触发；
           未绑定则事件不匹配，任务静默不执行。
         - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
-          以防 AI 的写入自我触发形成循环。因此事件任务不会被自己创建的内容触发。
+          以防 AI 的写入自我触发形成循环。因此按事件触发时不会被自己创建的内容触发。
         - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
           评论内容等）会**自动前置**到 `prompt` 之前，无需在 prompt 里写占位符。
       requestBody:
@@ -2662,10 +2662,10 @@ paths:
                 repeat_mode:
                   type: string
                   enum: [once, limited, unlimited]
-                  description: 重复模式，默认 `unlimited`。事件任务忽略此字段。
+                  description: 重复模式，默认 `unlimited`。`trigger_mode=event` 时忽略此字段。
                 max_runs:
                   type: integer
-                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。事件任务忽略此字段。
+                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。`trigger_mode=event` 时忽略此字段。
                 session_id:
                   type: string
                   description: 预留字段，当前不生效。
@@ -2678,7 +2678,7 @@ paths:
                   description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
                 event_repo:
                   type: string
-                  description: 将事件任务限定到单个仓库（`platform|host|owner/repo`）。空表示不限仓库。
+                  description: 将 `trigger_mode=event` 的任务限定到单个仓库（`platform|host|owner/repo`）。空表示不限仓库。
       responses:
         "200":
           description: 新任务

@@ -12,9 +12,9 @@
 
 **From Palm to Desktop** — An AI workbench for every screen.
 
-Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, scheduled tasks, one app does it all, whether you're on the go or at your desk.
+Brings the full power of AI coding agents to every screen — phone, tablet, and desktop. File browsing, code editing, AI conversation, Git operations, tasks, one app does it all, whether you're on the go or at your desk.
 
-Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, scheduled tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
+Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
@@ -55,9 +55,9 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 |------------------------------|
 | ![Recommended Reply](docs/screenshots/conversation-recommendation.png) |
 
-| Scheduled Tasks | Create Task | Task Card |
+| Tasks | Create Task | Task Card |
 |-----------------|-------------|-----------|
-| ![Scheduled Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
+| ![Tasks](docs/screenshots/scheduled-tasks.png) | ![Create Task](docs/screenshots/task-create.png) | ![Task Card](docs/screenshots/schedule-proposal.png) |
 
 ### Git Integration
 
@@ -214,8 +214,8 @@ clawbench
 - **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 11 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Copilot/Kimi/Antigravity/Grok/ZCode), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
-- **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 3-level breadcrumb navigation (list → detail with merged overview & history → execution detail); task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
-- **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; sessions originated from scheduled tasks show a purple "Task" badge in session list
+- **Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 3-level breadcrumb navigation (list → detail with merged overview & history → execution detail); task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
+- **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; sessions originated from tasks show a purple "Task" badge in session list
 - **Multi-Session Management**: Create, switch, archive independent sessions, swipe to switch; archived sessions recoverable via search, physical delete (irreversible) and archive retention auto-cleanup available; Ctrl/Cmd+Delete to quick-archive current session
 - **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
 - **Wide-Screen Chat Toggle**: A button at the bottom of the wide-screen dock hides/shows the chat area — when hidden, the left pane takes the full width for focused work (files, terminal, etc.) and can be restored on demand
@@ -226,7 +226,7 @@ clawbench
 - **Message Clusters**: Auto-analyze chat history patterns, group semantically similar user messages into clusters, one-click add to Quick Send; Union-Find + Sørensen-Dice similarity, on-demand computation with progress tracking
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; **message display modes** control the default view — Mixed (default: the most recent AI reply shows full text, older messages show summaries), Summary-only or Original-only; individual messages can still be toggled via the bottom banner; summary view also surfaces warning/error banners that were part of the reply; TTS playback also uses the summary
 - **Recommended Reply**: Automatically generates a next-step suggestion after AI reply; recommendation banner above input box, one-click to accept; aware of quick commands and project context
-- **Slash Commands**: Type `/` to open a unified autocomplete menu merging the agent's ACP commands with ClawBench built-ins — `cb-chatsearch` (search conversation history), `cb-task` (manage scheduled tasks), and `cb-usage` (token / cost usage statistics). Each row carries a left color bar + icon so agent commands (blue) and ClawBench commands (purple) are visually distinct; user messages show a matching command badge
+- **Slash Commands**: Type `/` to open a unified autocomplete menu merging the agent's ACP commands with ClawBench built-ins — `cb-chatsearch` (search conversation history), `cb-task` (manage tasks), and `cb-usage` (token / cost usage statistics). Each row carries a left color bar + icon so agent commands (blue) and ClawBench commands (purple) are visually distinct; user messages show a matching command badge
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion; thinking content lazy-loaded — after stream ends, only thumbnail is kept, full text loaded on demand when expanded
 - **Sub-Agent Grouping**: When an ACP agent spawns sub-agents (CodeBuddy Task/Agent, Claude/Codex child threads), the child's thinking, text and tool calls are folded into the parent Agent card instead of flooding the main conversation — collapsed as an "N steps" chip, expanding into the full nested trajectory (child thinking still lazy-loaded). Attribution uses the parent tool-call id the agent stamps on `_meta` (CodeBuddy flat key / Claude·Qoder nested key), so parallel sub-agents never get cross-attributed; orphaned or nested blocks fall back to flat rendering so no content is lost
@@ -253,7 +253,7 @@ clawbench
 - **Attach Drawer Footer**: Selected files shown as persistent scrollable tags at the bottom of the attach drawer, with direct removal support
 - **Auto-Approve Indicator**: Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode
 - **Reset Session**: A "Reset session" button on AI error/warning banners restarts a stuck agent process (e.g., a tool approved but never executed); the external session ID and chat history are preserved, context is restored on reconnect and the last user message is re-sent
-- **Completion Popup**: When a session or scheduled task finishes while the chat UI is not in the foreground (you're on another tab or a different session), an Android-notification-style card slides in from the top — showing the full summary, project name/path, the last user message and the agent backend icon, with a built-in quick input to follow up, a mark-as-read button and a jump button to the session/task detail. Sending a follow-up message or tapping mark-as-read clears the unread badge for that session (via `/api/ai/chat/read`, project-aware so cross-project popups work) and shows a success toast; tapping the backdrop closes the popup (ignored within the first second to prevent accidental taps). The user message renders as a quote-style block that expands on tap. External-project popups show a footer divider with the project name/path. Multiple completions queue up and show one at a time; replaces the old in-UI toast
+- **Completion Popup**: When a session or task finishes while the chat UI is not in the foreground (you're on another tab or a different session), an Android-notification-style card slides in from the top — showing the full summary, project name/path, the last user message and the agent backend icon, with a built-in quick input to follow up, a mark-as-read button and a jump button to the session/task detail. Sending a follow-up message or tapping mark-as-read clears the unread badge for that session (via `/api/ai/chat/read`, project-aware so cross-project popups work) and shows a success toast; tapping the backdrop closes the popup (ignored within the first second to prevent accidental taps). The user message renders as a quote-style block that expands on tap. External-project popups show a footer divider with the project name/path. Multiple completions queue up and show one at a time; replaces the old in-UI toast
 - **Scroll Position Retention**: Scrolling position is kept while you read older messages within a session (loading more history mid-session doesn't jump the view); switching sessions/projects always returns to the bottom (tab switches rely on the browser's native scroll retention). After sending a message, if scrolling has stopped, the view unconditionally snaps back to the bottom
 - **Per-Project Session Restore**: Each project remembers the session you last opened (keyed by project root), and reopens it automatically on entry — falling back to default behavior when that session is gone. Jumping between projects doesn't lose your place
 - **Rewind (Backtrack)**: A rewind button on assistant messages (next to Fork) truncates the session in place back to that message — deleting everything after it (including summaries and RAG indexes) and restarting the AI session, while pre-filling the input box with the most recently removed user question for re-editing. Disabled on the last message and hidden while streaming; guarded by a confirmation dialog — ideal for restarting from a point where the AI went astray while keeping prior context
@@ -337,8 +337,8 @@ clawbench
 ### 🔔 Notifications
 - Notification sound + haptic feedback (alerts when AI completes); sound can be toggled off in settings to prevent Bluetooth headphone interruption
 - Browser push notifications
-- **Task Completion Push**: Scheduled task completion notifications include response preview summary; tap to navigate to execution details
-- **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and scheduled task status changes; view session list and send messages to sessions from IM
+- **Task Completion Push**: Task completion notifications include response preview summary; tap to navigate to execution details
+- **DingTalk/Feishu Bot Push**: Instant push via DingTalk or Feishu bot on AI session completion, permission approval, and task status changes; view session list and send messages to sessions from IM
 - See [DingTalk Push Setup](docs/DINGTALK_PUSH.en.md) | [Feishu Push Setup](docs/FEISHU_PUSH.en.md)
 
 

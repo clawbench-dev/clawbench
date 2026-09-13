@@ -128,7 +128,7 @@ UNIQUE：`(target_type, target_id)`
 
 UNIQUE：`(message_id)`
 
-### scheduled_tasks（计划任务）
+### scheduled_tasks（任务）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|

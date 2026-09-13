@@ -108,7 +108,7 @@ cd clawbench
 ```
 feat(android): 推送通知显示 AI 回复预览
 docs: 补充 RAG 部署文档
-refactor(scheduler): 优化计划任务调度逻辑
+refactor(scheduler): 优化任务调度逻辑
 test: 改善后端测试覆盖 — internal/handler
 chore: 升级 Go 版本至 1.25
 ```

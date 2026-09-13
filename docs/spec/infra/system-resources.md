@@ -44,7 +44,7 @@ sequenceDiagram
 
 - **六类系统指标**：CPU（占用百分比 + 核数）、内存（已用/总量/百分比，已用=总量-可用，排除 buffers/cache）、磁盘（数据目录所在分区用量）、磁盘 I/O（读/写速率 bytes/sec）、网络（上传/下载速率 bytes/sec，排除 loopback）、系统负载（1/5/15 分钟平均）。覆盖了判断 AI Agent 执行瓶颈所需的关键资源信息
 - **实时资源面板**：`SystemResourcesPanel` 组件在 AppHeader 的 Gauge 图标弹出菜单中展示所有六类指标的实时数值，页面可见时自动轮询、隐藏时暂停。AppHeader 的 Server 图标在系统资源压力异常时（CPU/内存超过阈值）切换为压力指示图标，提醒用户关注资源状态。WS 断线或重连期间隐藏资源数据，改为展示连接状态指示器——断线时显示 `WifiOff` 图标（红色），重连中显示 `LoaderCircle` 旋转图标（黄色），避免展示过时数据误导用户
-- **API 端点**：`GET /api/system/resources`（需认证）返回 `ResourceResponse` JSON，包含六类指标的完整数值。支持程序化访问（如计划任务的健康检查）
+- **API 端点**：`GET /api/system/resources`（需认证）返回 `ResourceResponse` JSON，包含六类指标的完整数值。支持程序化访问（如任务的健康检查）
 
 ### 设计要点
 

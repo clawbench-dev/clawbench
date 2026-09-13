@@ -218,7 +218,7 @@ func TestServeTasks_PostAssistantAgent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// All agents are allowed for scheduled tasks
+	// All agents are allowed for tasks
 	model.Agents = map[string]*model.Agent{
 		"assistant": {ID: "assistant", Name: "Assistant", Backend: "codebuddy"},
 	}
@@ -603,7 +603,7 @@ func TestServeTaskByID_UpdateAssistantAgent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// All agents are allowed for scheduled tasks
+	// All agents are allowed for tasks
 	model.Agents = map[string]*model.Agent{
 		"coder":     {ID: "coder", Name: "Coder", Backend: "claude"},
 		"assistant": {ID: "assistant", Name: "Assistant", Backend: "codebuddy"},

@@ -1642,7 +1642,7 @@ func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
 
 	// Step 2: Build event channel with content + terminal event
 	events := []ai.StreamEvent{
-		{Type: "content", Content: "scheduled task output"},
+		{Type: "content", Content: "task output"},
 		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 10, OutputTokens: 20}},
 		{Type: "done"},
 	}

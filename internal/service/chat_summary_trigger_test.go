@@ -193,7 +193,7 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 	assert.Equal(t, longText, summary)
 }
 
-// --- summarizeTarget (shared entry point for chat + scheduled tasks) ---
+// --- summarizeTarget (shared entry point for chat + tasks) ---
 
 func TestSummarizeMessage_ShortTextGetsSummary(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)

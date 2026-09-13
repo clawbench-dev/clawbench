@@ -22,7 +22,7 @@ import (
 // when the executor finishes (after Finalize has persisted the final content).
 var activeStreams sync.Map // key: sessionID (string), value: *SessionExecutor
 
-// ExecutionMode distinguishes between interactive chat and scheduled task execution.
+// ExecutionMode distinguishes between interactive chat and task execution.
 type ExecutionMode int
 
 // Sentinel errors for RunResult.Err
@@ -162,7 +162,7 @@ type RunResult struct {
 }
 
 // SessionExecutor handles the full lifecycle of a single AI session execution.
-// It unifies the event loop logic for both interactive chat and scheduled tasks,
+// It unifies the event loop logic for both interactive chat and tasks,
 // with mode-specific behavior controlled by RunConfig.
 //
 // The caller is responsible for:

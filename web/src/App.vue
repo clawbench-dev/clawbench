@@ -1133,7 +1133,7 @@ function projectBaseName(path) {
     return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
 }
 
-// AI 完成弹窗：任何会话/定时任务完成时，若用户当前未在查看该会话，入队弹出。
+// AI 完成弹窗：任何会话/任务完成时，若用户当前未在查看该会话，入队弹出。
 // 后端 session_update/task_update 的 completed 事件已携带 session_title 与
 // response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
 //

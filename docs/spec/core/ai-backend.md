@@ -115,7 +115,7 @@ sequenceDiagram
 - **Antigravity ACP 桥接**：Antigravity 后端通过 `agy-acp` ACP 桥接适配器接入，仅支持 `acp-stdio` 传输模式，没有 CLI 命令。这是外部 Agent 的集成模式——桥接适配器将非 ACP 原生的 Agent 包装为 ACP 协议兼容的子进程
 - **ZCode ACP 桥接**：ZCode（智谱 GLM 编码代理）后端通过 `zcode-acp-server` ACP 桥接适配器接入，仅支持 `acp-stdio` 传输模式，没有 CLI 命令（`AcpCommand: npx -y zcode-acp-server`）。桥接自行解析 zcode CLI（`ZCODE_BIN` → PATH → 桌面应用 bundle）并启动真实 headless 引擎（`zcode app-server --stdio`），凭据留在 `~/.zcode/v2/config.json`；经标准 ACP sessionConfig 上报 modes（plan/build/edit/yolo/auto）、模型（GLM-5.3）与思考档位（low/high/max）
 - **Grok Build 双传输模式**：Grok Build 后端同时支持 ACP（`grok agent stdio`）和 CLI（`grok -p ... --output-format streaming-json`）两种传输。ACP 为首选传输，CLI 作为流式 JSON 回退。`GrokStreamParser` 解析 CLI 的 JSON Lines 输出（text/thought/end/error 事件类型），从 end 事件捕获 session ID 和 token 用量
-- **OPENCODE_PERMISSION 注入**：OpenCode 的 ACP 连接自动注入 `OPENCODE_PERMISSION` 环境变量，将默认需人工审批的三个权限（文件读取、文件写入、命令执行）转为自动通过——防止 OpenCode 子 Agent 在无人值守的计划任务场景中因权限审批而挂起
+- **OPENCODE_PERMISSION 注入**：OpenCode 的 ACP 连接自动注入 `OPENCODE_PERMISSION` 环境变量，将默认需人工审批的三个权限（文件读取、文件写入、命令执行）转为自动通过——防止 OpenCode 子 Agent 在无人值守的任务场景中因权限审批而挂起
 - **ACP ListSessions 磁盘扫描回退**：对于不支持 ACP `session/list` RPC 的后端（如 CodeBuddy），系统回退到磁盘扫描枚举会话。每个后端在 `init()` 时注册自己的磁盘扫描函数（`ListSessionsFromDiskFn`），`ACPConnManager` 的 `ListSessions` 方法优先尝试 RPC，失败时回退到磁盘扫描
 - **Codex 项目级会话发现**：Codex 的 ACP `session/list` 第一页会与磁盘扫描结果合并（`CODEX_HOME/sessions` 下的 `rollout-*.jsonl`，上限 10k 文件 / 200 结果，只读 session_meta 头），按 `sessionId` 去重、`updatedAt` 排序。ACP 列表失败时纯磁盘扫描兜底，恢复抽屉隐藏无标题会话——让 Codex 历史会话跨项目可靠恢复
 - **ACP EnsureAlive**：仅确保 ACP 连接存活，不创建或恢复会话。用于 `ListSessions` 等不需要会话上下文的场景

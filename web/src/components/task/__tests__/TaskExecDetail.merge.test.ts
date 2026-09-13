@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 /**
  * Tests for the block-merge logic used in TaskExecDetail.activeMsgData.
  *
- * When a scheduled task is running and the user opens its detail view,
+ * When a task is running and the user opens its detail view,
  * the streaming message (WS incremental blocks) must be merged with
  * the DB history blocks — NOT replace them. Otherwise the user sees
  * a flash: full history → only latest streaming output.
