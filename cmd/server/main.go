@@ -374,13 +374,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("ClawBench - AI Workbench, United Across Devices")
 		fmt.Println()
-		fmt.Println("Usage: clawbench <command> [options]")
+		fmt.Println("Usage: clawbench [options]")
 		fmt.Println()
-		fmt.Println("Commands:")
-		fmt.Println("  task    Manage scheduled tasks (cron-based AI execution)")
-		fmt.Println("  rag     Search and retrieve conversation history")
-		fmt.Println()
-		fmt.Println("Run \"clawbench <command> --help\" for more information.")
+		fmt.Println("Runs the ClawBench server. There are no user-facing subcommands;")
+		fmt.Println("scheduled tasks and conversation search are driven by the built-in")
+		fmt.Println("slash commands in the web UI.")
 		fmt.Println()
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
@@ -389,8 +387,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(0)
 	}
 
-	// Parse --data-dir early (before subcommand dispatch) so CLI subcommands
-	// can find cookie-token in the correct data directory.
+	// Parse --data-dir early (before subcommand dispatch) so upgrade-replace
+	// can locate the data directory it is operating on.
 	for i, arg := range os.Args[1:] {
 		if arg == "--data-dir" && i+1 < len(os.Args[1:]) {
 			absDataDir, err := filepath.Abs(os.Args[i+2])

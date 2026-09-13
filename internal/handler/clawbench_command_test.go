@@ -260,6 +260,36 @@ func TestProcessClawbenchCommand_NoMessageDuplication(t *testing.T) {
 		"user message should appear exactly once in the final prompt for /cb-task (ISS-287)")
 }
 
+// TestProcessClawbenchCommand_ProjectCookieIsPortScoped guards a real bug: on a
+// non-default port the server only accepts the scoped cookie name
+// ("cb21999_clawbench_project"), so telling the AI to send the bare name made
+// every call 403. The default port keeps the bare name, which is why this only
+// shows up on multi-instance / custom-port setups.
+func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
+	t.Run("default port uses bare name", func(t *testing.T) {
+		withServerPort(t, 20000)
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily"} {
+			result, err := processClawbenchCommand(msg, "/project", "sess-1")
+			require.NoError(t, err)
+			assert.Containsf(t, result, "clawbench_project=/project",
+				"%s must name the bare cookie on the default port", msg)
+		}
+	})
+
+	t.Run("custom port uses scoped name", func(t *testing.T) {
+		withServerPort(t, 21999)
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily"} {
+			result, err := processClawbenchCommand(msg, "/project", "sess-1")
+			require.NoError(t, err)
+			assert.Containsf(t, result, "cb21999_clawbench_project=/project",
+				"%s must name the port-scoped cookie", msg)
+			// The bare name must not appear: it would 403 on this port.
+			assert.NotContainsf(t, result, `"clawbench_project=/project"`,
+				"%s must not advertise the bare cookie name on a custom port", msg)
+		}
+	})
+}
+
 // itoa avoids pulling strconv into the test's import list for one call.
 func itoa(n int) string {
 	if n == 0 {

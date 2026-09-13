@@ -32,7 +32,7 @@ Endpoints:
 
 Required parameters:
 - The search query (body field "q") is required.
-- Send the cookie "clawbench_project={{PROJECT_PATH}}" so results stay inside this project.
+- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" so results stay inside this project.
 - Set exclude_session_id to {{SESSION_ID}} to keep the current conversation out of the results.
 
 After searching, present the results in a natural, readable format (e.g. a summary paragraph or bullet list). Mention the session titles and key findings.
@@ -41,7 +41,7 @@ If no results found, answer based on your own knowledge — do NOT mention the s
 
 // taskInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "/cb-task ".
-// Placeholders: {{BASE_URL}}, {{PROJECT_PATH}}
+// Placeholders: {{BASE_URL}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
 const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
 Base URL: {{BASE_URL}} (no authentication needed from localhost)
@@ -50,7 +50,7 @@ Endpoints:
 {{ENDPOINTS}}
 
 Project scope:
-- Send the cookie "clawbench_project={{PROJECT_PATH}}" on every request; task endpoints take the project from that cookie and reject requests without it.
+- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request; task endpoints take the project from that cookie and reject requests without it.
 
 Discovering agent IDs:
 - Call "GET /api/agents" and use the "id" field of the returned agents. You may reuse the current session's agent when appropriate.
@@ -129,6 +129,14 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 	return rawMsg, nil
 }
 
+// clawbenchProjectCookie is the cookie name the AI must send for project
+// scoping. It goes through ScopedCookieName because a non-default port prefixes
+// the cookie (e.g. "cb21999_clawbench_project") to keep multiple instances on
+// one host from clobbering each other — sending the bare name would 403.
+func clawbenchProjectCookie() string {
+	return model.ScopedCookieName("clawbench_project")
+}
+
 func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
 	endpoints, err := api.RenderCommand(api.CommandChatSearch)
 	if err != nil {
@@ -136,6 +144,7 @@ func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
 	}
 	tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{ENDPOINTS}}", endpoints)
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
 	return tmpl, nil
@@ -148,6 +157,7 @@ func renderTaskTemplate(projectPath string) (string, error) {
 	}
 	tmpl := strings.ReplaceAll(taskInjectTemplate, "{{ENDPOINTS}}", endpoints)
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	return tmpl, nil
 }
