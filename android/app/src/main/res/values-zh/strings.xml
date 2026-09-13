@@ -56,7 +56,6 @@
     <string name="floating_stat_running">执行中 %1$d</string>
     <string name="floating_stat_pending">待审批 %1$d</string>
     <string name="floating_stat_unread">未读 %1$d</string>
-    <string name="floating_idle">空闲</string>
     <string name="session_untitled">(无标题)</string>
     <!-- Main activity: connection / login errors -->
     <string name="conn_file_picker_title">选择文件</string>

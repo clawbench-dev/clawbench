@@ -9,7 +9,7 @@ import org.json.JSONObject;
 /**
  * Floating stats capsule for the desktop floating status window.
  *
- * The visual content — logo + three stat item groups + breathing animation —
+ * The visual content — logo + three stat item groups + spin animation —
  * lives in {@link FloatingStatusContentView}; the capsule is a pill-shaped
  * frame around a single content row. Height = 2 * 7dp vertical padding + 24dp
  * logo = 38dp, with a 19dp (half-height) corner radius so both ends render as
@@ -58,7 +58,7 @@ public class FloatingStatusView extends android.widget.FrameLayout {
         // near the capsule's left end; trailing edge keeps the wider 14dp.
         setPadding(dp(PADDING_H_START_DP), dp(PADDING_V_DP), dp(PADDING_H_DP), dp(PADDING_V_DP));
 
-        // Shared content row: logo + stat items + breathing animation.
+        // Shared content row: logo + stat items + spin animation.
         contentView = new FloatingStatusContentView(context);
         addView(contentView, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT));
     }
@@ -154,7 +154,7 @@ public class FloatingStatusView extends android.widget.FrameLayout {
     }
 
     /**
-     * Stop the breathing animation in the content row. Called on controller
+     * Stop the spin animation in the content row. Called on controller
      * teardown so an infinite animator cannot keep posting frame callbacks
      * after the window is removed. UI thread only.
      */

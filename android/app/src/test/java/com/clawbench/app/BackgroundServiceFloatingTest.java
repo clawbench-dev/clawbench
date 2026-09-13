@@ -22,6 +22,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -519,7 +520,9 @@ public class BackgroundServiceFloatingTest {
 
             org.mockito.ArgumentCaptor<org.json.JSONObject> captor =
                     org.mockito.ArgumentCaptor.forClass(org.json.JSONObject.class);
-            verify(controller).onOverviewLoaded(captor.capture());
+            // The version captured before the fetch is passed back so the
+            // controller can tell whether this response is still current.
+            verify(controller).onOverviewLoaded(captor.capture(), anyLong());
             assertEquals("s1", captor.getValue().optJSONArray("projects")
                     .optJSONObject(0).optJSONArray("sessions").optJSONObject(0).optString("id"));
         } finally {
@@ -542,7 +545,7 @@ public class BackgroundServiceFloatingTest {
 
             invokeMethod(service, "fetchOverviewSessions", url);
 
-            verify(controller, never()).onOverviewLoaded(any(org.json.JSONObject.class));
+            verify(controller, never()).onOverviewLoaded(any(org.json.JSONObject.class), anyLong());
         } finally {
             server.shutdown();
         }

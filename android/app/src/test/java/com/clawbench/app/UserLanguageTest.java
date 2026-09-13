@@ -50,18 +50,6 @@ public class UserLanguageTest {
     }
 
     @Test
-    public void resolve_zhPref_returnsChineseFloatingIdle() {
-        prefs.edit().putString("user_language", "zh").commit();
-        assertEquals("空闲", UserLanguage.resolve(context, R.string.floating_idle));
-    }
-
-    @Test
-    public void resolve_enPref_returnsEnglishFloatingIdle() {
-        prefs.edit().putString("user_language", "en").commit();
-        assertEquals("Idle", UserLanguage.resolve(context, R.string.floating_idle));
-    }
-
-    @Test
     public void resolve_enPref_formattedStat_returnsEnglishWithCount() {
         prefs.edit().putString("user_language", "en").commit();
         assertEquals("Running 3", UserLanguage.resolve(context, R.string.floating_stat_running, 3));
@@ -76,6 +64,6 @@ public class UserLanguageTest {
     @Test
     public void resolve_noPref_fallsBackToSystemLocale() {
         // No user_language pref — must fall back to the default resource set.
-        assertNotNull(UserLanguage.resolve(context, R.string.floating_idle));
+        assertNotNull(UserLanguage.resolve(context, R.string.floating_stat_running, 1));
     }
 }

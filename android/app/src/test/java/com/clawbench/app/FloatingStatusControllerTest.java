@@ -87,21 +87,25 @@ public class FloatingStatusControllerTest {
         assertFalse(FloatingStatusController.isActiveStatus("", ""));
     }
 
-    // --- shouldShow / hasContent ---
+    // --- shouldShow ---
 
     @Test
-    public void shouldShow_backgroundNotDismissed_true() {
-        // While the app is in the background the window is always shown,
-        // regardless of whether any content (active / unread) remains.
+    public void shouldShow_backgroundActiveNotDismissed_true() {
         assertTrue(FloatingStatusController.shouldShow(false, true, false, false));
-        assertTrue("idle (no active, no unread) must still show the window",
-                FloatingStatusController.shouldShow(false, false, false, false));
     }
 
     @Test
     public void shouldShow_backgroundUnreadNotDismissed_true() {
         // Unread sessions are worth showing even with nothing active.
         assertTrue(FloatingStatusController.shouldShow(false, false, true, false));
+    }
+
+    @Test
+    public void shouldShow_backgroundIdle_false() {
+        // Nothing active and nothing unread: an idle window has nothing worth
+        // showing, so it must not be displayed.
+        assertFalse("idle (no active, no unread) must hide the window",
+                FloatingStatusController.shouldShow(false, false, false, false));
     }
 
     @Test
@@ -115,25 +119,11 @@ public class FloatingStatusControllerTest {
         assertFalse(FloatingStatusController.shouldShow(false, true, false, true));
         assertFalse("dismissal must win over unread too",
                 FloatingStatusController.shouldShow(false, false, true, true));
-        assertFalse("dismissal must hide the idle capsule too",
-                FloatingStatusController.shouldShow(false, false, false, true));
     }
 
     @Test
     public void shouldShow_foregroundNoActiveDismissed_false() {
         assertFalse(FloatingStatusController.shouldShow(true, false, true, true));
-    }
-
-    @Test
-    public void hasContent_anyActiveOrUnread_true() {
-        assertTrue(FloatingStatusController.hasContent(true, false));
-        assertTrue(FloatingStatusController.hasContent(false, true));
-        assertTrue(FloatingStatusController.hasContent(true, true));
-    }
-
-    @Test
-    public void hasContent_none_false() {
-        assertFalse(FloatingStatusController.hasContent(false, false));
     }
 
     // --- snapX ---
@@ -269,6 +259,17 @@ public class FloatingStatusControllerTest {
         return data;
     }
 
+    /**
+     * A "completed" event as the backend actually broadcasts it: the live
+     * terminal broadcast passes has_new_messages=false (see
+     * internal/handler/chat.go EmitSessionEventWSOnly). A completion still means
+     * new assistant output, so the controller must treat it as unread
+     * regardless of the flag — tests use this shape to stay honest.
+     */
+    private org.json.JSONObject completedEvent(String sessionId) throws Exception {
+        return sessionEvent("completed", sessionId);
+    }
+
     @Test
     public void handleEvent_runningIncrementsCount() throws Exception {
         FloatingStatusController controller = newController();
@@ -357,9 +358,12 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void trackSessionState_taskUpdate_isIgnored() throws Exception {
-        // task_update is a scheduled-task status (session_id omitempty, often
-        // empty); it must not feed the running session set.
+    public void trackSessionState_taskUpdate_doesNotEnterSessionSets() throws Exception {
+        // task_update is tracked in its own runningTasks set, never in
+        // runningSessions: the overview covers chat sessions only, so a task id
+        // in runningSessions would be wiped by the next overview and wrongly
+        // hide the window mid-task. Window visibility for a task is covered by
+        // taskRunning_keepsWindowUp.
         FloatingStatusController controller = newController();
         controller.trackSessionState("task_update", "running", "t1");
         assertEquals("task_update must not be tracked as a running session", 0,
@@ -458,42 +462,20 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void onCapsuleTap_idle_firesIdleCallbackNotExpand() throws Exception {
-        // An idle capsule (no active session, no unread) must fire the idle
-        // callback (which brings the app to the foreground) instead of
-        // expanding the panel, which would have no content.
-        final int[] idleTaps = {0};
+    public void onCapsuleTap_unreadOnly_expandsPanel() throws Exception {
+        // An unread session (tracked from an overview) is still content worth
+        // showing, so the tap must expand the panel.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
-        controller.setOnIdleCapsuleTap(() -> idleTaps[0]++);
-
-        controller.onCapsuleTap();
-
-        assertEquals("idle capsule tap must fire the idle callback", 1, idleTaps[0]);
-        assertFalse("idle capsule tap must not expand the panel",
-                controller.isExpanded());
-        controller.destroy();
-    }
-
-    @Test
-    public void onCapsuleTap_unreadOnly_expandsPanelNotIdle() throws Exception {
-        // An unread session (lastUnreadCount > 0 from an overview) is still
-        // content worth showing, so the tap must expand the panel, not fire
-        // the idle callback.
-        final int[] idleTaps = {0};
-        FloatingStatusController controller = new FloatingStatusController(
-                RuntimeEnvironment.getApplication());
-        controller.setOnIdleCapsuleTap(() -> idleTaps[0]++);
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         controller.onCapsuleTap();
 
-        assertEquals("unread content must not fire the idle callback", 0, idleTaps[0]);
         assertTrue("unread content must expand the panel", controller.isExpanded());
         controller.destroy();
     }
@@ -600,7 +582,7 @@ public class FloatingStatusControllerTest {
                         + "{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
                         + "{\"id\":\"s2\",\"title\":\"t2\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}"
                         + "]}],\"total\":2}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         lp = (WindowManager.LayoutParams) getPrivateField(controller, "params");
@@ -639,11 +621,9 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void collapse_withNoActive_showsIdleCapsule() throws Exception {
-        // No active session (e.g. panel showed only unread sessions): collapsing
-        // must switch back to the capsule. With nothing left worth showing the
-        // capsule renders the idle "空闲" state — the window stays up while the
-        // app is backgrounded.
+    public void collapse_withNoActive_hidesWindow() throws Exception {
+        // No active session and no unread content: collapsing the panel must
+        // hide the window entirely — an idle window has nothing worth showing.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -657,12 +637,8 @@ public class FloatingStatusControllerTest {
         ShadowLooper.runUiThreadTasks();
 
         assertFalse(controller.isExpanded());
-        assertTrue("collapse with no active session must keep the idle capsule up",
+        assertFalse("collapse with no content must hide the idle window",
                 controller.isWindowShowing());
-        Object capsuleView = getPrivateField(controller, "view");
-        assertNotNull("capsule view must be restored on collapse", capsuleView);
-        assertEquals("the attached view must be the capsule after collapse",
-                capsuleView, getPrivateField(controller, "attachedView"));
         controller.destroy();
     }
 
@@ -835,7 +811,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         FloatingStatusPanelView panelView = (FloatingStatusPanelView) getPrivateField(controller, "panelView");
@@ -853,7 +829,7 @@ public class FloatingStatusControllerTest {
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
 
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertNull("no panel view should exist when not expanded",
@@ -872,7 +848,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("a running session from the overview must show the capsule while backgrounded",
@@ -883,9 +859,9 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void onOverviewLoaded_noRunning_showsIdleCapsule() throws Exception {
-        // Backgrounded with no running session and no unread content: the
-        // window is not hidden — it shows the idle "空闲" capsule.
+    public void onOverviewLoaded_noRunningNoUnread_hidesWindow() throws Exception {
+        // Backgrounded with no running session and no unread content: there is
+        // nothing worth showing, so the window must stay hidden.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -893,15 +869,12 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
-        assertTrue("no running session must still show the idle capsule",
+        assertFalse("no running session and no unread content must hide the window",
                 controller.isWindowShowing());
         assertEquals(0, controller.getRunningSessionCount());
-        List<String> texts = collectAllTexts(capsuleOf(controller));
-        assertTrue("the idle capsule must show the idle label, got: " + texts,
-                texts.contains("空闲"));
         controller.destroy();
     }
 
@@ -919,7 +892,7 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t1\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("an unread session from the overview must show the capsule",
@@ -933,11 +906,11 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void onOverviewLoaded_noRunningAndTotalZero_keepsIdleWindow() throws Exception {
+    public void onOverviewLoaded_noRunningAndTotalZero_hidesWindow() throws Exception {
         // Regression: the overview had no running sessions but did not reset
         // hasActive, so a session that ended while the WS was down left the
         // capsule stuck on screen. With total == 0 nothing is worth showing —
-        // the window must NOT be hidden, only switch to the idle capsule.
+        // hasActive must reset and the window must be hidden.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -951,14 +924,13 @@ public class FloatingStatusControllerTest {
         // is running and there are no unread/pending sessions left.
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[],\"total\":0}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
-        assertTrue("empty overview must reset hasActive but keep the window up",
+        assertFalse("empty overview must reset hasActive and hide the window",
                 controller.isWindowShowing());
-        List<String> texts = collectAllTexts(capsuleOf(controller));
-        assertTrue("the idle capsule must show the idle label, got: " + texts,
-                texts.contains("空闲"));
+        assertEquals("stale running ids must be cleared by the overview", 0,
+                controller.getRunningSessionCount());
         controller.destroy();
     }
 
@@ -976,7 +948,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"t1\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("unread sessions must keep the window visible",
@@ -985,12 +957,12 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void onOverviewLoaded_panelEmptied_autoCollapsesToIdleCapsule() throws Exception {
+    public void onOverviewLoaded_panelEmptied_autoCollapsesAndHidesWindow() throws Exception {
         // Regression: when the last running session finished while the panel
         // was expanded, the overview came back empty — the panel went blank
         // and stayed on screen until the user tapped the × button. A panel
-        // with nothing left worth showing must collapse to the idle capsule
-        // (the window itself stays up).
+        // with nothing left worth showing must collapse, which hides the
+        // window entirely.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -1005,11 +977,11 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject emptyOverview = new org.json.JSONObject(
                 "{\"projects\":[],\"total\":0}");
-        controller.onOverviewLoaded(emptyOverview);
+        controller.onOverviewLoaded(emptyOverview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertFalse("an emptied panel must auto-collapse", controller.isExpanded());
-        assertTrue("an emptied panel must keep the idle capsule up",
+        assertFalse("an emptied panel must hide the idle window",
                 controller.isWindowShowing());
         assertNull("the panel view must be dropped after auto-collapse",
                 getPrivateField(controller, "panelView"));
@@ -1034,12 +1006,223 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
                         + "]}],\"total\":1}");
-        controller.onOverviewLoaded(unreadOverview);
+        controller.onOverviewLoaded(unreadOverview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("unread sessions must keep the panel expanded",
                 controller.isExpanded());
         assertTrue(controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_staleResponseAfterRunningEvent_keepsWindowUp() throws Exception {
+        // Race: the overview is fetched asynchronously, so its response can be
+        // older than a session_update that arrived while the request was in
+        // flight. A stale snapshot (taken before the session started) must not
+        // wipe the tracked running session and hide the window mid-session.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        // The overview request was issued while the tracked state was still
+        // empty; the session then starts before the response lands. The version
+        // captured at request time (0) no longer matches the current state.
+        long requestVersion = controller.beginOverviewRequest();
+        controller.handleEvent("session_update", sessionEvent("running", "s-late"));
+        ShadowLooper.runUiThreadTasks();
+        assertEquals("the running event must be tracked before the overview lands", 1,
+                controller.getRunningSessionCount());
+
+        // The stale response predates the session: it knows nothing about it.
+        org.json.JSONObject staleOverview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(staleOverview, requestVersion);
+        ShadowLooper.runUiThreadTasks();
+
+        assertEquals("a stale overview must not drop the just-started session", 1,
+                controller.getRunningSessionCount());
+        assertTrue("the window must stay up for the running session",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_staleResponse_doesNotClearUnreadMark() throws Exception {
+        // Same race for unread: a completion marks its session unread locally, a
+        // stale response (taken before it) must not clear that mark and hide the
+        // window while the user still has something to read.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        long requestVersion = controller.beginOverviewRequest();
+
+        controller.handleEvent("session_update", completedEvent("s-done"));
+        ShadowLooper.runUiThreadTasks();
+
+        org.json.JSONObject staleOverview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(staleOverview, requestVersion);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("a stale overview must not clear the unread mark",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_staleResponse_doesNotResurrectClearedUnread() throws Exception {
+        // Regression (the mirror of the test above): applying a stale snapshot
+        // as "add-only" would re-add a session the user just read, resurrecting
+        // the window with a count that no longer exists — and with no further
+        // events nothing would correct it. A stale response must be discarded
+        // outright, not merged.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        // The overview request goes out while s1 is unread.
+        long requestVersion = controller.beginOverviewRequest();
+        org.json.JSONObject unreadOverview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"s1\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
+                        + "]}]}");
+        controller.onOverviewLoaded(unreadOverview, requestVersion);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("the unread session must show the window", controller.isWindowShowing());
+
+        // The user reads it before the in-flight response lands.
+        controller.handleEvent("session_update", sessionEvent("read", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertFalse("reading the only unread session must hide the window",
+                controller.isWindowShowing());
+
+        // A stale snapshot (still listing s1 unread) must NOT bring it back.
+        org.json.JSONObject staleOverview = new org.json.JSONObject(
+                "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
+                        + "{\"id\":\"s1\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
+                        + "]}]}");
+        controller.onOverviewLoaded(staleOverview, requestVersion);
+        ShadowLooper.runUiThreadTasks();
+
+        assertFalse("a stale overview must not resurrect a read session",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_staleResponse_requestsFreshOverview() throws Exception {
+        // A discarded stale response must trigger a fresh fetch: the snapshot
+        // may have carried data the events cannot reconstruct (e.g. an unread
+        // mark for a session that finished while the WS was down), so dropping
+        // it silently would leave the capsule permanently stale.
+        final int[] requests = {0};
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.setOverviewRequestListener(() -> requests[0]++);
+
+        long requestVersion = controller.beginOverviewRequest();
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        requests[0] = 0;
+
+        org.json.JSONObject staleOverview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(staleOverview, requestVersion);
+        ShadowLooper.runUiThreadTasks();
+
+        assertEquals("a stale response must trigger a fresh overview request",
+                1, requests[0]);
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_completionCountsAsUnreadEvenWithFlagFalse() throws Exception {
+        // Regression: the live "completed" broadcast passes has_new_messages
+        // =false (internal/handler/chat.go EmitSessionEventWSOnly), yet the turn
+        // did produce assistant output the backend counts as unread. Keying the
+        // unread mark off that flag hid the window on every completion.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        // completedEvent() deliberately omits has_new_messages, matching prod.
+        controller.handleEvent("session_update", completedEvent("s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("a completion must keep the window up as unread",
+                controller.isWindowShowing());
+        assertTrue("the capsule must show the unread count, got: "
+                        + collectAllTexts(capsuleOf(controller)),
+                collectAllTexts(capsuleOf(controller)).contains("未读 1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void taskRunning_keepsWindowUp() throws Exception {
+        // A running scheduled task is not part of /api/ai/sessions/overview
+        // (chat sessions only), so it must keep the window up on its own.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+
+        org.json.JSONObject task = new org.json.JSONObject();
+        task.put("status", "running");
+        task.put("task_id", "task-1");
+        controller.handleEvent("task_update", task);
+        ShadowLooper.runUiThreadTasks();
+
+        assertTrue("a running scheduled task must show the window",
+                controller.isWindowShowing());
+
+        // An overview that knows nothing about the task must not hide it.
+        org.json.JSONObject emptyOverview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(emptyOverview, -1L);
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("an overview covering only chat sessions must not hide a running task",
+                controller.isWindowShowing());
+
+        // The task finishing leaves nothing to show.
+        task.put("status", "completed");
+        controller.handleEvent("task_update", task);
+        ShadowLooper.runUiThreadTasks();
+        assertFalse("a finished task with nothing else must hide the window",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void onOverviewLoaded_authoritativeResponseClearsEndedSessions() throws Exception {
+        // A response that is still current (no event landed after the request)
+        // is authoritative: it clears the tracked sets, so a session that ended
+        // while the WS was down does not linger and keep the window up.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        org.json.JSONObject emptyOverview = new org.json.JSONObject(
+                "{\"projects\":[],\"total\":0}");
+        controller.onOverviewLoaded(emptyOverview, -1L);
+        ShadowLooper.runUiThreadTasks();
+
+        assertEquals("an authoritative empty overview must clear running ids", 0,
+                controller.getRunningSessionCount());
+        assertFalse("nothing left worth showing must hide the window",
+                controller.isWindowShowing());
         controller.destroy();
     }
 
@@ -1094,7 +1277,7 @@ public class FloatingStatusControllerTest {
                         + "{\"id\":\"p\",\"title\":\"t\",\"running\":false,\"pendingApproval\":true,\"unreadCount\":0},"
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":5}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
@@ -1110,9 +1293,9 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void onOverviewLoaded_zeroCounts_showIdleLabel() throws Exception {
-        // Zero-count groups (dot + label) must be hidden; the idle "空闲"
-        // label takes their place.
+    public void onOverviewLoaded_zeroCounts_hidesWindow() throws Exception {
+        // All counts at zero means nothing is worth showing: the window must
+        // be hidden rather than left up as a logo-only capsule.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -1123,16 +1306,10 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[],\"total\":0}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
-        FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
-        assertNotNull(capsule);
-        List<String> texts = collectAllTexts(capsule);
-        assertTrue("zero-count stats must be replaced by the idle label, got: " + texts,
-                texts.contains("空闲"));
-        assertFalse("no stat labels may remain when all counts are zero, got: " + texts,
-                texts.contains("执行中") || texts.contains("待审批") || texts.contains("未读"));
+        assertFalse("zero counts must hide the window", controller.isWindowShowing());
         controller.destroy();
     }
 
@@ -1154,7 +1331,7 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"r\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         FloatingStatusView capsule = (FloatingStatusView) getPrivateField(controller, "view");
@@ -1178,7 +1355,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s1\",\"title\":\"T1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("a running session from the overview must show the capsule",
@@ -1206,7 +1383,7 @@ public class FloatingStatusControllerTest {
         ShadowLooper.runUiThreadTasks();
         assertTrue(controller.isWindowShowing());
 
-        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        controller.handleEvent("session_update", completedEvent("s1"));
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("another session still running must keep the window",
@@ -1215,9 +1392,10 @@ public class FloatingStatusControllerTest {
     }
 
     @Test
-    public void terminalEvent_lastSession_keepsWindowAsIdle() throws Exception {
-        // When the last running session ends the window must NOT hide: it
-        // switches to the idle "空闲" capsule and stays visible.
+    public void terminalEvent_lastSession_keepsWindowAsUnread() throws Exception {
+        // A completion carries new assistant output, so the finished session is
+        // unread: the window must stay up showing 未读 rather than hide — the
+        // user still has something to read.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -1226,14 +1404,35 @@ public class FloatingStatusControllerTest {
         ShadowLooper.runUiThreadTasks();
         assertTrue(controller.isWindowShowing());
 
-        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        controller.handleEvent("session_update", completedEvent("s1"));
         ShadowLooper.runUiThreadTasks();
 
-        assertTrue("the window must stay up after the last session ends",
+        assertTrue("a completed session is unread and must keep the window up",
                 controller.isWindowShowing());
         List<String> texts = collectAllTexts(capsuleOf(controller));
-        assertTrue("the capsule must show the idle label, got: " + texts,
-                texts.contains("空闲"));
+        assertTrue("the capsule must show the unread count, got: " + texts,
+                texts.contains("未读 1"));
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_cancelledWithoutNewMessages_hidesWindow() throws Exception {
+        // A cancellation carries no new content, so once the last running
+        // session is gone with nothing unread there is nothing to show: the
+        // window must be hidden.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", sessionEvent("running", "s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue(controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("cancelled", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertFalse("a cancelled session with nothing unread must hide the window",
+                controller.isWindowShowing());
         controller.destroy();
     }
 
@@ -1254,30 +1453,28 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
         assertTrue(collectAllTexts(capsuleOf(controller)).contains("未读 1"));
 
-        // Last running session ends: the capsule must stay up and keep the
-        // unread count visible.
-        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        // Last running session ends with new output: it joins the unread set
+        // alongside u, so the capsule must stay up and show both.
+        controller.handleEvent("session_update", completedEvent("s1"));
         ShadowLooper.runUiThreadTasks();
 
         assertTrue("unread sessions must keep the capsule visible",
                 controller.isWindowShowing());
         List<String> texts = collectAllTexts(capsuleOf(controller));
-        assertTrue("capsule must keep showing the unread count, got: " + texts,
-                texts.contains("未读 1"));
-        assertFalse("capsule must not show the idle label with unread content, got: " + texts,
-                texts.contains("空闲"));
+        assertTrue("capsule must count the finished session as unread too, got: " + texts,
+                texts.contains("未读 2"));
         controller.destroy();
     }
 
     @Test
-    public void terminalEvent_withUnread_afterRead_showsIdle() throws Exception {
-        // The unread guard is not sticky: once the user reads the sessions
-        // (overview reports zero unread), a later terminal event for the last
-        // session must switch the capsule to the idle state.
+    public void terminalEvent_withUnread_afterRead_hidesWindow() throws Exception {
+        // The unread state is not sticky: once the user reads everything and
+        // the overview confirms zero unread, a later terminal event for the
+        // last session (with no new content) must hide the window.
         FloatingStatusController controller = new FloatingStatusController(
                 RuntimeEnvironment.getApplication());
         ShadowSettings.setCanDrawOverlays(true);
@@ -1289,7 +1486,7 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":2}"
                         + "]}]}");
-        controller.onOverviewLoaded(unreadOverview);
+        controller.onOverviewLoaded(unreadOverview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         // All unread cleared.
@@ -1297,15 +1494,37 @@ public class FloatingStatusControllerTest {
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":["
                         + "{\"id\":\"u\",\"title\":\"t\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":0}"
                         + "]}]}");
-        controller.onOverviewLoaded(readOverview);
+        controller.onOverviewLoaded(readOverview, -1L);
         ShadowLooper.runUiThreadTasks();
 
-        controller.handleEvent("session_update", sessionEvent("completed", "s1"));
+        // A cancellation carries no new content, so nothing is left to show.
+        controller.handleEvent("session_update", sessionEvent("cancelled", "s1"));
         ShadowLooper.runUiThreadTasks();
-        assertTrue("the window must never auto-hide", controller.isWindowShowing());
-        List<String> texts = collectAllTexts(capsuleOf(controller));
-        assertTrue("with unread cleared the capsule must show the idle label, got: " + texts,
-                texts.contains("空闲"));
+        assertFalse("with unread cleared and no new content the window must hide",
+                controller.isWindowShowing());
+        controller.destroy();
+    }
+
+    @Test
+    public void terminalEvent_readEvent_hidesWindowWithoutWaitingForOverview() throws Exception {
+        // A "read" event (session marked read from another client) must drop
+        // the session from the unread set immediately: with no active session
+        // left, the window hides on that event rather than lingering until the
+        // overview round trip returns.
+        FloatingStatusController controller = new FloatingStatusController(
+                RuntimeEnvironment.getApplication());
+        ShadowSettings.setCanDrawOverlays(true);
+        controller.setAppForeground(false);
+        controller.handleEvent("session_update", completedEvent("s1"));
+        ShadowLooper.runUiThreadTasks();
+        assertTrue("the completed session is unread and must show the window",
+                controller.isWindowShowing());
+
+        controller.handleEvent("session_update", sessionEvent("read", "s1"));
+        ShadowLooper.runUiThreadTasks();
+
+        assertFalse("reading the last unread session must hide the window",
+                controller.isWindowShowing());
         controller.destroy();
     }
 
@@ -1489,7 +1708,7 @@ public class FloatingStatusControllerTest {
                         + "{\"id\":\"s1\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0},"
                         + "{\"id\":\"u\",\"running\":false,\"pendingApproval\":false,\"unreadCount\":3}"
                         + "]}]}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
         assertTrue(collectAllTexts(capsuleOf(controller)).contains("未读 1"));
 
@@ -1545,7 +1764,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s-click\",\"title\":\"t\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         FloatingStatusPanelView panelView = (FloatingStatusPanelView) getPrivateField(controller, "panelView");
@@ -1574,7 +1793,7 @@ public class FloatingStatusControllerTest {
 
         org.json.JSONObject overview = new org.json.JSONObject(
                 "{\"projects\":[{\"name\":\"/projA\",\"sessions\":[{\"id\":\"s-click\",\"title\":\"t\",\"running\":true,\"pendingApproval\":false,\"unreadCount\":0}]}],\"total\":1}");
-        controller.onOverviewLoaded(overview);
+        controller.onOverviewLoaded(overview, -1L);
         ShadowLooper.runUiThreadTasks();
 
         FloatingStatusPanelView panelView = (FloatingStatusPanelView) getPrivateField(controller, "panelView");

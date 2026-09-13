@@ -1839,11 +1839,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Bring the main activity to the front from the desktop floating status window
-     * (capsule tap). Static so BackgroundService can invoke it without an activity
-     * reference. Carries the tapped session id as a deep link for the frontend.
-     * No project path is available for capsule taps (it opens the most recently
-     * seen session), so this delegates to the two-arg variant with a null path.
+     * Bring the main activity to the front from the desktop floating status
+     * window, without a session deep link. Static so BackgroundService can
+     * invoke it without an activity reference. Delegates to the two-arg variant
+     * with a null path.
      */
     public static void launchFromFloatingWindow(String sessionId) {
         launchFromFloatingWindow(sessionId, null);

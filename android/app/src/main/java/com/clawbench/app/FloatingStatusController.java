@@ -26,15 +26,14 @@ import java.util.function.BiConsumer;
  * task_update events, app foreground state, and user dismissal. Handles
  * drag-to-snap positioning (persisted to SharedPreferences) and tap-to-open.
  *
- * While the app is in the background the window is always shown: the capsule
- * renders live stats while a session is active / unread items remain, and an
- * idle "空闲" state when nothing is worth drawing attention to. It is only
- * hidden when the app returns to the foreground or the user dismisses it.
+ * The window is only shown while it has something worth showing: the app is in
+ * the background, a session is active (running / pending approval) or unread
+ * items remain, and the user has not dismissed it. When the last session ends
+ * and no unread items are left the window is hidden entirely, so an idle
+ * background never leaves a meaningless capsule on screen.
  *
- * Capsule taps with content expand the grouped panel (the panel's session rows
- * are the single tap-to-open entry point, carrying session id + project path);
- * an idle capsule tap brings the app back to the foreground instead (via
- * onIdleCapsuleTap).
+ * Capsule taps always expand the grouped panel (the panel's session rows are
+ * the single tap-to-open entry point, carrying session id + project path).
  *
  * The panel's height follows its content: after each render the panel is
  * measured and the window height is updated to min(content, screen), so a few
@@ -90,10 +89,14 @@ public class FloatingStatusController {
     private volatile boolean expanded;
     private BiConsumer<String, String> onSessionClick;
     private OverviewRequestListener overviewRequestListener;
-    /** Invoked when an idle capsule (no active / unread content) is tapped. */
-    private Runnable onIdleCapsuleTap;
     /** Last time an event-triggered overview refresh was requested (throttle). */
     private volatile long lastOverviewRequestMs;
+    /**
+     * Whether an overview has ever been requested. Tracked separately from
+     * lastOverviewRequestMs because 0 is a legitimate timestamp (elapsedRealtime
+     * origin, as in tests) and must not be confused with "never requested".
+     */
+    private volatile boolean overviewRequested;
 
     /** Session ids currently running, tracked from events. Thread-safe set. */
     private final java.util.Set<String> runningSessions =
@@ -108,11 +111,54 @@ public class FloatingStatusController {
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
-     * Number of sessions with unread messages, as of the last overview. Events
-     * carry no unread data, so this is the best the capsule can show between
-     * overview refreshes; onOverviewLoaded corrects it.
+     * Session ids with unread messages, tracked from the last overview and
+     * corrected by events between overviews. Thread-safe set. The capsule's
+     * unread count is the set size; the set (not a bare counter) is what makes
+     * the idle decision exact — a completion adds its session once, a "read"
+     * event removes it, and a session that starts running again is dropped so
+     * it cannot stay counted as unread.
      */
-    private volatile int lastUnreadCount;
+    private final java.util.Set<String> unreadSessions =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Scheduled-task ids currently running, tracked from task_update events.
+     * Thread-safe set. Kept separate from runningSessions because the overview
+     * covers chat sessions only — a running task must keep the window up, and
+     * must not be wiped by an overview that knows nothing about it.
+     */
+    private final java.util.Set<String> runningTasks =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Guards every mutation of the tracked sets (runningSessions /
+     * pendingSessions / unreadSessions / runningTasks / hasActive) together with
+     * stateVersion, so an event's mutation and the version bump are atomic and
+     * an overview response cannot interleave between a version check and the
+     * set update it authorises.
+     */
+    private final Object stateLock = new Object();
+
+    /**
+     * Bumped whenever an event actually changes the tracked sets. An overview is
+     * fetched asynchronously, so its response can be older than an event that
+     * arrived while the request was in flight; comparing this counter against
+     * the value captured when the request was issued tells the response whether
+     * it is still current. Without this a stale snapshot could clear a session
+     * that started mid-request and hide the window mid-session.
+     */
+    private final java.util.concurrent.atomic.AtomicLong stateVersion =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Capture the tracked-state version before starting an overview fetch. The
+     * service calls this at its single fetch choke point and passes the result
+     * back to {@link #onOverviewLoaded(JSONObject, long)}, so every response is
+     * matched to the state as it was when its own request went out. Any thread.
+     */
+    public long beginOverviewRequest() {
+        return stateVersion.get();
+    }
 
     // Drag bookkeeping.
     private float downX;
@@ -138,24 +184,18 @@ public class FloatingStatusController {
 
     /**
      * Whether the floating window should be shown right now. Pure: no framework
-     * deps. While the app is in the background the window is always shown —
-     * with live stats when a session is active or unread items remain, and an
-     * idle "空闲" capsule otherwise — unless the user has dismissed it. Only
-     * returning to the foreground (or an explicit user dismissal) hides it.
+     * deps. The window is only meaningful while the app is in the background,
+     * there is an active task or an unread session (either is worth drawing
+     * the user's attention to), and the user has not dismissed it.
      */
     public static boolean shouldShow(boolean appForeground, boolean hasActive,
                                      boolean hasUnread, boolean userDismissed) {
-        return !appForeground && !userDismissed;
+        return !appForeground && (hasActive || hasUnread) && !userDismissed;
     }
 
-    /**
-     * Whether any session is active (running / pending approval) or has unread
-     * messages — i.e. the window has content worth drawing attention to. Pure:
-     * no framework deps. The capsule renders live stats when this is true and
-     * an idle "空闲" state when it is false.
-     */
-    public static boolean hasContent(boolean hasActive, boolean hasUnread) {
-        return hasActive || hasUnread;
+    /** Number of sessions currently marked unread (tracked set size). */
+    private int unreadCount() {
+        return unreadSessions.size();
     }
 
     /**
@@ -184,41 +224,98 @@ public class FloatingStatusController {
     }
 
     /**
-     * Track session running state from events. Adds the session when an event
-     * reports it as active, removes it on a terminal status (completed /
-     * cancelled / failed). Any thread.
+     * Track running state from events. Adds the id when an event reports it as
+     * active, removes it on a terminal status (completed / cancelled / failed).
+     * For session_update the id is the session id; for task_update it is the
+     * task id (a scheduled task never enters the session sets — see below).
+     * Any thread.
+     *
+     * The version bump is applied only when a set actually changes, and both
+     * happen under {@link #stateLock} so an overview response can never observe
+     * a half-applied event (see onOverviewLoaded).
      */
-    public void trackSessionState(String eventType, String status, String sessionId) {
+    public void trackSessionState(String eventType, String status, String id) {
         // Late events arriving after destroy() must not resurrect the cleared
         // running set. This guard runs before any mutation; the postToUi
         // dropped-runnable guard only protects the window, not this set.
         if (destroyed) {
             return;
         }
-        // Only session_update events feed the running set. task_update is a
-        // scheduled-task status, not a session status: its session_id is
-        // omitempty (often empty) and would desync the count from hasActive.
-        if (!"session_update".equals(eventType)) {
+        if (id == null || id.isEmpty()) {
             return;
         }
+        boolean changed = false;
+        synchronized (stateLock) {
+            if ("task_update".equals(eventType)) {
+                // Scheduled tasks are tracked by task_id. They never enter the
+                // session sets: the overview covers chat sessions only, so a
+                // task id in runningSessions would be wiped by the next overview
+                // and wrongly hide the window mid-task.
+                if ("running".equals(status)) {
+                    changed = runningTasks.add(id);
+                } else if (isTerminalStatus(status)) {
+                    changed = runningTasks.remove(id);
+                }
+            } else if ("session_update".equals(eventType)) {
+                if (isActiveStatus(eventType, status)) {
+                    changed = runningSessions.add(id);
+                    // A running / pending session is excluded from the unread
+                    // group (pending > running > unread), so it must not stay
+                    // counted unread.
+                    changed |= unreadSessions.remove(id);
+                    if ("permission_pending".equals(status)) {
+                        changed |= pendingSessions.add(id);
+                    }
+                } else if (isTerminalStatus(status)) {
+                    changed = runningSessions.remove(id);
+                    changed |= pendingSessions.remove(id);
+                } else if ("permission_resolved".equals(status)) {
+                    // The session is still running, so it must NOT be removed
+                    // from runningSessions here.
+                    changed = pendingSessions.remove(id);
+                } else if ("read".equals(status)) {
+                    // The session was read (possibly from another client): it is
+                    // no longer unread. Applied here so the idle decision is
+                    // correct even before the next overview lands.
+                    changed = unreadSessions.remove(id);
+                }
+            }
+            if (changed) {
+                stateVersion.incrementAndGet();
+            }
+        }
+    }
+
+    /** A terminal session/task status — the run is no longer in progress. */
+    private static boolean isTerminalStatus(String status) {
+        return "completed".equals(status) || "cancelled".equals(status)
+                || "failed".equals(status);
+    }
+
+    /**
+     * Mark a session unread from an event. Any thread. Bumps the state version
+     * (an in-flight overview response must not overwrite this), so it is
+     * skipped for a blank id.
+     */
+    private void markSessionUnread(String sessionId) {
         if (sessionId == null || sessionId.isEmpty()) {
             return;
         }
-        if (isActiveStatus(eventType, status)) {
-            runningSessions.add(sessionId);
-            if ("permission_pending".equals(status)) {
-                pendingSessions.add(sessionId);
+        synchronized (stateLock) {
+            if (unreadSessions.add(sessionId)) {
+                stateVersion.incrementAndGet();
             }
-        } else if ("completed".equals(status) || "cancelled".equals(status)
-                || "failed".equals(status)) {
-            runningSessions.remove(sessionId);
-            pendingSessions.remove(sessionId);
-        } else {
-            // permission_resolved leaves the session still running, so it must
-            // NOT be removed from the set here.
-            if ("permission_resolved".equals(status)) {
-                pendingSessions.remove(sessionId);
-            }
+        }
+    }
+
+    /**
+     * Recompute {@code hasActive} from the tracked sets. Any thread. The
+     * overview's apply path writes it directly under the same lock; this is the
+     * event path's equivalent.
+     */
+    private void refreshHasActive(boolean eventActive) {
+        synchronized (stateLock) {
+            hasActive = eventActive || !runningSessions.isEmpty() || !runningTasks.isEmpty();
         }
     }
 
@@ -242,28 +339,12 @@ public class FloatingStatusController {
     }
 
     /**
-     * Public entry point for a capsule tap. With active or unread content the
-     * tap always expands the grouped panel; an idle capsule (no content worth
-     * showing) instead fires onIdleCapsuleTap so the service can bring the app
-     * back to the foreground. Session-specific open actions happen through the
-     * panel's session rows (which carry the tapped session id + project path).
-     * Any thread.
+     * Public entry point for a capsule tap: always expand the grouped panel.
+     * Session-specific open actions happen through the panel's session rows
+     * (which carry the tapped session id + project path). Any thread.
      */
     public void onCapsuleTap() {
-        if (hasContent(hasActive, lastUnreadCount > 0)) {
-            setExpanded(true);
-        } else if (onIdleCapsuleTap != null) {
-            onIdleCapsuleTap.run();
-        }
-    }
-
-    /**
-     * Callback invoked when an idle capsule (no active session, no unread
-     * messages) is tapped. The service wires this to bring the app back to the
-     * foreground; the controller only fires it and stays hidden.
-     */
-    public void setOnIdleCapsuleTap(Runnable listener) {
-        this.onIdleCapsuleTap = listener;
+        setExpanded(true);
     }
 
     /**
@@ -300,11 +381,10 @@ public class FloatingStatusController {
                 // streaming event fired moments before the expand.
                 requestOverviewRefresh(true);
             } else {
-                // Collapse: back to the capsule (live stats if content remains,
-                // the idle "空闲" state otherwise). The window stays up while
-                // the app is in the background; only the foreground or a user
-                // dismissal hides it.
-                if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, userDismissed)) {
+                // Collapse: back to the capsule if a session is still active or
+                // unread items remain, otherwise hide the window entirely —
+                // an idle window has nothing worth showing.
+                if (shouldShow(appForeground, hasActive, unreadCount() > 0, userDismissed)) {
                     attachView(view != null ? view : buildCapsuleView());
                     renderCapsuleStats();
                 } else {
@@ -322,71 +402,77 @@ public class FloatingStatusController {
      * Render overview data into the expanded panel. Any thread; the render is
      * marshalled to the UI thread and no-ops when the panel is not expanded.
      *
-     * The overview also re-seeds the running session set: on WS connect it is
-     * the fallback for a "running" session_update that was broadcast while the
-     * WS was down, so the capsule still appears. Running ids are added (never
-     * removed — the event stream remains authoritative for termination).
+     * The overview also re-seeds the tracked sets: on WS connect it is the
+     * fallback for a "running" session_update that was broadcast while the WS
+     * was down, so the capsule still appears.
+     *
+     * @param requestVersion the {@link #beginOverviewRequest() tracked-state
+     *                       version} captured when this response's request was
+     *                       issued, or -1 when the caller did not record one
+     *                       (only tests do that; every production path goes
+     *                       through BackgroundService.fetchOverviewSessions,
+     *                       which always captures a version). A response whose
+     *                       version no longer matches is stale and discarded.
      */
-    public void onOverviewLoaded(JSONObject overview) {
+    public void onOverviewLoaded(JSONObject overview, long requestVersion) {
         if (overview == null) {
             return;
         }
-        seedRunningFromOverview(overview);
-        lastUnreadCount = FloatingStatusView.countUnread(overview);
-        postToUi(() -> {
-            if (panelView != null && expanded) {
-                panelView.render(overview, (sid, projectPath) -> {
-                    if (sid != null && !sid.isEmpty()) {
-                        // Opening a specific session: deliver it to the service
-                        // deep-link and collapse the panel.
-                        if (onSessionClick != null) {
-                            onSessionClick.accept(sid, projectPath);
-                        }
-                        setExpanded(false);
-                    }
-                });
-                // Real data (or an empty no-session overview) replaces the
-                // skeleton, so the placeholder never lingers after a load —
-                // even when the overview carried zero sessions.
-                panelView.hideSkeleton();
-                // The overview changed the panel's content (group/session
-                // count), so re-fit the window height to the new content.
-                resizePanelIfNeeded();
-                // A session list that emptied out (the last running session
-                // finished and nothing is left worth showing) must not leave a
-                // hollow panel behind: collapse it. The window itself stays up
-                // as the idle capsule (shouldShow only gates on foreground and
-                // user dismissal, never on content).
-                if (!hasContent(hasActive, lastUnreadCount > 0)) {
-                    setExpanded(false);
-                }
-            } else if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, userDismissed) && !windowShowing) {
-                // Background + not dismissed: the window is always up. On WS
-                // connect the overview is the first reliable state signal — a
-                // running session discovered here (whose start event was missed
-                // while the WS was down) must bring up the capsule, and an
-                // empty overview brings up the idle capsule.
-                ensureWindow();
+        // The overview is a server snapshot fetched asynchronously, so it can be
+        // older than an event that arrived while the request was in flight.
+        // Applying a stale snapshot is unsafe in BOTH directions: it could
+        // resurrect a session an event just cleared (keeping the window up for a
+        // finished session, showing a count the user already read) or drop a
+        // session an event just started (hiding the window mid-session). So the
+        // version is re-checked under the same lock that guards the sets: a
+        // current response replaces them wholesale, a stale one is discarded and
+        // a fresh fetch is requested instead. A caller that did not record a
+        // version (-1) has nothing to compare against and is taken as current.
+        boolean current;
+        synchronized (stateLock) {
+            current = requestVersion < 0 || stateVersion.get() == requestVersion;
+            if (current) {
+                applyOverviewLocked(overview);
             }
-            // The stats capsule always reflects the latest overview so its
-            // counts stay current on collapse and right after a fallback build.
-            if (view != null) {
-                int[] stats = computeStats(overview);
-                view.renderStats(stats[0], stats[1], stats[2]);
-            }
-        });
+        }
+        if (!current) {
+            AppLog.d(TAG, "overview response stale (requested v" + requestVersion
+                    + ", now v" + stateVersion.get() + "), discarded; refetching");
+            // Converge: the discarded snapshot may have carried data the events
+            // alone cannot reconstruct (e.g. an unread mark for a session that
+            // finished while the WS was down). Forced past the throttle so the
+            // discard cannot silently leave the capsule stale; this cannot storm
+            // because a discard requires a real state change mid-flight
+            // (stateVersion only moves when a tracked set actually changes, not
+            // on every streaming event).
+            requestOverviewRefresh(true);
+            return;
+        }
+        postToUi(() -> renderOverview(overview));
     }
 
     /**
-     * Add sessions flagged running or pending-approval by the overview into
-     * their tracked sets. Any thread. No-op when the overview is malformed.
+     * Replace the tracked sets with an authoritative overview snapshot, and
+     * recompute {@code hasActive} from it. Caller must hold {@link #stateLock}.
+     *
+     * The overview is authoritative: the server lists every non-archived chat
+     * session that is running, pending approval, or unread, resolving the flags
+     * against the live registries. So the sets are replaced rather than merged —
+     * a tracked id absent from the snapshot (its session ended while the WS was
+     * down) must be dropped, otherwise a stale id would keep {@code hasActive}
+     * true on the next unrelated event and resurrect a window with nothing to
+     * show. A running scheduled task is not part of this overview (it covers
+     * chat sessions only), so {@code hasActive} additionally honours the tracked
+     * task set. No-op when the payload is malformed.
      */
-    private void seedRunningFromOverview(JSONObject overview) {
+    private void applyOverviewLocked(JSONObject overview) {
         JSONArray projects = overview.optJSONArray("projects");
         if (projects == null) {
             return;
         }
-        boolean anyRunning = false;
+        java.util.Set<String> running = new java.util.HashSet<>();
+        java.util.Set<String> pending = new java.util.HashSet<>();
+        java.util.Set<String> unread = new java.util.HashSet<>();
         for (int i = 0; i < projects.length(); i++) {
             JSONObject project = projects.optJSONObject(i);
             if (project == null) {
@@ -405,30 +491,78 @@ public class FloatingStatusController {
                 if (id.isEmpty()) {
                     continue;
                 }
-                boolean pending = s.optBoolean("pendingApproval", false);
-                boolean running = s.optBoolean("running", false);
-                if (pending) {
+                if (s.optBoolean("pendingApproval", false)) {
                     // Pending wins over running (yellow > green), matching the
                     // panel's status-dot priority and the capsule's mutual
                     // exclusion between the running and pending groups.
-                    runningSessions.add(id);
-                    pendingSessions.add(id);
-                    anyRunning = true;
-                } else if (running) {
-                    runningSessions.add(id);
-                    anyRunning = true;
+                    running.add(id);
+                    pending.add(id);
+                } else if (s.optBoolean("running", false)) {
+                    running.add(id);
+                } else if (s.optInt("unreadCount", 0) > 0) {
+                    // Mirrors FloatingStatusView.countUnread: unread only counts
+                    // sessions that are neither running nor pending.
+                    unread.add(id);
                 }
             }
         }
-        if (anyRunning) {
-            hasActive = true;
-        } else if (hasActive && overview.optInt("total", 0) == 0) {
-            // No running session anywhere in the overview and nothing left
-            // worth showing (total counts unread / pending-approval items too):
-            // every session ended while the WS was down, so reset hasActive.
-            // The window stays up — the next render shows the idle capsule —
-            // because shouldShow only gates on foreground and user dismissal.
-            hasActive = false;
+        runningSessions.clear();
+        runningSessions.addAll(running);
+        pendingSessions.clear();
+        pendingSessions.addAll(pending);
+        unreadSessions.clear();
+        unreadSessions.addAll(unread);
+        hasActive = !running.isEmpty() || !runningTasks.isEmpty();
+    }
+
+    /**
+     * Render an (already applied) overview into the panel and drive window
+     * visibility from the current tracked state. UI thread only.
+     */
+    private void renderOverview(JSONObject overview) {
+        if (panelView != null && expanded) {
+            panelView.render(overview, (sid, projectPath) -> {
+                if (sid != null && !sid.isEmpty()) {
+                    // Opening a specific session: deliver it to the service
+                    // deep-link and collapse the panel.
+                    if (onSessionClick != null) {
+                        onSessionClick.accept(sid, projectPath);
+                    }
+                    setExpanded(false);
+                }
+            });
+            // Real data (or an empty no-session overview) replaces the
+            // skeleton, so the placeholder never lingers after a load —
+            // even when the overview carried zero sessions.
+            panelView.hideSkeleton();
+            // The overview changed the panel's content (group/session
+            // count), so re-fit the window height to the new content.
+            resizePanelIfNeeded();
+            // A session list that emptied out (the last running session
+            // finished and nothing is left worth showing) must not leave a
+            // hollow panel behind: collapse it, which hides the window
+            // because shouldShow is false with no content left.
+            if (!shouldShow(appForeground, hasActive, unreadCount() > 0, userDismissed)) {
+                setExpanded(false);
+            }
+        } else if (shouldShow(appForeground, hasActive, unreadCount() > 0, userDismissed)) {
+            // Background + not dismissed + content worth showing. On WS
+            // connect the overview is the first reliable state signal — a
+            // running session discovered here (whose start event was missed
+            // while the WS was down) must bring up the capsule.
+            if (!windowShowing) {
+                ensureWindow();
+            }
+        } else {
+            // Nothing active and no unread items left: hide the window so
+            // an idle background leaves no meaningless capsule on screen.
+            hideWindow();
+        }
+        // The stats capsule always reflects the latest overview so its
+        // counts stay current on collapse and right after a fallback build.
+        if (view != null) {
+            int[] stats = computeStats(overview);
+            view.renderStats(stats[0], stats[1], stats[2]);
         }
     }
 
@@ -489,13 +623,31 @@ public class FloatingStatusController {
         }
         String status = data.optString("status", "");
         String sessionId = data.optString("session_id", "");
+        // Scheduled-task events identify the run by task_id; session_id is
+        // omitempty there and often empty. Both feed the tracked-state update
+        // below, but only sessions reach the session sets.
+        String taskId = data.optString("task_id", "");
 
         boolean active = isActiveStatus(eventType, status);
         // trackSessionState must run before deriving hasActive: a terminal
         // event for one session must not clear hasActive while other sessions
         // are still running in the tracked set.
-        trackSessionState(eventType, status, sessionId);
-        hasActive = active || !runningSessions.isEmpty();
+        trackSessionState(eventType, status,
+                "task_update".equals(eventType) ? taskId : sessionId);
+        // A completed turn always produced assistant output, which the backend
+        // counts as unread (messages newer than last_read_at). The live
+        // "completed" broadcast carries has_new_messages=false, so keying off
+        // that flag alone would hide the window on every completion — record
+        // the session as unread here instead. A cancellation is different: it
+        // may have produced nothing, so it only counts when the event itself
+        // reports new messages. The overview remains authoritative and corrects
+        // this either way.
+        if ("session_update".equals(eventType)
+                && ("completed".equals(status)
+                        || data.optBoolean("has_new_messages", false))) {
+            markSessionUnread(sessionId);
+        }
+        refreshHasActive(active);
 
         // While the panel is expanded, every event should refresh the overview
         // so the session list stays current without waiting for the next tap.
@@ -513,7 +665,7 @@ public class FloatingStatusController {
 
         postToUi(() -> {
             if (active) {
-                if (shouldShow(appForeground, true, lastUnreadCount > 0, userDismissed)) {
+                if (shouldShow(appForeground, true, unreadCount() > 0, userDismissed)) {
                     ensureWindow();
                     // Render the capsule instantly from locally tracked state
                     // (running/pending sets, last overview's unread count) so a
@@ -523,13 +675,33 @@ public class FloatingStatusController {
                     requestOverviewRefresh();
                 }
             } else {
-                // Terminal state: reflect the updated counts on the capsule.
-                // The window never auto-hides — with no active session or
-                // unread items left it simply shows the idle "空闲" state.
-                if (windowShowing && !expanded) {
-                    renderCapsuleStats();
-                    requestOverviewRefresh();
+                // Terminal state (or an unrelated status). The unread mark was
+                // already recorded synchronously above, so the window decision
+                // here uses current state.
+                // While the panel is expanded the user is reading the list, so
+                // never touch the window here — the overview path collapses and
+                // hides it once nothing is left worth showing.
+                if (!expanded) {
+                    if (shouldShow(appForeground, hasActive, unreadCount() > 0, userDismissed)) {
+                        // Content remains (another session running, or this one
+                        // is now unread): show the capsule with fresh counts.
+                        // ensureWindow covers the case where no window is up yet
+                        // (e.g. the completion is the first event seen after a
+                        // WS reconnect).
+                        ensureWindow();
+                        renderCapsuleStats();
+                    } else {
+                        // Nothing active and no unread items left: hide the
+                        // window so an idle background leaves no capsule up.
+                        hideWindow();
+                    }
                 }
+                // Always re-pull the overview: it is authoritative for the
+                // unread count and can reveal a running session whose start
+                // event was missed while the WS was down. Forced for a terminal
+                // status so the throttled path cannot leave the capsule showing
+                // a just-finished session as still running.
+                requestOverviewRefresh(isTerminalStatus(status));
             }
         });
     }
@@ -538,15 +710,15 @@ public class FloatingStatusController {
      * Render the capsule stats from locally tracked state, without waiting for
      * an overview round trip. The running count is the tracked running set
      * minus the pending set (pending wins over running, matching the overview
-     * grouping); the unread count is whatever the last overview reported, since
-     * events carry no unread data. onOverviewLoaded corrects all three. Any
-     * thread; marshalled to the UI thread.
+     * grouping); the unread count is the tracked unread set, seeded from the
+     * last overview and adjusted by events since. onOverviewLoaded corrects all
+     * three. Any thread; marshalled to the UI thread.
      */
     private void renderCapsuleStats() {
         postToUi(() -> {
             if (view != null) {
                 int running = Math.max(0, runningSessions.size() - pendingSessions.size());
-                view.renderStats(running, pendingSessions.size(), lastUnreadCount);
+                view.renderStats(running, pendingSessions.size(), unreadCount());
             }
         });
     }
@@ -582,9 +754,13 @@ public class FloatingStatusController {
         postToUi(() -> {
             if (foreground) {
                 hideWindow();
-            } else if (shouldShow(false, hasActive, lastUnreadCount > 0, userDismissed)) {
+            } else if (shouldShow(false, hasActive, unreadCount() > 0, userDismissed)) {
                 ensureWindow();
                 renderCapsuleStats();
+            } else {
+                // Backgrounded with nothing active and nothing unread: there is
+                // nothing to show, so the window stays hidden.
+                hideWindow();
             }
         });
     }
@@ -595,7 +771,7 @@ public class FloatingStatusController {
         postToUi(() -> {
             if (dismissed) {
                 hideWindow();
-            } else if (shouldShow(appForeground, hasActive, lastUnreadCount > 0, false)) {
+            } else if (shouldShow(appForeground, hasActive, unreadCount() > 0, false)) {
                 // Re-evaluate: un-dismissing should restore the window if conditions hold.
                 ensureWindow();
                 renderCapsuleStats();
@@ -612,6 +788,8 @@ public class FloatingStatusController {
         destroyed = true;
         runningSessions.clear();
         pendingSessions.clear();
+        unreadSessions.clear();
+        runningTasks.clear();
         // Bypass postToUi's destroyed guard here: the guard must drop event
         // runnables, but it must NOT drop our own teardown, otherwise the
         // window is never removed from the WindowManager.
@@ -658,12 +836,14 @@ public class FloatingStatusController {
             return;
         }
         long now = android.os.SystemClock.elapsedRealtime();
-        // lastOverviewRequestMs == 0 means "never requested" — always fire so
-        // the expand request is never swallowed by the throttle.
-        if (!force && lastOverviewRequestMs != 0
+        // The first request is never swallowed by the throttle (elapsedRealtime
+        // may legitimately be 0, so a timestamp check alone cannot tell "never
+        // requested" from "requested at the clock origin").
+        if (!force && overviewRequested
                 && now - lastOverviewRequestMs < OVERVIEW_REFRESH_MIN_INTERVAL_MS) {
             return;
         }
+        overviewRequested = true;
         lastOverviewRequestMs = now;
         overviewRequestListener.onRequestOverview();
     }
@@ -728,7 +908,7 @@ public class FloatingStatusController {
             attachedView.animate().alpha(1f).setDuration(FADE_MS).start();
             if (attachedView instanceof FloatingStatusView) {
                 // The capsule's stats render on the next event / overview; the
-                // breathing animation is driven by renderStats, so nothing to
+                // spin animation is driven by renderStats, so nothing to
                 // start here.
                 renderCapsuleStats();
             }

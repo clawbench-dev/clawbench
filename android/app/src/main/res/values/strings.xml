@@ -56,7 +56,6 @@
     <string name="floating_stat_running">Running %1$d</string>
     <string name="floating_stat_pending">Pending %1$d</string>
     <string name="floating_stat_unread">Unread %1$d</string>
-    <string name="floating_idle">Idle</string>
     <string name="session_untitled">(Untitled)</string>
     <!-- Main activity: connection / login errors -->
     <string name="conn_file_picker_title">Select file</string>

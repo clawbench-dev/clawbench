@@ -100,7 +100,7 @@ flowchart LR
 - **SSH 端口映射**：原生层建立 SSH 连接并维持端口映射，前端通过 `usePortForward` composable 控制
 - **硬件返回键代理**：Android `onBackPressed` 通过 `evaluateJavascript` 派发 `clawbench-back-press` 事件并**同步**读回 `window.__clawbenchBackHandled`——JS 层判定「是否消费此按」须在同一 tick 内完成（`useAndroidBackPress` 桥接），导航本身异步执行。状态机裁决见[统一返回与跨界面导航](unified-back-navigation.md)。无人消费时按双击退出协议放行：第一按提示"再按一次退出"（`__clawbenchBackHandled=true` 防退出），2 秒窗口内第二按放行原生退出。全屏视频、登录页与 WebView 断连场景在原生侧直接处理，不走 JS 委托
 - **自动登录**：Android 通过 `AndroidNative.getPassword()` Bridge 获取密码自动登录，配合 `setSSHPassword(savedPwd)` 设置 SSH 密码
-- **桌面悬浮状态窗**：`FloatingStatusView`（原生 `FrameLayout` 胶囊 + `TYPE_APPLICATION_OVERLAY`）在 App 进入后台时于系统桌面实时展示会话状态。数据源复用 `BackgroundService` 的原生 WebSocket 通道（`session_update` / `chat_stream` 事件），无需额外连接。胶囊展示实时统计（执行中/待审批/未读计数）；**无任务且无未读时显示"空闲"状态胶囊而非隐藏**——让用户知道悬浮窗依然在守护，点空闲胶囊可打开 App。执行中状态用旋转加载指示器而非呼吸绿点。**点击胶囊展开为分组会话列表面板**（`FloatingStatusPanelView`，280dp 宽），面板标题栏复用胶囊统计内容，正文从 `GET /api/ai/sessions/overview` 拉取按项目分组的会话列表——每行显示状态点（黄色待审批 > 绿色运行中 > 蓝色未读的固定优先级）、省略标题和红色未读徽章，点击行通过深链（session id + project path）跳转到对应会话。项目分组头显示项目名+路径。面板高度跟随内容自适应并限幅屏幕。`FloatingStatusController` 负责事件→UI 状态映射、自动显隐状态机（前台隐藏、后台有任务出现、完成淡出）、展开/收起切换、拖动贴边与位置持久化。需 Manifest 声明 `SYSTEM_ALERT_WINDOW` 权限，Settings 提供开关和权限申请流程
+- **桌面悬浮状态窗**：`FloatingStatusView`（原生 `FrameLayout` 胶囊 + `TYPE_APPLICATION_OVERLAY`）在 App 进入后台时于系统桌面实时展示会话状态。数据源复用 `BackgroundService` 的原生 WebSocket 通道（`session_update` / `chat_stream` 事件），无需额外连接。胶囊展示实时统计（执行中/待审批/未读计数）；**无任务且无未读时隐藏悬浮窗**——空闲状态没有任何值得展示的信息，常驻只会造成干扰。执行中状态用旋转加载指示器而非呼吸绿点。**点击胶囊展开为分组会话列表面板**（`FloatingStatusPanelView`，280dp 宽），面板标题栏复用胶囊统计内容，正文从 `GET /api/ai/sessions/overview` 拉取按项目分组的会话列表——每行显示状态点（黄色待审批 > 绿色运行中 > 蓝色未读的固定优先级）、省略标题和红色未读徽章，点击行通过深链（session id + project path）跳转到对应会话。项目分组头显示项目名+路径。面板高度跟随内容自适应并限幅屏幕。`FloatingStatusController` 负责事件→UI 状态映射、自动显隐状态机（前台隐藏、后台有任务/未读出现、内容清空即隐藏）、展开/收起切换、拖动贴边与位置持久化。未读按会话 id 集合跟踪（overview 全量重建 + 事件增量增删：completed 记为未读——实时广播的 `has_new_messages` 恒为 false，不能作为依据；`read`/running 移除），使「是否空闲」的判定精确到最后一个未读被读掉的那一刻。overview 响应带**版本门控**：请求发出时记录状态版本，响应回来若版本已变（期间有事件改动过集合）则整份丢弃并强制重新拉取——陈旧快照既不能清掉刚启动的会话（会中途隐藏），也不能重新加回刚被读掉的会话（会让已消失的未读复活）。计划任务不在 overview 内，单独用 `runningTasks` 跟踪，避免被 overview 清空导致任务中途隐藏。需 Manifest 声明 `SYSTEM_ALERT_WINDOW` 权限，Settings 提供开关和权限申请流程
 - **Live Updates 实时状态（灵动岛）**：`LiveUpdateManager` 把会话状态作为 Android 16 的实时更新通知（Live Updates）——状态栏显示单行状态胶囊（iOS 灵动岛的 Android 对应物），锁屏和通知抽屉展示默认展开、不可折叠的卡片。状态栏胶囊只显示一组互斥摘要（待审批 > 未读完成会话 > 运行中，按紧急度取最高者，全空时移除通知保持状态栏干净）；展开卡片始终显示三组完整计数（执行中/待审批/未读），标签走 string 资源支持 i18n。数据源与悬浮窗共享同一份 `/api/ai/sessions/overview` 快照（WS 连接和事件时由 service 喂给两个消费者），`computeStats` 委托给 `FloatingStatusController` 复用三个纯 overview 解析器，保证胶囊与悬浮窗数字永远一致。事件驱动刷新有合并窗口（`THROTTLE_MS`）避免 session_update 突发触发多次 notify。Live Updates 是独立于悬浮窗的开关（Settings 提供"灵动岛/实时状态"开关，默认开），Bridge 通过 `setLiveUpdateEnabled` / `isLiveUpdateEnabled` 控制并持久化；开启时会维持原生 WS 保活。需要系统「实时更新」通知权限，Bridge 提供 `canPostPromoted` 检测和 `openLiveUpdateSettings` 跳转授权，系统不支持时回退为普通常驻通知
 - **全量国际化**：Android 原生 UI 全面 i18n——`strings.xml` 英文默认 + `values-zh` 中文镜像（108 key 对齐），`MainActivity` 21 处硬编码中文（登录/连接错误、SSL 对话框、文件选择器、splash）抽到 `R.string`，`BackgroundService` 16 处通知文字同样抽离。语言跟随三层保障：App 内 `setLanguage` bridge 持久化到 prefs > cookie 读取 > 系统 locale；悬浮窗 locale 即时刷新（`onConfigurationChanged` → `controller.onLocaleChanged()`）
 - **APK 单二进制部署**：`build.sh --android` → Gradle assembleRelease → APK 复制到 `internal/frontend/dist/assets/clawbench-android.apk`（`build.sh`）→ Go `//go:embed all:dist` 打包进二进制（`internal/frontend/embed.go`）→ 运行时 `GET /api/apk` 端点读取
@@ -139,7 +139,7 @@ flowchart LR
 | `OemUtils` | 厂商 ROM 适配 |
 | `SharedCacheUtils` | 跨进程缓存 |
 | `ClawBenchApp` | Application 初始化 |
-| `FloatingStatusView` | 桌面悬浮胶囊 View（状态映射 + 空闲状态 + 旋转加载指示器 + 拖动贴边 + 收缩正圆动画） |
+| `FloatingStatusView` | 桌面悬浮胶囊 View（状态映射 + 旋转加载指示器 + 拖动贴边 + 收缩正圆动画） |
 | `FloatingStatusContentView` | 胶囊/面板标题栏共享的统计内容行（logo + 执行中/待审批/未读计数，计数为 0 时整组隐藏） |
 | `FloatingStatusPanelView` | 点击胶囊展开的分组会话列表面板：解析 overview JSON、状态点优先级、未读徽章、点击行回调 |
 | `FloatingStatusController` | 悬浮窗状态机：事件映射、自动显隐、展开/收起、位置持久化、overview 拉取调度、locale 变更即时刷新 |
@@ -149,7 +149,7 @@ flowchart LR
 
 - **后台服务是端口映射的前提**：没有 BackgroundService，Android 杀进程后 SSH 端口映射断开，已映射的端口全部不可达。后台服务保持 SSH 心跳，维持隧道活跃
 - **悬浮窗与 Live Updates 共享事件通道与解析器**：悬浮窗不建立新连接，直接消费 BackgroundService 原生 WS 的 `session_update` / `chat_stream` 事件；Live Update 同样复用同一份 overview 快照，并委托给同一个 `computeStats` 解析器——省电、与 App 内状态天然一致，且两处展示永不出现数字打架。胶囊本身保持轻量（只做展示 + 展开面板），交互集中在展开后的会话面板上：按项目分组浏览各会话状态、一眼看到未读、点击行直达目标会话。overview 拉取有最小间隔节流（2s），避免展开时高频刷新
-- **空闲状态常驻而非隐藏**：悬浮窗无任务、无未读时显示"空闲"胶囊而不是消失——隐藏会让用户以为悬浮窗失效，常驻空闲状态明确告知"后台守护中"，点击可回 App。Live Updates 则相反，无会话时移除状态栏通知保持系统通知栏干净（状态栏不常驻，与锁屏卡片体验一致）
+- **空闲时隐藏而非常驻**：悬浮窗无任务、无未读时直接隐藏——空闲状态没有任何值得展示的信息，常驻一个空胶囊只会干扰桌面且让人误以为有内容。Live Updates 同样在无会话时移除状态栏通知，保持系统通知栏干净（两者在「无内容即不显示」上口径一致）
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知
 - **WS 优先 + Worker 回退**：常驻 WS 链路是主路径（实时通知），PendingEventsWorker 是 WS 不可达时的兜底（轮询拉取）。两条路径相互独立，BackgroundService 监控 WS 健康度触发 Worker
 - **AppLog 双写 + Anti-Recursion**：`AppLog` 写入 logcat，同时 POST 到 `/api/client-log` 实现集中持久化。`AppLog.java` 自身是允许调用裸 `android.util.Log` 的唯一生产代码位置，以避免日志封装递归；通过 `OemUtils` 和 `SharedCacheUtils` 共享多进程状态
