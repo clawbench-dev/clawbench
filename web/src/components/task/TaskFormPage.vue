@@ -124,26 +124,14 @@
           <!-- Hourly: minute only -->
           <div v-if="preset === 'hourly'" class="time-row">
             <span class="time-label">{{ t('task.form.minute') }}</span>
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="minute">
-                <option v-for="m in 60" :key="m - 1" :value="m - 1">{{ String(m - 1).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="minute" :options="minuteOptions" />
           </div>
 
           <!-- Daily: hour + minute -->
           <div v-if="preset === 'daily'" class="time-row">
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="hour">
-                <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="hour" :options="hourOptions" />
             <span class="time-sep">:</span>
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="minute">
-                <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="minute" :options="minuteStepOptions" />
           </div>
 
           <!-- Weekly: weekday + hour + minute -->
@@ -154,17 +142,9 @@
               </button>
             </div>
             <div class="time-row mt-2">
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="hour">
-                  <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="hour" :options="hourOptions" />
               <span class="time-sep">:</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="minute">
-                  <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="minute" :options="minuteStepOptions" />
             </div>
           </div>
 
@@ -172,25 +152,13 @@
           <div v-if="preset === 'monthly'" class="time-column">
             <div class="time-row">
               <span class="time-label">{{ t('task.form.date') }}</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="monthDay">
-                  <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="monthDay" :options="monthDayOptions" />
             </div>
             <div v-if="monthDay >= 29" class="form-hint warning">{{ t('task.form.monthDaySkipHint') }}</div>
             <div class="time-row mt-2">
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="hour">
-                  <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="hour" :options="hourOptions" />
               <span class="time-sep">:</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="minute">
-                  <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="minute" :options="minuteStepOptions" />
             </div>
           </div>
         </div>
@@ -284,6 +252,7 @@ import { AlertTriangle, ChevronDown, GitBranch, Save } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import MenuSelect from '@/components/common/MenuSelect.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
@@ -424,6 +393,21 @@ const hour = ref(9)
 const weekday = ref(1)     // 0=Sun, 1=Mon, ..., 6=Sat
 const monthDay = ref(1)
 const customCron = ref('')
+
+// ── Time option lists ──
+// MenuSelect holds a flat option array, so the generated ranges live here
+// rather than in the template's v-for. Values stay numbers to match the refs
+// (and the cron builder's arithmetic).
+const pad2 = (n) => String(n).padStart(2, '0')
+const hourOptions = Array.from({ length: 24 }, (_, h) => ({ value: h, label: pad2(h) }))
+// Hourly allows any minute; the other presets step by 5 (as the old <select>
+// did), so the two lists are deliberately different.
+const minuteOptions = Array.from({ length: 60 }, (_, m) => ({ value: m, label: pad2(m) }))
+const minuteStepOptions = Array.from({ length: 12 }, (_, i) => {
+  const m = i * 5
+  return { value: m, label: pad2(m) }
+})
+const monthDayOptions = Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))
 
 // Generate cron from preset
 const generatedCron = computed(() => {

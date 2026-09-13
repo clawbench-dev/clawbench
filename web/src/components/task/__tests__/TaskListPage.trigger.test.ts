@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TaskListPage from '../TaskListPage.vue'
 
@@ -93,9 +93,18 @@ function makeTask(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function mountWith(tasks: unknown[]) {
+// mount() runs onMounted(refresh), which awaits a 600ms timer that only exists
+// to keep the refresh spinner visible. Left pending it outlives the test and
+// surfaces as an "Async Leaks" report, so drain it here: fake timers stop it
+// from ever reaching the real clock, and runAllTimersAsync resolves it so the
+// promise chain settles before the test ends.
+async function mountWith(tasks: unknown[]) {
   mockStore.state.tasks = tasks
-  return mount(TaskListPage)
+  vi.useFakeTimers()
+  const wrapper = mount(TaskListPage)
+  await vi.runAllTimersAsync()
+  vi.useRealTimers()
+  return wrapper
 }
 
 describe('TaskListPage — trigger-type distinction', () => {
@@ -108,8 +117,13 @@ describe('TaskListPage — trigger-type distinction', () => {
     })
   })
 
-  it('badges a cron task and an event task differently', () => {
-    const wrapper = mountWith([
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('badges a cron task and an event task differently', async () => {
+    const wrapper = await mountWith([
       makeTask({ id: 1, triggerMode: 'cron' }),
       makeTask({ id: 2, triggerMode: 'event', eventTypes: 'issue.opened' }),
     ])
@@ -122,8 +136,8 @@ describe('TaskListPage — trigger-type distinction', () => {
 
   // An absent triggerMode is the cron default: the backend omits the field for
   // tasks created before the event mode existed.
-  it('treats an absent triggerMode as cron', () => {
-    const wrapper = mountWith([makeTask({ id: 1, triggerMode: undefined })])
+  it('treats an absent triggerMode as cron', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: undefined })])
 
     const badge = wrapper.find('.task-trigger-badge')
     expect(badge.classes()).toContain('is-cron')
@@ -133,8 +147,8 @@ describe('TaskListPage — trigger-type distinction', () => {
   // The regression this guards: a Clock was rendered unconditionally on the
   // summary line, so an event task — which has no schedule at all — appeared to
   // have one.
-  it('never shows a clock icon on an event task', () => {
-    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+  it('never shows a clock icon on an event task', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
     const summary = wrapper.find('.task-item-next')
     expect(summary.findComponent({ name: 'GitBranch' }).exists()).toBe(true)
@@ -144,7 +158,7 @@ describe('TaskListPage — trigger-type distinction', () => {
   // Every event task watches its project's binding, so the row names that
   // repository instead of repeating the trigger type already shown by the badge.
   it('shows the project-bound repository on an event task', async () => {
-    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
     await vi.waitFor(() => {
       expect(wrapper.find('.task-item-repo').text()).toBe('acme/widgets')
@@ -156,15 +170,15 @@ describe('TaskListPage — trigger-type distinction', () => {
   // stale or fabricated repository.
   it('shows the unbound label when the project has no binding', async () => {
     mockFetchForgeBinding.mockResolvedValue({ binding: null })
-    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
     await vi.waitFor(() => {
       expect(wrapper.find('.task-item-repo').text()).toBe('task.form.eventRepoUnbound')
     })
   })
 
-  it('shows the next-run time, with a clock, on a cron task', () => {
-    const wrapper = mountWith([
+  it('shows the next-run time, with a clock, on a cron task', async () => {
+    const wrapper = await mountWith([
       makeTask({ id: 1, triggerMode: 'cron', nextRunAt: '2026-09-14T03:00:00Z' }),
     ])
 
@@ -178,8 +192,8 @@ describe('TaskListPage — trigger-type distinction', () => {
 
   // A paused cron task has no next run; the row must still use the clock rather
   // than falling back to an event icon.
-  it('keeps the clock for a cron task with no next run', () => {
-    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'cron', nextRunAt: undefined })])
+  it('keeps the clock for a cron task with no next run', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'cron', nextRunAt: undefined })])
 
     const summary = wrapper.find('.task-item-next')
     expect(summary.findComponent({ name: 'Clock' }).exists()).toBe(true)
