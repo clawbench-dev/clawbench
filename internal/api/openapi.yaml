@@ -2581,27 +2581,55 @@ paths:
       tags: [Tasks]
       summary: 新建定时任务
       operationId: tasksCreate
+      description: |
+        创建定时任务。两种触发模式由 `trigger_mode` 决定：
+
+        - `cron`（默认）：由 `cron_expr` 驱动，必填。
+        - `event`：由 Forge（GitHub/GitLab）事件驱动，不需要 `cron_expr`，
+          但必须提供 `event_types`（逗号分隔，且至少一个）。
+
+        `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
+        `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
+        `pr.commented`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [name, agent_id, prompt]
               properties:
                 name:
                   type: string
+                  description: 任务名（必填）。
                 cron_expr:
                   type: string
+                  description: 5 字段 cron 表达式。`trigger_mode=cron` 时必填。
                 agent_id:
                   type: string
+                  description: 执行任务的 agent ID（必填）。
                 prompt:
                   type: string
+                  description: 每次执行传给 AI 的提示词（必填）。
                 repeat_mode:
                   type: string
+                  enum: [once, limited, unlimited]
+                  description: 重复模式，默认 `unlimited`。
                 max_runs:
                   type: integer
+                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。
                 session_id:
                   type: string
+                trigger_mode:
+                  type: string
+                  enum: [cron, event]
+                  description: 触发模式，默认 `cron`。
+                event_types:
+                  type: string
+                  description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
+                event_repo:
+                  type: string
+                  description: 将事件任务限定到单个仓库（`platform|host|owner/repo`）。空表示不限仓库。
       responses:
         "200":
           description: 新任务
@@ -2813,6 +2841,14 @@ paths:
       tags: [RAG]
       summary: 摘要消息
       operationId: ragMessageSummarize
+      description: 为指定消息按需生成阅读摘要并返回。
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: 消息数据库 ID。
+          schema:
+            type: integer
       responses:
         "200":
           description: 摘要结果
@@ -2840,8 +2876,11 @@ paths:
     post:
       tags: [RAG]
       summary: 会话聚合搜索
-      description: 跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
       operationId: ragSessionSearch
+      description: |
+        跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
+        `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
+        `archived`/`sort`/`cursor` 仍然生效。
       requestBody:
         required: true
         content:
@@ -2851,16 +2890,34 @@ paths:
               properties:
                 q:
                   type: string
-                  description: 搜索词（必填）。
-                archived:
-                  type: boolean
-                sort:
+                  description: 搜索词；为空时列出会话而非搜索。
+                backend:
                   type: string
-                cursor:
+                role:
                   type: string
-                cursor_id:
+                session_id:
+                  type: string
+                exclude_session_id:
+                  type: string
+                from:
+                  type: string
+                to:
                   type: string
                 prefer_mode:
+                  type: string
+                  description: 强制检索模式，如 `fts`；缺省为混合检索。
+                archived:
+                  type: string
+                  enum: [all, active, archived]
+                  description: 归档筛选（字符串，非布尔）。默认 `all`。
+                sort:
+                  type: string
+                  enum: [newest, oldest, relevance]
+                  description: 排序方式，默认 `relevance`（未知值也回落到它）。
+                cursor:
+                  type: string
+                  description: 游标时间戳；需与 `cursor_id` 同时提供才生效。
+                cursor_id:
                   type: string
       responses:
         "200":
