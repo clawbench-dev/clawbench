@@ -207,7 +207,7 @@ function handleBodyInput(event) {
 
 /* Body */
 .tool-detail-body {
-  padding: var(--space-6) 14px;
+  padding: var(--space-6) var(--space-5);
   overflow-y: auto;
   overflow-x: clip;
   font-size: var(--font-size-sm);
@@ -225,7 +225,9 @@ function handleBodyInput(event) {
 </style>
 
 <style>
-/* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet */
+/* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet.
+   Content blocks (output code, terminal bodies, prompt cards, message bodies) are
+   deliberately square; only tags, badges and icon buttons keep a small radius. */
 .tool-detail-body .tool-output-section {
   margin-top: var(--space-4);
   border-top: 1px solid var(--border-color);
@@ -305,7 +307,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   font-family: inherit;
   line-height: var(--line-height-relaxed);
 }
@@ -343,7 +345,7 @@ function handleBodyInput(event) {
   margin: var(--space-2) 0;
   padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   overflow-x: auto;
 }
 .tool-detail-body .tool-output-body .agent-call-prompt pre code {
@@ -483,7 +485,7 @@ function handleBodyInput(event) {
 
 .tool-detail-body .tool-output-content pre {
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   padding: var(--space-4) var(--space-5);
 }
 
@@ -784,7 +786,7 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1047,7 +1049,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   font-family: inherit;
   line-height: var(--line-height-relaxed);
 }
@@ -1085,7 +1087,7 @@ function handleBodyInput(event) {
   margin: var(--space-2) 0;
   padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   overflow-x: auto;
 }
 .tool-detail-body .agent-call-prompt pre code {
@@ -1141,7 +1143,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   font-family: var(--font-mono);
   line-height: var(--line-height-normal);
 }
@@ -1329,7 +1331,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 
 /* Computer use */
@@ -1400,7 +1402,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 
 /* Save memory */
@@ -1428,7 +1430,7 @@ function handleBodyInput(event) {
   word-break: break-word;
   padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 
 /* Deep think */
@@ -1509,7 +1511,7 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1580,7 +1582,7 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1606,7 +1608,7 @@ function handleBodyInput(event) {
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
 }
 .tool-detail-body .ask-question-header {
   font-size: var(--font-size-2xs);
