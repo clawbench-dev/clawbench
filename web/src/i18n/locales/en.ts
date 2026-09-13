@@ -2577,12 +2577,6 @@ export default {
     dontShowAgain: "Don't show again",
     ok: 'OK',
   },
-  versionMismatch: {
-    title: 'Version Mismatch',
-    message: 'APK version: {appVersion}\nServer version: {serverVersion}\n\nUpdating the APK is recommended for the best experience.',
-    download: 'Download APK',
-    skip: 'Skip',
-  },
   upgrade: {
     title: 'Upgrade',
     start: 'Start Upgrade',

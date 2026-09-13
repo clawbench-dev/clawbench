@@ -39,21 +39,6 @@ export function extractBaseVersion(v: string): string {
 }
 
 /**
- * Whether the version mismatch dialog should be shown.
- * Compares base versions and shows when APK is older than server.
- * Works for both release and dev builds with a vX.Y.Z base.
- */
-export function shouldShowMismatch(appVersion: string, serverVersion: string): boolean {
-  if (!appVersion || !serverVersion) return false
-  const normalizedApp = normalizeVersion(appVersion)
-  const normalizedServer = normalizeVersion(serverVersion)
-  // Both must have a parseable vX.Y.Z base version
-  if (!isVersionedBuild(normalizedApp) || !isVersionedBuild(normalizedServer)) return false
-  // Show only when APK is older than server (needs upgrade)
-  return compareVersions(normalizedApp, normalizedServer) < 0
-}
-
-/**
  * Compare two semver-like version strings.
  * Strips optional "v" prefix and pre-release suffix before comparison.
  * Pre-release builds (e.g. "v0.66.0-5-gabc") are considered newer than

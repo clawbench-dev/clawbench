@@ -28,7 +28,6 @@
         <div class="wallpaper-scrim"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
-      <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
       <UpgradeDialog ref="upgradeDialogRef" />
       <AppHeader
@@ -493,7 +492,6 @@ const TerminalPanelContent = defineAsyncComponent({
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
-import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
 import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
@@ -1549,7 +1547,6 @@ async function handleLoginSuccess() {
       onUnmounted(() => dockResizeObs.disconnect())
     }
     welcomeOverlay.value?.show()
-    versionMismatchOverlay.value?.show()
     checkForUpgrade()
 
     // Handle pending navigation
@@ -1558,7 +1555,6 @@ async function handleLoginSuccess() {
 const projectDialogOpen = ref(false)
 const shareLinkOpen = ref(false)
 const welcomeOverlay = ref(null)
-const versionMismatchOverlay = ref(null)
 const upgradePromptOverlay = ref(null)
 const upgradeDialogRef = ref(null)
 
@@ -2575,7 +2571,6 @@ onMounted(async () => {
     applyFontConfig()
     startDockResize()
     welcomeOverlay.value?.show()
-    versionMismatchOverlay.value?.show()
     checkForUpgrade()
 
     // Handle pending navigation from push notification deep link

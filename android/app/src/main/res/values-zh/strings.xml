@@ -82,6 +82,11 @@
     <string name="conn_err_request">请求错误 (%1$d)，请检查服务器地址。</string>
     <string name="conn_err_http_failed">连接失败，请检查服务器地址和网络连接。</string>
     <string name="conn_render_crash">页面渲染异常，请重新连接。</string>
+    <!-- Native pre-WebView version mismatch gate (APK older than server) -->
+    <string name="version_mismatch_title">版本不一致</string>
+    <string name="version_mismatch_message">APK 版本: %1$s\n服务器版本: %2$s\n\n应用版本低于服务器，建议更新 APK 以获得最佳体验。</string>
+    <string name="version_mismatch_download">下载 APK</string>
+    <string name="version_mismatch_skip">强制跳过</string>
     <!-- Background service notifications -->
     <string name="ssh_notification_reconnecting">SSH 隧道断开，正在重连…</string>
     <string name="ssh_notification_recovering">SSH 隧道已恢复</string>

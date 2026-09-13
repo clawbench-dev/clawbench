@@ -2577,12 +2577,6 @@ export default {
     dontShowAgain: '不再提示',
     ok: '确定',
   },
-  versionMismatch: {
-    title: '版本不一致',
-    message: 'APK 版本: {appVersion}\n服务器版本: {serverVersion}\n\n建议更新 APK 以获得最佳体验。',
-    download: '下载 APK',
-    skip: '跳过',
-  },
   upgrade: {
     title: '升级',
     start: '开始升级',

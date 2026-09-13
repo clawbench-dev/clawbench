@@ -1,6 +1,6 @@
 # 应用自升级
 
-应用自升级让已部署的 ClawBench 在 Web 界面内完成版本检查、二进制替换和服务恢复，不需要用户登录服务器手工下载。升级期间服务会短暂断开，因此流程同时处理备份、进度通知、断线轮询和升级后的版本确认。Android 客户端还提供版本不匹配检测——WebView 启动时对比 APK 内嵌版本与服务端 /api/upgrade/check 返回的服务器版本，不匹配时展示 VersionMismatchOverlay 提示用户下载新版 APK。服务端升级后客户端版本可能落后，检测确保前后端版本一致性。
+应用自升级让已部署的 ClawBench 在 Web 界面内完成版本检查、二进制替换和服务恢复，不需要用户登录服务器手工下载。升级期间服务会短暂断开，因此流程同时处理备份、进度通知、断线轮询和升级后的版本确认。Android 客户端还提供版本不匹配检测——原生层在加载 WebView **之前**对比 APK 版本与 `/api/health` 返回的服务器版本，APK 落后时弹出阻塞式原生弹窗引导下载新版 APK（用户可强制跳过）。服务端升级后客户端版本可能落后，检测确保前后端版本一致性。
 
 ## 流程图
 
@@ -37,7 +37,7 @@ sequenceDiagram
 - **断线恢复**：升级导致 WebSocket 断开后自动切换为状态轮询，服务恢复后重新同步状态。升级本身造成的重启不会被误判为普通网络故障
 - **版本跳过**：启动提示允许按版本记录"暂不提醒"，只跳过指定版本；出现更新版本后重新提示
 - **安装目录可写预检**：升级前先探测二进制所在目录是否可写（实际创建并删除临时文件，以反映 ACL、只读挂载和 MAC 而不只是 mode 位）——不可写时立即以 `install_dir_not_writable` 错误码给出可操作的提示，而非下载完约 40MB 压缩包后才在备份步骤报 `permission denied`。`/api/upgrade/check` 同时返回 `install_writable` 与 `install_dir`，让界面在用户开始升级前就能预警。约束在**目录**而非二进制：备份要新建 `.bak` 文件、`rename(2)` 也是目录操作
-- **Android 版本不匹配检测**：Android WebView 启动时对比 APK 版本与服务器版本，不匹配时展示 `VersionMismatchOverlay` 提示用户下载新版 APK。服务端升级后客户端可能落后，检测确保版本一致性
+- **Android 版本不匹配检测**：原生层在健康检查（`GET /api/health`）通过后、加载 WebView 之前对比 APK 版本与服务器版本（`VersionCompare.shouldShowMismatch`）。APK 落后时展示阻塞式原生 `AlertDialog`（`MainActivity.showVersionMismatchDialog`），提供「下载 APK」与「强制跳过」两个动作；点下载会启动 DownloadManager 下载并退回原生登录页，完成后自动拉起系统安装器。该弹窗**不记忆跳过**（每次冷启动都会重新提示）。任一侧版本不可解析（`dev`、短哈希、缺 `version` 字段）时一律 fail-open，不阻塞登录。服务端升级后客户端可能落后，检测确保版本一致性
 
 ### 设计要点
 
