@@ -31,6 +31,14 @@
           <div class="task-item-main">
             <div class="task-item-header">
               <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :size="16" />
+              <!-- Trigger-type badge. The two modes differ in *what* starts a
+                   run (a clock vs. a repository event), which the rest of the
+                   row cannot convey on its own: the meta line below is shared
+                   and the row would otherwise read identically at a glance. -->
+              <span
+                class="task-trigger-badge"
+                :class="task.triggerMode === 'event' ? 'is-event' : 'is-cron'"
+              >{{ task.triggerMode === 'event' ? t('task.form.triggerEvent') : t('task.form.triggerCron') }}</span>
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
               <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
@@ -50,10 +58,19 @@
                 <span v-if="task.repeatMode !== 'unlimited'" class="task-progress">({{ task.runCount }}/{{ task.maxRuns || 1 }})</span>
               </div>
             </div>
-            <div class="task-item-next">
+            <!-- Trigger summary line. The icon sits inside each branch because
+                 the two modes mean different things: a cron task is defined by
+                 *when* it runs (a clock), an event task by *what* it watches.
+                 An unconditional Clock told an event task's user it has a
+                 schedule, which it never does — the backend leaves nextRunAt
+                 null for event tasks (scheduler.go's event-task branch). -->
+            <div v-if="task.triggerMode === 'event'" class="task-item-next">
+              <Zap class="meta-icon" :size="12" />
+              <span>{{ t('task.eventTriggered') }}</span>
+            </div>
+            <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
-              <span v-if="task.triggerMode === 'event'">{{ t('task.eventTriggered') }}</span>
-              <span v-else-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
+              <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
             </div>
           </div>
@@ -299,6 +316,32 @@ onMounted(refresh)
 .task-item-icon {
   flex-shrink: 0;
   vertical-align: middle;
+}
+
+/* Trigger-type badge. Kept visually distinct from the status pill on the right
+   (which reports lifecycle) and from the meta icons (which are grey) — this is
+   the one element that answers "what starts this task?" at a glance. */
+.task-trigger-badge {
+  font-size: var(--font-size-2xs);
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.task-trigger-badge.is-cron {
+  color: var(--color-info, #1f6feb);
+  background: color-mix(in srgb, var(--color-info, #1f6feb) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-info, #1f6feb) 35%, transparent);
+}
+
+.task-trigger-badge.is-event {
+  color: var(--color-purple, #7c3aed);
+  background: color-mix(in srgb, var(--color-purple, #7c3aed) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 35%, transparent);
 }
 
 .task-item-name {
