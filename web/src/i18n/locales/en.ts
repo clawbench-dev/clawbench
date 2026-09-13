@@ -18,7 +18,6 @@ export default {
     retry: 'Retry',
     rename: 'Rename',
     editSessionName: 'Edit session name',
-    removeFromList: 'Remove from session list',
     open: 'Open',
     save: 'Save',
     create: 'Create',

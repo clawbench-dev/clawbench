@@ -1,8 +1,22 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 import { LongPressDirective } from '@/directives/longPress'
+
+// UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
+// clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
+// menu is clamped in getBoundingClientRect() space rather than raw viewport px.
+const scaleHolder = vi.hoisted(() => ({ value: 1 }))
+vi.mock('@/composables/useSettingsConfig', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useSettingsConfig')>()
+  return {
+    ...actual,
+    getUIScale: () => scaleHolder.value,
+    toFixedCSS: (v: number) => v / scaleHolder.value,
+    getZoomedViewport: () => ({ width: 1024, height: 768 }),
+  }
+})
 
 const { mockGetAgentBackend, mockGetAgentName, mockDialogHolder, mockReconcileRunningSessions, mockRemoveEventHandler, mockEventHolder, mockStore, mockCrossState } = vi.hoisted(() => {
   // projectRoot/homeDir are required by useCrossProjectSessions' "exclude the
@@ -125,6 +139,11 @@ describe('SessionList', () => {
     mockCrossState.loading.value = false
     mockCrossState.loaded.value = true
     mockCrossState.total.value = 0
+    scaleHolder.value = 1
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   async function mountList(props = {}) {
@@ -766,6 +785,106 @@ describe('SessionList', () => {
       // Optimistic local update applied to s2, not s1.
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's2').pinned).toBe(true)
       expect(wrapper.vm.sessions.find((s: any) => s.id === 's1').pinned).toBe(true)
+    })
+  })
+
+  describe('shared context menu control', () => {
+    it('renders the shared .context-menu markup (not the old bespoke classes)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, wrapper.vm.sessions[0])
+      await nextTick()
+
+      const menus = document.body.querySelectorAll('.context-menu.visible')
+      const menu = menus[menus.length - 1]
+      expect(menu).toBeTruthy()
+      // Reuses the file manager's item class + icon-left layout.
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(3)
+      expect(document.body.querySelector('.session-context-menu')).toBeNull()
+      wrapper.unmount()
+    })
+
+    it('renders a full-viewport .ctx-overlay that closes the menu on click', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, wrapper.vm.sessions[0])
+      await nextTick()
+
+      // Earlier tests leave their own teleported menus open on document.body, so
+      // take the newest overlay — the one this wrapper just rendered.
+      const overlays = document.body.querySelectorAll('.ctx-overlay')
+      const overlay = overlays[overlays.length - 1] as HTMLElement
+      expect(overlay).toBeTruthy()
+      overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('stores coords in fixed-CSS space and clamps within the zoomed viewport', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // At zoom 2, a raw clientX of 2000 is 1000 in fixed-CSS space; the menu
+      // (140px min-width) must then be pulled back inside the 512px-wide CSS
+      // viewport instead of overflowing to the right.
+      scaleHolder.value = 2
+      wrapper.vm.showContextMenu({ clientX: 2000, clientY: 1600 }, wrapper.vm.sessions[0])
+      await nextTick()
+      await nextTick()
+
+      expect(wrapper.vm.contextMenu.x).toBeLessThanOrEqual(512 - 8)
+      expect(wrapper.vm.contextMenu.y).toBeLessThanOrEqual(384 - 8)
+      expect(wrapper.vm.contextMenu.x).toBeGreaterThanOrEqual(8)
+      expect(wrapper.vm.contextMenu.y).toBeGreaterThanOrEqual(8)
+      wrapper.unmount()
+    })
+
+    it('closes the menu when an item is clicked', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1, sessionsFixture().s2], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const menus = () => document.body.querySelectorAll('.context-menu.visible')
+      const openFor = (session: any) => wrapper.vm.showContextMenu({ clientX: 40, clientY: 60 }, session)
+      const clickLastMenu = (idx: number) => {
+        const items = menus()[menus().length - 1].querySelectorAll('.context-menu-item')
+        ;(items[idx] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      }
+
+      // Pin item (index 0) — must dismiss the menu, not just fire the action.
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(0)
+      await flushPromises()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+
+      // Rename item (index 1) — also dismisses. prompt() resolves null so the
+      // action itself is a no-op; the close must not depend on it succeeding.
+      mockDialogHolder.prompt = vi.fn().mockResolvedValue(null)
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(1)
+      await flushPromises()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+
+      // Archive item (index 2) — dismisses and emits.
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(2)
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(wrapper.emitted('archive')).toBeTruthy()
+      wrapper.unmount()
     })
   })
 })

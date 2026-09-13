@@ -134,22 +134,28 @@
       </template>
     </div>
 
-    <!-- Context menu for pin/unpin & rename -->
+    <!-- Context menu for pin/unpin & rename — reuses the shared file-manager
+         context menu (.context-menu / .context-menu-item in css/components.css)
+         so positioning, styling and viewport clamping stay in one place. -->
     <Teleport to="body">
-      <div v-if="contextMenu.visible" class="session-context-menu" :style="{ top: contextMenu.y + 'px', left: contextMenu.x + 'px' }" @click="contextMenu.visible = false">
-        <button class="session-context-menu-item" @click="togglePin(contextMenu.sessionId, contextMenu.pinned)">
-          <span>{{ contextMenu.pinned ? t('common.unpin') : t('common.pin') }}</span>
-          <component :is="contextMenu.pinned ? PinOff : Pin" :size="14" class="session-context-menu-icon" />
-        </button>
-        <button class="session-context-menu-item" @click="renameSessionFromMenu(contextMenu.sessionId)">
-          <span>{{ t('common.editSessionName') }}</span>
-          <PencilLine :size="14" class="session-context-menu-icon" />
-        </button>
-        <button class="session-context-menu-item" @click="archiveFromMenu(contextMenu.sessionId)">
-          <span>{{ t('common.removeFromList') }}</span>
-          <ListX :size="14" class="session-context-menu-icon" />
-        </button>
+      <div v-if="contextMenu.visible" class="context-menu visible" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
+        <div class="context-menu-item" @click.stop="togglePin(contextMenu.sessionId, contextMenu.pinned)">
+          <component :is="contextMenu.pinned ? PinOff : Pin" :size="14" />
+          {{ contextMenu.pinned ? t('common.unpin') : t('common.pin') }}
+        </div>
+        <div class="context-menu-item" @click.stop="renameSessionFromMenu(contextMenu.sessionId)">
+          <PencilLine :size="14" />
+          {{ t('common.editSessionName') }}
+        </div>
+        <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
+          <Archive :size="14" />
+          {{ t('common.archive') }}
+        </div>
       </div>
+      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
+           Re-dispatching contextmenu through it keeps right-click-on-another-row
+           working while the menu is open (mirrors FileManagerContent). -->
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
     </Teleport>
   </div>
 </template>
@@ -157,7 +163,7 @@
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, ChevronDown, PencilLine, ListX } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, ChevronDown, PencilLine } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents } from '@/composables/useAgents'
@@ -169,6 +175,7 @@ import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { apiPatch } from '@/utils/api.ts'
+import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -384,12 +391,21 @@ async function archiveSession(sessionId) {
 
 const contextMenu = reactive({ visible: false, x: 0, y: 0, sessionId: '', pinned: false })
 
-function showContextMenu(event, session) {
+/** Resolve a session by id, open the menu anchored at viewport coords. */
+function openContextMenu(x, y, sessionId, pinned) {
   contextMenu.visible = true
-  contextMenu.x = event.clientX
-  contextMenu.y = event.clientY
-  contextMenu.sessionId = session.id
-  contextMenu.pinned = !!session.pinned
+  // Viewport (getBoundingClientRect) space → position:fixed CSS space: under
+  // the app's CSS UI-zoom the raw clientX/clientY would be over-scaled and push
+  // the menu past the right/bottom edge. toFixedCSS applies the inverse scale.
+  contextMenu.x = toFixedCSS(x)
+  contextMenu.y = toFixedCSS(y)
+  contextMenu.sessionId = sessionId
+  contextMenu.pinned = !!pinned
+  nextTick(() => clampContextMenu())
+}
+
+function showContextMenu(event, session) {
+  openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
 }
 
 function onSessionLongPress(e, capturedSessionId) {
@@ -408,25 +424,53 @@ function onSessionLongPress(e, capturedSessionId) {
   const session = sessionsWithStatus.value.find(s => s.id === sessionId)
   if (!session) return
   const touch = e.touches[0]
-  contextMenu.visible = true
-  contextMenu.x = touch.clientX
-  contextMenu.y = touch.clientY + 10
-  contextMenu.sessionId = sessionId
-  contextMenu.pinned = !!session.pinned
-  nextTick(() => clampContextMenu())
+  openContextMenu(touch.clientX, touch.clientY + 10, sessionId, session.pinned)
 }
 
+function closeContextMenu() {
+  contextMenu.visible = false
+}
+
+/**
+ * Right-click while the menu is open lands on the full-viewport overlay, not on
+ * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
+ * underneath, then re-open the menu for that row — otherwise a second
+ * right-click anywhere would just close the menu (mirrors FileManagerContent).
+ */
+function handleOverlayContextMenu(e) {
+  const overlay = e.currentTarget
+  const prev = overlay.style.pointerEvents
+  overlay.style.pointerEvents = 'none'
+  let row = null
+  try {
+    row = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-session-id]') || null
+  } finally {
+    overlay.style.pointerEvents = prev
+  }
+  if (!row) { closeContextMenu(); return }
+  const session = sessionsWithStatus.value.find(s => s.id === row.dataset.sessionId)
+  if (!session) { closeContextMenu(); return }
+  openContextMenu(e.clientX, e.clientY, session.id, session.pinned)
+}
+
+// Clamp menu position to stay within the viewport on all sides. Mirrors
+// FileManagerContent.clampCtxMenu: viewport dims and the stored coords are both
+// in getBoundingClientRect() space, so the comparison is zoom-consistent.
 function clampContextMenu() {
-  const menu = document.querySelector('.session-context-menu')
+  const menu = document.querySelector('.context-menu.visible')
   if (!menu) return
   const pad = 8
-  const maxX = window.innerWidth - menu.offsetWidth - pad
-  const maxY = window.innerHeight - menu.offsetHeight - pad
+  const vp = getZoomedViewport()
+  const vpW = toFixedCSS(vp.width)
+  const vpH = toFixedCSS(vp.height)
+  const maxX = vpW - menu.offsetWidth - pad
+  const maxY = vpH - menu.offsetHeight - pad
   contextMenu.x = Math.max(pad, Math.min(contextMenu.x, maxX))
   contextMenu.y = Math.max(pad, Math.min(contextMenu.y, maxY))
 }
 
 async function togglePin(sessionId, currentPinned) {
+  closeContextMenu()
   const newPinned = !currentPinned
   // Optimistic update
   const session = sessions.value.find(s => s.id === sessionId)
@@ -443,6 +487,7 @@ async function togglePin(sessionId, currentPinned) {
 }
 
 async function renameSessionFromMenu(sessionId) {
+  closeContextMenu()
   const session = sessions.value.find(s => s.id === sessionId)
   if (!session) return
   const current = session.title || ''
@@ -468,7 +513,7 @@ async function renameSessionFromMenu(sessionId) {
 
 function archiveFromMenu(sessionId) {
   const session = sessions.value.find(s => s.id === sessionId)
-  contextMenu.visible = false
+  closeContextMenu()
   emit('archive', sessionId, session?.backend)
 }
 
@@ -581,8 +626,6 @@ onMounted(() => {
   removeEventHandler = onEvent((event) => {
     if (event === 'session_update') scheduleReload()
   })
-  // Close context menu on click outside
-  document.addEventListener('click', closeContextMenuOnOutside)
 })
 onUnmounted(() => {
   removeEventHandler?.()
@@ -590,12 +633,7 @@ onUnmounted(() => {
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
   if (observer) { observer.disconnect(); observer = null }
   contextMenu.visible = false
-  document.removeEventListener('click', closeContextMenuOnOutside)
 })
-
-function closeContextMenuOnOutside() {
-  contextMenu.visible = false
-}
 </script>
 
 <style scoped>
@@ -657,17 +695,12 @@ function closeContextMenuOnOutside() {
   min-width: 0;
   min-height: 44px;
   padding: 10px 12px;
-  border-top: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
 }
 
 /* Accent border lives on the row so it encloses the archive button too. */
 .session-item.active {
   padding-left: 8px;
-}
-
-.session-row.active .session-item {
-  border-top-color: transparent;
 }
 
 .session-row.session-row-active {
@@ -803,6 +836,10 @@ function closeContextMenuOnOutside() {
   display: flex;
   align-items: stretch;
   position: relative;
+  /* Row separator lives here (not on .session-item / .session-archive-btn) so it
+     spans the full row width. Drawn on the two cells it stopped short of the
+     archive button, leaving a gap. */
+  border-top: 1px solid var(--border-color, #dee2e6);
 }
 
 .session-archive-btn {
@@ -815,7 +852,6 @@ function closeContextMenuOnOutside() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-top: 1px solid var(--border-color, #dee2e6);
   transition: background 0.15s, color 0.15s;
 }
 
@@ -877,8 +913,12 @@ function closeContextMenuOnOutside() {
 
 /* ── Pinned / section grouping ── */
 
-.session-row.pinned .session-item {
-  border-top: 1px solid color-mix(in srgb, #f59e0b 15%, var(--border-color, #dee2e6));
+/* Pinned rows get a warm-tinted separator instead of the neutral one. Target
+   the row (not .session-item) so the tint reaches the archive button too —
+   otherwise the yellow line stopped 34px short of the right edge. The active
+   variant keeps its own accent border-top and therefore outranks this. */
+.session-row.pinned:not(.active) {
+  border-top-color: color-mix(in srgb, #f59e0b 15%, var(--border-color, #dee2e6));
 }
 
 .session-row.pinned.active .session-item {
@@ -940,42 +980,8 @@ function closeContextMenuOnOutside() {
   background: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
-/* ── Context menu ── */
-
-.session-context-menu {
-  position: fixed;
-  z-index: 1000;
-  background: var(--bg-primary, #fff);
-  border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  padding: 4px 0;
-  width: 180px;
-}
-
-.session-context-menu-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-primary, #1a1a1a);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.session-context-menu-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary, #495057);
-}
-
-.session-context-menu-item:hover {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
+/* The context menu itself uses the shared .context-menu / .context-menu-item
+   styles from css/components.css (same as the file manager). */
 
 /* ── Cross-project pane ── */
 
