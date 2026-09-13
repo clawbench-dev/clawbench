@@ -182,12 +182,12 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
 	}
 	// A nil presence map with no database present is a fresh install, which
-	// ships with the Bing daily wallpaper enabled.
+	// pre-selects the Bing source but leaves the wallpaper switch off.
 	if cfg.Appearance.WallpaperMode != "bing" {
 		t.Errorf("Appearance.WallpaperMode = %q, want bing (fresh install)", cfg.Appearance.WallpaperMode)
 	}
-	if !cfg.Appearance.WallpaperEnabled {
-		t.Error("Appearance.WallpaperEnabled = false, want true (fresh install)")
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("Appearance.WallpaperEnabled = true, want false (wallpaper is off by default)")
 	}
 	if !cfg.Appearance.Bing.Enabled {
 		t.Error("Appearance.Bing.Enabled = false, want true (fresh install)")
@@ -250,9 +250,11 @@ func TestApplyDefaultsLocalModeLeavesBingFetchAlone(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultsFreshInstallBingOn pins the out-of-box appearance: a brand
-// new install has no config.yaml and no database.
-func TestApplyDefaultsFreshInstallBingOn(t *testing.T) {
+// TestApplyDefaultsFreshInstallBingPreselected pins the out-of-box appearance: a
+// brand new install has no config.yaml and no database. The wallpaper switch is
+// off, but the Bing source is pre-selected so turning the switch on shows the
+// Bing daily image without a further choice.
+func TestApplyDefaultsFreshInstallBingPreselected(t *testing.T) {
 	setupTestBinDir(t)
 
 	cfg := Config{}
@@ -261,8 +263,8 @@ func TestApplyDefaultsFreshInstallBingOn(t *testing.T) {
 	if cfg.Appearance.WallpaperMode != "bing" {
 		t.Errorf("WallpaperMode = %q, want bing", cfg.Appearance.WallpaperMode)
 	}
-	if !cfg.Appearance.WallpaperEnabled {
-		t.Error("WallpaperEnabled = false, want true")
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = true, want false (wallpaper must be off by default)")
 	}
 	if !cfg.Appearance.Bing.Enabled {
 		t.Error("Bing.Enabled = false, want true")

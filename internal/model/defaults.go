@@ -117,10 +117,15 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// Wallpaper source selection. Two independent sources exist (a local
 	// gallery and the Bing daily image) but only one is shown at a time.
 	//
-	// Fresh installs ship with the Bing daily wallpaper auto-following, which is
-	// what makes the out-of-box appearance work with no bundled image. Existing
-	// installs are deliberately left alone: a user who never enabled a wallpaper
-	// must not have one appear after an upgrade.
+	// The wallpaper layer itself is OFF out of the box: WallpaperEnabled stays
+	// at its zero value for fresh installs too, so no image is downloaded or
+	// displayed until the user turns the switch on. What a fresh install does
+	// pre-select is the *source* (Bing daily) with its fetch switch on, so that
+	// flipping the switch shows the Bing image immediately rather than an empty
+	// panel with no source chosen.
+	//
+	// Existing installs are deliberately left alone: a user who never enabled a
+	// wallpaper must not have one appear after an upgrade.
 	//
 	// The decision is captured in FirstRun because the database file this check
 	// relies on is created later in startup, so it cannot be re-evaluated once
@@ -130,7 +135,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		if cfg.Appearance.WallpaperMode == "" {
 			cfg.Appearance.WallpaperMode = "bing"
 		}
-		cfg.Appearance.WallpaperEnabled = true
 		cfg.Appearance.Bing.Enabled = true
 		if cfg.Appearance.Bing.Mkt == "" {
 			cfg.Appearance.Bing.Mkt = "zh-CN"

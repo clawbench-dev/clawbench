@@ -872,9 +872,10 @@ func TestPersistStartupAppearance_FreshInstallWritesDefaultsToDisk(t *testing.T)
 	model.FirstRun = true
 	t.Cleanup(func() { model.FirstRun = false })
 
-	// The defaults ApplyDefaults derived for a fresh install.
+	// The defaults ApplyDefaults derived for a fresh install: the Bing source is
+	// pre-selected with its fetch switch on, but the wallpaper itself is off.
 	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
+	model.ConfigInstance.Appearance.WallpaperEnabled = false
 	model.ConfigInstance.Appearance.Bing.Enabled = true
 	model.ConfigInstance.Appearance.Bing.Mkt = "zh-CN"
 
@@ -887,7 +888,7 @@ func TestPersistStartupAppearance_FreshInstallWritesDefaultsToDisk(t *testing.T)
 	require.NoError(t, err)
 	s := string(data)
 	assert.Contains(t, s, "wallpaper_mode: bing")
-	assert.Contains(t, s, "wallpaper_enabled: true")
+	assert.Contains(t, s, "wallpaper_enabled: false")
 	assert.Contains(t, s, "enabled: true")
 	assert.Contains(t, s, "mkt: zh-CN")
 }
@@ -925,7 +926,7 @@ func TestPersistStartupAppearance_FreshInstallSurvivesReload(t *testing.T) {
 	t.Cleanup(func() { model.FirstRun = false })
 
 	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
+	model.ConfigInstance.Appearance.WallpaperEnabled = false
 	model.ConfigInstance.Appearance.Bing.Enabled = true
 	model.ConfigInstance.Appearance.Bing.Mkt = "zh-CN"
 	require.NoError(t, PersistStartupAppearance())
@@ -941,8 +942,9 @@ func TestPersistStartupAppearance_FreshInstallSurvivesReload(t *testing.T) {
 	model.ApplyDefaults(&reloaded, map[string]bool{"appearance": true})
 
 	assert.Equal(t, "bing", reloaded.Appearance.WallpaperMode,
-		"the factory wallpaper must survive a restart")
-	assert.True(t, reloaded.Appearance.WallpaperEnabled)
+		"the factory wallpaper source must survive a restart")
+	assert.False(t, reloaded.Appearance.WallpaperEnabled,
+		"the wallpaper must stay off across a restart")
 	assert.True(t, reloaded.Appearance.Bing.Enabled)
 }
 
