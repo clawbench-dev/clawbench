@@ -123,6 +123,23 @@ func (sc *schema) enumValues() []string {
 	return nil
 }
 
+// displayType is the type annotation shown next to a parameter or body field.
+// A nested object often declares no scalar type, so its own properties are the
+// only signal that it is an object — labelling it keeps the rendered list from
+// showing a bare name with no indication of what it holds.
+func (sc *schema) displayType() string {
+	if sc == nil {
+		return ""
+	}
+	if sc.Type != "" {
+		return sc.Type
+	}
+	if sc.Properties.Kind == yaml.MappingNode {
+		return "object"
+	}
+	return ""
+}
+
 var (
 	parsedOnce sync.Once
 	parsedSpec *spec
@@ -176,12 +193,13 @@ func (sc *schema) propertyNames() ([]string, map[string]bool) {
 	return names, required
 }
 
-// schemaType reads the type of a named property. Property values are decoded
-// lazily so a nested object (or a $ref) degrades to its declared type or
-// "object" instead of failing the whole parse.
-func (sc *schema) propertyType(name string) string {
+// propertySchema decodes one named property of a schema, or returns nil when
+// the property is absent. Decoding is lazy so a nested object (or a $ref)
+// degrades to an empty schema rather than failing the whole parse — the caller
+// only ever needs the scalar facets (type, enum, description).
+func (sc *schema) propertySchema(name string) *schema {
 	if sc.Properties.Kind != yaml.MappingNode {
-		return ""
+		return nil
 	}
 	for i := 0; i+1 < len(sc.Properties.Content); i += 2 {
 		if sc.Properties.Content[i].Value != name {
@@ -189,17 +207,11 @@ func (sc *schema) propertyType(name string) string {
 		}
 		var child schema
 		if err := sc.Properties.Content[i+1].Decode(&child); err != nil {
-			return ""
+			return nil
 		}
-		if child.Type != "" {
-			return child.Type
-		}
-		if child.Properties.Kind == yaml.MappingNode {
-			return "object"
-		}
-		return ""
+		return &child
 	}
-	return ""
+	return nil
 }
 
 // endpoint is one rendered operation: a method, a path, and its inputs.
@@ -218,8 +230,16 @@ type endpoint struct {
 
 type bodyField struct {
 	Name     string
-	Type     string
 	Required bool
+	// Description carries the spec's field note. Unlike query parameters — whose
+	// constraints are visible in the name — a body field's rules (an enum's
+	// permitted values, "required when repeat_mode=limited") exist nowhere else,
+	// so dropping it leaves the AI guessing at a field it must fill in.
+	Description string
+	// Schema backs the rendered label (type and enum). It is the field's own
+	// schema, so an enum or array element enum renders inline exactly as it
+	// does for query parameters.
+	Schema *schema
 }
 
 // endpointsForOperations collects the operations with the given operationIds.
@@ -308,11 +328,16 @@ func buildEndpoint(s *spec, method, path string, op *operation) endpoint {
 		if mt, ok := op.RequestBody.Content["application/json"]; ok && mt.Schema != nil {
 			names, required := mt.Schema.propertyNames()
 			for _, n := range names {
-				ep.BodyFields = append(ep.BodyFields, bodyField{
+				child := mt.Schema.propertySchema(n)
+				field := bodyField{
 					Name:     n,
-					Type:     mt.Schema.propertyType(n),
 					Required: required[n],
-				})
+					Schema:   child,
+				}
+				if child != nil {
+					field.Description = strings.TrimSpace(child.Description)
+				}
+				ep.BodyFields = append(ep.BodyFields, field)
 			}
 		}
 	}

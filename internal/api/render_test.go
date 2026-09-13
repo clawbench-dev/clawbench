@@ -43,12 +43,19 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"PUT /api/tasks/{id}",
 				"DELETE /api/tasks/{id}",
 				"GET /api/agents",
+				// An event task only fires for a bound repository, so the AI
+				// needs to be able to check the binding before creating one.
+				"GET /api/forge/binding",
 			},
 			// Agent mutation must never be exposed to a task command.
 			notWant: []string{
 				"DELETE /api/agents",
 				"PATCH /api/agents",
 				"POST /api/agents",
+				// Binding mutation would let the task command rebind the
+				// project; only the read side is in scope.
+				"POST /api/forge/binding",
+				"DELETE /api/forge/binding",
 			},
 		},
 		{
@@ -112,7 +119,7 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		CommandChatSearch: 2000,
-		CommandTask:       4000,
+		CommandTask:       7000,
 		CommandUsage:      2000,
 	}
 	for cmd, budget := range budgets {
@@ -153,6 +160,51 @@ func TestRenderCommand_RendersEnumsInline(t *testing.T) {
 		"order must list its permitted values")
 	// The removed dimension must not resurface.
 	assert.NotContains(t, out, "dims:project")
+}
+
+// TestRenderCommand_BodyFieldsCarryEnumsAndDescriptions guards the request-body
+// side of the same contract. Query parameters were covered; body fields were
+// rendered with a nil schema, so an enum like repeat_mode lost its permitted
+// values and every field note was dropped — leaving the AI to guess at values
+// the server would reject.
+func TestRenderCommand_BodyFieldsCarryEnumsAndDescriptions(t *testing.T) {
+	out, err := RenderCommand(CommandTask)
+	require.NoError(t, err)
+
+	// Enum values are inlined on the field list.
+	assert.Contains(t, out, "repeat_mode:once|limited|unlimited",
+		"body enums must list their permitted values")
+	assert.Contains(t, out, "trigger_mode:cron|event",
+		"body enums must list their permitted values")
+
+	// Field notes are rendered, since a body field's constraints live only
+	// there (there is no name to infer them from).
+	assert.Contains(t, out, "field max_runs:",
+		"body field descriptions must reach the prompt")
+	assert.Contains(t, out, "repeat_mode=limited",
+		"the conditional-required rule must survive into the prompt")
+
+	// Non-string scalar types are still annotated.
+	assert.Contains(t, out, "max_runs:integer")
+}
+
+// TestRenderCommand_TaskDocumentsEventSemantics pins the event-task caveats
+// that are not derivable from the endpoint shapes: an event task ignores
+// repeat_mode/max_runs, needs a bound repository, and is suppressed when the
+// credential's own account authored the action. Each was a silent trap when
+// only the request schema was visible.
+func TestRenderCommand_TaskDocumentsEventSemantics(t *testing.T) {
+	out, err := RenderCommand(CommandTask)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "事件任务忽略此字段",
+		"repeat_mode must state it is ignored for event tasks")
+	assert.Contains(t, out, "已绑定仓库",
+		"the repository-binding precondition must be documented")
+	assert.Contains(t, out, "凭据账号自身",
+		"the anti-recursion suppression must be documented")
+	assert.Contains(t, out, "本地时区",
+		"the cron timezone must be documented")
 }
 
 // TestRenderCommand_MarksRepeatableArrayParams guards a real failure seen in

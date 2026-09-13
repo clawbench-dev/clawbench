@@ -59,10 +59,14 @@ Project scope:
 Discovering agent IDs:
 - Call "GET /api/agents" and use the "id" field of the returned agents. You may reuse the current session's agent when appropriate.
 
+Event-triggered tasks (trigger_mode=event):
+- Before creating one, call "GET /api/forge/binding" and confirm "binding" is non-null — an event task only fires for a repository its project is bound to. If it is null, tell the user to bind a repository first rather than creating a task that will never run.
+- Note that repeat_mode / max_runs do not constrain an event task, and that the event context is prepended to the prompt automatically; write the prompt as the instruction to act on that context.
+
 After creating a task, you MUST include in your response: <scheduled-task id="task-id" />
 
 Rules:
-- Always validate cron expression before creating a task
+- Cron expressions are 5-field and interpreted in the server's local timezone. There is no validation endpoint: an invalid expression is rejected by the create call itself (HTTP 400). Treat that response as the validation result rather than claiming the expression was checked beforehand.
 - Never create extremely high frequency tasks (e.g. * * * * *) without user confirmation
 - Use the user's language for task names and prompts
 `

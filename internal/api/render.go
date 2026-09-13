@@ -45,6 +45,12 @@ var commandOperations = map[Command][]struct {
 		{"taskDelete", "Tasks"},
 		{"taskExecutions", "Tasks"},
 		{"agentsList", "Agents"},
+		// An event-triggered task only fires for repositories its project is
+		// bound to, so the AI must be able to check the binding before creating
+		// one — otherwise it would happily configure a task that never runs.
+		// Only the read operation is exposed; binding mutation stays out of the
+		// task command's reach.
+		{"forgeBindingGet", "Forge"},
 	},
 	CommandUsage: {
 		{"usageStats", "System"},
@@ -143,7 +149,7 @@ func writeEndpoint(b *strings.Builder, ep endpoint) {
 	if len(ep.BodyFields) > 0 {
 		parts := make([]string, 0, len(ep.BodyFields))
 		for _, f := range ep.BodyFields {
-			parts = append(parts, paramLabel(f.Name, f.Required, nil))
+			parts = append(parts, paramLabel(f.Name, f.Required, f.Schema))
 		}
 		body := "  body"
 		if !ep.BodyRequired {
@@ -153,6 +159,21 @@ func writeEndpoint(b *strings.Builder, ep endpoint) {
 		b.WriteString(": ")
 		b.WriteString(strings.Join(parts, ", "))
 		b.WriteString("\n")
+
+		// A body field's constraints (an enum's permitted values, "required
+		// when X") live in its description, not in its name. Rendering them on
+		// their own line keeps the compact field list readable while still
+		// telling the AI what each field accepts.
+		for _, f := range ep.BodyFields {
+			if f.Description == "" {
+				continue
+			}
+			b.WriteString("  field ")
+			b.WriteString(f.Name)
+			b.WriteString(": ")
+			b.WriteString(collapseWhitespace(f.Description))
+			b.WriteString("\n")
+		}
 	}
 
 	// Descriptions carry usage notes the AI must honour (e.g. the taskUpdate
@@ -172,8 +193,8 @@ func paramLabel(name string, required bool, sc *schema) string {
 	label := name
 	if vals := sc.enumValues(); len(vals) > 0 {
 		label += ":" + strings.Join(vals, "|")
-	} else if sc != nil && sc.Type != "" && sc.Type != "string" {
-		label += ":" + sc.Type
+	} else if t := sc.displayType(); t != "" && t != "string" {
+		label += ":" + t
 	}
 	if required {
 		label += " (required)"

@@ -2246,6 +2246,12 @@ paths:
       tags: [Forge]
       summary: 读取项目绑定
       operationId: forgeBindingGet
+      description: |
+        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`owner`、`repo`、`slug`）。
+        **未绑定时仍是 200**，此时 `binding` 为 `null`，可能附带 `suggested`（候选仓库）。
+        注意：GET 有副作用——若项目存在指向官方平台的 git remote，本端点会自动完成绑定。
+        事件触发的任务只在项目已绑定仓库时才会被触发，创建这类任务前应先用本端点确认
+        `binding` 非空。
       responses:
         "200":
           description: 绑定信息
@@ -2619,6 +2625,20 @@ paths:
         `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
         `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
         `pr.commented`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+
+        **cron 表达式**按服务器本地时区解释（5 字段，支持 `@daily` 等描述符）。
+        没有单独的 cron 校验端点：非法表达式在创建时返回 400，这是唯一的验证方式。
+
+        **事件任务的额外语义**（与 cron 任务不同，配置时务必知晓）：
+
+        - `repeat_mode` 与 `max_runs` 被忽略：事件任务不参与 cron 完成语义，
+          每次匹配到事件都会执行，也不会因次数耗尽而停止。停止需 `pause` 或删除。
+        - 任务只在**其项目已绑定仓库**（见 `GET /api/forge/binding`）时才会触发；
+          未绑定则事件不匹配，任务静默不执行。
+        - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
+          以防 AI 的写入自我触发形成循环。因此事件任务不会被自己创建的内容触发。
+        - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
+          评论内容等）会**自动前置**到 `prompt` 之前，无需在 prompt 里写占位符。
       requestBody:
         required: true
         content:
@@ -2642,12 +2662,13 @@ paths:
                 repeat_mode:
                   type: string
                   enum: [once, limited, unlimited]
-                  description: 重复模式，默认 `unlimited`。
+                  description: 重复模式，默认 `unlimited`。事件任务忽略此字段。
                 max_runs:
                   type: integer
-                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。
+                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。事件任务忽略此字段。
                 session_id:
                   type: string
+                  description: 预留字段，当前不生效。
                 trigger_mode:
                   type: string
                   enum: [cron, event]

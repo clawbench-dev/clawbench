@@ -207,9 +207,31 @@ func TestProcessClawbenchCommand_TaskKeepsBehaviourRules(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Contains(t, result, "<scheduled-task", "the completion marker must survive")
-	assert.Contains(t, result, "validate cron expression")
+	// The cron rule must not promise a validation step that does not exist:
+	// there is no validation endpoint, so the create call is the only check.
+	assert.Contains(t, result, "no validation endpoint")
+	assert.Contains(t, result, "HTTP 400")
+	assert.NotContains(t, result, "Always validate cron expression",
+		"the rule must not instruct the AI to validate via a non-existent endpoint")
 	assert.Contains(t, result, "high frequency")
 	assert.Contains(t, result, "user's language")
+}
+
+// TestProcessClawbenchCommand_TaskWarnsEventPreconditions asserts the injected
+// prompt tells the AI the two things that make an event task silently dead:
+// an unbound repository, and repeat_mode not constraining an event task.
+func TestProcessClawbenchCommand_TaskWarnsEventPreconditions(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-task review new PRs", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "GET /api/forge/binding",
+		"the binding check endpoint must be advertised")
+	assert.Contains(t, result, "never run",
+		"the AI must be told an unbound project yields a dead task")
+	assert.Contains(t, result, "repeat_mode",
+		"the repeat_mode caveat must reach the prompt")
 }
 
 // TestProcessClawbenchCommand_TaskExcludesDestructiveAgentOps asserts the task
