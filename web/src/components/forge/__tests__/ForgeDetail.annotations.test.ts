@@ -111,6 +111,26 @@ vi.mock('@/components/file/CodeLinkPreview.vue', () => ({
   default: { name: 'CodeLinkPreview', template: '<div class="code-preview-stub" />' },
 }))
 
+// Double-click copy + quote bar: capture the options object the component
+// registers so tests can drive its onCopy callback, and record that the click
+// chain actually reaches handleDblClick.
+const { mockShowBar, mockHandleDblClick, capturedDoubleClickOptions } = vi.hoisted(() => ({
+  mockShowBar: vi.fn(),
+  mockHandleDblClick: vi.fn(),
+  capturedDoubleClickOptions: { value: null as null | { onCopy?: (t: EventTarget | null, text: string) => void } },
+}))
+
+vi.mock('@/composables/useQuoteQuestion', () => ({
+  useQuoteQuestion: () => ({ showBar: mockShowBar }),
+}))
+
+vi.mock('@/composables/useDoubleClickCopy', () => ({
+  useDoubleClickCopy: (opts: { onCopy?: (t: EventTarget | null, text: string) => void }) => {
+    capturedDoubleClickOptions.value = opts
+    return { handleDblClick: mockHandleDblClick }
+  },
+}))
+
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 
 function mountDetail() {
@@ -286,6 +306,88 @@ describe('ForgeDetail quote action (header)', () => {
     // key off; setting it would add "add to chat" buttons to every code block.
     const wrapper = mountDetail()
     expect(wrapper.find('.forge-detail-body').attributes('data-file-path')).toBeUndefined()
+  })
+})
+
+// Double-click on an issue/PR body block reuses the markdown preview's
+// copy + quote pipeline: the shared composable copies the block, and onCopy
+// opens the quote bar tagged with the issue/PR identity instead of a file path.
+describe('ForgeDetail double-click copy → quote', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    bodyHtml.value = DEFAULT_BODY_HTML
+    capturedDoubleClickOptions.value = null
+    mockDetail.item.value = {
+      type: 'issue', number: 7, title: 'A bug', state: 'open', author: 'alice',
+      url: 'https://example.com/7', slug: 'a/b', body: 'see src/real.ts',
+      createdAt: '2026-09-10T00:00:00Z', updatedAt: '2026-09-10T00:00:00Z',
+      commentCount: 0, platform: 'github', host: 'github.com', owner: 'a', repo: 'b',
+    }
+    mockDetail.comments.value = []
+    mockDetail.loading.value = false
+    mockDetail.error.value = null
+  })
+
+  function quoteSourceEl(wrapper: ReturnType<typeof mountDetail>): HTMLElement {
+    return wrapper.find('.forge-detail-body').element as HTMLElement
+  }
+
+  it('registers an onCopy handler with the shared double-click composable', () => {
+    mountDetail()
+    expect(capturedDoubleClickOptions.value?.onCopy, 'onCopy must be wired').toBeTypeOf('function')
+  })
+
+  it('opens the quote bar tagged with the issue identity, not a file path', () => {
+    const wrapper = mountDetail()
+    capturedDoubleClickOptions.value!.onCopy!(quoteSourceEl(wrapper), 'quoted paragraph')
+
+    expect(mockShowBar).toHaveBeenCalledTimes(1)
+    expect(mockShowBar).toHaveBeenCalledWith({
+      text: 'quoted paragraph',
+      // The issue/PR label (not a file path) is what getQuoteSource resolves;
+      // issue text has no file line numbers, so those stay 0 and the fence
+      // gets no ":N" suffix.
+      filePath: 'a/b#7',
+      language: 'issue',
+      startLine: 0,
+      endLine: 0,
+    })
+  })
+
+  it('tags a PR body with the pr language', () => {
+    mockDetail.item.value = {
+      ...(mockDetail.item.value as Record<string, unknown>),
+      type: 'pr', number: 9,
+    }
+    const wrapper = mountDetail()
+    capturedDoubleClickOptions.value!.onCopy!(quoteSourceEl(wrapper), 'pr text')
+
+    expect(mockShowBar).toHaveBeenCalledWith(expect.objectContaining({
+      filePath: 'a/b#9', language: 'pr', startLine: 0, endLine: 0,
+    }))
+  })
+
+  it('falls back to an unlabelled quote when the block is outside the body', () => {
+    // A block with no [data-quote-source] ancestor cannot claim an issue
+    // identity; the quote must still open rather than throw.
+    mountDetail()
+    const orphan = document.createElement('p')
+    orphan.textContent = 'loose'
+    capturedDoubleClickOptions.value!.onCopy!(orphan, 'loose')
+
+    expect(mockShowBar).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'loose', filePath: '', language: '',
+    }))
+  })
+
+  it('reaches handleDblClick from a plain body click', async () => {
+    // The body's click handler must hand non-interactive targets to the
+    // double-click composable, otherwise the second click is never seen.
+    const wrapper = mountDetail()
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.find('.forge-detail-body').trigger('click')
+
+    expect(mockHandleDblClick).toHaveBeenCalled()
   })
 })
 

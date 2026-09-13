@@ -124,6 +124,9 @@ import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader'
+import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy'
+import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
+import { getQuoteSource } from '@/utils/quoteQuestionUtils'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { appLog } from '@/utils/appLog'
 
@@ -151,6 +154,32 @@ const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 // owns both halves: verifyAnnotations() below, and handleContentClick().
 const bodyRef = ref<HTMLElement | null>(null)
 const codeLinkPreview = useCodeLinkPreview({ containerRef: bodyRef, source: 'forge' })
+
+// Same double-click-to-copy + quote-reply pipeline as the markdown preview:
+// a double-click copies the block and opens the shared quote bar so the user
+// can turn the copied text into a chat message without re-selecting it.
+//
+// No `lineSelector`: the detail body is *rendered* markdown (the `.code-line`
+// rows only exist in CodeMirror's raw view), so every double-click resolves to
+// a block element. Issue/PR text has no file line numbers, so both line fields
+// stay 0 and the quote fence carries no `:N` suffix — matching the selection
+// path in useQuoteQuestion, which tags a `data-quote-source` region the same way.
+const quoteQuestion = useQuoteQuestion()
+const { handleDblClick } = useDoubleClickCopy({
+  onCopy(target, text) {
+    const el = target as HTMLElement | null
+    // Reuse the selection path's label resolution: it walks up to the nearest
+    // `[data-quote-source]` region (the issue/PR body) and reads its identity.
+    const source = el ? getQuoteSource(el) : null
+    quoteQuestion.showBar({
+      text,
+      filePath: source?.label || '',
+      language: source?.language || '',
+      startLine: 0,
+      endLine: 0,
+    })
+  },
+})
 
 onMounted(() => {
   void detail.open(props.type, props.number)
@@ -213,14 +242,22 @@ function handleContentClick(event: MouseEvent) {
   const btn = target?.closest<HTMLElement>('.chat-file-open-btn[data-file-path]')
   const dirEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path][data-path-type="dir"]')
   const linkOrBtn = btn || dirEl
-  if (!linkOrBtn) return
-  event.preventDefault()
-  event.stopPropagation()
-  codeLinkPreview.close()
-  const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
-  if (!filePath) return
-  if (lineRanges) void openFilePath(filePath, lineStart, lineEnd, 'forge', lineRanges)
-  else void openFilePath(filePath, lineStart, lineEnd, 'forge')
+  if (linkOrBtn) {
+    event.preventDefault()
+    event.stopPropagation()
+    codeLinkPreview.close()
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
+    if (!filePath) return
+    if (lineRanges) void openFilePath(filePath, lineStart, lineEnd, 'forge', lineRanges)
+    else void openFilePath(filePath, lineStart, lineEnd, 'forge')
+    return
+  }
+
+  // Double-click on a paragraph/heading/etc. copies it and offers the quote
+  // bar. Last in the chain so every interactive target above wins the click
+  // first — handleDblClick also resolves anchor clicks, but those are already
+  // consumed by the file-path / commit handlers above.
+  handleDblClick(event)
 }
 
 const renderedBody = computed(() => {
