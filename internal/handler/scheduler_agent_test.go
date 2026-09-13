@@ -439,6 +439,55 @@ func TestServeTaskByID_Trigger_AlreadyRunning(t *testing.T) {
 	assertStatus(t, w, http.StatusConflict)
 }
 
+// TestServeTaskByID_Trigger_EventTaskRejected guards that an event-triggered
+// task cannot be run manually. Its prompt is written against the event context
+// the trigger injects, and a manual run has no event to inject — it would run
+// with {{TITLE}}/{{URL}} left unsubstituted.
+func TestServeTaskByID_Trigger_EventTaskRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "On new PR",
+		AgentID:     "coder",
+		Prompt:      "Review {{TITLE}}",
+		RepeatMode:  "unlimited",
+		TriggerMode: "event",
+		EventTypes:  "pr.opened",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
+		"action": "trigger",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusConflict)
+	assert.Contains(t, w.Body.String(), "TaskEventTriggerUnsupported")
+
+	// The refusal must happen before the task is marked running, otherwise the
+	// task would be stuck with a running flag and no execution behind it. The
+	// flag is taskRunning (LoadOrStore), NOT runningExecutions — the latter is
+	// only populated once a backend is created, so checking it here would pass
+	// even if the guard were moved after TriggerTask.
+	if _, loaded := s.TriggerTaskLoadOrStore(task.ID); loaded {
+		t.Fatal("task was left marked running despite the refused trigger")
+	}
+	s.UnmarkTaskRunning(task.ID)
+}
+
 func TestServeTaskByID_Trigger_TaskNotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

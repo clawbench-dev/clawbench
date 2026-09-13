@@ -47,6 +47,12 @@
       <span class="overview-label">{{ t('chat.contentBlocks.lastRun') }}</span>
       <span class="overview-value">{{ formatDateTimeWithYear(lastRunAt) }}</span>
     </div>
+
+    <!-- The prompt is written against the context injected at trigger time, so
+         running it by hand would leave those fields unsubstituted. The detail
+         page therefore hides the Run button — say why, rather than letting the
+         user hunt for an action that is deliberately absent. -->
+    <div class="form-hint">{{ t('task.overview.eventNoManualRun') }}</div>
   </div>
 
   <!-- Read-only rendering of the block the backend prepends to the prompt.

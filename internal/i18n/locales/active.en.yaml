@@ -72,6 +72,7 @@ TaskFieldsRequired: name, cronExpr, agentId, and prompt are required
 TaskEventTypesInvalid: an event task must subscribe to at least one valid event type
 TaskCronRequired: a cron expression is required for a task
 TaskAlreadyRunning: Task is already running, please wait for it to finish
+TaskEventTriggerUnsupported: An event-triggered task cannot be run manually; it runs when a matching event occurs
 TaskExecutionIdRequired: Execution ID is required
 TaskExecutionNotFound: Execution not found or already finished
 DirectoryNameRequired: Directory name required

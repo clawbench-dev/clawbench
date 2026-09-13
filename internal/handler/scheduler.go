@@ -283,6 +283,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "trigger" {
+			// An event task's prompt is written against the event context the
+			// trigger injects ({{TITLE}}, {{URL}}, ...). A manual run has no
+			// event to inject, so the prompt would execute with its placeholders
+			// unsubstituted — a meaningless run the user cannot distinguish from
+			// a real one. Refuse instead of producing it.
+			if task.IsEventTriggered() {
+				writeLocalizedErrorf(w, r, http.StatusConflict, "TaskEventTriggerUnsupported")
+				return
+			}
 			if err := service.GlobalScheduler.TriggerTask(taskID); err != nil {
 				// TriggerTask now returns error if task already running (ISS-187)
 				if strings.Contains(err.Error(), "already has a running execution") {

@@ -2701,6 +2701,10 @@ paths:
         `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
         删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
         或 `action: "deleteAllExecutions"` 清空该任务执行历史。
+        **注意**：`trigger`（手动立即执行一次）对 `trigger_mode=event` 的任务不适用，
+        返回 409 `TaskEventTriggerUnsupported`——事件任务的 prompt 依赖触发时注入的
+        事件上下文（标题、链接、作者等字段），手动执行没有事件可注入，只会跑出
+        字段未替换的无意义结果。事件任务需等待匹配的 Forge 事件触发。
         **注意**：子路径不会被父资源兜底。对 `/api/tasks/{id}/executions` 发 PUT
         返回 405，未知子路径（如 `/api/tasks/{id}/bogus`）返回 404，均不会更新任务。
       operationId: taskUpdate
@@ -2722,6 +2726,8 @@ paths:
       responses:
         "200":
           description: 结果
+        "409":
+          $ref: "#/components/responses/Error"
     delete:
       tags: [Tasks]
       summary: 删除任务

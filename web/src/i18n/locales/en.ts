@@ -950,6 +950,7 @@ export default {
       eventTrigger: 'Event trigger',
       eventRepo: 'Watched repository',
       eventPausedNote: 'This task is disabled, so no event will trigger a run',
+      eventNoManualRun: 'Runs only when a matching event occurs — it cannot be run manually, because the prompt relies on the event details injected at trigger time.',
       eventContext: 'Event context',
       eventContextSample: 'Sample',
       eventContextHint: 'At trigger time these variables are replaced with real values and injected before your prompt.',

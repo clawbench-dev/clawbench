@@ -28,7 +28,11 @@
       </button>
 
       <template v-if="taskStatus === 'active'">
-        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <!-- An event task has no event to inject on a manual run, so its
+             {{TITLE}}/{{URL}} placeholders would go unsubstituted. The backend
+             rejects such a trigger (409); hide the button rather than offer an
+             action that can only fail. -->
+        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -42,7 +46,7 @@
         </button>
       </template>
       <template v-else-if="taskStatus === 'paused'">
-        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -101,6 +105,10 @@ const { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask } = useTas
 
 const taskStatus = computed(() => props.task.status as string)
 const taskRunningCount = computed(() => props.task.runningCount as number)
+
+// An absent triggerMode is the cron default (tasks created before event mode
+// existed carry no field). Same reading as TaskListPage / TaskOverviewTab.
+const isEventTriggered = computed(() => (props.task.triggerMode as string) === 'event')
 
 const refreshing = ref(false)
 const scrollRef = ref<HTMLElement | null>(null)

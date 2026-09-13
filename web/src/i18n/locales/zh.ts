@@ -950,6 +950,7 @@ export default {
       eventTrigger: '事件触发',
       eventRepo: '监听仓库',
       eventPausedNote: '任务已禁用，事件不会触发执行',
+      eventNoManualRun: '仅在匹配的事件发生时执行，不支持手动执行——提示词依赖触发时注入的事件详情。',
       eventContext: '事件上下文',
       eventContextSample: '示例值',
       eventContextHint: '触发时以下变量会替换为真实值，并固定注入在提示词之前。',
