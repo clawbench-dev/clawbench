@@ -2,7 +2,7 @@
   <div
     ref="dividerRef"
     class="split-view__divider"
-    :class="`split-view__divider--${orientation}`"
+    :class="[`split-view__divider--${orientation}`, { 'split-view__divider--dragging': dragging }]"
     role="separator"
     :aria-orientation="ariaOrientation"
     :aria-valuenow="ariaValueNow"
@@ -44,11 +44,19 @@ const emit = defineEmits<{
 }>()
 
 const dividerRef = ref<HTMLDivElement | null>(null)
+/**
+ * Drives the expanded highlight while dragging. `:active` alone is not enough
+ * on touch: once `setPointerCapture` takes over the pointer, the browser drops
+ * `:active`, so a fast swipe showed no highlight at all (only a held press did).
+ * This mirrors the pointer lifecycle instead of relying on the pseudo-class.
+ */
+const dragging = ref(false)
 let dragActive = false
 
 function onDividerPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
   dragActive = true
+  dragging.value = true
   dividerRef.value?.setPointerCapture?.(e.pointerId)
   document.body.classList.add('split-view-dragging')
   document.body.classList.add(isVertical.value ? 'split-view-dragging--vertical' : 'split-view-dragging--horizontal')
@@ -64,6 +72,7 @@ function onPointerMove(e: PointerEvent) {
 function onPointerUp(e: PointerEvent) {
   if (!dragActive) return
   dragActive = false
+  dragging.value = false
   dividerRef.value?.releasePointerCapture?.(e.pointerId)
   document.body.classList.remove('split-view-dragging')
   document.body.classList.remove('split-view-dragging--vertical', 'split-view-dragging--horizontal')
@@ -113,7 +122,10 @@ onBeforeUnmount(() => {
   left: -6px;
   right: -6px;
 }
-.split-view__divider--horizontal:active {
+/* Expanded highlight. `:active` covers mouse press; `--dragging` covers the
+   whole pointer session, which is what touch needs (see the `dragging` ref). */
+.split-view__divider--horizontal:active,
+.split-view__divider--horizontal.split-view__divider--dragging {
   width: 12px;
   margin: 0 -5.5px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -159,7 +171,8 @@ onBeforeUnmount(() => {
     width: 3px;
   }
 }
-.split-view__divider--vertical:active {
+.split-view__divider--vertical:active,
+.split-view__divider--vertical.split-view__divider--dragging {
   height: 12px;
   margin: -5.5px 0;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -191,7 +204,8 @@ onBeforeUnmount(() => {
   height: 1px;
   transform: translateY(-50%);
 }
-.split-view__divider:active .split-view__gutter-line {
+.split-view__divider:active .split-view__gutter-line,
+.split-view__divider--dragging .split-view__gutter-line {
   background: var(--accent-color, #0066cc);
 }
 @media (hover: hover) {
