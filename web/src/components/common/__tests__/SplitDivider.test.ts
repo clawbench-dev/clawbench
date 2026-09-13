@@ -206,4 +206,33 @@ describe('SplitDivider — drag highlight survives touch', () => {
       /\.split-view__divider--dragging \.split-view__gutter-line/,
     )
   })
+
+  it('keeps the resting line on the device pixel grid', () => {
+    // The divider is 1px wide at rest (3px under `pointer: coarse`). Centring
+    // with `left: 50%` + translateX(-50%) resolves to a 0.5px offset, which the
+    // compositor antialiases across two columns — the separator then looks like
+    // a double border. `(100% - 1px) / 2` centres it on whole pixels instead.
+    const src = readSource()
+    const style = src.slice(src.indexOf('<style'))
+
+    const ruleFor = (dir: string) => {
+      const m = style.match(
+        new RegExp(
+          `\\.split-view__divider--${dir} \\.split-view__gutter-line \\{([^}]*)\\}`,
+        ),
+      )
+      expect(m, `${dir} gutter-line rule must exist`).not.toBeNull()
+      return m![1]
+    }
+
+    for (const dir of ['horizontal', 'vertical']) {
+      const resting = ruleFor(dir)
+      expect(resting, `${dir} resting line must not use 50%`).not.toContain('50%')
+      expect(resting, `${dir} resting line must not be transformed`).not.toContain('transform')
+      expect(
+        resting,
+        `${dir} resting line must centre with (100% - 1px) / 2`,
+      ).toContain('calc((100% - 1px) / 2)')
+    }
+  })
 })

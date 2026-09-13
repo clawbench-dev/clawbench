@@ -190,19 +190,24 @@ onBeforeUnmount(() => {
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   transition: background var(--duration-base) ease;
 }
+/* The line must sit on the device pixel grid, or it antialiases across two
+   columns and reads as a double border. `left: 50%` + translateX(-50%) can't do
+   that: the divider is 1px wide at rest (3px under `pointer: coarse`), so 50%
+   resolves to a half pixel and the line straddles two columns.
+   `(100% - 1px) / 2` centres it on whole pixels for both those widths — and it
+   keeps working while dragging, where the divider widens and the line rides on
+   the tinted band anyway. */
 .split-view__divider--horizontal .split-view__gutter-line {
-  left: 50%;
+  left: calc((100% - 1px) / 2);
   top: 0;
   bottom: 0;
   width: 1px;
-  transform: translateX(-50%);
 }
 .split-view__divider--vertical .split-view__gutter-line {
-  top: 50%;
+  top: calc((100% - 1px) / 2);
   left: 0;
   right: 0;
   height: 1px;
-  transform: translateY(-50%);
 }
 .split-view__divider:active .split-view__gutter-line,
 .split-view__divider--dragging .split-view__gutter-line {

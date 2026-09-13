@@ -187,13 +187,17 @@ onBeforeUnmount(() => {
 .toc-dock--left .toc-dock-divider:hover {
   margin-left: 3px;
 }
+/* The line must land on a whole device pixel, or the compositor antialiases it
+   across two columns and it reads as a double border. `left: 50%` in this fixed
+   6px box resolves to 3px, and translateX(-50%) then pulls it to 2.5px — hence
+   the explicit -1px instead. (SplitDivider uses `(100% - 1px) / 2` because its
+   box is 1px/3px wide, where this formula would land on a half pixel.) */
 .toc-dock-divider__line {
   position: absolute;
-  left: 50%;
+  left: calc(50% - 1px);
   top: 0;
   bottom: 0;
   width: 1px;
-  transform: translateX(-50%);
   background: var(--border-color, rgba(0, 0, 0, 0.12));
   transition: background var(--duration-base) ease;
 }
