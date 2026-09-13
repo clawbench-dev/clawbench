@@ -205,29 +205,29 @@ func applyHotReloadWarnings() []string {
 // protected by auth middleware (password + localhost bypass). Frontend
 // renders secrets using <input type="password"> for secure display.
 type configResponse struct {
-	Version             string               `json:"version"`
-	HasPassword         bool                 `json:"has_password"`          // true when a password is configured
-	DefaultAgent        string               `json:"default_agent"`
-	Chat                configChat           `json:"chat"`
-	Session             configSession        `json:"session"`
-	RecentProjects      configRecentProjects `json:"recent_projects"`
-	Upload              configUpload         `json:"upload"`
-	Terminal            configTerminal       `json:"terminal"`
-	TTS                 configTTS            `json:"tts"`
-	STT                 configSTT            `json:"stt"`
-	RAG                 configRAG            `json:"rag"`
-	PortForward         configPortForward    `json:"port_forward"`
-	FRP                 configFRP            `json:"frp"`
-	Summarize           configSummarize      `json:"summarize"`
-	AISummary           configAISummary      `json:"ai_summary"`
-	DingTalk            configDingTalk       `json:"dingtalk"`
-	Feishu              configFeishu         `json:"feishu"`
-	PushMode            string               `json:"push_mode"`
-	FileSearch          configFileSearch     `json:"file_search"`
-	TLS                 configTLS            `json:"tls"`
-	Fonts               configFonts          `json:"fonts"`
-	Appearance          configAppearance     `json:"appearance"`
-	Forge               configForge          `json:"forge"`
+	Version        string               `json:"version"`
+	HasPassword    bool                 `json:"has_password"` // true when a password is configured
+	DefaultAgent   string               `json:"default_agent"`
+	Chat           configChat           `json:"chat"`
+	Session        configSession        `json:"session"`
+	RecentProjects configRecentProjects `json:"recent_projects"`
+	Upload         configUpload         `json:"upload"`
+	Terminal       configTerminal       `json:"terminal"`
+	TTS            configTTS            `json:"tts"`
+	STT            configSTT            `json:"stt"`
+	RAG            configRAG            `json:"rag"`
+	PortForward    configPortForward    `json:"port_forward"`
+	FRP            configFRP            `json:"frp"`
+	Summarize      configSummarize      `json:"summarize"`
+	AISummary      configAISummary      `json:"ai_summary"`
+	DingTalk       configDingTalk       `json:"dingtalk"`
+	Feishu         configFeishu         `json:"feishu"`
+	PushMode       string               `json:"push_mode"`
+	FileSearch     configFileSearch     `json:"file_search"`
+	TLS            configTLS            `json:"tls"`
+	Fonts          configFonts          `json:"fonts"`
+	Appearance     configAppearance     `json:"appearance"`
+	Forge          configForge          `json:"forge"`
 	// FirstRun is true on a brand-new install. The frontend uses it to apply
 	// out-of-box appearance defaults (the default theme) without overriding
 	// choices an existing user has already made.
@@ -672,10 +672,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RUnlock()
 
 	resp := configResponse{
-		Version:             getBuildVersion(),
-		HasPassword:         model.SessionToken != "",
-		DefaultAgent:        cfg.DefaultAgent,
-		FirstRun:            model.FirstRun,
+		Version:      getBuildVersion(),
+		HasPassword:  model.SessionToken != "",
+		DefaultAgent: cfg.DefaultAgent,
+		FirstRun:     model.FirstRun,
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,

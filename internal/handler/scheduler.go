@@ -14,7 +14,7 @@ import (
 )
 
 // ServeTasks handles GET (list) and POST (create) for tasks.
-func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method task list handler
+func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-method task list handler: one switch arm per verb plus enrichment, splitting would scatter the shared validation
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return

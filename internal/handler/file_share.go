@@ -22,6 +22,11 @@ import (
 	"clawbench/internal/service"
 )
 
+// shareLocalSegment is the URL path segment that addresses a file relative to
+// the shared file's directory (see serveShareLocal). Named so the parser and
+// the resolver cannot drift apart.
+const shareLocalSegment = "local"
+
 // shareResponse is the payload for share management endpoints.
 type shareResponse struct {
 	Token string `json:"token,omitempty"`
@@ -302,7 +307,7 @@ func ServeSharePublic(w http.ResponseWriter, r *http.Request) {
 		serveShareFileContent(w, r, absPath)
 	case rest == "download":
 		serveShareRaw(w, r, absPath, name, true)
-	case rest == "local" || strings.HasPrefix(rest, "local/"):
+	case rest == shareLocalSegment || strings.HasPrefix(rest, shareLocalSegment+"/"):
 		serveShareLocal(w, r, absPath, rest)
 	default:
 		http.NotFound(w, r)
@@ -431,7 +436,7 @@ func serveShareLocal(w http.ResponseWriter, r *http.Request, sharedAbsPath, rest
 	}
 
 	// Relative path from /local/{rel...}: resolve against the shared file's dir.
-	rel := strings.TrimPrefix(rest, "local")
+	rel := strings.TrimPrefix(rest, shareLocalSegment)
 	rel = strings.TrimLeft(rel, "/")
 	if rel == "" {
 		// Bare /local without a resource — serve the shared file itself.

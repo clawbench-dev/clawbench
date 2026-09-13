@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -168,6 +169,13 @@ func TestServeForgeCredentials_HostNormalizedToLowercase(t *testing.T) {
 // TestWriteConfigYAML_FilePermissions ensures secrets on disk are not
 // world-readable.
 func TestWriteConfigYAML_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows has no POSIX mode bits: os.Stat reports synthetic permissions
+		// (the file came back group/other-readable) and chmod cannot tighten
+		// them, so the assertion below cannot hold there. The restriction is
+		// enforced by NTFS ACLs on Windows instead.
+		t.Skip("Windows does not honor POSIX file modes")
+	}
 	_, teardown := setupPersistTestEnv(t)
 	defer teardown()
 
