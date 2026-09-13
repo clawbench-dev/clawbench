@@ -96,7 +96,7 @@ func InjectQueuedMessage(sessionID, queueID string) (bool, int64, error) {
 			// loop can never recover a row it cannot see (it selects queued=1).
 			slog.Error("midturn: injection declined AND requeue failed; message is stranded",
 				"session", sessionID, "queue_id", queueID, "msg_id", msg.ID, "err", rerr)
-			return false, 0, fmt.Errorf("%w: %v", ErrMessageStranded, rerr)
+			return false, 0, fmt.Errorf("%w: %w", ErrMessageStranded, rerr)
 		}
 		slog.Info("midturn: injection declined, message restored to the queue",
 			"session", sessionID, "queue_id", queueID, "reason", res.Reason)
@@ -120,7 +120,7 @@ var ErrMessageStranded = errors.New("queued message stranded: claim succeeded bu
 // The UPDATE is idempotent, so retrying is free of side effects.
 func requeueWithRetry(msgID int64) error {
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		if err = RequeueMessage(msgID); err == nil {
 			return nil
 		}

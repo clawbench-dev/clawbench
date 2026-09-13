@@ -23,7 +23,7 @@ const (
 
 // The endpoint reference embedded in each template is rendered from the
 // embedded OpenAPI spec (internal/api), so the AI is always told the same
-// contract the server implements. Only behaviour rules — things that are not
+// contract the server implements. Only behavior rules — things that are not
 // part of the HTTP contract — are written by hand here.
 //
 // Placeholders: {{BASE_URL}}, {{PROJECT_PATH}}, {{SESSION_ID}}

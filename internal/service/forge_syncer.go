@@ -206,58 +206,15 @@ func (s *ForgeSyncer) processItem(
 	// Comment activity is derived from the newest comment on the item. Fetching
 	// comments per item is the only option on GitLab (no repo-level endpoint),
 	// and it is the expensive part, so it is skipped on state-only passes.
-	latestID, latestUpdated := int64(0), time.Time{}
-	latestAuthor, latestBody := "", ""
-	var commentErr error
-	if opts.IncludeComments {
-		latestID, latestUpdated, latestAuthor, latestBody, commentErr = s.latestComment(ctx, provider, typ, item.Number)
-	} else if prev != nil {
-		// Preserve the last known comment state so a state-only pass does not
-		// look like "comments were removed".
-		latestID, latestUpdated = prev.LastCommentID, prev.LastCommentUpdatedAt
-	}
-	if opts.IncludeComments && commentErr != nil {
-		// A comment fetch failure must not abort the whole sync: the item state
-		// is still valuable, and comments are retried next round.
-		slog.Warn("forge: comment fetch failed",
-			slog.String("repo", repoRef.Key()),
-			slog.Int("number", item.Number),
-			slog.String("err", commentErr.Error()))
-		latestID, latestUpdated = 0, time.Time{}
-		latestAuthor, latestBody = "", ""
-		if prev != nil {
-			latestID, latestUpdated = prev.LastCommentID, prev.LastCommentUpdatedAt
-		}
-	}
-
-	// Whether this item's comment history was already known BEFORE this pass.
-	//
-	// This is tracked per item, not per repo. The repo-level watermark says "we
-	// have seen this repo before", but the comment baseline is established by a
-	// comment-inclusive pass — which the poller's startup pass normally is, and
-	// which can fail independently (rate limit, timeout). Without this flag a
-	// zero baseline is ambiguous: "no comments exist" and "never fetched
-	// comments" look identical, so the first successful comment pass would
-	// replay every historical comment as new.
-	//
-	// The gate below uses the PRE-pass value: the pass that establishes the
-	// baseline must absorb history silently, and only later passes may report
-	// comment activity.
-	prevBaselined := prev != nil && prev.CommentsBaselined
-	commentsBaselined := prevBaselined
-	if opts.IncludeComments && commentErr == nil {
-		// This pass read comments, so the baseline is now established (for
-		// persistence on the snapshot written below).
-		commentsBaselined = true
-	}
+	cs := s.resolveCommentState(ctx, provider, repoRef, prev, typ, item.Number, opts.IncludeComments)
 
 	cur := forge.ItemState{
 		State:                  string(item.State),
 		Merged:                 item.State == forge.StateMerged,
-		LatestCommentID:        latestID,
-		LatestCommentUpdatedAt: latestUpdated,
-		LatestCommentAuthor:    latestAuthor,
-		LatestCommentBody:      latestBody,
+		LatestCommentID:        cs.id,
+		LatestCommentUpdatedAt: cs.updated,
+		LatestCommentAuthor:    cs.author,
+		LatestCommentBody:      cs.body,
 		Author:                 item.Author.Login,
 	}
 
@@ -271,7 +228,7 @@ func (s *ForgeSyncer) processItem(
 		// A state transition is still reported without one — it is derived from
 		// data this pass actually fetched — but comment activity cannot be,
 		// because there is no "previous" comment to compare against.
-		if !prevBaselined {
+		if !cs.prevBaselined {
 			changes = dropCommentChanges(changes)
 		}
 	}
@@ -287,9 +244,9 @@ func (s *ForgeSyncer) processItem(
 		Number:               item.Number,
 		State:                cur.State,
 		Merged:               cur.Merged,
-		LastCommentID:        latestID,
-		LastCommentUpdatedAt: latestUpdated,
-		CommentsBaselined:    commentsBaselined,
+		LastCommentID:        cs.id,
+		LastCommentUpdatedAt: cs.updated,
+		CommentsBaselined:    cs.baselined,
 		ItemUpdatedAt:        item.UpdatedAt,
 	}); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
@@ -324,8 +281,69 @@ func (s *ForgeSyncer) processItem(
 	return nil
 }
 
-// latestComment returns the highest comment id and newest updated_at for an
-// item, paging to the end. Only the last page matters, so we walk forward.
+// commentState is the resolved comment state for one item, plus the pre-pass
+// baseline flag the caller uses to gate comment events.
+type commentState struct {
+	id            int64
+	updated       time.Time
+	author        string
+	body          string
+	baselined     bool // baseline established after this pass
+	prevBaselined bool // baseline existed before this pass
+}
+
+// resolveCommentState determines the comment state to persist for one item and
+// reports whether the comment baseline was established before this pass.
+//
+// Fetching comments is the expensive part of a sync, so it only happens on
+// comment-inclusive passes; state-only passes preserve the last known values so
+// the item does not look like "comments were removed". A fetch failure is not
+// fatal — the item state is still valuable and comments are retried next round.
+//
+// The returned prevBaselined is the PRE-pass baseline. It is tracked per item,
+// not per repo: the repo-level watermark says "we have seen this repo before",
+// but the comment baseline is established by a comment-inclusive pass, which
+// can fail independently (rate limit, timeout). Without this distinction a zero
+// baseline is ambiguous — "no comments exist" and "never fetched comments" look
+// identical — so the first successful comment pass would replay every
+// historical comment as new. The caller uses the PRE-pass value so the pass
+// that establishes the baseline absorbs history silently.
+func (s *ForgeSyncer) resolveCommentState(
+	ctx context.Context,
+	provider forge.Provider,
+	repoRef ForgeRepoRef,
+	prev *ForgeItemSnapshot,
+	typ forge.ItemType,
+	number int,
+	includeComments bool,
+) commentState {
+	cs := commentState{prevBaselined: prev != nil && prev.CommentsBaselined}
+	cs.baselined = cs.prevBaselined
+
+	if includeComments {
+		id, updated, author, body, err := s.latestComment(ctx, provider, typ, number)
+		if err != nil {
+			slog.Warn("forge: comment fetch failed",
+				slog.String("repo", repoRef.Key()),
+				slog.Int("number", number),
+				slog.String("err", err.Error()))
+		} else {
+			// This pass read comments, so the baseline is now established (for
+			// persistence on the snapshot written by the caller).
+			cs.id, cs.updated, cs.author, cs.body = id, updated, author, body
+			cs.baselined = true
+			return cs
+		}
+	}
+
+	if prev != nil {
+		// Preserve the last known comment state so a state-only pass (or a
+		// failed comment fetch) does not look like "comments were removed".
+		cs.id, cs.updated = prev.LastCommentID, prev.LastCommentUpdatedAt
+	}
+	return cs
+}
+
 func (s *ForgeSyncer) latestComment(ctx context.Context, provider forge.Provider, typ forge.ItemType, number int) (int64, time.Time, string, string, error) {
 	var maxID int64
 	var maxUpdated time.Time

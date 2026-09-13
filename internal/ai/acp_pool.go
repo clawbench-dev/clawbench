@@ -1174,7 +1174,7 @@ func (c *ACPConn) CallRaw(ctx context.Context, method string, params any) (json.
 }
 
 // ExpectSteerEcho registers a mid-turn injection id so the ACP notification
-// layer can recognise the agent's echo of it and emit a steer_boundary event.
+// layer can recognize the agent's echo of it and emit a steer_boundary event.
 // Satisfies ai.SteerEchoTracker.
 func (c *ACPConn) ExpectSteerEcho(clientUserMessageID string) {
 	c.addPendingSteerID(clientUserMessageID)
@@ -1504,7 +1504,7 @@ func (c *ACPConn) setLastCompletedRequestID(rid string) {
 }
 
 // addPendingSteerID records a mid-turn injection id this host just issued, so
-// the boundary observer can recognise its echo on the wire. Safe to call from
+// the boundary observer can recognize its echo on the wire. Safe to call from
 // the steer caller goroutine (metaMu, never c.mu).
 func (c *ACPConn) addPendingSteerID(id string) {
 	if id == "" {

@@ -184,3 +184,129 @@ func TestSchema_ForgeSyncTablesExist(t *testing.T) {
 		require.NoError(t, err, "table %s must exist", table)
 	}
 }
+
+// TestForgeSync_NilDBGuards covers the "no database" branches of the snapshot,
+// watermark and event accessors. The forge integration is optional, so every
+// one of them must be a silent no-op rather than a panic.
+func TestForgeSync_NilDBGuards(t *testing.T) {
+	cleanup := service.SetDBForTest(nil, nil)
+	t.Cleanup(cleanup)
+
+	repo := testRepoKey()
+
+	s, err := service.GetForgeItemSnapshot(repo, "issue", 1)
+	require.NoError(t, err)
+	assert.Nil(t, s)
+
+	assert.NoError(t, service.UpsertForgeItemSnapshot(service.ForgeItemSnapshot{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, State: "open",
+	}))
+
+	n, err := service.PruneForgeItems(repo, time.Now())
+	require.NoError(t, err)
+	assert.Zero(t, n)
+
+	list, err := service.ListForgeItemSnapshots(repo)
+	require.NoError(t, err)
+	assert.Nil(t, list)
+
+	assert.NoError(t, service.SetForgeSyncWatermark(repo, time.Now()))
+
+	wm, err := service.GetForgeSyncWatermark(repo)
+	require.NoError(t, err)
+	assert.True(t, wm.IsZero())
+
+	fresh, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, EventType: "opened", DedupeKey: "k",
+	})
+	require.NoError(t, err)
+	assert.False(t, fresh)
+
+	count, err := service.CountUnreadForgeEvents()
+	require.NoError(t, err)
+	assert.Zero(t, count)
+
+	assert.NoError(t, service.MarkForgeEventsRead())
+}
+
+// TestForgeSync_QueryErrors covers the error branches: a query against a
+// database that lacks the forge tables must surface, not be swallowed.
+func TestForgeSync_QueryErrors(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	repo := testRepoKey()
+
+	_, err = service.GetForgeItemSnapshot(repo, "issue", 1)
+	require.Error(t, err)
+
+	_, err = service.ListForgeItemSnapshots(repo)
+	require.Error(t, err)
+
+	_, err = service.GetForgeSyncWatermark(repo)
+	require.Error(t, err)
+
+	_, err = service.CountUnreadForgeEvents()
+	require.Error(t, err)
+
+	_, err = service.PruneForgeItems(repo, time.Now())
+	require.Error(t, err)
+
+	assert.Error(t, service.SetForgeSyncWatermark(repo, time.Now()))
+	assert.Error(t, service.MarkForgeEventsRead())
+}
+
+// TestForgeSnapshot_NullableTimestamps covers the NullTime handling: a snapshot
+// written without comment/item timestamps must read back as zero times rather
+// than a scan error, and one written with them must round-trip.
+func TestForgeSnapshot_NullableTimestamps(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	repo := testRepoKey()
+
+	// No timestamps: the NULL columns must decode to zero values.
+	require.NoError(t, service.UpsertForgeItemSnapshot(service.ForgeItemSnapshot{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, State: "open",
+	}))
+	got, err := service.GetForgeItemSnapshot(repo, "issue", 1)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.LastCommentUpdatedAt.IsZero())
+	assert.True(t, got.ItemUpdatedAt.IsZero())
+
+	// With timestamps: they must round-trip (truncated to the second by SQLite).
+	commentAt := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	itemAt := time.Date(2026, 9, 2, 11, 30, 0, 0, time.UTC)
+	require.NoError(t, service.UpsertForgeItemSnapshot(service.ForgeItemSnapshot{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 2, State: "closed",
+		LastCommentID: 9, LastCommentUpdatedAt: commentAt, ItemUpdatedAt: itemAt,
+		CommentsBaselined: true,
+	}))
+	got, err = service.GetForgeItemSnapshot(repo, "issue", 2)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(9), got.LastCommentID)
+	assert.WithinDuration(t, commentAt, got.LastCommentUpdatedAt, time.Second)
+	assert.WithinDuration(t, itemAt, got.ItemUpdatedAt, time.Second)
+	assert.True(t, got.CommentsBaselined)
+
+	// ListForgeItemSnapshots applies the same NULL handling.
+	list, err := service.ListForgeItemSnapshots(repo)
+	require.NoError(t, err)
+	require.Len(t, list, 2)
+	for _, s := range list {
+		if s.Number == 1 {
+			assert.True(t, s.LastCommentUpdatedAt.IsZero())
+			assert.True(t, s.ItemUpdatedAt.IsZero())
+		}
+	}
+}

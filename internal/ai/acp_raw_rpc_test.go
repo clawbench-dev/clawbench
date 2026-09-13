@@ -136,7 +136,7 @@ func TestACPRawRPC_IgnoresForeignAndNumericIDs(t *testing.T) {
 	case err := <-done:
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	case <-time.After(2 * time.Second):
-		t.Fatal("CallRaw did not honour context cancellation")
+		t.Fatal("CallRaw did not honor context cancellation")
 	}
 
 	// Pending must be cleaned up after the timeout.
@@ -221,7 +221,7 @@ func TestACPRawRPC_ConcurrentIDsAreUnique(t *testing.T) {
 	const n = 8
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			// Never answered; context ends the call.
@@ -258,11 +258,11 @@ func TestLockedWriter_SerializesWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	const writers, reps = 8, 50
 	wg.Add(writers)
-	for i := 0; i < writers; i++ {
+	for range writers {
 		go func() {
 			defer wg.Done()
 			// Each write is one atomic line.
-			for j := 0; j < reps; j++ {
+			for range reps {
 				_, _ = lw.Write([]byte("0123456789\n"))
 			}
 		}()
@@ -287,4 +287,125 @@ func (w *yieldingWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 	time.Sleep(time.Microsecond)
 	return w.dst.Write(p)
+}
+
+// failingWriter fails every write, so CallRaw must report a transport error and
+// drop the pending entry rather than leaving a caller waiting forever.
+type failingWriter struct{ err error }
+
+func (w *failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestACPRawRPC_WriteFailureDropsPending covers the write-error branch: the
+// request never reaches the agent, so the caller is told immediately and no
+// pending entry leaks.
+func TestACPRawRPC_WriteFailureDropsPending(t *testing.T) {
+	rpc := newACPRawRPC(&failingWriter{err: errRawConnClosed}, liveDone())
+
+	_, err := rpc.CallRaw(context.Background(), "session/steer", nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errRawConnClosed)
+
+	rpc.mu.Lock()
+	pending := len(rpc.pending)
+	rpc.mu.Unlock()
+	assert.Zero(t, pending, "a failed write must not leave a pending entry")
+}
+
+// TestACPRawRPC_MalformedResponse covers the decode-error branch: a response
+// line addressed to us that is not a JSON-RPC envelope is reported as a decode
+// failure rather than being silently dropped (which would hang the caller).
+func TestACPRawRPC_MalformedResponse(t *testing.T) {
+	w := &rawRPCWriter{}
+	rpc := newACPRawRPC(w, liveDone())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := rpc.CallRaw(context.Background(), "session/steer", nil)
+		done <- err
+	}()
+
+	var id string
+	require.Eventually(t, func() bool {
+		ls := w.lines()
+		if len(ls) == 0 {
+			return false
+		}
+		var msg struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal([]byte(ls[0]), &msg) != nil {
+			return false
+		}
+		id = msg.ID
+		return id != ""
+	}, 2*time.Second, 5*time.Millisecond)
+
+	// Addressed to us (the probe sees our id), but the envelope does not
+	// unmarshal: "error" must be an object, not a string.
+	rpc.DispatchRawResponse([]byte(`{"jsonrpc":"2.0","id":"` + id + `","error":"not-an-object"}`))
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "decode")
+	case <-time.After(2 * time.Second):
+		t.Fatal("CallRaw did not report a malformed response")
+	}
+}
+
+// TestACPRawRPC_MarshalFailure covers the marshal-error branch: params that
+// cannot be serialized must be reported and the pending entry dropped, so the
+// caller never waits for a request that was never sent.
+func TestACPRawRPC_MarshalFailure(t *testing.T) {
+	w := &rawRPCWriter{}
+	rpc := newACPRawRPC(w, liveDone())
+
+	// A channel has no JSON representation, so marshaling the request fails.
+	_, err := rpc.CallRaw(context.Background(), "session/steer", map[string]any{"bad": make(chan int)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "marshal")
+
+	rpc.mu.Lock()
+	pending := len(rpc.pending)
+	rpc.mu.Unlock()
+	assert.Zero(t, pending, "a failed marshal must not leave a pending entry")
+	assert.Empty(t, w.lines(), "nothing may reach the wire")
+}
+
+// TestACPRawRPC_ParamsOmittedWhenNil covers the wire shape: params is present
+// only when supplied, so a parameterless call stays minimal.
+func TestACPRawRPC_ParamsOmittedWhenNil(t *testing.T) {
+	w := &rawRPCWriter{}
+	rpc := newACPRawRPC(w, liveDone())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _ = rpc.CallRaw(ctx, "session/steer", nil)
+
+	require.Len(t, w.lines(), 1)
+	var msg map[string]any
+	require.NoError(t, json.Unmarshal([]byte(w.lines()[0]), &msg))
+	assert.Equal(t, "2.0", msg["jsonrpc"])
+	assert.Equal(t, "session/steer", msg["method"])
+	_, hasParams := msg["params"]
+	assert.False(t, hasParams, "a nil params must be omitted, not sent as null")
+
+	// With params, the object is forwarded verbatim.
+	w2 := &rawRPCWriter{}
+	rpc2 := newACPRawRPC(w2, liveDone())
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel2()
+	_, _ = rpc2.CallRaw(ctx2, "session/steer", map[string]any{"sessionId": "s1"})
+
+	require.Len(t, w2.lines(), 1)
+	var msg2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(w2.lines()[0]), &msg2))
+	assert.Equal(t, map[string]any{"sessionId": "s1"}, msg2["params"])
+}
+
+// TestRawRPCError_ErrorMessage covers the error string used in logs and surfaced
+// to callers, which must name both the code and the agent's message.
+func TestRawRPCError_ErrorMessage(t *testing.T) {
+	err := &RawRPCError{Code: -32601, Message: "Method not found"}
+	assert.Equal(t, "json-rpc error -32601: Method not found", err.Error())
 }

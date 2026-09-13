@@ -23,14 +23,14 @@ func setupForgeEnv(t *testing.T) (*testEnv, func()) {
 	return env, teardown
 }
 
-func bindProject(t *testing.T, projectPath, platform, host, owner, repo string) {
+func bindProject(t *testing.T, projectPath, platform, host string) {
 	t.Helper()
 	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
 		ProjectPath: projectPath,
 		Platform:    platform,
 		Host:        host,
-		Owner:       owner,
-		Repo:        repo,
+		Owner:       "acme",
+		Repo:        "widgets",
 		Source:      "manual",
 	}))
 }
@@ -307,7 +307,7 @@ func TestServeForgeItems_RequiresProject(t *testing.T) {
 func TestServeForgeItem_RequiresNumber(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
-	bindProject(t, env.ProjectDir, "github", "github.com", "acme", "widgets")
+	bindProject(t, env.ProjectDir, "github", "github.com")
 
 	req := newRequest(t, http.MethodGet, "/api/forge/item?type=issue", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -320,7 +320,7 @@ func TestServeForgeItem_RequiresNumber(t *testing.T) {
 func TestServeForgeComments_RequiresNumber(t *testing.T) {
 	env, teardown := setupForgeEnv(t)
 	defer teardown()
-	bindProject(t, env.ProjectDir, "github", "github.com", "acme", "widgets")
+	bindProject(t, env.ProjectDir, "github", "github.com")
 
 	req := newRequest(t, http.MethodGet, "/api/forge/comments?type=issue", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -352,7 +352,7 @@ func TestServeForgeItems_EndToEndAgainstMockGitHub(t *testing.T) {
 	// httptest directly here; instead assert the wiring via a bound host and a
 	// missing credential, which must surface as an auth-classified error rather
 	// than a crash.
-	bindProject(t, env.ProjectDir, "github", "github.invalid", "acme", "widgets")
+	bindProject(t, env.ProjectDir, "github", "github.invalid")
 
 	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue", nil)
 	withProjectCookie(req, env.ProjectDir)

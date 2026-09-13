@@ -2,10 +2,13 @@ package github
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	gogithub "github.com/google/go-github/v85/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -243,4 +246,176 @@ func TestListItems_NoQueryUsesListEndpoint(t *testing.T) {
 		Type: forge.ItemTypeIssue, State: "open",
 	})
 	require.NoError(t, err)
+}
+
+// TestVerifyToken_HostScoped covers the token probe used by the credential and
+// identity flows: it needs no repository, so it must authenticate against
+// /user and return the account.
+func TestVerifyToken_HostScoped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v3/user", r.URL.Path)
+		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"login":"octocat","name":"The Octocat"}`))
+	}))
+	defer srv.Close()
+
+	got, err := VerifyToken(context.Background(), Config{
+		Token:      "tok",
+		BaseURL:    srv.URL,
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "octocat", got.Login)
+}
+
+// TestVerifyToken_AuthError covers the rejected-credential path.
+func TestVerifyToken_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer srv.Close()
+
+	_, err := VerifyToken(context.Background(), Config{
+		BaseURL:    srv.URL,
+		HTTPClient: srv.Client(),
+	})
+	require.Error(t, err)
+	assert.True(t, forge.IsAuthError(err))
+}
+
+// TestGetItem_ChangeRequest covers the PR branch of GetItem, which fetches from
+// the pulls endpoint rather than issues.
+func TestGetItem_ChangeRequest(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/repos/acme/widgets/pulls/12")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"number":12,"title":"a pr","state":"closed","merged":true,
+			"user":{"login":"bob"},"html_url":"u",
+			"created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z"}`))
+	}))
+
+	item, err := p.GetItem(context.Background(), forge.ItemTypeChangeRequest, 12)
+	require.NoError(t, err)
+	assert.Equal(t, 12, item.Number)
+	assert.Equal(t, forge.ItemTypeChangeRequest, item.Type)
+	assert.Equal(t, forge.StateMerged, item.State)
+}
+
+// TestSearchSortParam covers the mapping to the search API's accepted values:
+// anything unrecognized falls back to best-match (the empty string).
+func TestSearchSortParam(t *testing.T) {
+	assert.Equal(t, "updated", searchSortParam("updated"))
+	assert.Equal(t, "created", searchSortParam("created"))
+	assert.Equal(t, "comments", searchSortParam("comments"))
+	assert.Equal(t, "", searchSortParam("best-match"))
+	assert.Equal(t, "", searchSortParam("bogus"))
+}
+
+// TestConvertIssueAsPull covers the search-result adaptation: the search API
+// returns PRs under the issue shape, so only the type needs correcting.
+func TestConvertIssueAsPull(t *testing.T) {
+	iss := &gogithub.Issue{}
+	iss.Number = gogithub.Ptr(5)
+	iss.Title = gogithub.Ptr("search hit")
+	item := convertIssueAsPull(iss)
+	assert.Equal(t, forge.ItemTypeChangeRequest, item.Type)
+	assert.Equal(t, 5, item.Number)
+	assert.Equal(t, "search hit", item.Title)
+}
+
+// TestAuthorsFromUsers covers the nil and populated cases of the assignee
+// conversion, including a nil element inside the slice.
+func TestAuthorsFromUsers(t *testing.T) {
+	assert.Nil(t, authorsFromUsers(nil), "no users yields nil, not an empty slice")
+
+	login, name := "alice", "Alice"
+	out := authorsFromUsers([]*gogithub.User{
+		{Login: &login, Name: &name},
+		nil,
+	})
+	require.Len(t, out, 2)
+	assert.Equal(t, "alice", out[0].Login)
+	assert.Equal(t, "Alice", out[0].Name)
+	assert.Equal(t, forge.Author{}, out[1], "a nil user must not panic")
+}
+
+// TestLabelsFromGitHub covers the label conversion, including the color the
+// frontend uses to tint the chip.
+func TestLabelsFromGitHub(t *testing.T) {
+	assert.Nil(t, labelsFromGitHub(nil))
+
+	n, c := "bug", "d73a4a"
+	out := labelsFromGitHub([]*gogithub.Label{{Name: &n, Color: &c}})
+	require.Len(t, out, 1)
+	assert.Equal(t, "bug", out[0].Name)
+	assert.Equal(t, "d73a4a", out[0].Color)
+}
+
+// TestAuthorFromUser_Nil covers the defensive nil check.
+func TestAuthorFromUser_Nil(t *testing.T) {
+	assert.Equal(t, forge.Author{}, authorFromUser(nil))
+}
+
+// TestWrapErr_Classifies covers each error family the adapter maps: a rate
+// limit with a Retry-After, an abuse (secondary) limit, a plain HTTP error, and
+// a transport failure.
+func TestWrapErr_Classifies(t *testing.T) {
+	assert.Nil(t, wrapErr(nil), "a nil error stays nil")
+
+	// Transport-level failure.
+	assert.Equal(t, forge.ErrKindNetwork, kindOf(t, wrapErr(errors.New("dial tcp: i/o timeout"))))
+
+	// A plain HTTP error response is classified by status.
+	resp := &http.Response{StatusCode: http.StatusNotFound}
+	assert.Equal(t, forge.ErrKindNotFound,
+		kindOf(t, wrapErr(&gogithub.ErrorResponse{Response: resp, Message: "Not Found"})))
+
+	// A rate limit carries the retry delay through.
+	rl := wrapErr(&gogithub.RateLimitError{
+		Response: &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     http.Header{"Retry-After": []string{"30"}},
+		},
+		Message: "rate limited",
+	})
+	var fe *forge.Error
+	require.ErrorAs(t, rl, &fe)
+	assert.Equal(t, forge.ErrKindRateLimit, fe.Kind)
+	assert.Equal(t, 30, fe.RetryAfterSeconds)
+
+	// A secondary (abuse) limit is also a rate limit.
+	secs := 45 * time.Second
+	ab := wrapErr(&gogithub.AbuseRateLimitError{Message: "slow down", RetryAfter: &secs})
+	require.ErrorAs(t, ab, &fe)
+	assert.Equal(t, forge.ErrKindRateLimit, fe.Kind)
+	assert.Equal(t, 45, fe.RetryAfterSeconds)
+}
+
+// kindOf extracts the classified error kind, failing the test on a non-forge error.
+func kindOf(t *testing.T, err error) forge.ErrorKind {
+	t.Helper()
+	var fe *forge.Error
+	require.ErrorAs(t, err, &fe)
+	return fe.Kind
+}
+
+// TestListItems_SinceIsForwarded covers the incremental-sync parameter: a
+// non-zero Since must reach the API so a poll only re-reads recent changes.
+func TestListItems_SinceIsForwarded(t *testing.T) {
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var gotSince string
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSince = r.URL.Query().Get("since")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+
+	_, err := p.ListItems(context.Background(), forge.ListOptions{
+		Type: forge.ItemTypeIssue, State: "all", Since: since,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, gotSince, "Since must be forwarded as the since query parameter")
+	assert.Contains(t, gotSince, "2026-09-01")
 }

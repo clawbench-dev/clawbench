@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -198,13 +199,14 @@ func ServeForgeVerifyToken(w http.ResponseWriter, r *http.Request) {
 // verifyForgeToken builds a host-scoped client and probes the platform's user
 // endpoint. The platform is derived from the host the same way bindings are.
 func verifyForgeToken(r *http.Request, host, token string) (forge.Author, error) {
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	if model.ConfigInstance.Forge.InsecureTLS {
-		httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // opt-in by explicit config (see InsecureTLS)
-		}
-	}
-	ctx := forgeContext(r)
+	return verifyForgeTokenContext(forgeContext(r), host, token)
+}
+
+// verifyForgeTokenContext is the context-explicit form of verifyForgeToken, so
+// callers without an *http.Request (the identity cache) share one implementation
+// and therefore one credential/TLS policy.
+func verifyForgeTokenContext(ctx context.Context, host, token string) (forge.Author, error) {
+	httpClient := forgeHTTPClient()
 
 	if forge.PlatformForHost(host) == forge.PlatformGitHub {
 		baseURL := ""
@@ -222,6 +224,19 @@ func verifyForgeToken(r *http.Request, host, token string) (forge.Author, error)
 		Host:       host,
 		HTTPClient: httpClient,
 	})
+}
+
+// forgeHTTPClient applies the configured TLS policy to a fresh client. Self-
+// signed certificates are common on self-hosted instances; InsecureTLS is an
+// explicit opt-in (see model.ForgeConfig).
+func forgeHTTPClient() *http.Client {
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	if model.ConfigInstance.Forge.InsecureTLS {
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // opt-in by explicit config (see InsecureTLS)
+		}
+	}
+	return httpClient
 }
 
 // forgeHostGuard rejects hosts that must never receive a credential (loopback,

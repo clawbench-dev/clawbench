@@ -104,7 +104,7 @@ func TestRenderCommand_Deterministic(t *testing.T) {
 	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
 		first, err := RenderCommand(cmd)
 		require.NoError(t, err)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			again, err := RenderCommand(cmd)
 			require.NoError(t, err)
 			assert.Equalf(t, first, again, "command %q rendered differently on repeat", cmd)

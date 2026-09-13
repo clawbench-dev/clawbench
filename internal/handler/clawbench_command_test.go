@@ -400,7 +400,7 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 
 	t.Run("chatsearch rejects a bare command", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
 		assert.False(t, clawbenchCommandPrecheck(w, r, "/cb-chatsearch"),
 			"a bare /cb-chatsearch has nothing to search for")
 		if ragReady {
@@ -416,7 +416,7 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 			t.Skip("RAG store not initialized in this test binary")
 		}
 		w := httptest.NewRecorder()
-		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
 		assert.True(t, clawbenchCommandPrecheck(w, r, "/cb-chatsearch auth bug"))
 		assert.Equal(t, http.StatusOK, w.Code, "no error response should be written")
 	})
@@ -424,7 +424,7 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 	t.Run("commands without a precondition pass through", func(t *testing.T) {
 		for _, msg := range []string{"/cb-task daily", "/cb-usage totals", "/compact"} {
 			w := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+			r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
 			assert.Truef(t, clawbenchCommandPrecheck(w, r, msg),
 				"%s has no precondition and must pass", msg)
 			assert.Equalf(t, http.StatusOK, w.Code, "%s must not write an error", msg)

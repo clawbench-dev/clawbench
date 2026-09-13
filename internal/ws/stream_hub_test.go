@@ -975,3 +975,71 @@ func TestStreamEventToPayload_ToolResultParentLink(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "call_p", m["parent_tool_call_id"])
 }
+
+// TestStreamHub_Manager covers the accessor used by callers that need the hub's
+// owning Manager (e.g. to broadcast outside the session fan-out).
+func TestStreamHub_Manager(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+	assert.Same(t, mgr, hub.Manager())
+}
+
+// TestStreamSplitPayload covers the "after" assistant row emitted when a
+// mid-turn injection split the reply: the message id is always carried, and the
+// queue id only when the split is anchored to an injected question.
+func TestStreamSplitPayload(t *testing.T) {
+	assert.Nil(t, streamSplitPayload(ai.StreamEvent{}),
+		"an event without split data has no payload")
+
+	// Anchored to an injected message: both ids travel so the client can sort
+	// the new bubble directly below that question.
+	anchored := streamSplitPayload(ai.StreamEvent{
+		StreamSplit: &ai.StreamSplitData{MessageID: 42, QueueID: "q-1"},
+	})
+	assert.Equal(t, map[string]any{"message_id": int64(42), "queue_id": "q-1"}, anchored)
+
+	// A split with no queue id (an unanchored boundary) omits the key rather
+	// than sending an empty string.
+	bare := streamSplitPayload(ai.StreamEvent{
+		StreamSplit: &ai.StreamSplitData{MessageID: 7},
+	})
+	assert.Equal(t, map[string]any{"message_id": int64(7)}, bare)
+	_, hasQueue := bare.(map[string]any)["queue_id"]
+	assert.False(t, hasQueue)
+}
+
+// TestQueueInjectPayload covers the payload for a message that joined the
+// RUNNING turn: clients clear the bubble's pending state but must not open a
+// new assistant placeholder.
+func TestQueueInjectPayload(t *testing.T) {
+	assert.Nil(t, queueInjectPayload(ai.StreamEvent{}),
+		"an event without queue data has no payload")
+
+	payload := queueInjectPayload(ai.StreamEvent{
+		QueueEvent: &ai.QueueEventData{
+			SessionID: "s1",
+			QueueID:   "q-1",
+			MessageID: 99,
+		},
+	})
+	assert.Equal(t, map[string]any{
+		"sessionId": "s1",
+		"queueId":   "q-1",
+		"messageId": int64(99),
+	}, payload)
+}
+
+// TestStreamStartPayload_QueueID covers the stream_start builder: the queue id
+// is included only when the start is anchored to a queued message.
+func TestStreamStartPayload_QueueID(t *testing.T) {
+	assert.Nil(t, streamStartPayload(ai.StreamEvent{}))
+
+	anchored := streamStartPayload(ai.StreamEvent{
+		StreamStart: &ai.StreamStartData{MessageID: 5, QueueID: "q-9"},
+	})
+	assert.Equal(t, map[string]any{"message_id": int64(5), "queue_id": "q-9"}, anchored)
+
+	bare := streamStartPayload(ai.StreamEvent{
+		StreamStart: &ai.StreamStartData{MessageID: 5},
+	})
+	assert.Equal(t, map[string]any{"message_id": int64(5)}, bare)
+}

@@ -53,15 +53,15 @@ func toForgeItemView(pf *service.ProjectForge, item forge.Item) forgeItemView {
 	for _, l := range item.Labels {
 		labels = append(labels, l.Name)
 	}
-	slug := ""
+	var slug, host, owner, repo string
 	if pf != nil {
-		slug = pf.Slug()
+		slug, host, owner, repo = pf.Slug(), pf.Host, pf.Owner, pf.Repo
 	}
 	return forgeItemView{
 		Platform:     string(item.Platform),
-		Host:         pf.Host,
-		Owner:        pf.Owner,
-		Repo:         pf.Repo,
+		Host:         host,
+		Owner:        owner,
+		Repo:         repo,
 		Type:         string(item.Type),
 		Number:       item.Number,
 		Title:        item.Title,

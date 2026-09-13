@@ -441,7 +441,7 @@ func TestDiscoverFrom_DetailListIsCapped(t *testing.T) {
 	build := func(versionCount int) string {
 		home := filepath.Join(t.TempDir(), "home")
 		versionsDir := filepath.Join(home, ".local", "share", "codebuddy", "versions")
-		for i := 0; i < versionCount; i++ {
+		for i := range versionCount {
 			dir := filepath.Join(versionsDir, fmt.Sprintf("2.0.%d", i))
 			writeProductFile(t, dir, "product.cloudhosted.json", []byte(`{"models":[]}`))
 		}

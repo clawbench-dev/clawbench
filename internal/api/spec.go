@@ -109,7 +109,7 @@ type schema struct {
 }
 
 // enumValues returns the permitted values for a scalar schema, or for an
-// array's element schema (repeated query parameters are modelled as arrays).
+// array's element schema (repeated query parameters are modeled as arrays).
 func (sc *schema) enumValues() []string {
 	if sc == nil {
 		return nil
@@ -125,7 +125,7 @@ func (sc *schema) enumValues() []string {
 
 // displayType is the type annotation shown next to a parameter or body field.
 // A nested object often declares no scalar type, so its own properties are the
-// only signal that it is an object — labelling it keeps the rendered list from
+// only signal that it is an object — labeling it keeps the rendered list from
 // showing a bare name with no indication of what it holds.
 func (sc *schema) displayType() string {
 	if sc == nil {

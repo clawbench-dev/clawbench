@@ -18,6 +18,14 @@ const (
 	CommandUsage Command = "usage"
 )
 
+// Spec tags referenced by commandOperations. They are named constants so the
+// selection binding cannot drift by a typo.
+const (
+	tagRAG    = "RAG"
+	tagTasks  = "Tasks"
+	tagAgents = "Agents"
+)
+
 // commandOperations lists the exact operations each command exposes to the AI,
 // paired with the spec tag they are expected to carry.
 //
@@ -32,19 +40,19 @@ var commandOperations = map[Command][]struct {
 	Tag string
 }{
 	CommandChatSearch: {
-		{"ragSearch", "RAG"},
-		{"ragMessage", "RAG"},
-		{"ragSession", "RAG"},
-		{"ragSessionSearch", "RAG"},
+		{"ragSearch", tagRAG},
+		{"ragMessage", tagRAG},
+		{"ragSession", tagRAG},
+		{"ragSessionSearch", tagRAG},
 	},
 	CommandTask: {
-		{"tasksList", "Tasks"},
-		{"tasksCreate", "Tasks"},
-		{"taskGet", "Tasks"},
-		{"taskUpdate", "Tasks"},
-		{"taskDelete", "Tasks"},
-		{"taskExecutions", "Tasks"},
-		{"agentsList", "Agents"},
+		{"tasksList", tagTasks},
+		{"tasksCreate", tagTasks},
+		{"taskGet", tagTasks},
+		{"taskUpdate", tagTasks},
+		{"taskDelete", tagTasks},
+		{"taskExecutions", tagTasks},
+		{"agentsList", tagAgents},
 		// An event-triggered task only fires for repositories its project is
 		// bound to, so the AI must be able to check the binding before creating
 		// one — otherwise it would happily configure a task that never runs.
@@ -176,7 +184,7 @@ func writeEndpoint(b *strings.Builder, ep endpoint) {
 		}
 	}
 
-	// Descriptions carry usage notes the AI must honour (e.g. the taskUpdate
+	// Descriptions carry usage notes the AI must honor (e.g. the taskUpdate
 	// action enumeration), so they are preserved but collapsed to one line.
 	if ep.Description != "" {
 		b.WriteString("  note: ")

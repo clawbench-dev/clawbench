@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -250,4 +251,201 @@ func mustParse(t *testing.T, s string) (tt time.Time) {
 	parsed, err := time.Parse(time.RFC3339, s)
 	require.NoError(t, err)
 	return parsed
+}
+
+// TestVerifyToken_HostScoped covers the token probe used by the credential and
+// identity flows: it needs no project, so it must authenticate against /user.
+func TestVerifyToken_HostScoped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/user", r.URL.Path)
+		assert.Equal(t, "glpat-tok", r.Header.Get("PRIVATE-TOKEN"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"octocat","name":"The Octocat"}`))
+	}))
+	defer srv.Close()
+	host := srv.URL[len("http://"):]
+
+	got, err := VerifyToken(context.Background(), Config{
+		Token:      "glpat-tok",
+		Host:       host,
+		Scheme:     "http",
+		HTTPClient: srv.Client(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "octocat", got.Login)
+}
+
+// TestVerifyToken_RequiresHost covers the validation branch.
+func TestVerifyToken_RequiresHost(t *testing.T) {
+	_, err := VerifyToken(context.Background(), Config{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "host is required")
+}
+
+// TestVerifyToken_AuthError covers the rejected-credential path.
+func TestVerifyToken_AuthError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+	}))
+	defer srv.Close()
+	host := srv.URL[len("http://"):]
+
+	_, err := VerifyToken(context.Background(), Config{
+		Host: host, Scheme: "http", HTTPClient: srv.Client(),
+	})
+	require.Error(t, err)
+	assert.True(t, forge.IsAuthError(err))
+}
+
+// TestVerifyToken_NetworkError covers a transport failure (the host is not
+// reachable), which must classify as network rather than auth — an unreachable
+// host is not proof the token is bad.
+func TestVerifyToken_NetworkError(t *testing.T) {
+	_, err := VerifyToken(context.Background(), Config{
+		Host:   "127.0.0.1:1",
+		Scheme: "http",
+	})
+	require.Error(t, err)
+	var fe *forge.Error
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, forge.ErrKindNetwork, fe.Kind)
+}
+
+// TestVerifyToken_DecodeError covers a 2xx response whose body is not the
+// expected JSON shape.
+func TestVerifyToken_DecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`not-json`))
+	}))
+	defer srv.Close()
+	host := srv.URL[len("http://"):]
+
+	_, err := VerifyToken(context.Background(), Config{
+		Host: host, Scheme: "http", HTTPClient: srv.Client(),
+	})
+	require.Error(t, err)
+	var fe *forge.Error
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, forge.ErrKindUnknown, fe.Kind)
+}
+
+// TestClassifyError_FallbackMessage covers the two fallbacks in the classifier:
+// a body with no JSON message falls back to the status text.
+func TestClassifyError_FallbackMessage(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Header:     http.Header{},
+	}
+	err := classifyError(resp, []byte("   "))
+	var fe *forge.Error
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, "Bad Gateway", fe.Message, "an empty body falls back to the status text")
+
+	// A JSON message wins over the status text.
+	err = classifyError(resp, []byte(`{"message":"upstream exploded"}`))
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, "upstream exploded", fe.Message)
+}
+
+// TestRetryAfter_HeaderForms covers both throttling hints GitLab may send: an
+// explicit Retry-After, and a RateLimit-Reset Unix timestamp.
+func TestRetryAfter_HeaderForms(t *testing.T) {
+	assert.Equal(t, 12, retryAfter(&http.Response{
+		Header: http.Header{"Retry-After": []string{"12"}},
+	}))
+
+	// A reset in the future becomes a positive delay. Header.Set is used so the
+	// key is canonicalized exactly as a parsed response would be.
+	futureHdr := http.Header{}
+	futureHdr.Set("RateLimit-Reset", strconv.FormatInt(time.Now().Add(30*time.Second).Unix(), 10))
+	got := retryAfter(&http.Response{Header: futureHdr})
+	assert.Positive(t, got)
+	assert.LessOrEqual(t, got, 30)
+
+	// A reset in the past yields 0 rather than a negative delay.
+	pastHdr := http.Header{}
+	pastHdr.Set("RateLimit-Reset", strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10))
+	assert.Zero(t, retryAfter(&http.Response{Header: pastHdr}))
+
+	// A malformed value yields 0.
+	assert.Zero(t, retryAfter(&http.Response{
+		Header: http.Header{"Retry-After": []string{"soon"}},
+	}))
+}
+
+// TestConvertAssignees covers the empty and populated cases.
+func TestConvertAssignees(t *testing.T) {
+	assert.Nil(t, convertAssignees(nil))
+
+	out := convertAssignees([]gitlabUser{{Username: "alice", Name: "Alice"}})
+	require.Len(t, out, 1)
+	assert.Equal(t, "alice", out[0].Login)
+	assert.Equal(t, "Alice", out[0].Name)
+}
+
+// TestOrderByParamAndDirectionParam covers the query builders: only "created"
+// is honored (anything else falls back to "updated"), and only an explicit
+// "asc" flips the direction.
+func TestOrderByParamAndDirectionParam(t *testing.T) {
+	assert.Equal(t, "created", orderByParam("created"))
+	assert.Equal(t, "updated", orderByParam("updated"))
+	assert.Equal(t, "updated", orderByParam("bogus"))
+	assert.Equal(t, "updated", orderByParam(""))
+
+	assert.Equal(t, "asc", directionParam("asc"))
+	assert.Equal(t, "desc", directionParam("desc"))
+	assert.Equal(t, "desc", directionParam(""))
+}
+
+// TestGetItem_MergeRequest covers the MR branch of GetItem.
+func TestGetItem_MergeRequest(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.URL.Path, "/merge_requests/4")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"iid":4,"title":"mr","state":"merged","draft":true,
+			"author":{"username":"bob"},"labels":[],"web_url":"u",
+			"merged_at":"2026-09-03T10:00:00Z",
+			"created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z"}`))
+	}), "acme", "widgets")
+
+	item, err := p.GetItem(context.Background(), forge.ItemTypeChangeRequest, 4)
+	require.NoError(t, err)
+	assert.Equal(t, forge.StateMerged, item.State)
+	assert.True(t, item.Draft)
+	require.NotNil(t, item.MergedAt)
+}
+
+// TestGetItem_UnsupportedType covers the type guard.
+func TestGetItem_UnsupportedType(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no request may be issued for an unsupported type")
+	}), "acme", "widgets")
+
+	_, err := p.GetItem(context.Background(), forge.ItemType("comment"), 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported item type")
+}
+
+// TestGetRaw_DecodeError covers a 2xx response with a malformed body.
+func TestGetRaw_DecodeError(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{oops`))
+	}), "acme", "widgets")
+
+	_, err := p.GetItem(context.Background(), forge.ItemTypeIssue, 1)
+	require.Error(t, err)
+	var fe *forge.Error
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, forge.ErrKindUnknown, fe.Kind)
+}
+
+// TestListResult_NoHeader covers the nil-header branch: pagination state is
+// absent rather than zero-valued garbage.
+func TestListResult_NoHeader(t *testing.T) {
+	res := listResult(nil, nil)
+	assert.False(t, res.HasMore)
+	assert.Zero(t, res.NextPage)
 }

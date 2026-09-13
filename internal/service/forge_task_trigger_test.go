@@ -590,7 +590,7 @@ func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
 //
 // matchingTasks accumulates every match and HandleChange enqueues each one
 // independently, so a single event fans out to all subscribed tasks. That
-// behaviour is load-bearing (a user may register several tasks for the same
+// behavior is load-bearing (a user may register several tasks for the same
 // event) but was previously untested: the only fan-out case covered multiple
 // *sinks*, not multiple tasks. A `break` in matchingTasks or a taskRunning key
 // change would have gone unnoticed.

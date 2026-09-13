@@ -309,3 +309,150 @@ func TestNormalizeProjectPath_Empty(t *testing.T) {
 	assert.Equal(t, "", service.NormalizeProjectPath(""))
 	assert.Equal(t, "", service.NormalizeProjectPath("   "))
 }
+
+// TestProjectForge_NilDBGuards covers the "no database" branches of every
+// accessor. They must be silent no-ops rather than panics, because the forge
+// integration is optional: a build without a DB must still serve the rest of
+// the app.
+func TestProjectForge_NilDBGuards(t *testing.T) {
+	cleanup := service.SetDBForTest(nil, nil)
+	t.Cleanup(cleanup)
+
+	assert.Nil(t, mustGet(t))
+	assert.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: "/tmp/x", Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
+	}))
+	assert.NoError(t, service.DeleteProjectForge("/tmp/x"))
+	assert.NoError(t, service.SetForgeBindOptOut("/tmp/x", true))
+
+	opted, err := service.IsForgeBindOptedOut("/tmp/x")
+	require.NoError(t, err)
+	assert.False(t, opted)
+
+	created, err := service.AutoBindProjectForge("/tmp/x", forge.Remote{
+		Platform: forge.PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b",
+	})
+	require.NoError(t, err)
+	assert.False(t, created)
+
+	repos, err := service.ListProjectForges()
+	require.NoError(t, err)
+	assert.Nil(t, repos)
+
+	uniq, err := service.UniqueForgeRepos()
+	require.NoError(t, err)
+	assert.Nil(t, uniq)
+}
+
+// mustGet is a helper so the nil-DB test reads as a single assertion.
+func mustGet(t *testing.T) *service.ProjectForge {
+	t.Helper()
+	pf, err := service.GetProjectForge("/tmp/x")
+	require.NoError(t, err)
+	return pf
+}
+
+// TestProjectForge_EmptyPathGuards covers the empty-path branches: a project
+// path that normalizes to nothing is a no-op, never a lookup on "".
+func TestProjectForge_EmptyPathGuards(t *testing.T) {
+	setupTestDBForProjectForges(t)
+
+	pf, err := service.GetProjectForge("")
+	require.NoError(t, err)
+	assert.Nil(t, pf)
+
+	assert.NoError(t, service.DeleteProjectForge(""))
+
+	opted, err := service.IsForgeBindOptedOut("")
+	require.NoError(t, err)
+	assert.False(t, opted)
+
+	assert.NoError(t, service.SetForgeBindOptOut("", true))
+
+	created, err := service.AutoBindProjectForge("", forge.Remote{
+		Platform: forge.PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b",
+	})
+	require.NoError(t, err)
+	assert.False(t, created)
+
+	// Upsert with an empty path is a hard error: it is a caller bug, not an
+	// optional integration being absent.
+	err = service.UpsertProjectForge(service.ProjectForge{
+		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "project path is required")
+}
+
+// TestAutoBindProjectForge_EmptyPathIsNoop covers AutoBind's own empty-path
+// guard (distinct from the validation error for an incomplete remote).
+func TestAutoBindProjectForge_EmptyPathIsNoop(t *testing.T) {
+	setupTestDBForProjectForges(t)
+	created, err := service.AutoBindProjectForge("   ", forge.Remote{
+		Platform: forge.PlatformGitHub, Host: "github.com", Owner: "a", Repo: "b",
+	})
+	require.NoError(t, err)
+	assert.False(t, created)
+}
+
+// TestIsForgeBindOptedOut_ErrorPath covers a query failure (the table is
+// missing), which must surface as an error rather than a silent "not opted out".
+func TestIsForgeBindOptedOut_ErrorPath(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = service.IsForgeBindOptedOut(t.TempDir())
+	require.Error(t, err, "a missing project_meta table must be reported")
+}
+
+// TestGetProjectForge_ErrorPath covers a query failure on the bindings table.
+func TestGetProjectForge_ErrorPath(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = service.GetProjectForge(t.TempDir())
+	require.Error(t, err, "a missing project_forges table must be reported")
+}
+
+// TestListProjectForges_ErrorPath covers a query failure on the list accessor.
+func TestListProjectForges_ErrorPath(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = service.ListProjectForges()
+	require.Error(t, err)
+}
+
+// TestUniqueForgeRepos_ErrorPath covers a query failure on the distinct-repo
+// accessor.
+func TestUniqueForgeRepos_ErrorPath(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(func() {
+		cleanup()
+		_ = db.Close()
+	})
+
+	_, err = service.UniqueForgeRepos()
+	require.Error(t, err)
+}

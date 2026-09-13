@@ -73,7 +73,7 @@ func TestPropertySchema_WithoutProperties(t *testing.T) {
 
 // TestDisplayType covers the label shown next to a parameter or body field.
 // A nested object frequently omits its type, and previously still rendered as
-// "object" because the old accessor synthesised it; that behaviour has to
+// "object" because the old accessor synthesized it; that behavior has to
 // survive the refactor or the field list silently loses the annotation.
 func TestDisplayType(t *testing.T) {
 	assert.Equal(t, "", (*schema)(nil).displayType(), "nil must not panic")
@@ -88,7 +88,7 @@ func TestDisplayType(t *testing.T) {
 	var withProps schema
 	require.NoError(t, yaml.Unmarshal([]byte("properties:\n  inner:\n    type: string\n"), &withProps))
 	assert.Equal(t, "object", withProps.displayType(),
-		"a typeless nested object must still be labelled")
+		"a typeless nested object must still be labeled")
 
 	// An explicit type wins over the properties-derived label.
 	typed := &schema{Type: "array", Properties: withProps.Properties}

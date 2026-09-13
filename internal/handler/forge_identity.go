@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/service"
+	"clawbench/internal/model"
 )
 
 // forgeIdentityCache memoizes the credential's login per (platform, host) so the
@@ -48,7 +48,7 @@ func ForgeCredentialLogin(platform, host string) string {
 	}
 	forgeIdentityMu.Unlock()
 
-	login := fetchForgeCredentialLogin(platform, host)
+	login := fetchForgeCredentialLogin(host)
 
 	forgeIdentityMu.Lock()
 	forgeIdentityCache[key] = forgeIdentityEntry{login: login, fetchedAt: time.Now()}
@@ -56,17 +56,21 @@ func ForgeCredentialLogin(platform, host string) string {
 	return login
 }
 
-// fetchForgeCredentialLogin builds a provider for the host and asks it for the
-// authenticated account. Any failure yields "".
-func fetchForgeCredentialLogin(platform, host string) string {
-	pf := service.ProjectForge{Platform: platform, Host: host}
-	provider, err := newForgeProvider(&pf)
-	if err != nil {
+// fetchForgeCredentialLogin probes the host's user endpoint with the stored
+// credential and returns the authenticated account. Any failure yields "".
+//
+// It uses the host-scoped verifier rather than a Provider: identity is a
+// property of the credential and host alone, and constructing a Provider would
+// additionally require a bound owner/repo (which the caller, working from an
+// event's repo reference, deliberately does not supply).
+func fetchForgeCredentialLogin(host string) string {
+	token := model.ConfigInstance.ForgeToken(host)
+	if token == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	author, err := provider.CurrentUser(ctx)
+	author, err := verifyForgeTokenContext(ctx, host, token)
 	if err != nil {
 		return ""
 	}
