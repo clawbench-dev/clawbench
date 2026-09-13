@@ -343,12 +343,19 @@ onMounted(refresh)
 
 /* Trigger-type badge. Kept visually distinct from the status pill on the right
    (which reports lifecycle) and from the meta icons (which are grey) — this is
-   the one element that answers "what starts this task?" at a glance. */
+   the one element that answers "what starts this task?" at a glance.
+
+   The label carries the meaning; colour is a secondary cue. Text uses
+   --text-primary rather than the hue token because several themes define
+   --color-info/--color-purple as soft pastels (everforest-light's #7fbbb3 on
+   #f2e9d0 measures 1.7:1), which would make this badge unreadable exactly
+   where it matters. Tinting the background and border instead keeps the two
+   modes distinguishable without depending on low-contrast text. */
 .task-trigger-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-full);
   border: 1px solid transparent;
   flex-shrink: 0;
   line-height: var(--line-height-normal);
@@ -356,15 +363,15 @@ onMounted(refresh)
 }
 
 .task-trigger-badge.is-cron {
-  color: var(--color-info, #1f6feb);
-  background: color-mix(in srgb, var(--color-info, #1f6feb) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-info, #1f6feb) 35%, transparent);
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--color-info, #1f6feb) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-info, #1f6feb) 45%, transparent);
 }
 
 .task-trigger-badge.is-event {
-  color: var(--color-purple, #7c3aed);
-  background: color-mix(in srgb, var(--color-purple, #7c3aed) 12%, transparent);
-  border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 35%, transparent);
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--color-purple, #7c3aed) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 45%, transparent);
 }
 
 .task-item-name {
@@ -504,6 +511,16 @@ onMounted(refresh)
   border-radius: 4px;
   border: 1px solid var(--border-color, #e5e5e5);
   width: fit-content;
+  max-width: 100%;
+}
+
+/* An owner/repo can be long; truncate rather than widen the row. The full
+   value stays available via the title attribute. */
+.task-item-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .task-item-right {
