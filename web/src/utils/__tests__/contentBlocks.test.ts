@@ -488,8 +488,16 @@ describe('extractSlashCommand', () => {
     expect(result!.clawbench).toBe(true)
   })
 
+  it('marks ClawBench /cb-usage as clawbench', () => {
+    const result = extractSlashCommand('/cb-usage last week by model')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-usage')
+    expect(result!.rest).toBe(' last week by model')
+    expect(result!.clawbench).toBe(true)
+  })
+
   it('does not mark a cb-prefixed agent command as clawbench', () => {
-    // Only the two known built-ins are ClawBench commands; a hypothetical
+    // Only the known built-ins are ClawBench commands; a hypothetical
     // agent command named /cb-something must render as an agent badge.
     const result = extractSlashCommand('/cb-something arg')
     expect(result).not.toBeNull()

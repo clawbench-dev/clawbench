@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/rag"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +63,7 @@ func TestProcessClawbenchCommand_TaskInjects(t *testing.T) {
 func TestProcessClawbenchCommand_NoCliReferences(t *testing.T) {
 	withServerPort(t, 20000)
 
-	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily build"} {
+	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily build", "/cb-usage last week"} {
 		result, err := processClawbenchCommand(msg, "/project", "sess-1")
 		require.NoError(t, err)
 		assert.NotContainsf(t, result, "clawbench rag", "%s must not reference the rag CLI", msg)
@@ -260,6 +264,75 @@ func TestProcessClawbenchCommand_NoMessageDuplication(t *testing.T) {
 		"user message should appear exactly once in the final prompt for /cb-task (ISS-287)")
 }
 
+// --- /cb-usage ---
+
+func TestProcessClawbenchCommand_UsageInjects(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage 最近一周哪个模型最贵", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "token usage statistics")
+	assert.Contains(t, result, "GET /api/usage/stats")
+	assert.Contains(t, result, "clawbench_project=/project")
+	// Returns only the template; the caller prepends the original message.
+	assert.NotContains(t, result, "/cb-usage 最近一周哪个模型最贵")
+}
+
+// TestProcessClawbenchCommand_UsageInjectsCurrentTime asserts the prompt
+// carries "now". The AI runs as a subprocess with no reliable clock, so
+// without this it would have to guess the date when building start/end.
+func TestProcessClawbenchCommand_UsageInjectsCurrentTime(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage this month", "/project", "sess-1")
+	require.NoError(t, err)
+
+	now := clawbenchNow()
+	assert.Contains(t, result, "Current time (UTC): "+now)
+	// Must be an RFC3339 UTC instant the AI can reuse verbatim.
+	_, parseErr := time.Parse(time.RFC3339, now)
+	assert.NoError(t, parseErr, "injected time must be RFC3339")
+	assert.True(t, strings.HasSuffix(now, "Z"), "injected time must be UTC")
+}
+
+// TestProcessClawbenchCommand_UsageRendersEnums asserts the permitted values
+// reach the prompt. dims is the parameter the AI most easily gets wrong.
+func TestProcessClawbenchCommand_UsageRendersEnums(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage usage", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, "dims:model|backend|agent")
+	assert.Contains(t, result, "metrics:input|output|total|cacheHit|credit|cost")
+	assert.NotContains(t, result, "dims:project",
+		"the unsupported project dimension must not be advertised")
+}
+
+// TestProcessClawbenchCommand_UsageExcludesUnrelatedSystemOps asserts the
+// usage command exposes only the statistics endpoint. System is a broad tag,
+// so a regression to tag-based selection would leak unrelated operations.
+func TestProcessClawbenchCommand_UsageExcludesUnrelatedSystemOps(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-usage totals", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.NotContains(t, result, "POST /api/config")
+	assert.NotContains(t, result, "POST /api/upgrade")
+	assert.NotContains(t, result, "GET /api/health")
+}
+
+// TestProcessClawbenchCommand_UsageIsRecognizedAsBuiltin guards the routing:
+// IsClawbenchCommand must claim "/cb-usage" or it is forwarded to the agent as
+// an ACP slash command and the injection never happens.
+func TestProcessClawbenchCommand_UsageIsRecognizedAsBuiltin(t *testing.T) {
+	assert.True(t, IsClawbenchCommand("/cb-usage"))
+	assert.True(t, IsClawbenchCommand("/cb-usage last week"))
+	assert.False(t, IsClawbenchCommand("/cb-usagex"))
+}
+
 // TestProcessClawbenchCommand_ProjectCookieIsPortScoped guards a real bug: on a
 // non-default port the server only accepts the scoped cookie name
 // ("cb21999_clawbench_project"), so telling the AI to send the bare name made
@@ -268,7 +341,7 @@ func TestProcessClawbenchCommand_NoMessageDuplication(t *testing.T) {
 func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
 	t.Run("default port uses bare name", func(t *testing.T) {
 		withServerPort(t, 20000)
-		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily"} {
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
 			result, err := processClawbenchCommand(msg, "/project", "sess-1")
 			require.NoError(t, err)
 			assert.Containsf(t, result, "clawbench_project=/project",
@@ -278,7 +351,7 @@ func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
 
 	t.Run("custom port uses scoped name", func(t *testing.T) {
 		withServerPort(t, 21999)
-		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily"} {
+		for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
 			result, err := processClawbenchCommand(msg, "/project", "sess-1")
 			require.NoError(t, err)
 			assert.Containsf(t, result, "cb21999_clawbench_project=/project",
@@ -286,6 +359,53 @@ func TestProcessClawbenchCommand_ProjectCookieIsPortScoped(t *testing.T) {
 			// The bare name must not appear: it would 403 on this port.
 			assert.NotContainsf(t, result, `"clawbench_project=/project"`,
 				"%s must not advertise the bare cookie name on a custom port", msg)
+		}
+	})
+}
+
+// --- clawbenchCommandPrecheck ---
+
+// TestClawbenchCommandPrecheck covers the per-command precondition that the
+// converged dispatch relies on. It returns false only when it has written an
+// error response, so the caller must stop.
+//
+// RAG readiness is process-global and false in this test binary, so the
+// chatsearch cases assert the *ordering* of the two checks rather than a fixed
+// status: with the store nil, RAGNotReady (503) must win over the empty-query
+// check (400), and both must reject.
+func TestClawbenchCommandPrecheck(t *testing.T) {
+	ragReady := rag.GlobalStore != nil
+
+	t.Run("chatsearch rejects a bare command", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+		assert.False(t, clawbenchCommandPrecheck(w, r, "/cb-chatsearch"),
+			"a bare /cb-chatsearch has nothing to search for")
+		if ragReady {
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		} else {
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+				"RAG-not-ready must be reported before the empty-query check")
+		}
+	})
+
+	t.Run("chatsearch accepts a query when RAG is ready", func(t *testing.T) {
+		if !ragReady {
+			t.Skip("RAG store not initialized in this test binary")
+		}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+		assert.True(t, clawbenchCommandPrecheck(w, r, "/cb-chatsearch auth bug"))
+		assert.Equal(t, http.StatusOK, w.Code, "no error response should be written")
+	})
+
+	t.Run("commands without a precondition pass through", func(t *testing.T) {
+		for _, msg := range []string{"/cb-task daily", "/cb-usage totals", "/compact"} {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", nil)
+			assert.Truef(t, clawbenchCommandPrecheck(w, r, msg),
+				"%s has no precondition and must pass", msg)
+			assert.Equalf(t, http.StatusOK, w.Code, "%s must not write an error", msg)
 		}
 	})
 }

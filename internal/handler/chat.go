@@ -19,7 +19,6 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/ws"
 )
@@ -415,26 +414,15 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// raw req.Message (since file prefixes would break the "/cb-" prefix check).
 	// matchClawbenchCommand also matches the bare command (no trailing space),
 	// which is what the frontend sends after trimming a menu selection.
-	if matchClawbenchCommand(req.Message, ClawbenchCmdChatSearch) {
-		// RAG availability check — GlobalStore is nil when RAG index is not ready
-		if rag.GlobalStore == nil {
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotReady")
+	//
+	// Every built-in command shares the same shape — optional precondition,
+	// then render-and-prepend — so new commands only need an entry in
+	// clawbenchCommandPrecheck and processClawbenchCommand, not another branch
+	// here.
+	if IsClawbenchCommand(req.Message) {
+		if !clawbenchCommandPrecheck(w, r, req.Message) {
 			return
 		}
-		// Empty query rejection
-		query := strings.TrimSpace(strings.TrimPrefix(req.Message, ClawbenchCmdChatSearch))
-		if query == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
-			return
-		}
-		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
-		if err != nil {
-			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
-			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-			return
-		}
-		prompt = injected + "\n\n" + prompt
-	} else if matchClawbenchCommand(req.Message, ClawbenchCmdTask) {
 		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
 		if err != nil {
 			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))

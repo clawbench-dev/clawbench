@@ -270,8 +270,12 @@ const SLASH_COMMAND_RE = /^\/(\w[\w:-]*)(\s[\s\S]*)?$/
  * ClawBench built-in commands are namespaced under "/cb-" so they can be
  * distinguished from the current agent's ACP commands (e.g. "/compact").
  * Mirrors the backend constants in internal/handler/clawbench_command.go.
+ *
+ * The names are listed explicitly rather than matched as a bare "/cb-" prefix:
+ * an agent command that happens to start with "cb-" must still render as an
+ * agent badge (see the /cb-something case in contentBlocks.test.ts).
  */
-const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task)(\s|$)/
+const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task|usage)(\s|$)/
 
 export interface SlashCommandBadge {
   command: string    // e.g. "/commit"

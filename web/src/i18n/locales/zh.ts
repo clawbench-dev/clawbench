@@ -366,6 +366,7 @@ export default {
     clawbenchCommand: {
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理定时任务',
+      usageDesc: '查看 token 用量',
     },
     slashCommand: {
       title: '命令',

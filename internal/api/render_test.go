@@ -51,6 +51,20 @@ func TestRenderCommand_CoversExpectedOperations(t *testing.T) {
 				"POST /api/agents",
 			},
 		},
+		{
+			cmd: CommandUsage,
+			want: []string{
+				"GET /api/usage/stats",
+			},
+			// A read-only statistics command must never expose mutating or
+			// unrelated endpoints that share the System tag.
+			notWant: []string{
+				"POST /api/config",
+				"POST /api/upgrade",
+				"DELETE /api/tasks",
+				"POST /api/ai/chat",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -80,7 +94,7 @@ func TestRenderCommand_UnknownCommand(t *testing.T) {
 // every request, so nondeterminism would defeat prompt caching and make tests
 // flaky.
 func TestRenderCommand_Deterministic(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
 		first, err := RenderCommand(cmd)
 		require.NoError(t, err)
 		for i := 0; i < 5; i++ {
@@ -99,6 +113,7 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 	budgets := map[Command]int{
 		CommandChatSearch: 2000,
 		CommandTask:       4000,
+		CommandUsage:      2000,
 	}
 	for cmd, budget := range budgets {
 		out, err := RenderCommand(cmd)
@@ -122,11 +137,54 @@ func TestRenderCommand_FieldsMatchSpec(t *testing.T) {
 	assert.Contains(t, out, "path: id", "path parameters must be rendered")
 }
 
+// TestRenderCommand_RendersEnumsInline asserts that permitted values reach the
+// prompt. Without this the AI sees only "dims:array" and has to guess — the
+// exact failure mode that had it sending dims=project, which the backend
+// rejects with invalid_dim.
+func TestRenderCommand_RendersEnumsInline(t *testing.T) {
+	out, err := RenderCommand(CommandUsage)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "dims:model|backend|agent",
+		"dims must list its permitted values")
+	assert.Contains(t, out, "metrics:input|output|total|cacheHit|credit|cost",
+		"metrics must list its permitted values")
+	assert.Contains(t, out, "order:asc|desc",
+		"order must list its permitted values")
+	// The removed dimension must not resurface.
+	assert.NotContains(t, out, "dims:project")
+}
+
+// TestRenderCommand_MarksRepeatableArrayParams guards a real failure seen in
+// end-to-end testing: dims/metrics are array-typed query params, which OpenAPI
+// encodes as "repeat this parameter". Rendering the enum inline without saying
+// so made the AI send "metrics=input,output,total" and get invalid_metric.
+func TestRenderCommand_MarksRepeatableArrayParams(t *testing.T) {
+	out, err := RenderCommand(CommandUsage)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "repeat:",
+		"array-valued params must carry an explicit repeat hint")
+	assert.Contains(t, out, "dims=model&dims=backend",
+		"the hint must show the correct wire form")
+	assert.Contains(t, out, "comma-separated values are rejected")
+}
+
+// TestRenderCommand_NoRepeatHintWithoutArrayParams asserts the hint is not
+// emitted for endpoints that have no array parameter, keeping prompts compact.
+func TestRenderCommand_NoRepeatHintWithoutArrayParams(t *testing.T) {
+	// /cb-task's rendered endpoints (tasks, agents) use scalar params only.
+	out, err := RenderCommand(CommandTask)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "repeat:",
+		"no array params means no repeat hint")
+}
+
 // TestOperationIDs_Resolvable asserts every operationId a command declares
 // actually exists in the spec. This is the drift guard's first half: renaming
 // an operation without updating commandOperations fails here.
 func TestOperationIDs_Resolvable(t *testing.T) {
-	for _, cmd := range []Command{CommandChatSearch, CommandTask} {
+	for _, cmd := range []Command{CommandChatSearch, CommandTask, CommandUsage} {
 		ids := OperationIDs(cmd)
 		require.NotEmptyf(t, ids, "command %q declares no operations", cmd)
 		for _, id := range ids {

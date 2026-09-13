@@ -811,6 +811,7 @@ const clawbenchCommands = computed(() => {
   return [
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
     { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
+    { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
   ]
 })
 

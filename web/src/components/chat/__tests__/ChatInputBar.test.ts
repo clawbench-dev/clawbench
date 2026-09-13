@@ -65,7 +65,7 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task' },
+        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage' },
         slashCommand: { title: 'Slash' },
         completion: {
           source: {
@@ -1758,8 +1758,9 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // ClawBench has 2 items: /cb-chatsearch (0), /cb-task (1); ArrowUp wraps to index 1
-    expect(wrapper.vm.commandMenuIndex).toBe(1)
+    // ClawBench has 3 items: /cb-chatsearch (0), /cb-task (1), /cb-usage (2);
+    // ArrowUp wraps to the last, index 2.
+    expect(wrapper.vm.commandMenuIndex).toBe(2)
   })
 
   it('keyboard nav scrolls highlighted command item into view even when menu is teleported', async () => {
@@ -1793,16 +1794,22 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    const items = wrapper.findAll('.completion-item')
-    // 2 ClawBench built-ins + 2 deduped agent commands
-    expect(items).toHaveLength(4)
-    const labels = items.map(i => i.find('.completion-label').text())
-    expect(labels.some(l => l.startsWith('//'))).toBe(false)
-    expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
-    expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
-    mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
-    mockSupportsACP.mockReturnValue(false)
+    // Unmount even if an assertion below fails: a leaked component keeps its
+    // watchers and mocks alive and corrupts the tests that follow.
+    try {
+      const items = wrapper.findAll('.completion-item')
+      // 3 ClawBench built-ins + 2 deduped agent commands
+      expect(items).toHaveLength(5)
+      const labels = items.map(i => i.find('.completion-label').text())
+      expect(labels.some(l => l.startsWith('//'))).toBe(false)
+      expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
+      expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
+    } finally {
+      wrapper.unmount()
+      mockAvailableCommands.value = []
+      mockSessionTransport.value = ''
+      mockSupportsACP.mockReturnValue(false)
+    }
   })
 
   it('quick menu opening triggers menu exclusion watcher', async () => {

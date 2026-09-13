@@ -192,8 +192,21 @@ paths:
       tags: [System]
       summary: 用量统计
       description: |
-        按维度聚合 `chat_metadata` 的 token/成本统计。`start`/`end` 为必填（RFC3339）。
-        项目范围通过项目 Cookie 传递，不是查询参数。
+        按维度聚合 `chat_metadata` 的 token / 成本统计。
+
+        项目范围通过项目 Cookie 传递，不是查询参数——`dims` 里**没有** `project`。
+
+        **响应结构**：
+        - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
+          `cacheMiss` / `credit` / `costUsd` / `messageCnt`。
+        - `rows[]`：每个 dim 组合一行。`key` 是对象，键即请求的 dims
+          （如 `{"model":"...","backend":"..."}`），行上带有与 `totals` 相同的字段。
+          行的顺序由 `sort` / `order` 决定，`limit` 截断。
+        - `trend[]`：仅 `trend=1` 时返回，在 `rows[]` 的基础上多一个 `day`
+          （`YYYY-MM-DD`），用于按天走势图。
+
+        注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
+        （约等于助手回复完成），不是用户提问时刻。
       operationId: usageStats
       parameters:
         - name: start
@@ -212,36 +225,51 @@ paths:
             format: date-time
         - name: dims
           in: query
-          description: 聚合维度，可重复传入（如 project / model / backend / agent）。
+          required: true
+          description: |
+            聚合维度。**重复该参数**以多维分组（1..3 个，不可重复）——
+            例如 `dims=model&dims=backend`。逗号分隔会被拒绝。
+            合法值仅 `model` / `backend` / `agent`。
           schema:
             type: array
             items:
               type: string
+              enum: [model, backend, agent]
         - name: metrics
           in: query
-          description: 指标，可重复传入。
+          required: true
+          description: |
+            指标。**重复该参数**（至少 1 个）——例如 `metrics=input&metrics=total`。
+            逗号分隔会被拒绝。
           schema:
             type: array
             items:
               type: string
+              enum: [input, output, total, cacheHit, credit, cost]
         - name: sort
           in: query
+          description: 排序用的指标 id，默认 `total`。
           schema:
             type: string
         - name: order
           in: query
+          description: 排序方向，默认 `desc`。
           schema:
             type: string
+            enum: [asc, desc]
         - name: trend
           in: query
+          description: 传 `1` 时额外返回按天分组的 `trend[]`。
           schema:
             type: string
         - name: top
           in: query
+          description: trend 模式下保留的 dim 组合数，默认 10。
           schema:
             type: integer
         - name: limit
           in: query
+          description: 最大行数，默认 50，上限 200。
           schema:
             type: integer
       responses:

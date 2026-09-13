@@ -14,6 +14,8 @@ const (
 	CommandChatSearch Command = "chatsearch"
 	// CommandTask backs /cb-task — managing scheduled tasks.
 	CommandTask Command = "task"
+	// CommandUsage backs /cb-usage — token / cost usage statistics.
+	CommandUsage Command = "usage"
 )
 
 // commandOperations lists the exact operations each command exposes to the AI,
@@ -43,6 +45,9 @@ var commandOperations = map[Command][]struct {
 		{"taskDelete", "Tasks"},
 		{"taskExecutions", "Tasks"},
 		{"agentsList", "Agents"},
+	},
+	CommandUsage: {
+		{"usageStats", "System"},
 	},
 }
 
@@ -116,12 +121,23 @@ func writeEndpoint(b *strings.Builder, ep endpoint) {
 
 	if len(ep.QueryParams) > 0 {
 		parts := make([]string, 0, len(ep.QueryParams))
+		repeatable := false
 		for _, p := range ep.QueryParams {
 			parts = append(parts, paramLabel(p.Name, p.Required, p.Schema))
+			if p.Schema != nil && p.Schema.Type == "array" {
+				repeatable = true
+			}
 		}
 		b.WriteString("  query: ")
 		b.WriteString(strings.Join(parts, ", "))
 		b.WriteString("\n")
+		// An array-typed query parameter is OpenAPI's encoding for "repeat this
+		// parameter", not "pass a list in one value". Saying so is essential:
+		// the enum values shown inline otherwise read as a menu to pick from,
+		// and sending them comma-separated is rejected by the server.
+		if repeatable {
+			b.WriteString("  repeat: array-valued params must be repeated once per value (e.g. dims=model&dims=backend); comma-separated values are rejected\n")
+		}
 	}
 
 	if len(ep.BodyFields) > 0 {
@@ -148,11 +164,15 @@ func writeEndpoint(b *strings.Builder, ep endpoint) {
 	}
 }
 
-// paramLabel renders "name" or "name (required)", with the type appended when
-// it is known and not the default string.
+// paramLabel renders "name" or "name (required)", annotating the type or the
+// permitted values when known. An enum replaces the type entirely — listing the
+// legal values is strictly more useful than knowing it is an array, and keeps
+// the AI from guessing (dims must be model|backend|agent, not "project").
 func paramLabel(name string, required bool, sc *schema) string {
 	label := name
-	if sc != nil && sc.Type != "" && sc.Type != "string" {
+	if vals := sc.enumValues(); len(vals) > 0 {
+		label += ":" + strings.Join(vals, "|")
+	} else if sc != nil && sc.Type != "" && sc.Type != "string" {
 		label += ":" + sc.Type
 	}
 	if required {

@@ -366,6 +366,7 @@ export default {
     clawbenchCommand: {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage scheduled tasks',
+      usageDesc: 'View token usage',
     },
     slashCommand: {
       title: 'Commands',

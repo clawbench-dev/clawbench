@@ -96,10 +96,31 @@ type schema struct {
 	Type        string   `yaml:"type"`
 	Description string   `yaml:"description"`
 	Required    []string `yaml:"required"`
+	// Enum lists the permitted values for a scalar, rendered inline so the AI
+	// does not have to guess (e.g. dims must be model|backend|agent).
+	Enum []string `yaml:"enum"`
+	// Items carries the element schema of an array, whose Enum is rendered the
+	// same way — a repeated query parameter is an array of scalars in OpenAPI.
+	Items *schema `yaml:"items"`
 	// Properties keeps the document order of the YAML mapping, so rendered
 	// field lists follow the order the spec author wrote rather than Go's
 	// random map iteration.
 	Properties yaml.Node `yaml:"properties"`
+}
+
+// enumValues returns the permitted values for a scalar schema, or for an
+// array's element schema (repeated query parameters are modelled as arrays).
+func (sc *schema) enumValues() []string {
+	if sc == nil {
+		return nil
+	}
+	if len(sc.Enum) > 0 {
+		return sc.Enum
+	}
+	if sc.Items != nil {
+		return sc.Items.Enum
+	}
+	return nil
 }
 
 var (

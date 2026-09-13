@@ -42,12 +42,13 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 
 ## 内置斜杠命令的接口注入
 
-两个内置斜杠命令的提示词片段由 `internal/api` 从规格渲染，**按 operationId 精确选取**（而非按 tag —— tag 过粗，会把删 agent、重建索引等破坏性操作一并注入）：
+内置斜杠命令的提示词片段由 `internal/api` 从规格渲染，**按 operationId 精确选取**（而非按 tag —— tag 过粗，会把删 agent、重建索引等破坏性操作一并注入）：
 
 | 命令 | 注入的 operationId |
 |------|-------------------|
 | `/cb-chatsearch` | `ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
 | `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList` |
+| `/cb-usage` | `usageStats` |
 
 选取列表见 `internal/api/render.go` 的 `commandOperations`；`internal/api/render_test.go` 断言每个 operationId 存在且仍带预期 tag。
 

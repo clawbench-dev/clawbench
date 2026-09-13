@@ -2,10 +2,13 @@ package handler
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"clawbench/internal/api"
 	"clawbench/internal/model"
+	"clawbench/internal/rag"
 )
 
 // ClawBench built-in slash commands. They share the "/" prefix with ACP agent
@@ -15,6 +18,7 @@ import (
 const (
 	ClawbenchCmdChatSearch = "/cb-chatsearch"
 	ClawbenchCmdTask       = "/cb-task"
+	ClawbenchCmdUsage      = "/cb-usage"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -63,6 +67,29 @@ Rules:
 - Use the user's language for task names and prompts
 `
 
+// usageInjectTemplate is the on-demand instruction template injected when the
+// user sends a message starting with "/cb-usage ".
+// Placeholders: {{BASE_URL}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}, {{NOW}}
+const usageInjectTemplate = `[You have access to token usage statistics for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
+
+Base URL: {{BASE_URL}} (no authentication needed from localhost)
+Current time (UTC): {{NOW}}
+
+Endpoints:
+{{ENDPOINTS}}
+
+Project scope:
+- Send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" on every request.
+
+Working with time:
+- start / end are RFC3339 UTC timestamps. Compute the range from the current time above.
+- Use the UTC form (append "Z") to match how the backend buckets days.
+- The date range is capped by the server; keep it to a few months at most.
+
+Present the numbers in a readable form: a short summary plus a table when several rows come back. Scale large token counts (e.g. 1.2M) and state the currency for cost.
+If no data is returned, say so plainly — do NOT invent figures.
+`
+
 // matchClawbenchCommand reports whether msg is exactly cmd, or cmd followed by
 // a space (i.e. cmd with arguments). A bare command with no trailing space is
 // still a ClawBench command: the frontend trims trailing whitespace before
@@ -78,7 +105,15 @@ func matchClawbenchCommand(msg, cmd string) bool {
 // ACP slash-command path (they must not be forwarded to the agent).
 func IsClawbenchCommand(rawMsg string) bool {
 	return matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdTask)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdTask) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage)
+}
+
+// clawbenchNow is the current time in the form the AI needs for RFC3339 query
+// parameters. The AI runs as a subprocess and has no reliable notion of "now",
+// so the prompt carries it rather than leaving the model to guess a date.
+func clawbenchNow() string {
+	return time.Now().UTC().Format(time.RFC3339)
 }
 
 // clawbenchBaseURL is the absolute base URL an AI subprocess must use to reach
@@ -96,6 +131,30 @@ func clawbenchBaseURL() string {
 		port = 20000
 	}
 	return fmt.Sprintf("%s://localhost:%d", scheme, port)
+}
+
+// clawbenchCommandPrecheck runs the command-specific precondition for a
+// built-in command, writing the error response and returning false when the
+// request must not proceed. Commands with no precondition fall through true.
+//
+// This is the only place a per-command check belongs: the primary HTTP path
+// calls it, so a new command gets its validation wired in by adding a case
+// rather than another if-branch at the call site.
+func clawbenchCommandPrecheck(w http.ResponseWriter, r *http.Request, rawMsg string) bool {
+	if !matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) {
+		return true
+	}
+	// RAG availability check — GlobalStore is nil when the index is not ready.
+	if rag.GlobalStore == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotReady")
+		return false
+	}
+	// Empty query rejection. A bare "/cb-chatsearch" carries nothing to search.
+	if strings.TrimSpace(strings.TrimPrefix(rawMsg, ClawbenchCmdChatSearch)) == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
+		return false
+	}
+	return true
 }
 
 // processClawbenchCommand checks if the raw user message starts with a
@@ -125,6 +184,8 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderChatSearchTemplate(projectPath, sessionID)
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdTask):
 		return renderTaskTemplate(projectPath)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdUsage):
+		return renderUsageTemplate(projectPath)
 	}
 	return rawMsg, nil
 }
@@ -159,5 +220,18 @@ func renderTaskTemplate(projectPath string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	return tmpl, nil
+}
+
+func renderUsageTemplate(projectPath string) (string, error) {
+	endpoints, err := api.RenderCommand(api.CommandUsage)
+	if err != nil {
+		return "", fmt.Errorf("render usage endpoints: %w", err)
+	}
+	tmpl := strings.ReplaceAll(usageInjectTemplate, "{{ENDPOINTS}}", endpoints)
+	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
+	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+	tmpl = strings.ReplaceAll(tmpl, "{{NOW}}", clawbenchNow())
 	return tmpl, nil
 }
