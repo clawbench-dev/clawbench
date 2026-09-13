@@ -348,6 +348,18 @@ func validateQueueFiles(w http.ResponseWriter, r *http.Request, projectPath stri
 
 	// files (structured entries with optional line ranges) → validated entries.
 	for _, fEntry := range fileEntries {
+		// URL entries carry an external address, not a local path. Resolving one
+		// as a path would 404 ("File not found: owner/repo#123") and drop the
+		// attachment — which is what happened before the chat endpoint's URL
+		// handling was mirrored here.
+		if fEntry.IsURL() {
+			entry, ok := validatedURLEntry(w, r, fEntry)
+			if !ok {
+				return nil, false
+			}
+			validated = append(validated, entry)
+			continue
+		}
 		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return nil, false

@@ -11,10 +11,16 @@ import (
 	"syscall"
 
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 )
 
 func launchSentinel() (*exec.Cmd, error) {
-	exe, err := os.Executable()
+	// Resolve through the recorded self-path rather than os.Executable(): the
+	// sentinel re-execs this path after the current process exits, so it must
+	// survive a package manager replacing the package mid-run. os.Executable()
+	// would point at the retired-and-deleted package directory, and all five
+	// exec retries would fail, leaving the service down.
+	exe, err := service.ResolveSelfBinary()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get executable path: %w", err)
 	}

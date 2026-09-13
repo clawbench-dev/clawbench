@@ -220,6 +220,80 @@ func TestQueueHandler_Enqueue_WithFiles(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+// TestQueueHandler_Enqueue_URLAttachment verifies a URL attachment survives the
+// queue endpoint.
+//
+// Regression: validateQueueFiles had no URL branch, so a kind=url entry was run
+// through path resolution and rejected with 404 "File not found:
+// acme/widgets#7" — silently dropping the attachment whenever a send went
+// through the queue (i.e. whenever the session was already running).
+func TestQueueHandler_Enqueue_URLAttachment(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-enqueue-url"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"message": "look at this",
+		"files": []map[string]any{{
+			"path": "acme/widgets#7", "kind": "url", "url": "https://github.com/acme/widgets/issues/7",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(QueueHandler, req)
+	assertOK(t, w)
+
+	// The label and the address must both survive, and the entry must still be
+	// marked as a URL (not turned into a resolved filesystem path).
+	//
+	// Assert on the persisted row rather than the live queue: the handler starts
+	// a drain goroutine that may consume the queue entry concurrently.
+	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+	require.NoError(t, err)
+	require.Len(t, messages, 1, "the message must be persisted")
+	require.Len(t, messages[0].Files, 1, "the URL entry must survive validation")
+	got := messages[0].Files[0]
+	assert.Equal(t, "url", got.Kind)
+	assert.Equal(t, "https://github.com/acme/widgets/issues/7", got.URL)
+	assert.Equal(t, "acme/widgets#7", got.Path, "the chip label must be preserved")
+
+	service.CancelSession(sessionID)
+}
+
+// TestQueueHandler_Enqueue_URLAttachment_RejectsUnsafeScheme verifies the queue
+// endpoint applies the same scheme restriction as the chat endpoint.
+func TestQueueHandler_Enqueue_URLAttachment_RejectsUnsafeScheme(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	for _, raw := range []string{"javascript:alert(1)", "data:text/html,x", "file:///etc/passwd", "not a url"} {
+		t.Run(raw, func(t *testing.T) {
+			sessionID := "q-enqueue-url-unsafe"
+			createQueueSession(t, env, sessionID)
+			defer service.ClearQueuedMessages(sessionID)
+
+			body := map[string]any{
+				"message": "x",
+				"files":   []map[string]any{{"path": "label", "kind": "url", "url": raw}},
+			}
+			req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+			req = withProjectCookie(req, env.ProjectDir)
+
+			w := callHandler(QueueHandler, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code,
+				"a non-http(s) URL must be rejected, got %s", w.Body.String())
+
+			messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
+			require.NoError(t, err)
+			assert.Empty(t, messages, "a rejected request must not persist a message")
+		})
+	}
+}
+
 func TestQueueHandler_Enqueue_MissingSessionID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
