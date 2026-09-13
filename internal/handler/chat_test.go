@@ -3193,7 +3193,7 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 	defer teardown()
 
 	// Create a scheduled session with external_session_id set
-	schedSessionID, err := service.CreateSession(env.ProjectDir, "pi", "Scheduled Task", "", "", "default", "scheduled")
+	schedSessionID, err := service.CreateSession(env.ProjectDir, "pi", "Task", "", "", "default", "scheduled")
 	assert.NoError(t, err)
 	err = service.UpdateExternalSessionID(schedSessionID, "pi-cli-session-abc")
 	assert.NoError(t, err)
