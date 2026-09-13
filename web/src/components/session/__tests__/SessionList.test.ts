@@ -619,9 +619,63 @@ describe('SessionList', () => {
       const wrapper = await mountList({ activeTab: 'cross' })
       await flushPromises()
       expect(wrapper.findAll('.cross-group').length).toBe(1)
-      expect(wrapper.find('.cross-group-name').text()).toBe('other')
-      expect(wrapper.find('.cross-group-path').text()).toBe('~/proj/other')
+      // Header markup now comes from the shared SessionGroupHeader component.
+      expect(wrapper.find('.session-group-title').text()).toBe('other')
+      expect(wrapper.find('.session-group-subtitle').text()).toBe('~/proj/other')
       expect(wrapper.findAll('.cross-session-item').length).toBe(2)
+    })
+
+    it('shows the active-session count in the cross-project group header', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+      // crossGroup() has two active sessions — the count must reflect the group,
+      // matching the count badge the Pinned/Recent headers already show.
+      expect(wrapper.find('.session-group-count').text()).toBe('2')
+    })
+
+    it('collapses and expands a cross-project group from its header', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup()]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      const header = wrapper.find('.cross-group .session-group-header')
+      // Expanded by default: chevron not rotated.
+      expect(wrapper.find('.cross-group .session-group-chevron').classes()).not.toContain('collapsed')
+
+      await header.trigger('click')
+      expect(wrapper.find('.cross-group .session-group-chevron').classes()).toContain('collapsed')
+      // Rows stay mounted (v-show, not v-if) so collapsing never destroys the
+      // fetched snapshot — only the rows container is hidden.
+      expect(wrapper.findAll('.cross-group .cross-session-item').length).toBe(2)
+      expect(wrapper.find('.cross-group-rows').attributes('style')).toContain('display: none')
+
+      await header.trigger('click')
+      expect(wrapper.find('.cross-group .session-group-chevron').classes()).not.toContain('collapsed')
+      expect(wrapper.find('.cross-group-rows').attributes('style') || '').not.toContain('display: none')
+    })
+
+    it('keeps each project group collapsed independently', async () => {
+      const second = {
+        name: '/proj/second',
+        displayName: 'second',
+        displayPath: '~/proj/second',
+        sessions: [
+          { id: 't1', title: 'Second 1', backend: 'cli', agentId: 'agent-1', model: '', running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-03' },
+        ],
+      }
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [crossGroup(), second]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      // Collapse only the first group; the second must stay expanded.
+      await wrapper.findAll('.cross-group .session-group-header')[0].trigger('click')
+      const chevrons = wrapper.findAll('.cross-group .session-group-chevron')
+      expect(chevrons[0].classes()).toContain('collapsed')
+      expect(chevrons[1].classes()).not.toContain('collapsed')
     })
 
     it('does not use .session-item for cross rows (keyboard nav index isolation)', async () => {

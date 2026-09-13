@@ -6,7 +6,7 @@ export default {
     archive: '归档',
     pin: '置顶',
     unpin: '取消置顶',
-    pinnedSection: '置顶会话',
+    pinnedSection: '置顶',
     recentSection: '最近',
     confirm: '确定',
     close: '关闭',

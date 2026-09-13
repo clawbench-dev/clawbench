@@ -10,12 +10,14 @@
       <template v-else>
         <!-- Pinned section: only shown when there are pinned sessions -->
         <section v-if="pinnedSessions.length > 0" class="session-section">
-          <div class="session-section-header" @click="pinnedCollapsed = !pinnedCollapsed">
-            <Pin :size="12" class="session-section-pin-icon" />
-            <span class="session-section-title">{{ t('common.pinnedSection') }}</span>
-            <span class="session-section-count">{{ pinnedSessions.length }}</span>
-            <ChevronDown :size="14" class="session-section-chevron" :class="{ collapsed: pinnedCollapsed }" />
-          </div>
+          <SessionGroupHeader
+            :title="t('common.pinnedSection')"
+            :count="pinnedSessions.length"
+            :collapsed="pinnedCollapsed"
+            @toggle="pinnedCollapsed = !pinnedCollapsed"
+          >
+            <template #icon><Pin :size="12" class="session-group-pin-icon" /></template>
+          </SessionGroupHeader>
           <TransitionGroup v-show="!pinnedCollapsed" name="session-list" tag="div" class="session-rows">
             <div
               v-for="(session, idx) in pinnedSessions"
@@ -53,11 +55,13 @@
 
         <!-- Recent (unpinned) section -->
         <section class="session-section">
-          <div v-if="pinnedSessions.length > 0" class="session-section-header" @click="recentCollapsed = !recentCollapsed">
-            <span class="session-section-title">{{ t('common.recentSection') }}</span>
-            <span class="session-section-count">{{ unpinnedSessions.length }}</span>
-            <ChevronDown :size="14" class="session-section-chevron" :class="{ collapsed: recentCollapsed }" />
-          </div>
+          <SessionGroupHeader
+            v-if="pinnedSessions.length > 0"
+            :title="t('common.recentSection')"
+            :count="unpinnedSessions.length"
+            :collapsed="recentCollapsed"
+            @toggle="recentCollapsed = !recentCollapsed"
+          />
           <TransitionGroup v-show="!recentCollapsed" name="session-list" tag="div" class="session-rows">
             <div
               v-for="(session, idx) in unpinnedSessions"
@@ -105,27 +109,33 @@
       <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
       <template v-else>
         <div v-for="group in crossGroups" :key="group.name" class="cross-group">
-          <div class="cross-group-header">
-            <span class="cross-group-name">{{ group.displayName }}</span>
-            <span class="cross-group-path" :title="group.name">{{ group.displayPath }}</span>
-          </div>
-          <div
-            v-for="session in group.sessions"
-            :key="group.name + '/' + session.id"
-            class="cross-session-row"
-            :class="{ running: session.running }"
-          >
-            <span v-if="session.running" class="session-running-line"></span>
-            <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
-              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-              <div class="session-item-info">
-                <div class="session-item-header">
-                  <span class="session-item-title">{{ session.title }}</span>
-                </div>
-                <div class="session-item-meta">
-                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+          <SessionGroupHeader
+            :title="group.displayName"
+            :count="group.sessions.length"
+            :subtitle="group.displayPath"
+            :subtitle-title="group.name"
+            :collapsed="isCrossCollapsed(group.name)"
+            @toggle="toggleCrossCollapsed(group.name)"
+          />
+          <div v-show="!isCrossCollapsed(group.name)" class="cross-group-rows">
+            <div
+              v-for="session in group.sessions"
+              :key="group.name + '/' + session.id"
+              class="cross-session-row"
+              :class="{ running: session.running }"
+            >
+              <span v-if="session.running" class="session-running-line"></span>
+              <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -163,8 +173,9 @@
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, ChevronDown, PencilLine } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
@@ -225,6 +236,18 @@ const unpinnedIndexOffset = computed(() => pinnedSessions.value.length)
 
 const pinnedCollapsed = ref(false)
 const recentCollapsed = ref(false)
+
+// Cross-project group collapse state, keyed by absolute project path. In-memory
+// only: the pane is v-show'd (never unmounted) while the app runs, so the state
+// survives tab switches and list reloads, and resets on page reload.
+const crossCollapsed = reactive(new Set())
+function isCrossCollapsed(name) {
+  return crossCollapsed.has(name)
+}
+function toggleCrossCollapsed(name) {
+  if (crossCollapsed.has(name)) crossCollapsed.delete(name)
+  else crossCollapsed.add(name)
+}
 
 async function loadSessions() {
   // Keep the existing list on screen during background refreshes — only show
@@ -925,61 +948,19 @@ onUnmounted(() => {
 
 /* ── Pinned / section grouping ── */
 
-/* Pinned rows get a warm-tinted separator instead of the neutral one. Target
-   the row (not .session-item) so the tint reaches the archive button too —
-   otherwise the yellow line stopped 34px short of the right edge. The active
-   variant keeps its own accent border-top and therefore outranks this. */
-.session-row.pinned:not(.active) {
-  border-top-color: color-mix(in srgb, #f59e0b 15%, var(--border-color, #dee2e6));
-}
-
-/* Section groups */
+/* Section groups. The collapsible header itself is the shared
+   SessionGroupHeader component; only the wrapper layout lives here. */
 .session-section {
   display: flex;
   flex-direction: column;
 }
 
-.session-section-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6) var(--space-2);
-  cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.session-section-title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary, #495057);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.session-section-count {
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted, #999);
-  background: var(--bg-tertiary, #e9ecef);
-  border-radius: var(--radius-sm);
-  padding: 0 5px;
-  line-height: 16px;
-}
-
-.session-section-pin-icon {
+/* Slot content passed into SessionGroupHeader is compiled in THIS component's
+   scope, so its styling must live here — the child's scoped rules do not reach
+   it. */
+.session-group-pin-icon {
   color: #f59e0b;
   flex-shrink: 0;
-}
-
-.session-section-chevron {
-  margin-left: auto;
-  color: var(--text-muted, #999);
-  transition: transform var(--duration-slow) ease;
-  flex-shrink: 0;
-}
-
-.session-section-chevron.collapsed {
-  transform: rotate(-90deg);
 }
 
 /* ── Long-press feedback ── */
@@ -997,39 +978,9 @@ onUnmounted(() => {
   border-top: 1px solid var(--border-color, #dee2e6);
 }
 
-/* Group header is the primary visual distinction from project rows: it names
-   the owning project so a row can never be mistaken for a local one. */
-.cross-group-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding:7px var(--space-6);
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  position: sticky;
-  top: 0;
-  z-index: 2;
-}
-
-.cross-group-name {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-secondary, #495057);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-shrink: 0;
-  max-width: 60%;
-}
-
-.cross-group-path {
-  font-size: var(--font-size-2xs);
-  color: var(--text-muted, #999);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
+/* The group header (shared SessionGroupHeader) is the primary visual distinction
+   from project rows: it names the owning project so a row can never be mistaken
+   for a local one. */
 .cross-session-row {
   display: flex;
   align-items: stretch;
