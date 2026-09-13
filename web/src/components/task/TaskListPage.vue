@@ -73,6 +73,7 @@ import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
+import { eventTypesSummary } from '@/utils/forgeEventLabels'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -101,31 +102,9 @@ interface TaskItem {
 }
 
 // eventTriggerLabel renders the subscribed event types as a compact list.
+// Shared with the task overview so the two never drift.
 function eventTriggerLabel(task: TaskItem): string {
-  const types = (task.eventTypes || '').split(',').map(s => s.trim()).filter(Boolean)
-  if (types.length === 0) return t('task.form.triggerEvent')
-  const transitionLabels: Record<string, string> = {
-    opened: t('task.form.eventOpened'),
-    closed: t('task.form.eventClosed'),
-    merged: t('task.form.eventMerged'),
-    reopened: t('task.form.eventReopened'),
-    commented: t('task.form.eventCommented'),
-    pipeline_done: t('task.form.eventPipeline'),
-  }
-  const kindLabels: Record<string, string> = {
-    issue: t('task.form.eventKindIssue'),
-    pr: t('task.form.eventKindPr'),
-  }
-  // Keys are kind-scoped ("issue.opened"); show the kind so two same-named
-  // transitions on different kinds are distinguishable. A bare legacy key
-  // renders without a prefix.
-  return types.map(x => {
-    const dot = x.indexOf('.')
-    if (dot <= 0) return transitionLabels[x] || x
-    const kind = kindLabels[x.slice(0, dot)] || x.slice(0, dot)
-    const transition = transitionLabels[x.slice(dot + 1)] || x.slice(dot + 1)
-    return `${kind} · ${transition}`
-  }).join(' · ')
+  return eventTypesSummary(task.eventTypes) || t('task.form.triggerEvent')
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])

@@ -34,6 +34,13 @@
               </template>
             </div>
             <template v-if="!isRunning(exec)">
+              <!-- Event-triggered runs trace back to the issue/PR that fired
+                   them; without this the row only shows a summary and the user
+                   cannot tell what caused the run. -->
+              <div v-if="eventSource(exec)" class="exec-event-row">
+                <Zap :size="11" class="exec-event-icon" />
+                <span class="exec-event-source" :title="exec.eventUrl">{{ eventSource(exec) }}</span>
+              </div>
               <div class="exec-summary-row">
                 <div v-if="exec.preview" class="exec-summary">{{ exec.preview }}</div>
                 <div v-else class="exec-summary empty">{{ t('task.exec.noTextOutput') }}</div>
@@ -69,8 +76,9 @@
 <script setup>
 import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Square, History, Trash2 } from 'lucide-vue-next'
+import { Square, History, Trash2, Zap } from 'lucide-vue-next'
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
+import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
@@ -111,6 +119,12 @@ function formatTokens(meta) {
   if (meta.inputTokens) parts.push(`${meta.inputTokens.toLocaleString()}↑`)
   if (meta.outputTokens) parts.push(`${meta.outputTokens.toLocaleString()}↓`)
   return parts.join(' ')
+}
+
+/** Compact "owner/repo PR #123" for an event-triggered run, or '' when the run
+ *  was not triggered by a forge event. Derived from the stored source URL. */
+function eventSource(exec) {
+  return eventSourceLabel(exec?.eventUrl)
 }
 
 /** Set up IntersectionObserver for infinite scroll.
@@ -416,6 +430,33 @@ defineExpose({
 .exec-summary-row {
   display: flex;
   align-items: center;
+}
+
+/* ── Event source (event-triggered runs) ── */
+.exec-event-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.exec-event-icon {
+  color: var(--text-muted, #9ca3af);
+  flex-shrink: 0;
+}
+
+.exec-event-source {
+  font-size: 11px;
+  color: var(--text-secondary, #4b5563);
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 4px;
+  padding: 1px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
 }
 
 .exec-summary {

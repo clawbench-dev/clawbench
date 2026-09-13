@@ -71,7 +71,7 @@ TaskIdRequired: 任务ID为必填项
 TaskNotFound: 任务未找到
 TaskFieldsRequired: 名称、cron表达式、智能体ID和提示词为必填项
 TaskEventTypesInvalid: 事件任务至少需订阅一个有效事件类型
-TaskCronRequired: 定时任务需提供 cron 表达式
+TaskCronRequired: 计划任务需提供 cron 表达式
 TaskAlreadyRunning: 任务正在执行中，请等待完成后再触发
 TaskExecutionIdRequired: 执行实例ID为必填项
 TaskExecutionNotFound: 执行实例未找到或已结束
@@ -100,10 +100,10 @@ CustomURLInvalid: URL 格式无效
 CustomURLInvalidScheme: URL 必须以 http:// 或 https:// 开头
 CustomURLInvalidHost: URL 缺少有效的主机名
 CustomURLUnrecognizedFormat: URL 路径须以 /chat/completions（OpenAI）或 /v1/messages（Anthropic）结尾
-PushTaskCompleted: 定时任务已完成
-PushTaskFailed: 定时任务失败
-PushTaskCancelled: 定时任务已取消
-PushTaskStarted: 定时任务已启动
+PushTaskCompleted: 计划任务已完成
+PushTaskFailed: 计划任务失败
+PushTaskCancelled: 计划任务已取消
+PushTaskStarted: 计划任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准

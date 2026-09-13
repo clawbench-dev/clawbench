@@ -28,6 +28,9 @@ interface TaskExecution {
   blocks?: unknown
   metadata?: unknown
   preview?: string
+  /** Forge event that triggered this run, when it was event-triggered. */
+  eventUrl?: string
+  eventSummary?: string
 }
 
 interface UseTaskHistoryOptions {

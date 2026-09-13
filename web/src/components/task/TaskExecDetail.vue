@@ -8,11 +8,25 @@
 
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
-      <!-- Trigger source: links an event-triggered run back to its issue/PR. -->
-      <a v-if="execDetail?.eventUrl" class="exec-event-source" :href="execDetail.eventUrl" target="_blank" rel="noopener noreferrer">
-        <Zap :size="12" />
-        <span>{{ t('task.exec.eventTriggeredFrom') }}</span>
-      </a>
+      <!-- Trigger source: links an event-triggered run back to its issue/PR and
+           shows the exact context block that was prepended to the prompt, so
+           the run can be read against what actually triggered it. -->
+      <div v-if="execDetail?.eventUrl || execDetail?.eventSummary" class="exec-event-card">
+        <a v-if="execDetail?.eventUrl" class="exec-event-source" :href="execDetail.eventUrl" target="_blank" rel="noopener noreferrer">
+          <Zap :size="12" />
+          <span>{{ eventSourceText || t('task.exec.eventTriggeredFrom') }}</span>
+          <ExternalLink :size="11" />
+        </a>
+        <button
+          v-if="execDetail?.eventSummary"
+          class="exec-event-toggle"
+          @click="eventContextOpen = !eventContextOpen"
+        >
+          <ChevronDown :size="12" :class="{ 'exec-event-chevron-collapsed': !eventContextOpen }" class="exec-event-chevron" />
+          <span>{{ t('task.exec.eventContext') }}</span>
+        </button>
+        <pre v-if="execDetail?.eventSummary && eventContextOpen" class="exec-event-context">{{ execDetail.eventSummary }}</pre>
+      </div>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -93,7 +107,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, Square, Zap } from 'lucide-vue-next'
+import { MessageSquare, Square, Zap, ExternalLink, ChevronDown } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -116,6 +130,7 @@ import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import { terminateExecution } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
+import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 
@@ -139,6 +154,13 @@ const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTab
 // ── Continue conversation logic ──
 const continueLoading = ref(false)
 const isRunning = computed(() => props.execDetail?.status === 'running')
+
+// ── Event trigger context ──
+// The run's source is identified by its URL; the backend also stored the exact
+// context block it prepended to the prompt, which the user can expand to see
+// what the AI was told about the event.
+const eventContextOpen = ref(false)
+const eventSourceText = computed(() => eventSourceLabel(props.execDetail?.eventUrl))
 
 // ── Terminate (cancel) running execution ──
 const cancelling = ref(false)
@@ -668,22 +690,80 @@ onUnmounted(() => {
   padding: 12px 0;
 }
 
-/* Trigger source link for event-triggered runs. */
+/* Trigger source for event-triggered runs: a source link plus the collapsible
+   context block the backend prepended to the prompt. */
+.exec-event-card {
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-secondary, #f3f4f6);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .exec-event-source {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin: 0 12px 10px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: var(--bg-secondary, #f3f4f6);
+  align-self: flex-start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
   color: var(--text-secondary, #4b5563);
   font-size: 12px;
   text-decoration: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .exec-event-source:hover {
-  color: var(--accent, #2563eb);
+  color: var(--accent-color, #2563eb);
+  border-color: var(--accent-color, #2563eb);
+}
+
+.exec-event-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted, #6b7280);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .exec-event-toggle:hover { color: var(--text-secondary, #4b5563); }
+}
+
+.exec-event-chevron {
+  transition: transform 0.2s ease;
+}
+
+.exec-event-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
+.exec-event-context {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-primary, #fff);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary, #4b5563);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
 }
 
 /* Fixed bottom action bar */

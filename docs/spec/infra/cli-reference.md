@@ -4,7 +4,7 @@ ClawBench 二进制兼具双重角色：无子命令时启动 Web 服务器；�
 
 目前**只剩一个子命令 `upgrade-replace`**，它是应用自升级的内部机制，由升级服务作为子进程启动，用户不应直接调用。
 
-> **历史**：曾提供 `clawbench task` 与 `clawbench rag` 两个业务子命令，供 AI 智能体自助管理定时任务、检索历史对话。它们本质是 REST 端点的 HTTP 薄封装（业务逻辑全在服务端 handler）。现已移除——内置斜杠命令改为让 AI 直接调用本地 HTTP API，接口说明由嵌入的 OpenAPI 规格渲染（见 [API 文档](../api/README.md)）。这样消除了「提示词描述接口」与「CLI 定义接口」两处手写描述必然脱节的根因。
+> **历史**：曾提供 `clawbench task` 与 `clawbench rag` 两个业务子命令，供 AI 智能体自助管理计划任务、检索历史对话。它们本质是 REST 端点的 HTTP 薄封装（业务逻辑全在服务端 handler）。现已移除——内置斜杠命令改为让 AI 直接调用本地 HTTP API，接口说明由嵌入的 OpenAPI 规格渲染（见 [API 文档](../api/README.md)）。这样消除了「提示词描述接口」与「CLI 定义接口」两处手写描述必然脱节的根因。
 
 ## 流程图
 

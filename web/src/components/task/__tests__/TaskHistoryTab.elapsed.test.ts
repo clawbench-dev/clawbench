@@ -7,6 +7,17 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
+// The event-source label resolves through the app i18n instance, so a bare
+// vue-i18n mock is not enough — importing @/i18n needs createI18n.
+vi.mock('@/i18n', () => ({
+  default: {
+    global: {
+      t: (key: string) => key,
+      locale: { value: 'en' },
+    },
+  },
+}))
+
 vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({
     name,
@@ -19,6 +30,7 @@ vi.mock('lucide-vue-next', () => {
     LoaderCircle: stub('LoaderCircle'),
     History: stub('History'),
     Trash2: stub('Trash2'),
+    Zap: stub('Zap'),
   }
 })
 

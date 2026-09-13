@@ -70,7 +70,7 @@ TaskIdRequired: Task ID required
 TaskNotFound: Task not found
 TaskFieldsRequired: name, cronExpr, agentId, and prompt are required
 TaskEventTypesInvalid: an event task must subscribe to at least one valid event type
-TaskCronRequired: a cron expression is required for a scheduled task
+TaskCronRequired: a cron expression is required for a task
 TaskAlreadyRunning: Task is already running, please wait for it to finish
 TaskExecutionIdRequired: Execution ID is required
 TaskExecutionNotFound: Execution not found or already finished
@@ -99,10 +99,10 @@ CustomURLInvalid: Invalid URL format
 CustomURLInvalidScheme: URL must start with http:// or https://
 CustomURLInvalidHost: URL is missing a valid hostname
 CustomURLUnrecognizedFormat: URL path must end with /chat/completions (OpenAI) or /v1/messages (Anthropic)
-PushTaskCompleted: Scheduled task completed
-PushTaskFailed: Scheduled task failed
-PushTaskCancelled: Scheduled task cancelled
-PushTaskStarted: Scheduled task started
+PushTaskCompleted: Task completed
+PushTaskFailed: Task failed
+PushTaskCancelled: Task cancelled
+PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval

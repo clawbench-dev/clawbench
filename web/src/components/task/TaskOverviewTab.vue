@@ -19,29 +19,13 @@
         </div>
       </div>
 
-      <!-- Schedule card -->
-      <div class="overview-card">
-        <h3 class="card-title">
-          <Clock class="card-icon" :size="14" />
-          {{ t('task.form.frequency') }}
-        </h3>
-        <div class="overview-row">
-          <span class="overview-value font-mono">{{ taskCronExpr }}</span>
-          <span class="overview-subtext">{{ humanizeCron(taskCronExpr) }}</span>
-        </div>
-        <div class="overview-divider"></div>
-        <div class="overview-row">
-          <span class="overview-label">{{ t('chat.contentBlocks.repeat') }}</span>
-          <span class="overview-value">{{ repeatLabel(taskRepeatMode, taskMaxRuns) }}</span>
-        </div>
-        <div v-if="taskRunCount > 0" class="overview-row">
-          <span class="overview-label">{{ t('chat.contentBlocks.statusExecutions', { count: taskRunCount }) }}</span>
-        </div>
-        <div v-if="taskNextRunAt" class="overview-row highlight">
-          <span class="overview-label">{{ t('chat.contentBlocks.nextRun') }}</span>
-          <span class="overview-value">{{ formatDateTimeWithYear(taskNextRunAt) }}</span>
-        </div>
-      </div>
+      <!-- Trigger card: a cron task shows its schedule, an event task shows the
+           forge events it listens for plus the context block injected at
+           runtime. They are separate components because almost no field is
+           shared — rendering one card for both produced a blank cron line and a
+           meaningless "next run: none" on event tasks. -->
+      <TaskScheduleCard v-if="!isEventTriggered" :task="task" />
+      <TaskEventCard v-else :task="task" />
 
       <!-- Prompt preview card (collapsible) -->
       <div class="overview-card">
@@ -63,11 +47,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { ChevronDown, Clock, MessageSquare } from 'lucide-vue-next'
+import { ChevronDown, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import TaskScheduleCard from '@/components/task/TaskScheduleCard.vue'
+import TaskEventCard from '@/components/task/TaskEventCard.vue'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -75,7 +61,6 @@ import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotatio
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app.ts'
-import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/format'
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
@@ -93,13 +78,12 @@ const taskName = computed(() => task.value.name as string)
 const taskAgentId = computed(() => task.value.agentId as string)
 const taskBackend = computed(() => getAgentBackend(taskAgentId.value))
 const taskStatus = computed(() => task.value.status as string)
-const taskCronExpr = computed(() => task.value.cronExpr as string)
-const taskRepeatMode = computed(() => task.value.repeatMode as string)
-const taskMaxRuns = computed(() => task.value.maxRuns as number)
-const taskRunCount = computed(() => task.value.runCount as number)
 const taskRunningCount = computed(() => task.value.runningCount as number)
-const taskNextRunAt = computed(() => task.value.nextRunAt as string | undefined)
 const taskPrompt = computed(() => task.value.prompt as string)
+
+// Trigger mode selects which card renders above the prompt. Absent means cron
+// (the pre-event-task default the backend also assumes).
+const isEventTriggered = computed(() => (task.value.triggerMode as string) === 'event')
 
 const promptCollapsed = ref(true)
 
@@ -340,7 +324,7 @@ function handlePromptClick(event: MouseEvent) {
 .overview-card {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
+  border-radius: var(--radius-sm, 6px);
   padding: 10px;
   display: flex;
   flex-direction: column;

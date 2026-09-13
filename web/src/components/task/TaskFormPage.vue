@@ -279,6 +279,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { fetchForgeBinding } from '@/utils/forgeApi'
+import { FORGE_EVENT_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -327,54 +328,19 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
 // it under Issues would create a subscription that can never fire.
 //
 // pipeline_done is deliberately absent: nothing derives a pipeline event yet,
-// so subscribing would never fire. It stays in TRANSITION_LABELS so a task that
-// already stores one still renders a readable label in the list.
-const TRANSITIONS = {
-  issue: ['opened', 'closed', 'reopened', 'commented'],
-  pr: ['opened', 'closed', 'merged', 'reopened', 'commented'],
-}
-const TRANSITION_LABELS = {
-  opened: 'task.form.eventOpened',
-  closed: 'task.form.eventClosed',
-  merged: 'task.form.eventMerged',
-  reopened: 'task.form.eventReopened',
-  commented: 'task.form.eventCommented',
-  pipeline_done: 'task.form.eventPipeline',
-}
-const eventTypeGroups = computed(() => [
-  { kind: 'issue', label: t('task.form.eventKindIssue') },
-  { kind: 'pr', label: t('task.form.eventKindPr') },
-].map(g => ({
-  ...g,
-  options: TRANSITIONS[g.kind].map(tr => ({ value: `${g.kind}.${tr}`, label: t(TRANSITION_LABELS[tr]) })),
+// so subscribing would never fire. It stays valid on the backend so a task that
+// already stores one is not rejected, and the shared label map still renders it.
+const eventTypeGroups = computed(() => Object.entries(FORGE_EVENT_TRANSITIONS).map(([kind, transitions]) => ({
+  kind,
+  label: eventKindLabel(kind),
+  options: transitions.map(tr => ({
+    value: `${kind}.${tr}`,
+    label: eventTransitionLabel(tr),
+  })),
 })))
 
 // Every kind-scoped value the checkboxes can represent.
-const OFFERED_EVENT_VALUES = computed(() => new Set(
-  Object.entries(TRANSITIONS).flatMap(([kind, trs]) => trs.map(tr => `${kind}.${tr}`)),
-))
-
-// Expand a stored subscription into checkbox values.
-//
-// A bare key is the pre-split spelling. The backend treats it as "either kind",
-// so it maps to EVERY kind that supports that transition (bare `opened` means
-// both issue.opened and pr.opened; bare `merged` means pr.merged only). Without
-// this, a legacy task would show zero events selected — and saving would then
-// silently rewrite its subscription to whatever the user happened to tick.
-function expandStoredEventTypes(raw) {
-  const keys = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : []
-  const out = []
-  for (const key of keys) {
-    if (key.includes('.')) { out.push(key); continue }
-    const kinds = Object.entries(TRANSITIONS)
-      .filter(([, trs]) => trs.includes(key))
-      .map(([kind]) => kind)
-    // Unrecognized key: keep it verbatim rather than dropping it.
-    if (kinds.length === 0) out.push(key)
-    else for (const kind of kinds) out.push(`${kind}.${key}`)
-  }
-  return out
-}
+const OFFERED_EVENT_VALUES = computed(() => offeredEventValues())
 
 // Keys with no checkbox (a retired or unknown subscription). They must survive
 // an edit untouched, or saving would drop something the user cannot even see.
