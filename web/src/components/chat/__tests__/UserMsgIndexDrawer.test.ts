@@ -50,7 +50,7 @@ function mountSheet(props = {}, opts: { attach?: boolean } = {}) {
 
 describe('UserMsgIndexDrawer', () => {
   describe('truncateText', () => {
-    it('renders the full message text', () => {
+    it('truncates long message text with an ellipsis', () => {
       const longContent = 'A'.repeat(120)
       const messages = [
         { id: 1, content: longContent, role: 'user' },
@@ -58,7 +58,15 @@ describe('UserMsgIndexDrawer', () => {
       const wrapper = mountSheet({ messages })
       const text = wrapper.find('.msg-text')
       expect(text.exists()).toBe(true)
-      expect(text.text()).toContain(longContent)
+      expect(text.text()).toBe('A'.repeat(100) + '…')
+    })
+
+    it('renders short message text in full', () => {
+      const messages = [
+        { id: 1, content: 'Short message', role: 'user' },
+      ]
+      const wrapper = mountSheet({ messages })
+      expect(wrapper.find('.msg-text').text()).toBe('Short message')
     })
 
     it('renders multiple messages with indices', () => {

@@ -114,15 +114,40 @@ function isKnownWrapper(value: unknown): boolean {
 }
 
 /**
- * Formats a user message for display in the index list.
- * Returns the full plain text, or [Attachment] label for attachment-only messages.
+ * Maximum characters rendered per row in the conversation index. Longer
+ * messages are cut with a trailing ellipsis so every row stays a compact,
+ * scannable preview (matches stripMarkdownPreview's default of 100).
  */
-export function formatUserMsg(msg: { content?: string; files?: string[] }, attachmentLabel: string): string {
+export const INDEX_TEXT_MAX_LENGTH = 100
+
+/**
+ * Truncate an index-row preview to `maxLen` characters, appending '…' when
+ * anything was cut. Iterates code points so surrogate pairs (emoji, rare CJK)
+ * are never split in half.
+ */
+export function truncateIndexText(text: string, maxLen: number = INDEX_TEXT_MAX_LENGTH): string {
+  if (maxLen <= 0) return ''
+  const chars = [...text]
+  return chars.length > maxLen ? chars.slice(0, maxLen).join('') + '…' : text
+}
+
+/**
+ * Formats a user message for display in the index list.
+ * Returns the plain text truncated to INDEX_TEXT_MAX_LENGTH, or the
+ * [Attachment] label for attachment-only messages. Search matching still runs
+ * against the untruncated text (see matchUserMsg), so a query hitting text past
+ * the cap still surfaces the row.
+ */
+export function formatUserMsg(
+  msg: { content?: string; files?: string[] },
+  attachmentLabel: string,
+  maxLen: number = INDEX_TEXT_MAX_LENGTH,
+): string {
   const text = extractPlainText(msg.content || '')
   if (!text && msg.files && msg.files.length > 0) {
     return `[${attachmentLabel}]`
   }
-  return text
+  return truncateIndexText(text, maxLen)
 }
 
 /** A user-message index row: content + attachments (legacy string[] or FileEntry-like objects). */
