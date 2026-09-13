@@ -4,7 +4,7 @@
 
 .code-link-preview-floating {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-sheet);
   display: flex;
   flex-direction: column;
   width: min(720px, calc(100vw - 24px));
@@ -680,7 +680,7 @@ body.code-preview-dragging * {
 /* Custom Fast Tooltip */
 .code-preview-tooltip {
   position: absolute;
-  z-index: 1300;
+  z-index: var(--z-preview-tooltip);
   pointer-events: none;
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-xs);

@@ -82,7 +82,7 @@ function copyCmd() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 3000;
+  z-index: var(--z-modal);
   padding:0 var(--space-8);
   animation: overlay-in 0.15s ease;
   outline: none;

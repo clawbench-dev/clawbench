@@ -2505,7 +2505,7 @@ function playQuoteEmitAnimation(e) {
     position: fixed; width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent-color, #0066cc);
     box-shadow: 0 0 10px 3px color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent);
-    z-index: 9999; pointer-events: none; left: 0; top: 0; will-change: transform, opacity;
+    z-index: var(--z-popover); pointer-events: none; left: 0; top: 0; will-change: transform, opacity;
   `
   document.body.appendChild(dot)
   const duration = 420, start = performance.now()
@@ -3410,7 +3410,7 @@ onUnmounted(() => {
     border-radius: var(--radius-lg);
     padding: var(--space-2);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-    z-index: 9999;
+    z-index: var(--z-popover);
     min-width: 140px;
 }
 

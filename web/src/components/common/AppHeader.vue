@@ -1095,7 +1095,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-    z-index: 9999;
+    z-index: var(--z-popover);
     overflow: hidden;
     max-width: calc(100vw - 16px);
     padding: 3px 0;
@@ -1305,7 +1305,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .ht-dirty-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2000;
+    z-index: var(--z-header-overlay);
     display: flex;
     align-items: center;
     justify-content: center;

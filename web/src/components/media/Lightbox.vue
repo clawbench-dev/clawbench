@@ -835,7 +835,7 @@ onUnmounted(() => {
     /* Above all overlays/dialogs (CompletionPopover z 9998, etc.): the popover's
        expanded markdown summary renders lightbox-able images, and the full-screen
        viewer must sit on top when opened from there. */
-    z-index: 10000;
+    z-index: var(--z-lightbox);
     display: flex;
     align-items: center;
     justify-content: center;

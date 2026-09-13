@@ -80,7 +80,7 @@ watch(visible, (v) => {
 .up-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1001;
+  z-index: var(--z-overlay-raised);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -96,7 +96,7 @@ watch(visible, (v) => {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 380px;
-  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 

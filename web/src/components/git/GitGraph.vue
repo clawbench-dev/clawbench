@@ -298,7 +298,7 @@ const tooltipStyle = computed(() => {
   padding: var(--space-3) var(--space-5);
   white-space: nowrap;
   pointer-events: none;
-  z-index: 9999;
+  z-index: var(--z-popover);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   display: flex;
   flex-direction: column;

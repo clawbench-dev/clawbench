@@ -33,7 +33,7 @@ const overlayText = computed(() =>
 .connection-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-popover);
   display: flex;
   align-items: center;
   justify-content: center;

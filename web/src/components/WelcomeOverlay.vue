@@ -236,7 +236,7 @@ onUnmounted(() => {
 .welcome-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -255,7 +255,7 @@ onUnmounted(() => {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 

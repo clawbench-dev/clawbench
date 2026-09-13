@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm);
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
-  z-index: 9999;
+  z-index: var(--z-popover);
   padding: 0;
 }
 

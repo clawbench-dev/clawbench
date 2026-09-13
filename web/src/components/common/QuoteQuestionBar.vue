@@ -246,8 +246,8 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
-  z-index: 2400;
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-quote-bar);
   max-width: 600px;
   margin: 0 auto;
   overflow: hidden;

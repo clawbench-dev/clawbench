@@ -301,7 +301,7 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 9998;
+    z-index: var(--z-popover-backdrop);
     display: flex;
     justify-content: center;
     align-items: flex-start;
@@ -324,7 +324,7 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--text-primary);
     border-radius: var(--radius-lg);
     padding: var(--space-4) var(--space-5);
-    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
+    box-shadow: var(--shadow-lg);
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     -webkit-tap-highlight-color: transparent;
     user-select: none;

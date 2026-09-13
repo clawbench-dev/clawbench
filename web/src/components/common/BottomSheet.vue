@@ -188,7 +188,7 @@ defineExpose({
   right: 0;
   bottom: var(--dock-height, 0);
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: flex-end;
   overflow: hidden;
@@ -372,7 +372,7 @@ defineExpose({
 .bs-overlay.bs-overlay-fullscreen {
   top: 0;
   bottom: 0;
-  z-index: 1200;
+  z-index: var(--z-sheet);
 }
 
 /* ── Wide-screen auto mode: centered floating card ── */

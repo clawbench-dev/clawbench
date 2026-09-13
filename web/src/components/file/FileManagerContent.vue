@@ -3342,7 +3342,7 @@ function scrollSelectedIntoView(path) {
 <style>
 .toolbar-dropdown {
     position: fixed;
-    z-index: 9999;
+    z-index: var(--z-popover);
     min-width: 140px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);

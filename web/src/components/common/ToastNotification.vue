@@ -36,7 +36,7 @@ defineProps({
     font-weight: var(--font-weight-medium);
     box-shadow: var(--shadow-md);
     cursor: pointer;
-    z-index: 9999;
+    z-index: var(--z-popover);
     white-space: normal;
     width: fit-content;
     min-width: 80px;

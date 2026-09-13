@@ -213,7 +213,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  z-index: 9999;
+  z-index: var(--z-popover);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-snug);

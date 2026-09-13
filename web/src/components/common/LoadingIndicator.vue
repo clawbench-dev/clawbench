@@ -65,7 +65,7 @@ withDefaults(
 .loading-indicator.fixed {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-popover);
   background: var(--bg-primary, #fff);
   opacity: 0.85;
 }

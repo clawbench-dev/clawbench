@@ -124,6 +124,88 @@ describe('duration tokens (variables.css)', () => {
   })
 })
 
+describe('stacking-order tokens (variables.css)', () => {
+  it('defines the named levels at their original literal values', () => {
+    // These replaced magic numbers; the values must not drift, or a surface
+    // that used to sit above another would silently swap order.
+    expect(token('--z-overlay')).toBe('1000')
+    expect(token('--z-overlay-raised')).toBe('1001')
+    expect(token('--z-header')).toBe('1100')
+    expect(token('--z-sheet')).toBe('1200')
+    expect(token('--z-preview-tooltip')).toBe('1300')
+    expect(token('--z-header-overlay')).toBe('2000')
+    expect(token('--z-quote-bar')).toBe('2400')
+    expect(token('--z-context-menu-backdrop')).toBe('2499')
+    expect(token('--z-context-menu')).toBe('2500')
+    expect(token('--z-modal')).toBe('3000')
+    expect(token('--z-popover-backdrop')).toBe('9998')
+    expect(token('--z-popover')).toBe('9999')
+    expect(token('--z-lightbox')).toBe('10000')
+  })
+
+  it('keeps each backdrop one below the surface it scrims', () => {
+    // A backdrop must sort under its own surface but over everything else;
+    // equal values would let the scrim cover the menu it belongs to.
+    expect(parseInt(token('--z-context-menu'))).toBe(
+      parseInt(token('--z-context-menu-backdrop')) + 1,
+    )
+    expect(parseInt(token('--z-popover'))).toBe(
+      parseInt(token('--z-popover-backdrop')) + 1,
+    )
+  })
+
+  it('keeps the topmost surfaces above the modal tier', () => {
+    // Popovers and the lightbox escape modals on purpose (a menu opened from
+    // a dialog must not be clipped by it).
+    expect(parseInt(token('--z-popover'))).toBeGreaterThan(parseInt(token('--z-modal')))
+    expect(parseInt(token('--z-lightbox'))).toBeGreaterThan(parseInt(token('--z-popover')))
+  })
+})
+
+describe('shadow tokens (variables.css)', () => {
+  it('defines all three elevation steps in every theme', () => {
+    // --shadow-lg was referenced (with a hard-coded fallback) long before it
+    // was ever defined, so those surfaces ignored the theme and always drew
+    // the same shadow. Assert every theme block carries the full set.
+    const themeBlocks = css.split(/^\[data-theme="/m).slice(1)
+    expect(themeBlocks.length, 'expected theme blocks').toBeGreaterThan(30)
+    for (const block of themeBlocks) {
+      const name = block.slice(0, block.indexOf('"'))
+      for (const step of ['sm', 'md', 'lg']) {
+        expect(
+          block.includes(`--shadow-${step}:`),
+          `theme "${name}" is missing --shadow-${step}`,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('keeps the geometry ordered from sm to lg', () => {
+    // Elevation reads through blur radius; equal geometry would make the
+    // three steps indistinguishable.
+    const blur = (step: string) => {
+      const m = token(`--shadow-${step}`).match(/0 \d+px (\d+)px/)
+      expect(m, `--shadow-${step} should match "0 <y>px <blur>px"`).not.toBeNull()
+      return parseInt(m![1])
+    }
+    expect(blur('md')).toBeGreaterThan(blur('sm'))
+    expect(blur('lg')).toBeGreaterThan(blur('md'))
+  })
+
+  it('does not hard-code shadow fallbacks at the call sites', () => {
+    // `var(--shadow-lg, 0 8px 32px …)` looked defensive but pinned the shadow
+    // to a light-theme value; the token now exists, so call sites must use it
+    // bare. Checked across the whole stylesheet set, not just variables.css.
+    const sources = ['css/components.css', 'css/layout.css']
+    for (const rel of sources) {
+      const src = readCss(rel)
+      expect(src, `${rel} should not inline a shadow fallback`).not.toMatch(
+        /var\(--shadow-[a-z]+,\s*0 /,
+      )
+    }
+  })
+})
+
 describe('token hygiene (variables.css)', () => {
   it('does not redeclare static tokens per theme', () => {
     // These are layout/typography values, not colours: they live once in
