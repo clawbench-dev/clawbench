@@ -1094,7 +1094,6 @@ defineExpose({ focusSearchInput })
   line-height: 1.6;
   padding: 4px 0 0;
   word-break: break-word;
-  overflow-wrap: break-word;
 }
 
 .detail-chunk-text :deep(mark.search-hl) {

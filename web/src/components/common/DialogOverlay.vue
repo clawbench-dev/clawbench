@@ -174,7 +174,6 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
   white-space: pre-line;
   word-break: break-word;
-  overflow-wrap: break-word;
   max-height: 40vh;
   overflow-y: auto;
 }
@@ -199,7 +198,6 @@ onBeforeUnmount(() => {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: break-word;
 }
 
 .dlg-input:focus {

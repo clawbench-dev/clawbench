@@ -3241,7 +3241,6 @@ onUnmounted(() => {
   padding: 5px 8px;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: anywhere;
 }
 
 .content-blocks .tool-detail .permission-options {

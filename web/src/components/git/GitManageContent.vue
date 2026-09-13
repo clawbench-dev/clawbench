@@ -562,7 +562,6 @@ defineExpose({
   line-height: 1.5;
   white-space: pre-line;
   word-break: break-word;
-  overflow-wrap: break-word;
   max-height: 40vh;
   overflow-y: auto;
 }

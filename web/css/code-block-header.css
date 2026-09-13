@@ -331,7 +331,6 @@
 .table-block-wrapper td {
     white-space: normal !important;  /* override white-space:nowrap from ChatMessageItem */
     word-break: break-word !important;
-    overflow-wrap: break-word !important;
 }
 
 /* ─── No-wrap mode: horizontal scroll (toggled off) ─── */

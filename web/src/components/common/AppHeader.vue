@@ -1349,7 +1349,6 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     line-height: 1.5;
     white-space: pre-line;
     word-break: break-word;
-    overflow-wrap: break-word;
 }
 
 .ht-dirty-actions {

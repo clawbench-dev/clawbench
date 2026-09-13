@@ -671,7 +671,6 @@ function handleCopyMessage() {
     line-height: 1.4;
     min-width: 0;
     word-wrap: break-word;
-    overflow-wrap: break-word;
     word-break: break-word;
     max-width: 100%;
     box-sizing: border-box;

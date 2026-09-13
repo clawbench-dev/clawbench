@@ -1805,7 +1805,6 @@ function handleBodyInput(event) {
   padding: 5px 8px;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: anywhere;
 }
 .tool-detail-body .permission-options {
   display: flex;

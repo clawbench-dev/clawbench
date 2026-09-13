@@ -385,7 +385,6 @@
     font-size: 14px;
     color: var(--text-primary, #1a1a1a);
     word-break: break-word;
-    overflow-wrap: break-word;
     cursor: text;
     user-select: text;
     -webkit-user-select: text;
