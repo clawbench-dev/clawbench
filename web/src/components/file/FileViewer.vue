@@ -36,6 +36,7 @@
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
       @set-as-background="(path) => emit('setAsBackground', path)"
+      @quote-in-chat="(path) => emit('quoteInChat', path)"
     />
 
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
@@ -355,7 +356,7 @@ const props = defineProps({
     canNavigateBack: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
 
 const fileNav = useFileNavStack()
 const { active: textSelecting } = useTextSelectionActive()

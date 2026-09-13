@@ -1241,6 +1241,7 @@ export default {
       stickyScroll: '粘性滚动',
       fileHistory: '文件历史',
       shareExternal: '分享',
+      quoteInChat: '引用对话',
       shareLink: '分享链接',
       shareLinkActive: '分享链接（已开启）',
       details: '文件详情',

@@ -48,9 +48,12 @@
         <MoveHorizontal :size="14" />
       </button>
 
-      <!-- Attach to chat button -->
-      <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" :class="{ active: isAttached }" @click.stop="handleAttachToChat" :title="isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat')">
-        <Paperclip :size="14" />
+      <!-- Quote in chat: opens the shared quote composer with this file attached,
+           matching the issue/PR detail header. Not a toggle — the composer is the
+           single entry point, and an attached file is removed from its chip in
+           the chat input. -->
+      <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" @click.stop="handleQuoteInChat" :title="t('file.header.quoteInChat')" :aria-label="t('file.header.quoteInChat')">
+        <MessageSquare :size="14" />
       </button>
 
       <!-- Lightbox view button (image / svg files only): opens the image full-size
@@ -160,9 +163,9 @@
               <MoveHorizontal :size="14" />
               {{ t('file.header.fitWidth') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" :class="{ active: isAttached }" @click="handleAttachToChat(); menuOpen = false">
-              <Paperclip :size="14" />
-              {{ isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
+            <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" @click="handleQuoteInChat(); menuOpen = false">
+              <MessageSquare :size="14" />
+              {{ t('file.header.quoteInChat') }}
             </button>
             <button v-if="isImageFile && toolbarCollapsedIds.includes('viewImage')" class="dropdown-item" @click="handleViewImage(); menuOpen = false">
               <Maximize2 :size="14" />
@@ -259,12 +262,10 @@ import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, inject } fr
 import { isRefreshing } from '@/composables/useFileRefresh'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, Paperclip, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, X, MessageSquare, Share2, ScreenShare, FileOutput, Eye, MoveHorizontal, FolderOpen, Pencil, Code2, Info, Image, ArrowLeft, ArrowRight, Maximize2 } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { fileSupportsToc } from '@/utils/tocSupport.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
-import { useChatContext } from '@/composables/useChatContext.ts'
-import { useToast } from '@/composables/useToast.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
@@ -291,15 +292,11 @@ const props = defineProps({
     canGoForwardFile: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'shareExternal', 'shareLink', 'exportHtml', 'fitWidth', 'toggleEdit', 'setAsBackground', 'navigateBack', 'navigateForward', 'quoteInChat'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
-const toast = useToast()
 const { isWideScreen } = getWideScreenState()
-
-const isAttached = computed(() => !!props.file?.path && hasAttachedFile(props.file.path))
 const { refreshFileShare, isFileShared } = useFileShare()
 
 // Whether the currently open file has an active public share link. Mirrors the
@@ -536,30 +533,18 @@ function handleRefresh() {
     triggerRefresh()
 }
 
-function handleAttachToChat() {
+/**
+ * Open the shared quote composer with this file attached, mirroring the
+ * issue/PR detail header. This replaces the old attach/detach toggle: the
+ * composer is the single entry point, and an already-attached file is removed
+ * from its chip in the chat input rather than by clicking this button again.
+ *
+ * The parent (App.vue) owns the composer + tab switch, so we only emit.
+ */
+function handleQuoteInChat() {
     const path = props.file?.path
     if (!path) return
-    if (hasAttachedFile(path)) {
-        removeAttachedFileByPath(path)
-        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
-        return
-    }
-    addAttachedFile(path)
-    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
-
-    // Fly-to-chat animation — capture button position before any async work
-    const btn = attachBtnRef.value
-    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
-    const animFrom = btn?.getBoundingClientRect() ?? null
-    const animTo = dockChatBtn?.getBoundingClientRect() ?? null
-    if (animFrom && animTo) {
-        window.dispatchEvent(new CustomEvent('attach-to-chat', {
-            detail: {
-                from: { x: animFrom.left + animFrom.width / 2, y: animFrom.top + animFrom.height / 2 },
-                to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
-            }
-        }))
-    }
+    emit('quoteInChat', path)
 }
 
 const openLightbox = inject('openLightbox', null)

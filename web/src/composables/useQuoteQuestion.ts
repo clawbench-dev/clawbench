@@ -9,14 +9,20 @@ import type { QuoteData } from '@/composables/useChatContext.ts'
 
 /**
  * Context for the "composer" flow: an entry point (e.g. the forge issue/PR
- * detail header) opens the quote bar with NO quote and only an attachment, so
- * the user can type immediately and optionally select text to quote.
+ * detail header, or the file browser header) opens the quote bar with NO quote
+ * and only an attachment, so the user can type immediately and optionally
+ * select text to quote.
+ *
+ * Exactly one attachment source is expected:
+ * - `url` + `label`  — an external address (issue/PR), attached as a URL entry;
+ * - `filePath`       — a local file, attached as a file entry.
  *
  * `onAdd` lets the caller navigate (e.g. switch to the chat tab) without this
  * composable knowing about tabs.
  */
 export interface QuoteComposerContext {
-  url: string
+  url?: string
+  filePath?: string
   label: string
   onAdd?: () => void
 }
@@ -220,10 +226,14 @@ export function useQuoteQuestion() {
    * and optionally select text to quote.
    */
   function openComposer(ctx: QuoteComposerContext) {
-    if (!ctx?.url) return
+    if (!ctx?.url && !ctx?.filePath) return
     composerContext.value = ctx
-    // Deduped by URL inside addUrlAttachment, so opening twice adds one chip.
-    addUrlAttachment(ctx.url, ctx.label)
+    // Both add* helpers dedupe, so opening twice adds one chip.
+    if (ctx.url) {
+      addUrlAttachment(ctx.url, ctx.label)
+    } else if (ctx.filePath) {
+      addAttachedFile(ctx.filePath)
+    }
     // A live selection carries over (select-then-click); otherwise start empty
     // so the full body is never quoted by default.
     const sel = window.getSelection()

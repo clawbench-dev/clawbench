@@ -37,6 +37,7 @@
             @share-external="emit('shareExternal')"
             @share-link="emit('shareLink')"
             @set-as-background="(path) => emit('setAsBackground', path)"
+            @quote-in-chat="(path) => emit('quoteInChat', path)"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -119,6 +120,7 @@ const emit = defineEmits([
   'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
   'setAsBackground',
   'captureScroll',
+  'quoteInChat',
 ])
 
 const contentRef = ref(null)

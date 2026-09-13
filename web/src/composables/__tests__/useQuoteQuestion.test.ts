@@ -363,6 +363,46 @@ describe('useQuoteQuestion', () => {
       })
     })
 
+    it('attaches a local file when the composer is opened with filePath', () => {
+      // The file browser header opens the same composer, but its attachment is a
+      // local file rather than an external URL.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      expect(qq.composerMode.value).toBe(true)
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value[0]).toMatchObject({ path: '/proj/src/main.ts' })
+      // Must not be mistaken for a URL entry.
+      expect(ctx.attachedFiles.value[0].kind).toBeUndefined()
+    })
+
+    it('does not attach twice when the same file composer is opened twice', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('ignores an open request with neither url nor filePath', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ label: 'nothing' })
+
+      expect(qq.composerMode.value).toBe(false)
+      expect(qq.visible.value).toBe(false)
+    })
+
+    it('sends the typed message with the file attached and no quote', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      await qq.sendMessage('explain this')
+
+      expect(mockSendMessage).toHaveBeenCalledWith('explain this')
+    })
+
     it('does not add a second chip when opened twice for the same URL', () => {
       const qq = useQuoteQuestion()
       const ctxArg = { url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' }

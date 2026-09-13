@@ -143,6 +143,7 @@
                       @navigate-forward="handleFileHistoryForward"
                       @capture-scroll="handleCaptureFileScroll"
                       @share-link="openShareLinkDialog"
+                      @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
@@ -2054,6 +2055,18 @@ function handleForgeQuote(payload) {
   quoteQuestion.openComposer({
     url: it.url,
     label: `${it.slug}#${it.number}`,
+    onAdd: () => switchTab('chat'),
+  })
+}
+
+// "Quote in chat" from the file browser header. Same composer as the forge
+// header, but the attachment is the local file instead of an external URL, and
+// no quote text is pre-filled — the user types the instruction themselves.
+function handleFileQuoteInChat(path) {
+  if (!path) return
+  quoteQuestion.openComposer({
+    filePath: path,
+    label: baseName(path),
     onAdd: () => switchTab('chat'),
   })
 }

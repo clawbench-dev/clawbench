@@ -1241,6 +1241,7 @@ export default {
       stickyScroll: 'Sticky Scroll',
       fileHistory: 'File history',
       shareExternal: 'Share',
+      quoteInChat: 'Quote in chat',
       shareLink: 'Share link',
       shareLinkActive: 'Share link (active)',
       details: 'Details',
