@@ -157,9 +157,9 @@ test.describe.serial('ACP Slash Commands', () => {
     expect(count).toBeGreaterThan(0)
   })
 
-  test('should show slash command autocomplete after session switch via prefetch', async ({ page }) => {
+  test('should show slash command autocomplete after session switch via agents API', async ({ page }) => {
     // Previous tests warmed the ACP connection pool. Create a new session
-    // and switch to it — prefetchCommands in switchSession should load commands.
+    // and switch to it — commands reload from GET /api/agents acpStates.
     await chat.createSessionWithAgent('acp-mock')
 
     // Type / to trigger slash command menu — should work without sending a message
