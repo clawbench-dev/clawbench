@@ -208,138 +208,187 @@ func requireSessionID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return sessionID, true
 }
 
+// Route describes one registered HTTP route. The route table is built once by
+// RegisterRoutes and exposed via RegisteredRoutes so tests can assert that the
+// OpenAPI spec (docs/spec/api/openapi.yaml) and the live mux stay in sync.
+//
+// Pattern keeps the http.ServeMux form: an exact path ("/api/tasks") or a
+// subtree prefix ending in "/" ("/api/tasks/"). Authenticated records whether
+// the handler is wrapped in middleware.Auth, which mirrors the spec's
+// `security` declaration.
+type Route struct {
+	Pattern       string
+	Authenticated bool
+}
+
+// routeTable accumulates every route registered during RegisterRoutes. It is
+// package-level (not returned by value) so the ~141 register calls below do not
+// each need to thread a slice through, keeping the diff to the call site
+// minimal. RegisterRoutes clears it on entry, so repeated calls in tests do not
+// accumulate duplicates.
+var routeTable []Route
+
+// RegisteredRoutes returns the routes registered by the most recent
+// RegisterRoutes call. Used by drift-guard tests; not for runtime routing.
+func RegisteredRoutes() []Route {
+	out := make([]Route, len(routeTable))
+	copy(out, routeTable)
+	return out
+}
+
+// registerRoute wraps a handler in the global middleware chain and mounts it.
+// Kept separate from the register closures so both the authenticated and the
+// public path share one definition of the chain.
+func registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	wrapped := middleware.Chain(
+		middleware.RecoverPanic,
+		middleware.WithRequestID,
+		middleware.RequestLogger,
+		middleware.WithLocalizer,
+		middleware.NoCache,
+	)(handler)
+	mux.HandleFunc(pattern, wrapped)
+}
+
 // RegisterRoutes registers all HTTP routes with the given mux
 func RegisterRoutes(mux *http.ServeMux) {
+	routeTable = routeTable[:0]
+
+	// register records an auth-protected route. Authentication is the default,
+	// mirroring the OpenAPI spec (every /api/ operation requires the session
+	// cookie unless it explicitly declares `security: []`).
 	register := func(pattern string, handler http.HandlerFunc) {
-		wrapped := middleware.Chain(
-			middleware.RecoverPanic,
-			middleware.WithRequestID,
-			middleware.RequestLogger,
-			middleware.WithLocalizer,
-			middleware.NoCache,
-		)(handler)
-		mux.HandleFunc(pattern, wrapped)
+		registerRoute(mux, pattern, middleware.Auth(handler))
+		routeTable = append(routeTable, Route{Pattern: pattern, Authenticated: true})
 	}
 
-	register("/", ServeIndex)
-	register("/login", ServeLogin)
-	register("/api/health", ServeHealth)
-	register("/api/me", ServeAuthCheck)
-	register("/api/system/resources", middleware.Auth(ServeSystemResources))
-	register("/api/roots", middleware.Auth(ServeRoots))
-	register("/api/config", middleware.Auth(ServeConfig))
-	register("/api/config/test", middleware.Auth(ServeConfigTest))
-	register("/api/config/restart", middleware.Auth(ServeConfigRestart))
-	register("/api/config/password", middleware.Auth(ServeConfigPassword))
-	register("/api/fonts/list", middleware.Auth(ServeFontsList))
-	register("/api/fonts/file", middleware.Auth(ServeFontFile))
-	register("/api/theme/local/upload", middleware.Auth(ServeThemeLocalUpload))
-	register("/api/theme/local/item", middleware.Auth(ServeThemeLocalUpload))
-	register("/api/theme/local/select", middleware.Auth(ServeThemeLocalSelect))
-	register("/api/theme/wallpaper", middleware.Auth(ServeThemeWallpaperMode))
-	register("/api/theme/bing/sync", middleware.Auth(ServeThemeBingSync))
-	register("/api/theme/bing/status", middleware.Auth(ServeThemeBingStatus))
-	register("/api/file/theme-wallpaper", middleware.Auth(ServeThemeWallpaperGet))
-	register("/api/projects", middleware.Auth(ServeProjects))
-	register("/api/project", middleware.Auth(ServeProjectSet))
-	register("/api/ai/chat", middleware.Auth(AIChat))
-	register("/api/ai/chat/cancel", middleware.Auth(CancelChat))
-	register("/api/ai/chat/read", middleware.Auth(MarkChatRead))
-	register("/api/ai/queue", middleware.Auth(QueueHandler))
-	register("/api/ai/queue/inject", middleware.Auth(QueueInjectHandler))
-	register("/api/ai/queue/interrupt", middleware.Auth(QueueInterruptHandler))
-	register("/api/ai/session/update", middleware.Auth(ServeAISessionUpdate))
-	register("/api/ai/sessions", middleware.Auth(ServeSessions))
-	register("/api/ai/sessions/overview", middleware.Auth(ServeSessionsOverview))
-	register("/api/ai/session/archive", middleware.Auth(ArchiveSession))
-	register("/api/ai/session/destroy", middleware.Auth(DestroySession))
-	register("/api/ai/session/resume", middleware.Auth(ServeSessionResume))
-	register("/api/ai/session/acp-load", middleware.Auth(ServeACPLoadSession))
-	register("/api/ai/session/acp-sync", middleware.Auth(ServeACPSyncSession))
-	register("/api/ai/session/fork", middleware.Auth(ServeForkSession))
-	register("/api/ai/session/reset", middleware.Auth(ServeSessionReset))
-	register("/api/ai/session/rewind", middleware.Auth(ServeSessionRewind))
-	register("/api/ai/chat/user-messages", middleware.Auth(ServeUserMessageIndex))
-	register("/api/ai/chat/tool-call", middleware.Auth(ServeToolCallDetail))
-	register("/api/ai/chat/thinking", middleware.Auth(ServeThinkingDetail))
-	register("/api/usage/stats", middleware.Auth(ServeUsageStats))
-	register("/api/git/stats", middleware.Auth(ServeGitStats))
-	register("/api/git/cloc", middleware.Auth(ServeGitCloc))
-	register("/api/ai/permission/respond", middleware.Auth(ServePermissionRespond))
-	register("/api/upload/file", middleware.Auth(UploadFile))
-	register("/api/upload/recent", middleware.Auth(UploadRecent))
-	register("/api/share-in/recent", middleware.Auth(ShareInRecent))
+	// registerPublic records one of the handful of intentionally-unauthenticated
+	// routes. Each has a documented reason at its call site and a matching
+	// `security: []` in the spec.
+	registerPublic := func(pattern string, handler http.HandlerFunc) {
+		registerRoute(mux, pattern, handler)
+		routeTable = append(routeTable, Route{Pattern: pattern, Authenticated: false})
+	}
+
+	registerPublic("/", ServeIndex)
+	registerPublic("/login", ServeLogin)
+	registerPublic("/api/health", ServeHealth)
+	registerPublic("/api/me", ServeAuthCheck)
+	register("/api/system/resources", ServeSystemResources)
+	register("/api/roots", ServeRoots)
+	register("/api/config", ServeConfig)
+	register("/api/config/test", ServeConfigTest)
+	register("/api/config/restart", ServeConfigRestart)
+	register("/api/config/password", ServeConfigPassword)
+	register("/api/fonts/list", ServeFontsList)
+	register("/api/fonts/file", ServeFontFile)
+	register("/api/theme/local/upload", ServeThemeLocalUpload)
+	register("/api/theme/local/item", ServeThemeLocalUpload)
+	register("/api/theme/local/select", ServeThemeLocalSelect)
+	register("/api/theme/wallpaper", ServeThemeWallpaperMode)
+	register("/api/theme/bing/sync", ServeThemeBingSync)
+	register("/api/theme/bing/status", ServeThemeBingStatus)
+	register("/api/file/theme-wallpaper", ServeThemeWallpaperGet)
+	register("/api/projects", ServeProjects)
+	register("/api/project", ServeProjectSet)
+	register("/api/ai/chat", AIChat)
+	register("/api/ai/chat/cancel", CancelChat)
+	register("/api/ai/chat/read", MarkChatRead)
+	register("/api/ai/queue", QueueHandler)
+	register("/api/ai/queue/inject", QueueInjectHandler)
+	register("/api/ai/queue/interrupt", QueueInterruptHandler)
+	register("/api/ai/session/update", ServeAISessionUpdate)
+	register("/api/ai/sessions", ServeSessions)
+	register("/api/ai/sessions/overview", ServeSessionsOverview)
+	register("/api/ai/session/archive", ArchiveSession)
+	register("/api/ai/session/destroy", DestroySession)
+	register("/api/ai/session/resume", ServeSessionResume)
+	register("/api/ai/session/acp-load", ServeACPLoadSession)
+	register("/api/ai/session/acp-sync", ServeACPSyncSession)
+	register("/api/ai/session/fork", ServeForkSession)
+	register("/api/ai/session/reset", ServeSessionReset)
+	register("/api/ai/session/rewind", ServeSessionRewind)
+	register("/api/ai/chat/user-messages", ServeUserMessageIndex)
+	register("/api/ai/chat/tool-call", ServeToolCallDetail)
+	register("/api/ai/chat/thinking", ServeThinkingDetail)
+	register("/api/usage/stats", ServeUsageStats)
+	register("/api/git/stats", ServeGitStats)
+	register("/api/git/cloc", ServeGitCloc)
+	register("/api/ai/permission/respond", ServePermissionRespond)
+	register("/api/upload/file", UploadFile)
+	register("/api/upload/recent", UploadRecent)
+	register("/api/share-in/recent", ShareInRecent)
 
 	// GitHub / GitLab integration (read-only issue & PR browsing).
-	register("/api/forge/credentials", middleware.Auth(ServeForgeCredentials))
-	register("/api/forge/verify-token", middleware.Auth(ServeForgeVerifyToken))
-	register("/api/forge/items", middleware.Auth(ServeForgeItems))
-	register("/api/forge/item", middleware.Auth(ServeForgeItem))
-	register("/api/forge/comments", middleware.Auth(ServeForgeComments))
-	register("/api/forge/binding", middleware.Auth(ServeForgeBinding))
-	register("/api/forge/remotes", middleware.Auth(ServeForgeRemotes))
-	register("/api/forge/test", middleware.Auth(ServeForgeTest))
-	register("/api/forge/unread", middleware.Auth(ServeForgeUnread))
-	register("/api/forge/read", middleware.Auth(ServeForgeMarkRead))
+	register("/api/forge/credentials", ServeForgeCredentials)
+	register("/api/forge/verify-token", ServeForgeVerifyToken)
+	register("/api/forge/items", ServeForgeItems)
+	register("/api/forge/item", ServeForgeItem)
+	register("/api/forge/comments", ServeForgeComments)
+	register("/api/forge/binding", ServeForgeBinding)
+	register("/api/forge/remotes", ServeForgeRemotes)
+	register("/api/forge/test", ServeForgeTest)
+	register("/api/forge/unread", ServeForgeUnread)
+	register("/api/forge/read", ServeForgeMarkRead)
 
 	// Public file-share links. Management endpoints are auth-protected; the
 	// public data endpoints (/api/share/{token}/...) and the share SPA page
 	// (/share/{token}) are intentionally unauthenticated — the capability token
 	// in the URL is the sole credential, and no token means a 404 (zero
 	// exposure when the feature is unused).
-	register("/api/share", middleware.Auth(ServeShareManage))
-	register("/api/share/list", middleware.Auth(ServeShareList))
-	register("/api/share/", ServeSharePublic)
-	register("/share/", ServeSharePage)
-	register("/api/dir", middleware.Auth(ListDir))
-	register("/api/file/list-tree", middleware.Auth(ServeListTree))
-	register("/api/file/thumb", middleware.Auth(FileThumb))
-	register("/api/file/", middleware.Auth(GetFile))
-	register("/api/git/branch", middleware.Auth(ServeGitBranch))
-	register("/api/git/branches", middleware.Auth(ServeGitBranches))
-	register("/api/git/project-history", middleware.Auth(ServeGitProjectHistory))
-	register("/api/git/file-diff", middleware.Auth(ServeGitFileDiff))
-	register("/api/git/commit-files", middleware.Auth(ServeGitCommitFiles))
-	register("/api/git/history", middleware.Auth(ServeGitHistory))
-	register("/api/git/diff", middleware.Auth(ServeGitDiff))
-	register("/api/git/working-tree", middleware.Auth(ServeGitWorkingTreeFiles))
-	register("/api/git/verify-commits", middleware.Auth(ServeGitVerifyCommits))
-	register("/api/git/worktrees", middleware.Auth(ServeGitWorktrees))
-	register("/api/git/checkout", middleware.Auth(ServeGitCheckout))
-	register("/api/git/tags", middleware.Auth(ServeGitTags))
-	register("/api/file/rename", middleware.Auth(ServeFileRename))
-	register("/api/file/write", middleware.Auth(ServeFileWrite))
-	register("/api/file/delete", middleware.Auth(ServeFileDelete))
-	register("/api/file/batch-exists", middleware.Auth(ServeFileBatchExists))
-	register("/api/file/batch-base64", middleware.Auth(ServeFileBatchBase64))
-	register("/api/file/create", middleware.Auth(ServeFileCreate))
-	register("/api/file/copy", middleware.Auth(ServeFileCopy))
-	register("/api/dir/create", middleware.Auth(ServeDirCreate))
-	register("/api/file/move", middleware.Auth(ServeFileMove))
-	register("/api/file/archive", middleware.Auth(ServeFileArchive))
-	register("/api/file/symbols", middleware.Auth(ServeFileSymbols))
-	register("/api/recent-projects", middleware.Auth(ServeRecentProjects))
-	register("/api/local-file/", middleware.Auth(ServeLocalFile))
-	register("/api/agents", middleware.Auth(ServeAgents))
-	register("/api/agents/", middleware.Auth(ServeAgentSubRoutes))
-	register("/api/backends", middleware.Auth(ServeBackends))
-	register("/api/tts/generate", middleware.Auth(TTSGenerate))
-	register("/api/tts/stream/", middleware.Auth(TTSStream))
-	register("/api/tts/audio/ws", middleware.Auth(TTSAudioWS))
-	register("/api/stt/transcribe", middleware.Auth(STTTranscribe))
-	register("/api/stt/transcribe/ws", middleware.Auth(STTTranscribeWS))
-	register("/api/tasks", middleware.Auth(ServeTasks))
-	register("/api/tasks/", middleware.Auth(ServeTaskByID))
-	register("/api/rag/search", middleware.Auth(ServeRAGSearch))
-	register("/api/rag/message", middleware.Auth(ServeRAGMessage))
-	register("/api/rag/message/summarize", middleware.Auth(ServeMessageSummarize))
-	register("/api/rag/message-index-status", middleware.Auth(ServeRAGMessageIndexStatus))
-	register("/api/rag/session", middleware.Auth(ServeRAGSession))
-	register("/api/rag/status", middleware.Auth(ServeRAGStatus))
-	register("/api/rag/reset-vector", middleware.Auth(ServeRAGResetVector))
-	register("/api/rag/rebuild-fts", middleware.Auth(ServeRAGRebuildFTS))
-	register("/api/rag/session-search", middleware.Auth(ServeRAGSessionSearch))
-	register("/api/rag/session-first-message", middleware.Auth(ServeRAGSessionFirstMessage))
+	register("/api/share", ServeShareManage)
+	register("/api/share/list", ServeShareList)
+	registerPublic("/api/share/", ServeSharePublic)
+	registerPublic("/share/", ServeSharePage)
+	register("/api/dir", ListDir)
+	register("/api/file/list-tree", ServeListTree)
+	register("/api/file/thumb", FileThumb)
+	register("/api/file/", GetFile)
+	register("/api/git/branch", ServeGitBranch)
+	register("/api/git/branches", ServeGitBranches)
+	register("/api/git/project-history", ServeGitProjectHistory)
+	register("/api/git/file-diff", ServeGitFileDiff)
+	register("/api/git/commit-files", ServeGitCommitFiles)
+	register("/api/git/history", ServeGitHistory)
+	register("/api/git/diff", ServeGitDiff)
+	register("/api/git/working-tree", ServeGitWorkingTreeFiles)
+	register("/api/git/verify-commits", ServeGitVerifyCommits)
+	register("/api/git/worktrees", ServeGitWorktrees)
+	register("/api/git/checkout", ServeGitCheckout)
+	register("/api/git/tags", ServeGitTags)
+	register("/api/file/rename", ServeFileRename)
+	register("/api/file/write", ServeFileWrite)
+	register("/api/file/delete", ServeFileDelete)
+	register("/api/file/batch-exists", ServeFileBatchExists)
+	register("/api/file/batch-base64", ServeFileBatchBase64)
+	register("/api/file/create", ServeFileCreate)
+	register("/api/file/copy", ServeFileCopy)
+	register("/api/dir/create", ServeDirCreate)
+	register("/api/file/move", ServeFileMove)
+	register("/api/file/archive", ServeFileArchive)
+	register("/api/file/symbols", ServeFileSymbols)
+	register("/api/recent-projects", ServeRecentProjects)
+	register("/api/local-file/", ServeLocalFile)
+	register("/api/agents", ServeAgents)
+	register("/api/agents/", ServeAgentSubRoutes)
+	register("/api/backends", ServeBackends)
+	register("/api/tts/generate", TTSGenerate)
+	register("/api/tts/stream/", TTSStream)
+	register("/api/tts/audio/ws", TTSAudioWS)
+	register("/api/stt/transcribe", STTTranscribe)
+	register("/api/stt/transcribe/ws", STTTranscribeWS)
+	register("/api/tasks", ServeTasks)
+	register("/api/tasks/", ServeTaskByID)
+	register("/api/rag/search", ServeRAGSearch)
+	register("/api/rag/message", ServeRAGMessage)
+	register("/api/rag/message/summarize", ServeMessageSummarize)
+	register("/api/rag/message-index-status", ServeRAGMessageIndexStatus)
+	register("/api/rag/session", ServeRAGSession)
+	register("/api/rag/status", ServeRAGStatus)
+	register("/api/rag/reset-vector", ServeRAGResetVector)
+	register("/api/rag/rebuild-fts", ServeRAGRebuildFTS)
+	register("/api/rag/session-search", ServeRAGSessionSearch)
+	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
 
 	// Client log collection — intentionally unauthenticated:
 	// Android AppLog sends logs via native HttpURLConnection (no WebView cookies).
@@ -348,25 +397,25 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
 	// Android native and JS frontend both land in the unified
 	// {LogDir}/logs/client.log ([js]/[android] markers).
-	register("/api/client-log", ServeClientLog)
+	registerPublic("/api/client-log", ServeClientLog)
 
 	// Android APK download — intentionally unauthenticated:
 	// APK is a public resource; users need to download it before they can even log in.
-	register("/api/apk", ServeAPK)
+	registerPublic("/api/apk", ServeAPK)
 
 	// File watch SSE (auto-refresh on file changes)
-	register("/api/file/watch", middleware.Auth(FileWatchSSE))
-	register("/api/file/watch/update", middleware.Auth(FileWatchUpdate))
+	register("/api/file/watch", FileWatchSSE)
+	register("/api/file/watch/update", FileWatchUpdate)
 
 	// Directory search SSE (recursive fuzzy file search)
-	register("/api/dir/search", middleware.Auth(DirSearch))
+	register("/api/dir/search", DirSearch)
 
 	// Port forwarding (registration & detection only; actual forwarding uses SSH tunnels)
-	register("/api/proxy/ports", middleware.Auth(ServeProxyPortAction))
-	register("/api/proxy/ports/enabled", middleware.Auth(ServeProxySetPortEnabled))
-	register("/api/proxy/detect", middleware.Auth(ServeProxyDetect))
+	register("/api/proxy/ports", ServeProxyPortAction)
+	register("/api/proxy/ports/enabled", ServeProxySetPortEnabled)
+	register("/api/proxy/detect", ServeProxyDetect)
 	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
-	register("/api/openapi-proxy", middleware.Auth(proxy.ServeCORSProxy))
+	register("/api/openapi-proxy", proxy.ServeCORSProxy)
 
 	// SSH tunnel info — intentionally unauthenticated:
 	// 1. Android BackgroundService.fetchSSHPort() calls this from native Java
@@ -375,45 +424,45 @@ func RegisterRoutes(mux *http.ServeMux) {
 	//    and SSH tunnel silently fails with no error reported to the user.
 	// 3. This endpoint only exposes: SSH port number, username ("clawbench"),
 	//    host key fingerprint, and connection stats — no secrets or credentials.
-	register("/api/ssh/info", ServeSSHInfo)
+	registerPublic("/api/ssh/info", ServeSSHInfo)
 
 	// FRP tunnel status
-	register("/api/frp/info", middleware.Auth(ServeFRPInfo)) // Full status, requires auth (exposes public IP)
-	register("/api/frp/status", ServeFRPStatus)              // Minimal status, no auth (only enabled+running)
+	register("/api/frp/info", ServeFRPInfo)           // Full status, requires auth (exposes public IP)
+	registerPublic("/api/frp/status", ServeFRPStatus) // Minimal status, no auth (only enabled+running)
 
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
-	register("/api/terminal/ws", middleware.Auth(TerminalWebSocket))
-	register("/api/terminal/status", middleware.Auth(TerminalStatus))
-	register("/api/terminal/close", middleware.Auth(TerminalClose))
-	register("/api/terminal/quick-commands", middleware.Auth(ServeQuickCommands))
-	register("/api/terminal/quick-commands/", middleware.Auth(ServeQuickCommandByID))
-	register("/api/terminal/key-config", middleware.Auth(ServeKeyConfig))
+	register("/api/terminal/ws", TerminalWebSocket)
+	register("/api/terminal/status", TerminalStatus)
+	register("/api/terminal/close", TerminalClose)
+	register("/api/terminal/quick-commands", ServeQuickCommands)
+	register("/api/terminal/quick-commands/", ServeQuickCommandByID)
+	register("/api/terminal/key-config", ServeKeyConfig)
 
 	// Global event WebSocket (replaces polling for session/task status)
-	register("/api/ai/events/ws", middleware.Auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	register("/api/ai/events/ws", func(w http.ResponseWriter, r *http.Request) {
 		ws.EventsHandler(w, r)
-	})))
+	})
 
 	// Pending events (missed notifications for offline clients)
-	register("/api/ai/events/pending", middleware.Auth(http.HandlerFunc(ServePendingEvents)))
+	register("/api/ai/events/pending", ServePendingEvents)
 
 	// Chat quick-send (CRUD for quick-send presets stored in database)
-	register("/api/chat/quick-send", middleware.Auth(ServeChatQuickSend))
-	register("/api/chat/quick-send/", middleware.Auth(ServeChatQuickSendByID))
+	register("/api/chat/quick-send", ServeChatQuickSend)
+	register("/api/chat/quick-send/", ServeChatQuickSendByID)
 
 	// Message clusters (cached cluster suggestions + on-demand computation)
-	register("/api/chat/message-clusters", middleware.Auth(ServeMessageClusters))
-	register("/api/chat/message-clusters/compute", middleware.Auth(ServeMessageClustersCompute))
-	register("/api/chat/message-clusters/compute/cancel", middleware.Auth(ServeMessageClustersComputeCancel))
-	register("/api/chat/message-clusters/compute/status", middleware.Auth(ServeMessageClustersComputeStatus))
+	register("/api/chat/message-clusters", ServeMessageClusters)
+	register("/api/chat/message-clusters/compute", ServeMessageClustersCompute)
+	register("/api/chat/message-clusters/compute/cancel", ServeMessageClustersComputeCancel)
+	register("/api/chat/message-clusters/compute/status", ServeMessageClustersComputeStatus)
 
 	// Conversation recommendation (latest next-step suggestion for a session)
-	register("/api/chat/recommendation", middleware.Auth(ServeChatRecommendation))
+	register("/api/chat/recommendation", ServeChatRecommendation)
 
 	// Self-upgrade
-	register("/api/upgrade/check", middleware.Auth(ServeUpgradeCheck))
-	register("/api/upgrade/start", middleware.Auth(ServeUpgradeStart))
-	register("/api/upgrade/status", middleware.Auth(ServeUpgradeStatus))
+	register("/api/upgrade/check", ServeUpgradeCheck)
+	register("/api/upgrade/start", ServeUpgradeStart)
+	register("/api/upgrade/status", ServeUpgradeStatus)
 
 	// Serve static assets from frontend filesystem (disk public/ > embed fallback)
 	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
