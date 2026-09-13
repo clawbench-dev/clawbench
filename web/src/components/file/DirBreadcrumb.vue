@@ -129,7 +129,7 @@ const parts = computed(() => {
 }
 
 .crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   cursor: default;
 }

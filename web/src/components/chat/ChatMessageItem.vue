@@ -444,7 +444,7 @@ function handleCopyMessage() {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
     color: var(--accent-color, #0066cc);
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
@@ -464,7 +464,7 @@ function handleCopyMessage() {
 .chat-file-changes-count {
     margin-left: auto;
     font-size: var(--font-size-xs);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
     border-radius: 2px;
     padding: 0 6px;
@@ -519,7 +519,7 @@ function handleCopyMessage() {
 
 .chat-copy-copied-text {
     font-size: var(--font-size-xs);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 @media (hover: hover) {
@@ -594,7 +594,7 @@ function handleCopyMessage() {
     color: rgba(255, 255, 255, 0.9);
     padding: 1px 7px;
     font-size: var(--font-size-2xs);
-    line-height: 1.6;
+    line-height: var(--line-height-relaxed);
     transition: background 0.15s, color 0.15s;
 }
 
@@ -668,7 +668,7 @@ function handleCopyMessage() {
 .chat-message {
     padding: 8px 12px;
     font-size: var(--font-size-md);
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     min-width: 0;
     word-wrap: break-word;
     word-break: break-word;
@@ -903,7 +903,7 @@ function handleCopyMessage() {
 .chat-message.user h2,
 .chat-message.user h3 {
     margin: 6px 0 3px;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .chat-message.user h1 { font-size: var(--font-size-2xl); }
@@ -1063,7 +1063,7 @@ function handleCopyMessage() {
 .chat-message.assistant h2,
 .chat-message.assistant h3 {
     margin: 6px 0 3px;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .chat-message.assistant h1 { font-size: var(--font-size-2xl); }

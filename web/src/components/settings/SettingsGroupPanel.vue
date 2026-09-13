@@ -628,7 +628,7 @@ watch(localValues, () => {
   padding: 5px 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   position: relative;
   background: var(--bg-tertiary);
 }
@@ -812,7 +812,7 @@ watch(localValues, () => {
   padding: 5px 16px 3px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: var(--bg-tertiary);
 }
 
@@ -861,7 +861,7 @@ watch(localValues, () => {
   margin: 6px 16px 0;
   padding: 6px 10px;
   border-radius: 6px;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .group-panel__test-result--success {
@@ -938,6 +938,6 @@ watch(localValues, () => {
 .group-panel__option-check {
   font-size: var(--font-size-xl);
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 </style>

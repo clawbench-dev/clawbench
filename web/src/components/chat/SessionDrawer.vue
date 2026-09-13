@@ -654,7 +654,7 @@ defineExpose({
   background: none;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
@@ -802,7 +802,7 @@ defineExpose({
 
 .model-item.current .model-item-name,
 .thinking-item.current .model-item-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .default-label {
@@ -815,7 +815,7 @@ defineExpose({
 
 .default-text {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -894,7 +894,7 @@ defineExpose({
 
 .auto-approve-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 

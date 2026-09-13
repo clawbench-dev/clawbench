@@ -73,7 +73,7 @@ function baseName(path) {
 .fc-section-title {
   padding: 4px 16px 6px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -122,7 +122,7 @@ function baseName(path) {
 
 .fc-file-name {
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;

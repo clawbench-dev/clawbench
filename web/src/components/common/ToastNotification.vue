@@ -33,7 +33,7 @@ defineProps({
     align-items: center;
     gap: 6px;
     font-size: var(--font-size-md);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     box-shadow: var(--shadow-md);
     cursor: pointer;
     z-index: 9999;
@@ -42,7 +42,7 @@ defineProps({
     min-width: 80px;
     max-width: 88vw;
     text-align: left;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     -webkit-tap-highlight-color: transparent;
     user-select: none;
     transition: opacity 0.1s, transform 0.1s;

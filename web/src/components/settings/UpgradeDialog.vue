@@ -246,7 +246,7 @@ watch(visible, (v) => {
 .ug-header h3 {
   margin: 0;
   font-size: var(--font-size-2xl);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
@@ -279,14 +279,14 @@ watch(visible, (v) => {
 
 .ug-ver-current { color: var(--text-secondary); }
 .ug-arrow { color: var(--text-muted); }
-.ug-ver-latest { color: var(--accent-color); font-weight: 600; }
+.ug-ver-latest { color: var(--accent-color); font-weight: var(--font-weight-semibold); }
 
 .ug-release-link {
   display: block;
   text-align: center;
   margin: 0 16px 12px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color);
   text-decoration: none;
   cursor: pointer;
@@ -333,7 +333,7 @@ watch(visible, (v) => {
 .ug-success {
   margin: 0 0 8px;
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
@@ -375,7 +375,7 @@ watch(visible, (v) => {
 .ug-warn-title {
   margin: 0 0 6px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-warning, #d69e2e);
 }
 
@@ -405,7 +405,7 @@ watch(visible, (v) => {
 .ug-hint-title {
   margin: 0 0 6px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
@@ -432,13 +432,13 @@ watch(visible, (v) => {
   margin: 8px 0 0;
   font-size: var(--font-size-xs);
   color: var(--text-warning, #d69e2e);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .ug-error-title {
   margin: 0;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-danger, #e53e3e);
 }
 

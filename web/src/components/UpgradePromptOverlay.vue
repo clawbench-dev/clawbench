@@ -107,7 +107,7 @@ watch(visible, (v) => {
 .up-header h3 {
   margin: 0;
   font-size: var(--font-size-2xl);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
@@ -115,7 +115,7 @@ watch(visible, (v) => {
   margin: 0 16px 8px;
   font-size: var(--font-size-md);
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 .up-version-badge {
@@ -126,7 +126,7 @@ watch(visible, (v) => {
   color: var(--accent-color);
   border-radius: 6px;
   font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
 }
 
@@ -134,7 +134,7 @@ watch(visible, (v) => {
   display: block;
   margin: 0 16px 12px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color);
   text-decoration: none;
   cursor: pointer;
@@ -148,7 +148,7 @@ watch(visible, (v) => {
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .up-docker-restart {
@@ -175,7 +175,7 @@ watch(visible, (v) => {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: opacity 0.2s;
 }
@@ -191,7 +191,7 @@ watch(visible, (v) => {
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: all 0.2s;
 }

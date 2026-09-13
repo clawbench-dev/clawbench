@@ -827,7 +827,7 @@ onMounted(async () => {
 
 .drilldown-count {
   font-size: var(--font-size-2xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
   padding: 1px 6px;
@@ -873,7 +873,7 @@ onMounted(async () => {
 
 .diff-nav-count {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   padding: 0 4px;
   white-space: nowrap;
@@ -928,7 +928,7 @@ onMounted(async () => {
 
 .git-file-type-badge {
   font-size: var(--font-size-2xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   padding: 2px 5px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -969,7 +969,7 @@ onMounted(async () => {
 
 .file-group-label {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   padding: 8px 14px 4px;
   letter-spacing: 0.03em;

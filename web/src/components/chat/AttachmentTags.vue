@@ -257,7 +257,7 @@ watch(() => props.files, (files) => {
 
 .attachment-progress-text {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #ffffff;
   line-height: 1;
 }

@@ -65,7 +65,7 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;

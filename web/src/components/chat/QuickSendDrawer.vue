@@ -240,7 +240,7 @@ async function onDragEnd() {
 
 .qs-label {
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;

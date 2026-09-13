@@ -359,7 +359,7 @@ function formatTime(iso: string): string {
 }
 .forge-error-icon { color: var(--color-red); flex-shrink: 0; }
 .forge-error-text { flex: 1; min-width: 0; }
-.forge-error-title { font-size: var(--font-size-md); font-weight: 600; margin-bottom: 2px; }
+.forge-error-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin-bottom: 2px; }
 .forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
 
 /* ── Body ── */
@@ -376,7 +376,7 @@ function formatTime(iso: string): string {
 .forge-detail-title-main { flex: 1; min-width: 0; }
 .forge-detail-title {
   font-size: var(--font-size-2xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin: 0;
   line-height: 1.35;
   color: var(--text-primary);
@@ -398,7 +398,7 @@ function formatTime(iso: string): string {
 /* State badge — tinted pill instead of bare coloured text. */
 .forge-state-badge {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 1px 8px;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -436,7 +436,7 @@ function formatTime(iso: string): string {
   align-items: center;
   gap: 5px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
 }
 .forge-load-more-comments {
@@ -472,7 +472,7 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
-.forge-comment-author { font-weight: 600; color: var(--text-primary); }
+.forge-comment-author { font-weight: var(--font-weight-semibold); color: var(--text-primary); }
 .forge-comment-body {
   padding: 10px 12px;
   background: var(--bg-primary);

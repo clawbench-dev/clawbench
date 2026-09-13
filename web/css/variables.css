@@ -59,6 +59,21 @@
     --font-size-lg: 14px;    /* tool icons, dialog titles, primary buttons */
     --font-size-xl: 15px;    /* reading text — matches the html/body base */
     --font-size-2xl: 16px;   /* page/section headings */
+
+    /* ── Weights. Three steps cover the UI; `400` (regular) is the browser
+       default and is left unwritten rather than tokenized, and `800` exists
+       once for terminal keycaps. ── */
+    --font-weight-medium: 500;    /* secondary emphasis, list emphasis */
+    --font-weight-semibold: 600;  /* the workhorse: labels, headings, buttons */
+    --font-weight-bold: 700;      /* strong emphasis, keycaps */
+
+    /* ── Line heights (unitless, so they scale with the element's own font
+       size). `1` on a single-line element and the handful of px values are
+       left as-is. ── */
+    --line-height-tight: 1.2;    /* dense two-line blocks */
+    --line-height-snug: 1.4;     /* compact UI text */
+    --line-height-normal: 1.5;   /* body text */
+    --line-height-relaxed: 1.6;  /* long-form reading (markdown) */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════

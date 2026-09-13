@@ -182,7 +182,7 @@ defineExpose({ startPolling, stopPolling })
 
 .server-info-address {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,7 +202,7 @@ defineExpose({ startPolling, stopPolling })
   border-radius: var(--radius-sm, 4px);
   color: var(--color-red, #ef4444);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   transition: background 0.15s, color 0.15s;
   flex-shrink: 0;
 }
@@ -234,7 +234,7 @@ defineExpose({ startPolling, stopPolling })
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-xs);
-  line-height: 1.2;
+  line-height: var(--line-height-tight);
 }
 
 .resource-icon {
@@ -319,7 +319,7 @@ defineExpose({ startPolling, stopPolling })
 
 .connection-status-text {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 

@@ -240,7 +240,7 @@ function handlePromptClick(event: MouseEvent) {
 
 .task-name {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
   flex: 1;
@@ -254,7 +254,7 @@ function handlePromptClick(event: MouseEvent) {
   padding: 4px 8px;
   border-radius: 12px;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -336,7 +336,7 @@ function handlePromptClick(event: MouseEvent) {
   align-items: center;
   gap: 8px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
 }
@@ -413,7 +413,7 @@ function handlePromptClick(event: MouseEvent) {
 
 .overview-row.highlight .overview-value {
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .overview-label {

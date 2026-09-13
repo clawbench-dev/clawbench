@@ -216,7 +216,7 @@ const sampleEventType = computed(() => {
   align-items: center;
   gap: 8px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
 }
@@ -250,7 +250,7 @@ const sampleEventType = computed(() => {
 }
 .event-chip-kind {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   flex-shrink: 0;
   min-width: 56px;
@@ -312,7 +312,7 @@ const sampleEventType = computed(() => {
 /* ── Context preview ── */
 .sample-badge {
   font-size: var(--font-size-2xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--text-muted, #999);
@@ -331,7 +331,7 @@ const sampleEventType = computed(() => {
 }
 .event-context-heading {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #4b5563);
   margin-bottom: 2px;
 }
@@ -339,7 +339,7 @@ const sampleEventType = computed(() => {
   display: flex;
   gap: 6px;
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 .event-context-label {
   color: var(--text-muted, #999);

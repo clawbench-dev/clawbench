@@ -291,7 +291,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
   overflow: hidden;
   flex: 1;
@@ -300,7 +300,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 .drilldown-count {
   font-size: var(--font-size-2xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
   padding: 1px 6px;
@@ -410,7 +410,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 .git-commit-msg {
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -467,7 +467,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 .empty-state-title {
     font-size: var(--font-size-lg);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
 }
 
@@ -533,7 +533,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 .git-ref-tag {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 1px 5px;
   border-radius: 3px;
   white-space: nowrap;

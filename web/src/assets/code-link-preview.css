@@ -155,7 +155,7 @@ body.code-preview-dragging * {
 .code-preview-notice {
   padding: 4px 10px;
   font-size: var(--font-size-xs);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
 }
 
@@ -272,7 +272,7 @@ body.code-preview-dragging * {
 .code-preview-line-row.is-target-line .code-preview-line-number,
 .code-preview-line-number.is-target-line {
   color: var(--primary-color, #1a73e8);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   background: rgba(59, 130, 246, 0.12);
   background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, var(--code-bg, var(--bg-primary, #ffffff)));
 }
@@ -477,7 +477,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-filename {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #202124);
   word-break: break-all;
   display: -webkit-box;
@@ -686,7 +686,7 @@ body.code-preview-dragging * {
   font-size: var(--font-size-xs);
   line-height: 14px;
   font-family: var(--font-ui);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.2px;
   color: #ffffff;
   background: rgba(32, 33, 36, 0.94);
@@ -770,7 +770,7 @@ body.code-preview-dragging * {
 
 .code-preview-media-audio-name {
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #202124);
   max-width: 100%;
   overflow: hidden;
@@ -893,7 +893,7 @@ body.code-preview-dragging * {
 .code-link-preview-floating.is-compact .code-preview-compact-name {
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #202124);
   overflow: hidden;
   text-overflow: ellipsis;

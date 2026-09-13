@@ -176,7 +176,7 @@ function shortDate(dateStr: string) {
 
 .tag-name {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;

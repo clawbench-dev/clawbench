@@ -324,7 +324,7 @@ defineExpose({
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
 }
 
@@ -386,7 +386,7 @@ defineExpose({
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   border-bottom: 1px solid var(--border-color, #f0f0f0);
   transition: background 0.1s;
 }

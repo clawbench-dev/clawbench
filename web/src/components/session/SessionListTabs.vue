@@ -78,8 +78,8 @@ watch(total, (n) => {
   background: transparent;
   color: var(--text-muted, #999);
   font-size: var(--font-size-sm);
-  font-weight: 500;
-  line-height: 1.4;
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
   cursor: pointer;
   transition: color 0.15s, background 0.15s;
 }

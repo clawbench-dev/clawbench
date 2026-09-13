@@ -114,7 +114,7 @@ function renderLabel(item: CompletionItem): string {
 
 .completion-label {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -125,7 +125,7 @@ function renderLabel(item: CompletionItem): string {
   background: rgba(255, 230, 0, 0.5);
   color: inherit;
   padding: 0 1px;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 
 :root[data-theme-base="dark"] .completion-label mark {
@@ -146,7 +146,7 @@ function renderLabel(item: CompletionItem): string {
 .completion-source {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 </style>

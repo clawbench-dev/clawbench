@@ -1779,7 +1779,7 @@ defineExpose({
   gap: 4px;
   padding: 4px 8px 0;
   font-size: var(--font-size-xs);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   color: var(--text-muted, #999);
   overflow: hidden;
   white-space: nowrap;
@@ -2098,7 +2098,7 @@ defineExpose({
   background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   border-radius: 20px;
   pointer-events: none;
 }
@@ -2543,7 +2543,7 @@ defineExpose({
   padding: 6px 14px 2px;
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.3px;
 }
 
@@ -2578,7 +2578,7 @@ defineExpose({
 /* Label (flex-shrink 0) + command (ellipsis) + trailing inject icon */
 .qs-label {
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2637,14 +2637,14 @@ defineExpose({
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin-bottom: 8px;
 }
 
 .usage-popup-section-title {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   margin-top: 8px;
   margin-bottom: 4px;
@@ -2675,7 +2675,7 @@ defineExpose({
 
 .usage-popup-pct {
   font-size: var(--font-size-lg);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   flex-shrink: 0;
   min-width: 36px;
   text-align: right;
@@ -2695,7 +2695,7 @@ defineExpose({
 
 .usage-popup-value {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2718,7 +2718,7 @@ defineExpose({
   padding: 5px 12px;
   color: var(--text-secondary, #6c757d);
   font-size: var(--font-size-sm);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   transition: color 0.15s, border-color 0.15s;
   user-select: none;
   -webkit-user-select: none;

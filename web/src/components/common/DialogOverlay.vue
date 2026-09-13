@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
 .dlg-msg {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #555);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   margin-bottom: 14px;
   white-space: pre-line;
   word-break: break-word;
@@ -195,7 +195,7 @@ onBeforeUnmount(() => {
 .dlg-textarea {
   resize: none;
   min-height: 84px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
   padding: 6px 16px;
   border-radius: 8px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   border: none;
   cursor: pointer;
   transition: opacity 0.12s;

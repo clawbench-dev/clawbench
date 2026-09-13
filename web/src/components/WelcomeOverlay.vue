@@ -269,7 +269,7 @@ onUnmounted(() => {
 .welcome-header h3 {
   margin: 0;
   font-size: var(--font-size-2xl);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
@@ -297,12 +297,12 @@ onUnmounted(() => {
   margin: 0 16px 10px;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .desc-highlight {
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .backends-list {
@@ -345,7 +345,7 @@ onUnmounted(() => {
 
 .backend-name {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   line-height: 1.3;
 }
@@ -362,7 +362,7 @@ onUnmounted(() => {
   right: 6px;
   bottom: 4px;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 1px 5px;
   border-radius: 6px;
   white-space: nowrap;
@@ -383,7 +383,7 @@ onUnmounted(() => {
   right: 6px;
   top: 4px;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 2px 6px;
   border: none;
   border-radius: 6px;
@@ -422,7 +422,7 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
   color: var(--accent-color);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -468,7 +468,7 @@ onUnmounted(() => {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: opacity 0.2s;
 }
@@ -481,7 +481,7 @@ onUnmounted(() => {
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   padding: 4px 10px;
   border-radius: 6px;

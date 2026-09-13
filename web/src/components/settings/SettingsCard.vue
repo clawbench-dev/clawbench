@@ -32,7 +32,7 @@ defineProps<{
   padding: 5px 16px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   position: relative;
   background: var(--bg-tertiary);
 }

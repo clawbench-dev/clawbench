@@ -504,7 +504,7 @@ async function handleRetryTunnel() {
 
 .proxy-header-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   flex: 1;
   white-space: nowrap;
@@ -629,7 +629,7 @@ async function handleRetryTunnel() {
 
 .tunnel-banner-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .tunnel-banner-detail {
@@ -724,7 +724,7 @@ async function handleRetryTunnel() {
   gap: 6px;
   padding: 8px 10px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #666);
   cursor: pointer;
   transition: background 0.15s;
@@ -760,7 +760,7 @@ async function handleRetryTunnel() {
 .tunnel-guide-intro {
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .tunnel-guide-steps {
@@ -772,7 +772,7 @@ async function handleRetryTunnel() {
 .tunnel-guide-step {
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 /* Tunnel guide: per-OS ssh install hint (web mode) */
@@ -783,12 +783,12 @@ async function handleRetryTunnel() {
   gap: 4px 6px;
   margin-top: 2px;
   font-size: var(--font-size-xs);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .tunnel-guide-install-hint {
   color: var(--text-muted, #999);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .tunnel-guide-install-link {
@@ -811,7 +811,7 @@ async function handleRetryTunnel() {
   font-size: var(--font-size-2xs);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .tunnel-guide-command {
@@ -830,7 +830,7 @@ async function handleRetryTunnel() {
   font-size: var(--font-size-2xs);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   display: block;
 }
@@ -932,7 +932,7 @@ async function handleRetryTunnel() {
 
 .port-scan-count {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
@@ -977,14 +977,14 @@ async function handleRetryTunnel() {
 
 .port-scan-item-port {
   font-family: var(--font-mono);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   font-size: var(--font-size-xl);
   flex-shrink: 0;
 }
 
 .port-scan-item-proto {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 2px 6px;
@@ -1049,7 +1049,7 @@ async function handleRetryTunnel() {
 
 .port-add-label {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #666);
 }
 

@@ -218,7 +218,7 @@ async function revokeLink() {
 .share-dialog-hint {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #57606a);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 .share-dialog-error {
   font-size: var(--font-size-md);
@@ -236,9 +236,9 @@ async function revokeLink() {
 }
 .share-dialog-file-name {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1f2328);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -247,7 +247,7 @@ async function revokeLink() {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #8b949e);
   font-family: var(--font-mono);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -292,7 +292,7 @@ async function revokeLink() {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
 .share-notice-warning {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: #b45309;
   word-break: break-word;
 }

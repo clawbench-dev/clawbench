@@ -53,7 +53,7 @@
 /* ─── Code block with per-line structure ─── */
 pre.code-block-pre {
     padding: 0;
-    line-height: 1.6;
+    line-height: var(--line-height-relaxed);
     overflow: auto;
     background: var(--code-bg);
 }

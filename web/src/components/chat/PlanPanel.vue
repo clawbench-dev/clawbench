@@ -216,7 +216,7 @@ watch(
 .plan-expanded__title {
   flex: 1;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
 }
 
@@ -342,7 +342,7 @@ watch(
   flex: 1;
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   padding-top: 2px;
   min-width: 0;
   white-space: nowrap;

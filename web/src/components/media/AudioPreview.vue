@@ -98,7 +98,7 @@ function onLoaded() {
 
 .audio-name {
     font-size: var(--font-size-xl);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     word-break: break-all;
     max-width: 300px;

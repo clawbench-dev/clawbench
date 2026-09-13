@@ -44,7 +44,7 @@
 .markdown-body h6 {
     margin-top: 1.5em;
     margin-bottom: 0.5em;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     line-height: 1.3;
     color: var(--text-primary);
 }
@@ -84,7 +84,7 @@
     padding: 12px;
     border: none;
     font-size: var(--font-size-md);
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
 }
 
 .markdown-body pre code {

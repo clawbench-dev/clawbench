@@ -229,7 +229,7 @@ watch(() => props.open, async (val) => {
 .agent-option-name {
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .agent-set-default-btn {
@@ -251,7 +251,7 @@ watch(() => props.open, async (val) => {
 .agent-default-badge-pill {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: var(--accent-color, #0066cc);
   padding: 1px 5px;
@@ -311,7 +311,7 @@ watch(() => props.open, async (val) => {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 

@@ -359,7 +359,7 @@ defineExpose({
   font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 4px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   white-space: nowrap;
   text-transform: uppercase;
@@ -381,7 +381,7 @@ defineExpose({
   font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 4px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.02em;
   flex-shrink: 0;
@@ -415,7 +415,7 @@ defineExpose({
 /* ── Duration (top row, right-aligned next to trigger type) ── */
 .exec-duration {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #111827);
   background: rgba(0, 102, 204, 0.05);
   padding: 2px 6px;
@@ -462,7 +462,7 @@ defineExpose({
 .exec-summary {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #4b5563);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

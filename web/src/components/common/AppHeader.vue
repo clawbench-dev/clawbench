@@ -851,7 +851,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     color: var(--text-primary);
     border-radius: 0;
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
@@ -876,7 +876,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     color: var(--text-primary);
 }
 
@@ -891,7 +891,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     border: none;
     border-radius: 0;
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
@@ -920,7 +920,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     border: none;
     border-radius: 0;
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
@@ -954,7 +954,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     color: var(--text-primary);
 }
 
@@ -998,7 +998,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
 }
 
 /* Quick theme picker */
@@ -1106,7 +1106,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu-title {
     padding: 5px 12px 4px;
     font-size: var(--font-size-xs);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
@@ -1158,7 +1158,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .app-menu-item.app-menu-item--stacked .item-path {
@@ -1233,7 +1233,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .app-menu-item .item-path {
@@ -1325,7 +1325,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     gap: 8px;
     font-size: var(--font-size-2xl);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary, #1a1a1a);
     margin-bottom: 8px;
 }
@@ -1346,7 +1346,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     font-size: var(--font-size-md);
     color: var(--text-secondary, #666);
     margin: 0 0 16px;
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
     white-space: pre-line;
     word-break: break-word;
 }
@@ -1363,7 +1363,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     border-radius: 8px;
     border: 1px solid;
     font-size: var(--font-size-lg);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     text-align: center;
     background: transparent;
@@ -1437,7 +1437,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
 .theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
 .theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
 .theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
 .theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

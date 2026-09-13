@@ -120,7 +120,7 @@ function onDiffClick(event: MouseEvent) {
 /* ─── Function name (left side) ─── */
 .git-diff-scroll :deep(.diff-hunk-func) {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #555);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -167,7 +167,7 @@ function onDiffClick(event: MouseEvent) {
   padding: 0;
   opacity: 0.5;
   font-size: var(--font-size-md);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   font-family: var(--font-mono);
   transition: opacity 0.15s, color 0.15s, background 0.15s;
   outline: none;
@@ -221,7 +221,7 @@ function onDiffClick(event: MouseEvent) {
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 /* ─── Word-wrap toggle: wrap mode ─── */
@@ -300,7 +300,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-raw) {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary, #212529);

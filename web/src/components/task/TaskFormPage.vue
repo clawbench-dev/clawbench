@@ -575,7 +575,7 @@ onMounted(() => {
   padding: 6px 12px;
   border-radius: 0;
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   margin-bottom: 4px;
 }
 
@@ -611,7 +611,7 @@ onMounted(() => {
 .section-title {
   margin: 0 0 2px 0;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
 }
 
@@ -627,7 +627,7 @@ onMounted(() => {
 
 .form-label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #4b5563);
 }
 
@@ -740,7 +740,7 @@ onMounted(() => {
 .agent-display-name {
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .agent-display-tags {
@@ -752,7 +752,7 @@ onMounted(() => {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 
@@ -830,7 +830,7 @@ onMounted(() => {
 
 .event-type-group-label {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
   margin-bottom: 6px;
 }
@@ -859,7 +859,7 @@ onMounted(() => {
   border: 1px dashed var(--border-color, #d1d5db);
   border-radius: 8px;
   font-size: var(--font-size-sm);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   color: var(--text-secondary, #4b5563);
   white-space: pre-wrap;
   word-break: break-word;
@@ -873,7 +873,7 @@ onMounted(() => {
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -916,14 +916,14 @@ onMounted(() => {
 
 .time-label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #4b5563);
   flex-shrink: 0;
 }
 
 .time-sep {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #4b5563);
 }
 
@@ -942,7 +942,7 @@ onMounted(() => {
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -976,7 +976,7 @@ onMounted(() => {
 
 .cron-display code {
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color, #0066cc);
   font-family: var(--font-mono);
 }

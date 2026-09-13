@@ -747,7 +747,7 @@ onBeforeUnmount(() => {
     margin-left: auto;
     color: var(--accent-color);
     font-size: var(--font-size-lg);
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
 }
 </style>
 
@@ -816,6 +816,6 @@ onBeforeUnmount(() => {
     margin-left: auto;
     color: var(--accent-color);
     font-size: var(--font-size-lg);
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
 }
 </style>

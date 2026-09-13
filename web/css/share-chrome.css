@@ -44,7 +44,7 @@
 
 .share-file-name {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1f2328);
   white-space: nowrap;
   overflow: hidden;
@@ -109,7 +109,7 @@
 
 .share-toc-title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #656d76);
   text-transform: uppercase;
   letter-spacing: .04em;
@@ -140,7 +140,7 @@
 .share-toc-item.active {
   color: var(--accent-color, #0969da);
   background: var(--bg-tertiary, #eaeef2);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Line flash used by TOC/anchor jumps (ShareView.scrollToHeading and the

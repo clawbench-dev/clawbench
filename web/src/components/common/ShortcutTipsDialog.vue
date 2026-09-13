@@ -77,7 +77,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 }
 .st-group-count {
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 .st-table {
   width: 100%;
@@ -88,7 +88,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
   text-align: left;
   padding: 4px 8px;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
 }
@@ -110,7 +110,7 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-family: var(--font-mono);
   white-space: nowrap;
 }

@@ -108,7 +108,7 @@ function navigate(target) {
 
 /* ── Current (active) crumb ── */
 .crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
   cursor: default;
 }

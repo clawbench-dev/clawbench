@@ -59,7 +59,7 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
   align-items: center;
   gap: 8px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
 }
@@ -83,7 +83,7 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
 }
 .overview-row.highlight .overview-value {
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 .overview-label {
   font-size: var(--font-size-sm);

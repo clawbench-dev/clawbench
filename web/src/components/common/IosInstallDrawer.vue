@@ -54,7 +54,7 @@ function close() {
   gap: 8px;
   font-size: var(--font-size-md);
   color: var(--text-primary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .ios-step-num {
@@ -67,7 +67,7 @@ function close() {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   flex-shrink: 0;
 }
 

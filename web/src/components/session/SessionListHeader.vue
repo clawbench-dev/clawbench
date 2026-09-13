@@ -104,7 +104,7 @@ const sessionBarColor = computed(() => {
   position: relative;
   z-index: 1;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   line-height: 1;
   letter-spacing: 0.3px;

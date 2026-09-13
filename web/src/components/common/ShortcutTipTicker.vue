@@ -183,7 +183,7 @@ watch(effectiveTips, () => {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-family: var(--font-mono);
   vertical-align: middle;
   white-space: nowrap;

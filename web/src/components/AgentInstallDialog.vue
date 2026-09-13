@@ -104,7 +104,7 @@ function copyCmd() {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 10px;
@@ -178,7 +178,7 @@ function copyCmd() {
   padding: 6px 16px;
   border-radius: 8px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   border: none;
   cursor: pointer;
   transition: opacity 0.12s;

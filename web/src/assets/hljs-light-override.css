@@ -25,7 +25,7 @@
 /* github.css: #d73a49 — already good, just ensure weight       */
 [data-hljs-theme="light"] .hljs-keyword,
 [data-hljs-theme="light"] .hljs-selector-tag,
-[data-hljs-theme="light"] .hljs-subst        { color: #cf222e; font-weight: 600; }
+[data-hljs-theme="light"] .hljs-subst        { color: #cf222e; font-weight: var(--font-weight-semibold); }
 
 /* ── Types & classes ───────────────────────────────────────── */
 /* github.css: #6f42c1 — already good                           */
@@ -75,7 +75,7 @@
 [data-hljs-theme="light"] .hljs-regexp       { color: #b35900; }
 
 /* ── Selectors ─────────────────────────────────────────────── */
-[data-hljs-theme="light"] .hljs-section      { color: #005cc5; font-weight: 700; }
+[data-hljs-theme="light"] .hljs-section      { color: #005cc5; font-weight: var(--font-weight-bold); }
 [data-hljs-theme="light"] .hljs-selector-id,
 [data-hljs-theme="light"] .hljs-selector-class { color: #6f42c1; }
 
@@ -84,7 +84,7 @@
 
 /* ── Inline emphasis / strong ──────────────────────────────── */
 [data-hljs-theme="light"] .hljs-emphasis      { font-style: italic; }
-[data-hljs-theme="light"] .hljs-strong        { font-weight: 700; }
+[data-hljs-theme="light"] .hljs-strong        { font-weight: var(--font-weight-bold); }
 
 /* ── Diffs inside code blocks ──────────────────────────────── */
 [data-hljs-theme="light"] .hljs-deletion      { background: rgba(207,34,46,.12); color: #cf222e; }

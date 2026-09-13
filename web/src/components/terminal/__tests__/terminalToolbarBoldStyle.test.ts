@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest'
 /**
  * Android WebView terminal virtual keys/symbols must match mobile browser
  * weight, using the SAME mechanism as chat bold (markdown-common.css):
- * - Keys are font-weight: 700 (shortcuts 800), symbols font-weight: 700
+ * - Keys are bold weight (shortcuts 800), symbols bold weight
  * - In app/WebView only, add a thin uniform -webkit-text-stroke (hard outline)
  * - Never reintroduce blurred text-shadow (0 0 Npx) or x-only offsets, which
  *   look fuzzy / leave horizontal strokes unchanged respectively.
+ *
+ * The 700 weight is now carried by --font-weight-bold (variables.css), so the
+ * assertion accepts either the token or the literal — what matters is that the
+ * rule resolves to bold, not which spelling is used.
  */
 describe('terminal toolbar bold style (Android WebView vs browser parity)', () => {
   const vue = readFileSync(
@@ -16,9 +20,12 @@ describe('terminal toolbar bold style (Android WebView vs browser parity)', () =
     'utf8',
   )
 
+  /** Matches `font-weight: 700` or `font-weight: var(--font-weight-bold)`. */
+  const BOLD = String.raw`font-weight:\s*(?:700|var\(--font-weight-bold\))`
+
   it('uses bold weight for virtual keys and symbols', () => {
-    expect(vue).toMatch(/\.toolbar-btn\s*\{[\s\S]*?font-weight:\s*700;/)
-    expect(vue).toMatch(/\.toolbar-btn\.btn-symbol\s*\{[\s\S]*?font-weight:\s*700;/)
+    expect(vue).toMatch(new RegExp(String.raw`\.toolbar-btn\s*\{[\s\S]*?${BOLD};`))
+    expect(vue).toMatch(new RegExp(String.raw`\.toolbar-btn\.btn-symbol\s*\{[\s\S]*?${BOLD};`))
     expect(vue).toMatch(/\.toolbar-btn\.shortcut\s*\{[\s\S]*?font-weight:\s*800;/)
   })
 

@@ -204,12 +204,12 @@ const segments = computed<Segment[]>(() => {
   overflow: auto;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .diff-drawer-title {
   flex: 1;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
   color: var(--text-primary);
 }
@@ -226,7 +226,7 @@ const segments = computed<Segment[]>(() => {
   align-items: center;
   gap: 4px;
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   background: none;
   border: none;

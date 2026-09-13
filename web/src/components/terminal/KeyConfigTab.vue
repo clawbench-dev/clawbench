@@ -161,7 +161,7 @@ defineExpose({ getSelectedIds })
 
 .kcf-section-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
 }
 
@@ -214,7 +214,7 @@ defineExpose({ getSelectedIds })
 
 .kcf-group-title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   margin-bottom: 6px;
   text-transform: uppercase;

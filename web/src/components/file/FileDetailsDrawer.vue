@@ -125,7 +125,7 @@ const detailItems = computed(() => {
 
 <style scoped>
 .details-title {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
 }

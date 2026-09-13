@@ -94,7 +94,7 @@ const commitTarget = computed(() => {
   transition: background 0.15s;
 }
 .git-crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   cursor: default;
 }

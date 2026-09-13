@@ -96,7 +96,7 @@ function doInput() {
   color: var(--text-primary, #1a1a1a);
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   padding: 8px 0;
   outline: none;
 }

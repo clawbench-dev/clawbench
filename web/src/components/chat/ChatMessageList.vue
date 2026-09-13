@@ -1330,14 +1330,14 @@ defineExpose({
 
 .agent-welcome-name {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
 .agent-welcome-specialty {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -1355,7 +1355,7 @@ defineExpose({
   font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 
@@ -1386,7 +1386,7 @@ defineExpose({
 
 .no-agents-title {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
@@ -1395,7 +1395,7 @@ defineExpose({
   color: var(--text-muted);
   max-width: 240px;
   text-align: center;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .no-agents-btn {

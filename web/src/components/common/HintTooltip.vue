@@ -216,7 +216,7 @@ onBeforeUnmount(() => {
   z-index: 9999;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   font-size: var(--font-size-sm);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   color: var(--text-primary);
   opacity: 0;
   transition: opacity 0.12s ease;

@@ -100,7 +100,7 @@ defineExpose({ focus, inputRef, focused })
   font-size: var(--font-size-md);
   color: var(--text-primary);
   padding: 0;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .search-pill input::placeholder {

@@ -192,7 +192,7 @@ async function handleRescan() {
 .settings-agents-index__default-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   line-height: 1;
   padding: 1px 5px;
   border-radius: 3px;

@@ -678,7 +678,7 @@ onUnmounted(() => {
 .wallpaper-credit {
   font-size: var(--font-size-xs);
   color: var(--text-muted);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   word-break: break-word;
 }
 
@@ -694,7 +694,7 @@ onUnmounted(() => {
   width: 100%;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   word-break: break-word;
 }
 
@@ -871,7 +871,7 @@ onUnmounted(() => {
   background: var(--accent-color);
   border-color: var(--accent-color);
   color: #fff;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 .settings-item__action:active {
   opacity: 0.85;
@@ -889,7 +889,7 @@ onUnmounted(() => {
   width: 100%;
   font-size: var(--font-size-sm);
   color: var(--color-red);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   word-break: break-word;
 }
 

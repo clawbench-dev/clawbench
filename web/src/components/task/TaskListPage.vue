@@ -323,12 +323,12 @@ onMounted(refresh)
    the one element that answers "what starts this task?" at a glance. */
 .task-trigger-badge {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid transparent;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: nowrap;
 }
 
@@ -346,7 +346,7 @@ onMounted(refresh)
 
 .task-item-name {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -359,13 +359,13 @@ onMounted(refresh)
   font-size: var(--font-size-2xs);
   padding: 2px 6px;
   border-radius: 10px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #0066cc);
   color: #fff;
   flex-shrink: 0;
   min-width: 16px;
   text-align: center;
-  line-height: 1.2;
+  line-height: var(--line-height-tight);
 }
 
 .task-item.has-unread {
@@ -392,7 +392,7 @@ onMounted(refresh)
   font-size: var(--font-size-2xs);
   padding: 3px 6px;
   border-radius: 4px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -466,7 +466,7 @@ onMounted(refresh)
 
 .task-progress {
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   margin-left: 2px;
 }
 

@@ -784,7 +784,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     background: transparent;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
 }
 @media (hover: hover) {
@@ -844,8 +844,8 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     min-width: 16px;
     text-align: center;
     font-size: var(--font-size-xs);
-    font-weight: 600;
-    line-height: 1.6;
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-relaxed);
     cursor: pointer;
     user-select: none;
     border-radius: 3px;
@@ -978,7 +978,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 }
 .cm-viewer .cm-completionMatchedText {
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Search panel (custom-rendered via the shared SearchBar component). The

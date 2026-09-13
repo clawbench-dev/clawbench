@@ -326,7 +326,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 
 .qq-copied-text {
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
 
@@ -379,7 +379,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
    Right padding keeps the text clear of the floating copy button. */
 .qq-quoted-text {
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;

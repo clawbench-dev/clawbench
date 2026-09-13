@@ -782,7 +782,7 @@ defineExpose({ focusSearchInput })
 
 .filter-menu-item.selected {
   color: var(--accent-color, #4a90d9);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .filter-menu-check {
@@ -855,7 +855,7 @@ defineExpose({ focusSearchInput })
   background: rgba(124, 58, 237, 0.08);
   color: var(--color-purple, #7c3aed);
   margin-left: 6px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .session-search-item {
@@ -886,7 +886,7 @@ defineExpose({ focusSearchInput })
 
 .session-search-item-title {
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -903,7 +903,7 @@ defineExpose({ focusSearchInput })
 
 .session-search-item-preview {
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   color: var(--text-secondary, #666);
   margin-bottom: 4px;
   overflow: hidden;
@@ -1014,7 +1014,7 @@ defineExpose({ focusSearchInput })
   border-radius: 3px;
   background: rgba(230, 162, 60, 0.12);
   color: var(--color-warning, #e6a23c);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
   margin-left: 6px;
 }
@@ -1040,7 +1040,7 @@ defineExpose({ focusSearchInput })
   font-size: var(--font-size-2xs);
   padding: 2px 7px;
   border-radius: 4px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .detail-meta-backend {
@@ -1076,7 +1076,7 @@ defineExpose({ focusSearchInput })
   align-items: center;
   gap: 4px;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 2px 0;
   letter-spacing: 0.3px;
 }
@@ -1091,7 +1091,7 @@ defineExpose({ focusSearchInput })
 
 .detail-chunk-text {
   font-size: var(--font-size-md);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   padding: 4px 0 0;
   word-break: break-word;
 }

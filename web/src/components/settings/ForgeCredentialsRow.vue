@@ -213,7 +213,7 @@ onMounted(loadHosts)
 .forge-cred-desc {
   color: var(--text-muted);
   font-size: var(--font-size-md);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 .forge-cred-host {
   display: flex;
@@ -274,7 +274,7 @@ onMounted(loadHosts)
   gap: 4px;
   flex-shrink: 0;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 2px 8px;
   border-radius: 999px;
   color: var(--color-success);

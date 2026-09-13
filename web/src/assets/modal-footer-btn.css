@@ -30,7 +30,7 @@
   background: var(--bg-tertiary, #f1f3f5);
   color: var(--text-secondary, #4b5563);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
   cursor: pointer;
   box-sizing: border-box;

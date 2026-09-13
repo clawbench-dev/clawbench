@@ -758,7 +758,7 @@ onUnmounted(() => {
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-primary, #fff);
   font-size: var(--font-size-xs);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   color: var(--text-secondary, #4b5563);
   white-space: pre-wrap;
   word-break: break-word;

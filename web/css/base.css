@@ -30,7 +30,7 @@ html, body {
     height: 100vh;
     font-family: var(--font-ui);
     font-size: var(--font-size-xl);
-    line-height: 1.6;
+    line-height: var(--line-height-relaxed);
     background: var(--bg-primary);
     color: var(--text-primary);
     transition: background 0.2s, color 0.2s;

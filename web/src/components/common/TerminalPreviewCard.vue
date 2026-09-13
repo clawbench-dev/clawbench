@@ -106,14 +106,14 @@ const fileStyle = computed(() => {
 
 .tpc-line {
   font-size: var(--font-size-2xs);
-  line-height: 1.2;
+  line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .tpc-prompt {
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   margin-right: 4px;
   color: var(--text-secondary);
 }

@@ -279,7 +279,7 @@ defineExpose({ open: openDrawer })
 
 .shared-file-name {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1f2328);
   white-space: nowrap;
   overflow: hidden;

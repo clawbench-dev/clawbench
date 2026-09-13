@@ -2703,7 +2703,7 @@ function scrollSelectedIntoView(path) {
 }
 .file-item.dir-item {
     color: var(--text-primary, #1a1a1a);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .file-item.dir-item .file-icon {
@@ -3037,14 +3037,14 @@ function scrollSelectedIntoView(path) {
 
 .grid-item.grid-dir .grid-name {
     color: var(--text-primary, #1a1a1a);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 /* Containing directory shown under a search hit in grid view. */
 .grid-parent-dir {
     margin-top: 1px;
     font-size: var(--font-size-2xs);
-    line-height: 1.2;
+    line-height: var(--line-height-tight);
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3055,7 +3055,7 @@ function scrollSelectedIntoView(path) {
 
 .grid-item.grid-dir.grid-active .grid-name {
     color: var(--accent-color, #4a90d9);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 /* Grid multi-select check */
@@ -3133,7 +3133,7 @@ function scrollSelectedIntoView(path) {
     font-size: var(--font-size-xs);
     color: var(--text-secondary, #666);
     white-space: nowrap;
-    line-height: 1.2;
+    line-height: var(--line-height-tight);
 }
 
 /* ── Drop overlay ── */
@@ -3148,7 +3148,7 @@ function scrollSelectedIntoView(path) {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
     color: var(--accent-color, #4a90d9);
     font-size: var(--font-size-lg);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     pointer-events: none;
     border-radius: 4px;
 }
@@ -3169,7 +3169,7 @@ function scrollSelectedIntoView(path) {
     background: color-mix(in srgb, var(--success-color, #22c55e) 10%, var(--bg-primary, #fff));
     color: var(--success-color, #22c55e);
     font-size: var(--font-size-lg);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     pointer-events: none;
     border-radius: 4px;
 }
@@ -3374,7 +3374,7 @@ function scrollSelectedIntoView(path) {
 
 .toolbar-dropdown .toolbar-dropdown-item.active {
     color: var(--accent-color, #4a90d9);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .toolbar-dropdown .toolbar-dropdown-item svg {

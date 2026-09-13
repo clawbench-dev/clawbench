@@ -385,8 +385,8 @@ function handleSummaryClick(event: MouseEvent): void {
     flex: 1;
     min-width: 0;
     font-size: var(--font-size-lg);
-    font-weight: 600;
-    line-height: 1.4;
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-snug);
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
@@ -417,7 +417,7 @@ function handleSummaryClick(event: MouseEvent): void {
     flex: 1;
     min-width: 0;
     font-size: var(--font-size-xs);
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
     color: var(--text-secondary, var(--text-primary));
 }
 
@@ -427,7 +427,7 @@ function handleSummaryClick(event: MouseEvent): void {
     gap: 4px;
     min-width: 0;
     font-size: var(--font-size-xs);
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
     color: var(--text-tertiary, var(--text-secondary));
     white-space: nowrap;
     overflow: hidden;
@@ -446,8 +446,8 @@ function handleSummaryClick(event: MouseEvent): void {
     gap: 2px;
     padding: 1px 5px;
     font-size: var(--font-size-2xs);
-    line-height: 1.4;
-    font-weight: 500;
+    line-height: var(--line-height-snug);
+    font-weight: var(--font-weight-medium);
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
@@ -488,8 +488,8 @@ function handleSummaryClick(event: MouseEvent): void {
     margin-left: 6px;
     padding: 2px 9px;
     font-size: var(--font-size-xs);
-    line-height: 1.5;
-    font-weight: 500;
+    line-height: var(--line-height-normal);
+    font-weight: var(--font-weight-medium);
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
@@ -509,7 +509,7 @@ function handleSummaryClick(event: MouseEvent): void {
     max-width: 100%;
     padding: 3px 8px;
     font-size: var(--font-size-sm);
-    line-height: 1.5;
+    line-height: var(--line-height-normal);
     color: var(--text-secondary);
     background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
     border-left: 2px solid var(--accent-color);
@@ -544,7 +544,7 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 .completion-popover-project-name {
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-secondary, var(--text-primary));
 }
 
@@ -560,7 +560,7 @@ function handleSummaryClick(event: MouseEvent): void {
     max-height: 28vh;
     overflow-y: auto;
     font-size: var(--font-size-md);
-    line-height: 1.6;
+    line-height: var(--line-height-relaxed);
     color: var(--text-secondary, var(--text-primary));
     word-break: break-word;
     padding-top: 2px;
@@ -713,7 +713,7 @@ function handleSummaryClick(event: MouseEvent): void {
     border-radius: 999px;
     font-size: var(--font-size-sm);
     line-height: 1;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     white-space: nowrap;
     cursor: pointer;
     transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;

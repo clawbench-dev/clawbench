@@ -296,7 +296,7 @@ function copyValue(value, event) {
 
 .metadata-label {
     font-size: var(--font-size-md);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-secondary);
     min-width: 90px;
     flex-shrink: 0;

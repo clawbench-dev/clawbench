@@ -1407,7 +1407,7 @@ onUnmounted(() => {
   color: var(--text-primary);
   border-radius: 24px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.3px;
   position: absolute;
   top: 48px;

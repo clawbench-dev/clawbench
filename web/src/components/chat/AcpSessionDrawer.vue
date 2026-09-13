@@ -276,8 +276,8 @@ function formatTime(iso: string): string {
 .acp-session-item-title {
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
-  line-height: 1.4;
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
   word-break: break-word;
 }
 
@@ -298,7 +298,7 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
   font-family: var(--font-mono);

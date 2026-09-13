@@ -1349,7 +1349,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab-title {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1359,7 +1359,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 .terminal-tab.active .terminal-tab-title {
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 
 .terminal-tab-unread-dot {
@@ -1704,7 +1704,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   background: transparent;
   color: var(--toolbar-key-text);
   font-size: var(--font-size-md);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   letter-spacing: 0.01em;
   cursor: pointer;
   flex-shrink: 0;
@@ -1735,7 +1735,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   line-height: 1;
   padding: 3px 5px;
 }
-.shift-tab-label { font-size: var(--font-size-2xs); font-weight: 700; line-height: 1.3; }
+.shift-tab-label { font-size: var(--font-size-2xs); font-weight: var(--font-weight-bold); line-height: 1.3; }
 
 @media (max-width: 768px) {
   .main-toolbar-row { padding-bottom: max(4px, env(safe-area-inset-bottom)); }
@@ -1774,7 +1774,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 }
 
 .toolbar-btn.btn-modifier, .toolbar-btn.btn-nav, .toolbar-btn.btn-arrow, .toolbar-btn.btn-symbol, .toolbar-btn.btn-action { background: transparent; }
-.toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: var(--font-mono); font-size: var(--font-size-xl); font-weight: 700; }
+.toolbar-btn.btn-symbol { color: var(--toolbar-key-text); font-family: var(--font-mono); font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); }
 
 /* WebView bold compensation — same mechanism as chat markdown bold
  * (markdown-common.css): font-weight alone renders lighter/softer in Android
@@ -1818,7 +1818,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
   padding: 4px 14px;
   border-radius: 6px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 .selection-copy-close {
   border: none;
@@ -1854,7 +1854,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 /* Quick commands item: label (flex-shrink 0) + command (ellipsis), no trailing inject button */
 .quick-send-item .qs-label {
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1900,7 +1900,7 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
 .theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
 .theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
 .theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
 .theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

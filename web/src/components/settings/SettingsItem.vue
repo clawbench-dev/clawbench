@@ -636,7 +636,7 @@ function confirmEdit() {
   width: 100%;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   word-break: break-word;
   margin-top: 0;
 }
@@ -671,7 +671,7 @@ function confirmEdit() {
   font-size: var(--font-size-lg);
   color: var(--text-secondary);
   word-break: break-all;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 /* Progress bar for info-type items (rendered via parent, not in info-row) */
@@ -744,7 +744,7 @@ function confirmEdit() {
   padding: 16px 16px 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 /* iOS-style switch toggle */
@@ -873,7 +873,7 @@ function confirmEdit() {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-lg);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
 }
 
@@ -901,7 +901,7 @@ function confirmEdit() {
   padding: 8px 12px;
   font-size: var(--font-size-md);
   font-family: inherit;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--bg-secondary);
@@ -923,7 +923,7 @@ function confirmEdit() {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: 4px 16px 8px;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 </style>
 
@@ -977,7 +977,7 @@ function confirmEdit() {
 .settings-item__option-check {
   font-size: var(--font-size-xl);
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   margin-left: auto;
 }
@@ -985,7 +985,7 @@ function confirmEdit() {
 /* Group header inside the select option list (font picker). */
 .settings-item__option-group {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1033,7 +1033,7 @@ function confirmEdit() {
 .theme-picker-error-text {
   font-size: var(--font-size-sm);
   color: #ef4444;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .theme-picker-error-retry {
@@ -1044,7 +1044,7 @@ function confirmEdit() {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
 }
 
@@ -1104,7 +1104,7 @@ function confirmEdit() {
 
 .theme-picker-swatch-label-text {
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   line-height: 1.3;
   color: inherit;
   display: -webkit-box;
@@ -1142,7 +1142,7 @@ function confirmEdit() {
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-sm);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   display: flex;
   align-items: center;
   justify-content: center;

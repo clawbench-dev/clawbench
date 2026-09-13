@@ -83,7 +83,7 @@ const displayFields = computed(() =>
 
 .settings-restart-dialog__header {
   font-size: var(--font-size-2xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin-bottom: 8px;
   text-align: center;
@@ -101,7 +101,7 @@ const displayFields = computed(() =>
   padding-left: 20px;
   font-size: var(--font-size-lg);
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 .settings-restart-dialog__list li {

@@ -140,7 +140,7 @@ async function saveCommand() {
 
 .form-label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #666);
 }
 
@@ -166,7 +166,7 @@ async function saveCommand() {
 .form-textarea {
   resize: vertical;
   min-height: 80px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   font-family: inherit;
 }
 

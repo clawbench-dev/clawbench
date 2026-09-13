@@ -156,7 +156,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .dir-preview-count {

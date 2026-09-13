@@ -190,13 +190,13 @@ onUnmounted(() => {
 .panel-count {
   margin-left: auto;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 22%, transparent);
   border-radius: 10px;
   padding: 1px 8px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 /* ── Search row (below header, above the list) ── */
@@ -269,14 +269,14 @@ onUnmounted(() => {
 
 .panel-empty-text {
   font-size: var(--font-size-lg);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #495057);
 }
 
 .panel-empty-hint {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   max-width: 260px;
 }
 
@@ -371,7 +371,7 @@ onUnmounted(() => {
 
 .msg-index {
   font-size: var(--font-size-xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-secondary);
   line-height: 1;
   transition: color 0.15s;
@@ -397,7 +397,7 @@ onUnmounted(() => {
 .msg-text {
   font-size: var(--font-size-md);
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   word-break: break-word;
   white-space: pre-wrap;
 }

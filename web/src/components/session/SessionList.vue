@@ -799,7 +799,7 @@ onUnmounted(() => {
 .session-item-title {
   font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -877,7 +877,7 @@ onUnmounted(() => {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
@@ -893,7 +893,7 @@ onUnmounted(() => {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 1;
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
@@ -943,7 +943,7 @@ onUnmounted(() => {
 
 .session-section-title {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #495057);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1004,7 +1004,7 @@ onUnmounted(() => {
 
 .cross-group-name {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #495057);
   white-space: nowrap;
   overflow: hidden;

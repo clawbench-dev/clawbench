@@ -236,7 +236,7 @@
 .markdown-body th,
 .chat-message.assistant th {
     background: var(--bg-tertiary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .markdown-body tr:nth-child(odd) td,
@@ -319,7 +319,7 @@
 
 .chat-message.user th {
     background: rgba(0, 0, 0, 0.15);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: rgba(255, 255, 255, 0.95);
 }
 
@@ -374,7 +374,7 @@
 
 .table-row-label {
     font-size: var(--font-size-xs);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-muted, #888);
     margin-bottom: 4px;
     text-transform: uppercase;
@@ -415,7 +415,7 @@
 .table-row-value h2,
 .table-row-value h3 {
     margin: 6px 0 3px;
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .table-row-value h1 { font-size: var(--font-size-2xl); }

@@ -2909,7 +2909,7 @@ onUnmounted(() => {
 
 .view-empty-recent-title {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   text-align: left;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -3095,7 +3095,7 @@ onUnmounted(() => {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
     color: var(--accent-color, #0066cc);
     font-size: var(--font-size-lg);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     pointer-events: none;
     z-index: 11;
 }
@@ -3310,7 +3310,7 @@ onUnmounted(() => {
     padding: 0 4px;
     border-radius: 8px;
     font-size: var(--font-size-2xs);
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
     line-height: 16px;
     text-align: center;
     color: #fff;
@@ -3468,7 +3468,7 @@ onUnmounted(() => {
     background: var(--accent-color);
     color: #fff;
     font-size: var(--font-size-xs);
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
     line-height: 18px;
     text-align: center;
     flex-shrink: 0;

@@ -534,7 +534,7 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.share-error-title { font-size: var(--font-size-2xl); font-weight: 600; color: var(--text-primary, #1f2328); }
+.share-error-title { font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); color: var(--text-primary, #1f2328); }
 .share-error-desc { font-size: var(--font-size-md); max-width: 480px; word-break: break-word; }
 
 .share-html-iframe {

@@ -227,7 +227,7 @@ function handleBodyInput(event) {
   overflow-y: auto;
   overflow-x: clip;
   font-size: var(--font-size-sm);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   flex: 1;
   cursor: default;
 }
@@ -355,7 +355,7 @@ function handleBodyInput(event) {
 .fd-header-path {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   min-width: 0;
   overflow: hidden;
@@ -370,7 +370,7 @@ function handleBodyInput(event) {
   border-radius: 3px;
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -381,7 +381,7 @@ function handleBodyInput(event) {
   border-radius: 3px;
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-variant-numeric: tabular-nums;
 }
 </style>

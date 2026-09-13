@@ -439,7 +439,7 @@ function formatTime(iso: string): string {
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
@@ -456,7 +456,7 @@ function formatTime(iso: string): string {
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -537,13 +537,13 @@ function formatTime(iso: string): string {
 }
 .forge-card-header {
   font-size: var(--font-size-xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .forge-card-body {
   color: var(--text-muted);
   font-size: var(--font-size-md);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 .forge-card-options {
   display: flex;
@@ -576,7 +576,7 @@ function formatTime(iso: string): string {
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -677,7 +677,7 @@ function formatTime(iso: string): string {
 .forge-error-text { flex: 1; min-width: 0; }
 .forge-error-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin-bottom: 2px;
 }
@@ -752,7 +752,7 @@ function formatTime(iso: string): string {
 .forge-row-text {
   color: var(--text-primary);
   font-size: var(--font-size-lg);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -809,7 +809,7 @@ function formatTime(iso: string): string {
 }
 .forge-bind-label {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
   margin-bottom: 8px;
 }
@@ -863,7 +863,7 @@ function formatTime(iso: string): string {
 }
 .forge-remote-name {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .forge-remote-url {
@@ -913,6 +913,6 @@ function formatTime(iso: string): string {
   background: color-mix(in srgb, var(--color-red) 8%, transparent);
   color: var(--color-red);
   font-size: 12.5px;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 </style>

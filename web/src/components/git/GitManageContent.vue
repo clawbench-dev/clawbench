@@ -462,7 +462,7 @@ defineExpose({
   gap: 5px;
   padding: 10px 8px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #666);
   background: transparent;
   border: none;
@@ -481,12 +481,12 @@ defineExpose({
 .manage-tab.active {
   color: var(--accent-color, #4a90d9);
   border-bottom-color: var(--accent-color, #4a90d9);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .tab-count {
   font-size: var(--font-size-2xs);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
   padding: 1px 5px;
@@ -538,7 +538,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   font-size: var(--font-size-2xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin-bottom: 8px;
 }
@@ -559,7 +559,7 @@ defineExpose({
   font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
   margin: 0 0 16px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-line;
   word-break: break-word;
   max-height: 40vh;

@@ -410,7 +410,7 @@ onMounted(() => {
 
 .login-title {
     font-size: 26px;
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
     color: var(--text-primary);
     letter-spacing: -0.02em;
     margin: 0 0 8px;
@@ -418,7 +418,7 @@ onMounted(() => {
 
 .login-slogan {
     font-size: var(--font-size-2xl);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--accent-color);
     margin: 0 0 4px;
     letter-spacing: 0.08em;
@@ -460,7 +460,7 @@ onMounted(() => {
     color: var(--text-secondary);
     margin-bottom: 6px;
     letter-spacing: 0.02em;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .server-list-divider {
@@ -543,7 +543,7 @@ onMounted(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .server-delete {
@@ -611,7 +611,7 @@ input:focus {
     background: var(--accent-color);
     color: #fff;
     font-size: var(--font-size-xl);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     cursor: pointer;
     transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
     display: flex;
@@ -695,7 +695,7 @@ input:focus {
     background: color-mix(in srgb, var(--color-red, #dc2626) 10%, transparent);
     color: var(--color-red, #dc2626);
     font-size: var(--font-size-xs);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
@@ -762,7 +762,7 @@ input:focus {
 
 .install-label {
     font-size: var(--font-size-md);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary);
 }
 

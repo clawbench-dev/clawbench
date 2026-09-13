@@ -130,7 +130,7 @@ const statusTitle = computed(() => {
 
 .port-number {
   font-size: var(--font-size-2xl);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   font-family: var(--font-mono);
   color: var(--text-primary, #1a1a1a);
   line-height: 1;
@@ -138,7 +138,7 @@ const statusTitle = computed(() => {
 
 .port-protocol {
   font-size: var(--font-size-2xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   padding: 2px 6px;
   border-radius: 0;
   text-transform: uppercase;
@@ -276,7 +276,7 @@ const statusTitle = computed(() => {
 .port-target {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   padding: 1px 6px;
   border-radius: 0;
   background: rgba(59, 130, 246, 0.1);
@@ -286,7 +286,7 @@ const statusTitle = computed(() => {
 .port-host {
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   padding: 1px 6px;
   border-radius: 0;
   background: rgba(107, 114, 128, 0.1);

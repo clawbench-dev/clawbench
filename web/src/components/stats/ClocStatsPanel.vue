@@ -234,7 +234,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin: 0;
 }
@@ -290,7 +290,7 @@ onMounted(() => {
 }
 .stats-total-value {
   font-size: var(--font-size-2xl);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   word-break: break-all;
@@ -324,7 +324,7 @@ onMounted(() => {
 }
 .stats-table th {
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: var(--bg-secondary, var(--bg-primary));
 }
 .stats-table tbody tr:last-child td {

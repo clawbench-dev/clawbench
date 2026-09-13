@@ -326,7 +326,7 @@ defineExpose({
 
 .office-error-title {
   font-size: var(--font-size-2xl);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   margin-bottom: 8px;
 }
@@ -353,7 +353,7 @@ defineExpose({
   border: 1px solid var(--border-color);
   border-radius: 14px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   gap: 6px;
   transition: all 0.15s;
@@ -377,7 +377,7 @@ defineExpose({
   border-radius: 14px;
   text-decoration: none;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   gap: 6px;
   transition: filter 0.15s;

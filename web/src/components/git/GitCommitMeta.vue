@@ -130,11 +130,11 @@ function formatDate(dateStr) {
 }
 
 .diff-meta-row-msg .diff-meta-value {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .diff-meta-file-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

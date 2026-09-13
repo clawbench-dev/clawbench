@@ -835,7 +835,7 @@ defineExpose({
 
 .unsupported-title {
     font-size: var(--font-size-2xl);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     margin-bottom: 8px;
     word-break: break-all;
@@ -864,7 +864,7 @@ defineExpose({
     border: 1px solid var(--border-color);
     border-radius: 14px;
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     transition: all 0.15s;
     gap: 4px;
@@ -893,7 +893,7 @@ defineExpose({
     border-radius: 14px;
     text-decoration: none;
     font-size: var(--font-size-sm);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     transition: filter 0.15s;
     gap: 4px;
     line-height: 1;
@@ -928,7 +928,7 @@ defineExpose({
     font-size: var(--font-size-md);
     margin: 24px auto;
     max-width: 90%;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     align-self: center;
 }
 

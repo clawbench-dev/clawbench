@@ -1510,7 +1510,7 @@ onUnmounted(() => {
 
 .chat-error-card .error-text {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--color-red, #dc2626);
 }
 
@@ -1544,7 +1544,7 @@ onUnmounted(() => {
 
 .chat-warning-card .warning-text {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--color-yellow, #d97706);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1568,9 +1568,9 @@ onUnmounted(() => {
   margin-left: 8px;
   padding: 1px 8px;
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   border-radius: 999px;
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
   white-space: nowrap;
 }
 
@@ -1607,7 +1607,7 @@ onUnmounted(() => {
   margin-left: auto;
   padding: 2px 10px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
@@ -1629,7 +1629,7 @@ onUnmounted(() => {
   margin-left: auto;
   padding: 2px 10px;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
@@ -1786,7 +1786,7 @@ onUnmounted(() => {
 }
 
 .thinking-label {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--thinking-accent);
   font-size: var(--font-size-xs);
   letter-spacing: 0.02em;
@@ -1840,7 +1840,7 @@ onUnmounted(() => {
 .thinking-inline-content h2,
 .thinking-inline-content h3 {
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin: 0.5em 0 0.3em;
 }
 .thinking-inline-content ul,
@@ -1860,10 +1860,10 @@ onUnmounted(() => {
 }
 .thinking-inline-content th {
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 .thinking-inline-content strong {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .thinking-inline-content em {
@@ -1918,7 +1918,7 @@ onUnmounted(() => {
 }
 
 .chat-tool-call .tool-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--tool-accent);
   font-size: var(--font-size-xs);
 }
@@ -2054,7 +2054,7 @@ onUnmounted(() => {
   margin: 2px 0 4px 0;
   padding: 6px 8px;
   font-size: var(--font-size-xs);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   background: var(--bg-primary);
   border-radius: 4px;
   border: 1px solid var(--border-color);
@@ -2108,7 +2108,7 @@ onUnmounted(() => {
   padding: 4px 10px;
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
   color: var(--accent-color, #4a90d9);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-sm);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--border-color, #dee2e6));
   cursor: pointer;
@@ -2122,7 +2122,7 @@ onUnmounted(() => {
 .stask-body {
   padding: 10px 12px;
   font-size: var(--font-size-sm);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 .stask-row {
@@ -2148,14 +2148,14 @@ onUnmounted(() => {
   padding: 6px 0;
   font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .stask-status-badge {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: 3px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   margin-left: auto;
 }
 
@@ -2192,10 +2192,10 @@ onUnmounted(() => {
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
   color: #0ea5e9;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin-right: 4px;
   vertical-align: baseline;
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 :root[data-theme-base="dark"] .slash-command-badge {
@@ -2260,7 +2260,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .tool-output-label {
@@ -2272,7 +2272,7 @@ onUnmounted(() => {
   font-size: var(--font-size-2xs);
   padding: 1px 4px;
   border-radius: 3px;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .content-blocks .tool-detail .tool-output-success {
@@ -2299,14 +2299,14 @@ onUnmounted(() => {
   max-height: 200px;
   overflow-y: auto;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .tool-output-body pre {
   margin: 0;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2339,7 +2339,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .tool-file-path {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   word-break: break-all;
   flex: 1;
@@ -2350,7 +2350,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .edit-diff-replace-all {
@@ -2359,7 +2359,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -2371,7 +2371,7 @@ onUnmounted(() => {
   white-space: pre;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   min-width: max-content;
 }
 
@@ -2406,14 +2406,14 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .file-preview-body {
   white-space: pre;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2426,7 +2426,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .file-write-badge {
@@ -2435,7 +2435,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -2448,7 +2448,7 @@ onUnmounted(() => {
   white-space: pre;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2461,7 +2461,7 @@ onUnmounted(() => {
   white-space: pre;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2484,7 +2484,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .bash-terminal-body {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   background: var(--bg-tertiary);
   border-radius: 4px;
   padding: 6px 8px;
@@ -2494,7 +2494,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .bash-prompt {
   color: #16a34a;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   margin-right: 4px;
 }
 
@@ -2550,7 +2550,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--tool-accent);
   font-size: var(--font-size-xs);
   flex-shrink: 0;
@@ -2625,7 +2625,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-question-header {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #f97316;
 }
 
@@ -2636,7 +2636,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-text {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2702,7 +2702,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-option-label {
   font-size: var(--font-size-sm);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
@@ -2711,7 +2711,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-option-desc {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2729,7 +2729,7 @@ onUnmounted(() => {
   background: transparent;
   color: #8b5cf6;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
@@ -2772,7 +2772,7 @@ onUnmounted(() => {
   background: #f97316;
   color: white;
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
 }
@@ -2819,7 +2819,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-supplementary-label {
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
@@ -2831,7 +2831,7 @@ onUnmounted(() => {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   outline: none;
   transition: border-color 0.15s;
   box-sizing: border-box;
@@ -2856,7 +2856,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .grep-pattern-row,
@@ -2872,10 +2872,10 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .grep-label {
@@ -2909,7 +2909,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .grep-mode-tag {
@@ -2923,7 +2923,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .glob-pattern-row,
@@ -2939,10 +2939,10 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .glob-label {
@@ -2962,7 +2962,7 @@ onUnmounted(() => {
 /* ── WebSearch view ── */
 .content-blocks .tool-detail .web-search-view {
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .web-search-query {
@@ -2975,7 +2975,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .web-search-icon {
   flex-shrink: 0;
   font-size: var(--font-size-sm);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .content-blocks .tool-detail .web-search-text {
@@ -2989,7 +2989,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .web-fetch-url-row {
@@ -3004,10 +3004,10 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .web-fetch-label {
@@ -3048,7 +3048,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .agent-call-header {
@@ -3064,7 +3064,7 @@ onUnmounted(() => {
   border-radius: 3px;
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -3075,7 +3075,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .agent-call-desc {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .content-blocks .tool-detail .agent-call-prompt {
@@ -3087,7 +3087,7 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   border-radius: 4px;
   font-family: inherit;
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 .content-blocks .tool-detail .agent-call-prompt p:first-child {
   margin-top: 0;
@@ -3100,7 +3100,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt h3,
 .content-blocks .tool-detail .agent-call-prompt h4 {
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin: 8px 0 4px;
   color: var(--text-primary);
 }
@@ -3132,7 +3132,7 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt strong {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .content-blocks .tool-detail .agent-call-prompt hr {
@@ -3147,7 +3147,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .skill-call-header {
@@ -3162,7 +3162,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .skill-call-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #0891b2;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
@@ -3181,7 +3181,7 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   border-radius: 4px;
   font-family: var(--font-mono);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 /* ── PermissionApproval card (body inside the unified inline card) ── */
@@ -3193,7 +3193,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-tool-name {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   letter-spacing: 0.2px;
@@ -3217,7 +3217,7 @@ onUnmounted(() => {
   border-radius: 4px;
   background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
   color: #b45309;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   letter-spacing: 0.4px;
   text-transform: uppercase;
   white-space: nowrap;
@@ -3232,7 +3232,7 @@ onUnmounted(() => {
   display: block;
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
@@ -3302,7 +3302,7 @@ onUnmounted(() => {
   padding: 4px 12px;
   border-radius: 4px;
   font-size: var(--font-size-md);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   margin-top: 6px;
 }
 
@@ -3331,7 +3331,7 @@ onUnmounted(() => {
   padding: 4px 12px;
   border-radius: 4px;
   font-size: var(--font-size-md);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: #dcfce7;
   color: #15803d;
   border: 1px solid #bbf7d0;

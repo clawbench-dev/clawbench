@@ -556,7 +556,7 @@ onBeforeUnmount(() => {
 .toc-page-badge {
     display: inline-block;
     font-size: var(--font-size-2xs);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     background: var(--bg-tertiary);
     color: var(--text-muted);
     padding: 1px 5px;
