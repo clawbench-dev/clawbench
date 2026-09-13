@@ -134,7 +134,7 @@ function handleClose() {
   left: 20%;
   right: 20%;
   height: 2px;
-  background: var(--accent, #4f8ef7);
+  background: var(--accent-color);
   border-radius: 1px;
 }
 

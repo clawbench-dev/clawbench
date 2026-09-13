@@ -275,7 +275,7 @@ html.wallpaper-active .settings-agents-index__rescan-row:active {
 }
 html.wallpaper-active .task-item.is-running,
 html.wallpaper-active .execution-item.running {
-    background: color-mix(in srgb, var(--success-color, #16a34a) 5%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
+    background: color-mix(in srgb, var(--color-green) 5%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
 }
 
 /* OfficePreview re-encodes its wrappers with !important deep overrides —

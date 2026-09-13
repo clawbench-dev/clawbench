@@ -83,7 +83,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-title-dir {
-  color: var(--text-tertiary, #9aa0a6);
+  color: var(--text-hint);
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -128,13 +128,13 @@ body.code-preview-dragging * {
 }
 
 .code-preview-btn:focus-visible {
-  outline: 2px solid var(--primary-color, #1a73e8);
+  outline: 2px solid var(--accent-color);
   outline-offset: -1px;
 }
 
 .code-preview-btn.is-pinned,
 .code-preview-btn.is-active {
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   background: rgba(26, 115, 232, 0.1);
 }
 
@@ -166,7 +166,7 @@ body.code-preview-dragging * {
 
 .code-preview-notice.notice-info {
   background: rgba(59, 130, 246, 0.1);
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
 }
 
 .code-preview-content {
@@ -198,7 +198,7 @@ body.code-preview-dragging * {
   width: 20px;
   height: 20px;
   border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--primary-color, #1a73e8);
+  border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: code-preview-spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -242,8 +242,8 @@ body.code-preview-dragging * {
 
 .code-preview-line-row.is-target-line {
   background: rgba(59, 130, 246, 0.12);
-  background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--primary-color, #3b82f6);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-color);
 }
 
 .code-preview-line-number {
@@ -271,10 +271,10 @@ body.code-preview-dragging * {
 
 .code-preview-line-row.is-target-line .code-preview-line-number,
 .code-preview-line-number.is-target-line {
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   font-weight: var(--font-weight-semibold);
   background: rgba(59, 130, 246, 0.12);
-  background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, var(--code-bg, var(--bg-primary, #ffffff)));
+  background: color-mix(in srgb, var(--accent-color) 12%, var(--code-bg, var(--bg-primary, #ffffff)));
 }
 
 .code-preview-line-code {
@@ -341,7 +341,7 @@ body.code-preview-dragging * {
   padding:3px var(--space-4);
   font-size: var(--font-size-xs);
   font-family: var(--font-ui);
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-xs);
@@ -379,7 +379,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-expand-btn.expand-all:hover {
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   background: rgba(0, 0, 0, 0.05);
 }
 
@@ -458,8 +458,8 @@ body.code-preview-dragging * {
 }
 
 .code-preview-search-input:focus {
-  border-color: var(--primary-color, #1a73e8);
-  box-shadow: 0 0 0 1px var(--primary-color, #1a73e8);
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color);
 }
 
 .code-preview-search-count {
@@ -493,7 +493,7 @@ body.code-preview-dragging * {
   line-height: inherit;
   font-family: var(--font-mono);
   font-weight: 400;
-  color: var(--text-tertiary, #80868b);
+  color: var(--text-hint);
   flex-shrink: 0;
 }
 
@@ -505,7 +505,7 @@ body.code-preview-dragging * {
 
 .code-preview-line-row.is-current-search-match {
   background-color: rgba(255, 214, 0, 0.45);
-  box-shadow: inset 3px 0 0 var(--primary-color, #1a73e8);
+  box-shadow: inset 3px 0 0 var(--accent-color);
 }
 
 /* Mobile BottomSheet Header & Footer styles */
@@ -579,7 +579,7 @@ body.code-preview-dragging * {
 
 .code-preview-sheet-meta-info {
   font-size: var(--font-size-xs);
-  color: var(--text-tertiary, #80868b);
+  color: var(--text-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -637,7 +637,7 @@ body.code-preview-dragging * {
 /* Active state (e.g. search bar open) — tint the neutral pill. */
 .code-preview-footer-btn.is-active {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, var(--bg-tertiary, #f1f3f5));
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
 }
 
 /* Icon-only footer buttons: collapse the shared pill padding to a 30px round
@@ -765,7 +765,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-media-audio-icon {
-  color: var(--text-tertiary, #999);
+  color: var(--text-hint);
 }
 
 .code-preview-media-audio-name {

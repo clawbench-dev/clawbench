@@ -141,7 +141,7 @@ defineExpose({ getSelectedIds })
 
 .kcf-action-btn {
   font-size: var(--font-size-sm);
-  color: var(--accent, #4f8ef7);
+  color: var(--accent-color);
   background: none;
   border: none;
   cursor: pointer;
@@ -156,7 +156,7 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-action-btn-danger {
-  color: var(--danger, #e74c3c);
+  color: var(--color-red);
 }
 
 .kcf-section-title {
@@ -252,13 +252,13 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-chip-active {
-  border-color: var(--accent, #4f8ef7);
-  background: var(--accent-bg, rgba(79, 142, 247, 0.1));
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .kcf-chip-selected {
-  border-color: var(--accent, #4f8ef7);
-  background: var(--accent-bg, rgba(79, 142, 247, 0.1));
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .kcf-chip-label {

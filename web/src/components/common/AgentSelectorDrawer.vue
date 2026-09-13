@@ -211,7 +211,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-option.selected {
-  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .agent-option-icon {
@@ -278,14 +278,14 @@ watch(() => props.open, async (val) => {
 @media (hover: hover) {
   .agent-config-btn:hover {
     opacity: 1;
-    background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+    background: var(--bg-hover);
   }
 }
 
 @media (hover: hover) {
   .agent-set-default-btn:hover {
     opacity: 1;
-    background: var(--hover-bg, rgba(0,0,0,0.06));
+    background: var(--bg-hover);
   }
 
   .agent-option:hover .agent-set-default-btn {

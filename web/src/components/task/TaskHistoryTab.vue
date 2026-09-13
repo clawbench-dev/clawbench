@@ -305,14 +305,14 @@ defineExpose({
 }
 
 .execution-item.running {
-  background: color-mix(in srgb, var(--success-color, #16a34a) 5%, var(--bg-secondary, #f8f9fa));
-  border-color: color-mix(in srgb, var(--success-color, #16a34a) 30%, transparent);
+  background: color-mix(in srgb, var(--color-green) 5%, var(--bg-secondary, #f8f9fa));
+  border-color: color-mix(in srgb, var(--color-green) 30%, transparent);
   animation: exec-card-running 2s ease-in-out infinite;
 }
 
 @keyframes exec-card-running {
-  0%, 100% { border-color: color-mix(in srgb, var(--success-color, #16a34a) 30%, transparent); }
-  50% { border-color: color-mix(in srgb, var(--success-color, #16a34a) 55%, transparent); }
+  0%, 100% { border-color: color-mix(in srgb, var(--color-green) 30%, transparent); }
+  50% { border-color: color-mix(in srgb, var(--color-green) 55%, transparent); }
 }
 
 .execution-row {

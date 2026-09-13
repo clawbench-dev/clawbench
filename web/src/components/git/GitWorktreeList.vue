@@ -139,7 +139,7 @@ function toggleCollapse() {
   justify-content: space-between;
   padding: var(--space-4) 0;
   font-size: var(--font-size-md);
-  color: var(--danger-color, #dc3545);
+  color: var(--color-red);
 }
 
 .retry-btn {

@@ -581,7 +581,7 @@ defineExpose({ activeTab, handleFileDrop })
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  box-shadow: 0 0 0 2px var(--bg-panel, #fff);
+  box-shadow: 0 0 0 2px var(--bg-primary);
   pointer-events: none;
 }
 
@@ -595,12 +595,12 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-file-row:active .ad-file-delete {
   opacity: 1;
-  color: var(--danger-color, #dc3545);
+  color: var(--color-red);
 }
 @media (hover: hover) {
   .ad-file-row:hover .ad-file-delete {
     opacity: 1;
-    color: var(--danger-color, #dc3545);
+    color: var(--color-red);
   }
 }
 

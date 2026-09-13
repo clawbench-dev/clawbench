@@ -356,7 +356,7 @@ function onModalClose() {
   justify-content: center;
   background: none;
   border: none;
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   cursor: pointer;
   padding: var(--space-1);
 }

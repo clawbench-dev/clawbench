@@ -358,7 +358,7 @@ watch(visible, (v) => {
 .ug-error {
   margin: var(--space-4) 0 0;
   font-size: var(--font-size-sm);
-  color: var(--text-danger, #e53e3e);
+  color: var(--color-red);
   word-break: break-word;
 }
 
@@ -367,8 +367,8 @@ watch(visible, (v) => {
   margin:0 var(--space-7) var(--space-6);
   padding: var(--space-5) var(--space-6);
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--text-warning, #d69e2e) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-warning, #d69e2e) 35%, transparent);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-orange) 35%, transparent);
   text-align: left;
 }
 
@@ -376,7 +376,7 @@ watch(visible, (v) => {
   margin:0 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  color: var(--text-warning, #d69e2e);
+  color: var(--color-orange);
 }
 
 .ug-warn-body {
@@ -431,7 +431,7 @@ watch(visible, (v) => {
 .ug-hint-warn {
   margin: var(--space-4) 0 0;
   font-size: var(--font-size-xs);
-  color: var(--text-warning, #d69e2e);
+  color: var(--color-orange);
   line-height: var(--line-height-normal);
 }
 
@@ -439,7 +439,7 @@ watch(visible, (v) => {
   margin: 0;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  color: var(--text-danger, #e53e3e);
+  color: var(--color-red);
 }
 
 .ug-error-hint {

@@ -1986,14 +1986,14 @@ defineExpose({
 
 @media (hover: hover) {
   .chat-action-btn-archive:not(.disabled):hover {
-    color: var(--color-warning, #e6a23c);
-    background: color-mix(in srgb, var(--color-warning, #e6a23c) 10%, transparent);
+    color: var(--color-orange);
+    background: color-mix(in srgb, var(--color-orange) 10%, transparent);
   }
 }
 
 .chat-action-btn-archive:not(.disabled):active {
-  color: var(--color-warning, #e6a23c);
-  background: color-mix(in srgb, var(--color-warning, #e6a23c) 18%, transparent);
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 18%, transparent);
   transform: scale(0.92);
 }
 
@@ -2215,7 +2215,7 @@ defineExpose({
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  color: var(--text-primary);
 }
 
 .recommendation-icon {
@@ -2332,7 +2332,7 @@ defineExpose({
 
 @media (hover: hover) {
   .attachment-close-btn:hover {
-    background: var(--danger-color, #dc3545);
+    background: var(--color-red);
   }
 }
 
@@ -2446,8 +2446,8 @@ defineExpose({
   width: 28px;
   height: 28px;
   padding: 0;
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 40%, transparent);
-  color: color-mix(in srgb, #fff 60%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 40%, transparent);
+  color: color-mix(in srgb, #fff 60%, var(--color-red));
   border: none;
   border-radius: 50%;
   cursor: pointer;
@@ -2458,13 +2458,13 @@ defineExpose({
 
 /* Light theme: boost stop button default visibility */
 :not([data-theme-base="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 55%, transparent);
-  color: color-mix(in srgb, #fff 75%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 55%, transparent);
+  color: color-mix(in srgb, #fff 75%, var(--color-red));
 }
 
 /* Stop button — primed (first click, awaiting confirmation): bright red + heartbeat */
 .chat-stop-btn.primed {
-  background: var(--danger-color, #dc3545);
+  background: var(--color-red);
   color: #fff;
   transform: scale(1.15);
   animation: stop-heartbeat 0.8s ease-in-out infinite;
@@ -2472,8 +2472,8 @@ defineExpose({
 
 /* Stop button — cancelling (API request in flight): spinner, dimmed */
 .chat-stop-btn.cancelling {
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 25%, transparent);
-  color: color-mix(in srgb, #fff 50%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 25%, transparent);
+  color: color-mix(in srgb, #fff 50%, var(--color-red));
   cursor: wait;
   animation: none;
   transform: none;

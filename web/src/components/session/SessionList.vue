@@ -922,7 +922,7 @@ onUnmounted(() => {
 }
 
 .session-row.pinned.active .session-item {
-  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 /* Section groups */

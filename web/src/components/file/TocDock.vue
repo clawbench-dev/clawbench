@@ -243,11 +243,11 @@ onBeforeUnmount(() => {
 }
 @media (hover: hover) {
   .toc-dock-close:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
   }
   .toc-dock-side-toggle:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
   }
 }

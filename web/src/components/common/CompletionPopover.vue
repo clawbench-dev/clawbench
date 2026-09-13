@@ -428,7 +428,7 @@ function handleSummaryClick(event: MouseEvent): void {
     min-width: 0;
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
-    color: var(--text-tertiary, var(--text-secondary));
+    color: var(--text-hint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

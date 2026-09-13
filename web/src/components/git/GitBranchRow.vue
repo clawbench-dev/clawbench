@@ -72,7 +72,7 @@ function handleClick() {
 }
 
 .git-branch-row.current {
-  background: var(--bg-accent-subtle, rgba(74, 144, 217, 0.08));
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   cursor: default;
 }
 
@@ -133,11 +133,11 @@ function handleClick() {
 }
 
 .track-ahead {
-  color: var(--success-color, #28a745);
+  color: var(--color-green);
 }
 
 .track-behind {
-  color: var(--warning-color, #e67e22);
+  color: var(--color-orange);
 }
 
 .branch-spinner {
@@ -164,13 +164,13 @@ function handleClick() {
 
 @media (hover: hover) {
   .branch-action-btn:hover {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
 .branch-action-btn:active {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
+  background: color-mix(in srgb, var(--color-red) 15%, transparent);
 }
 
 </style>

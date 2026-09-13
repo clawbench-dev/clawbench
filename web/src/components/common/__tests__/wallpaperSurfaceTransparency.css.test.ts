@@ -106,7 +106,7 @@ describe('wallpaper-active single-surface transparency', () => {
     )
     // Running states keep their green tint composited over the translucent base.
     const running = ruleContaining('html.wallpaper-active .task-item.is-running')
-    expect(running).toContain('var(--success-color, #16a34a) 5%')
+    expect(running).toContain('var(--color-green) 5%')
   })
 
   it('lets the wallpaper show through the CodeMirror code canvas in browse AND edit modes', () => {

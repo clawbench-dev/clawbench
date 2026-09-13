@@ -685,7 +685,7 @@ onBeforeUnmount(() => {
 }
 @media (hover: hover) {
     .file-header-btn:hover {
-        background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+        background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     }
 }
 .file-header-btn svg {
@@ -704,7 +704,7 @@ onBeforeUnmount(() => {
     }
 }
 .file-header-btn.active {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
 }
 .file-header-btn.danger {
@@ -786,7 +786,7 @@ onBeforeUnmount(() => {
     }
 }
 .file-header-dropdown-menu .dropdown-item.active {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
 }
 .file-header-dropdown-menu .dropdown-item svg {

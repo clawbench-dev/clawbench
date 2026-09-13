@@ -91,7 +91,7 @@ function shortDate(dateStr: string) {
   justify-content: space-between;
   padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-md);
-  color: var(--danger-color, #dc3545);
+  color: var(--color-red);
 }
 
 .retry-btn {
@@ -144,13 +144,13 @@ function shortDate(dateStr: string) {
 
 @media (hover: hover) {
   .tag-action-btn:hover {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
 .tag-action-btn:active {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
+  background: color-mix(in srgb, var(--color-red) 15%, transparent);
 }
 
 @media (hover: hover) {

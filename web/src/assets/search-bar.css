@@ -141,7 +141,7 @@
   transition: background-color var(--duration-base), color var(--duration-base);
 }
 .search-bar .search-input-actions .search-opt-btn:hover {
-  background: var(--bg-quaternary, var(--bg-tertiary));
+  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 .search-bar .search-input-actions .search-opt-btn.active {
@@ -172,7 +172,7 @@
   white-space: nowrap;
 }
 .cm-search .cm-button:hover:not(:disabled) {
-  background: var(--bg-quaternary, var(--bg-tertiary));
+  background: var(--bg-tertiary);
   border-color: var(--accent-color);
 }
 .cm-search .cm-button:disabled {
@@ -198,7 +198,7 @@
   transition: background-color var(--duration-base), color var(--duration-base);
 }
 .cm-search button[name='close']:hover {
-  background: var(--bg-quaternary, var(--bg-tertiary));
+  background: var(--bg-tertiary);
   color: var(--text-primary);
 }
 

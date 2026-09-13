@@ -816,7 +816,7 @@ defineExpose({ focusSearchInput })
 .session-search-error {
   padding: 24px;
   text-align: center;
-  color: var(--color-error, #e74c3c);
+  color: var(--color-red);
   font-size: var(--font-size-md);
   flex-shrink: 0;
 }
@@ -933,7 +933,7 @@ defineExpose({ focusSearchInput })
   padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-orange);
 }
 
 .session-search-item-backend {
@@ -1013,7 +1013,7 @@ defineExpose({ focusSearchInput })
   padding:1px var(--space-3);
   border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-orange);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
   margin-left: var(--space-3);

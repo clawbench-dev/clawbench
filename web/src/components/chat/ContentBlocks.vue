@@ -1586,8 +1586,8 @@ onUnmounted(() => {
 }
 
 .error-source-chip.src-network {
-  color: var(--color-blue, #2563eb);
-  background: color-mix(in srgb, var(--color-blue, #3b82f6) 12%, transparent);
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
 }
 
 :root[data-theme-base="dark"] .error-source-chip.src-agent {
@@ -1599,7 +1599,7 @@ onUnmounted(() => {
 }
 
 :root[data-theme-base="dark"] .error-source-chip.src-network {
-  color: var(--color-blue, #93c5fd);
+  color: var(--color-info);
 }
 
 .chat-warning-card .warning-continue-btn {
@@ -1801,7 +1801,7 @@ onUnmounted(() => {
 .thinking-chevron {
   flex-shrink: 0;
   margin-left: auto;
-  color: var(--text-tertiary, #999);
+  color: var(--text-hint);
   transition: color var(--duration-base);
 }
 
@@ -1834,7 +1834,7 @@ onUnmounted(() => {
 .thinking-inline-content blockquote {
   margin: 0.5em 0;
   padding: var(--space-2) var(--space-4);
-  border-left: 2px solid var(--text-tertiary, #aaa);
+  border-left: 2px solid var(--text-hint);
 }
 .thinking-inline-content h1,
 .thinking-inline-content h2,
@@ -1924,7 +1924,7 @@ onUnmounted(() => {
 }
 
 .chat-tool-call .tool-summary {
-  color: var(--text-tertiary, #888);
+  color: var(--text-hint);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1991,7 +1991,7 @@ onUnmounted(() => {
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--text-tertiary, #999);
+  color: var(--text-hint);
   transition: color var(--duration-base);
 }
 
@@ -2557,7 +2557,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-summary {
-  color: var(--text-tertiary, #888);
+  color: var(--text-hint);
   flex: 1;
   min-width: 0;
   overflow: hidden;

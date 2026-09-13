@@ -65,7 +65,7 @@ defineEmits(['switch', 'delete'])
 }
 
 .git-worktree-row.current {
-  background: var(--bg-accent-subtle, rgba(74, 144, 217, 0.08));
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   cursor: default;
 }
 
@@ -151,8 +151,8 @@ defineEmits(['switch', 'delete'])
     background: var(--bg-secondary, #e9ecef);
   }
   .wt-action-btn:hover.wt-action-delete {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
@@ -169,18 +169,18 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-badge-dirty {
-  background: var(--warning-bg, rgba(255, 159, 64, 0.15));
-  color: var(--warning-color, #e67e22);
+  background: color-mix(in srgb, var(--color-orange) 15%, transparent);
+  color: var(--color-orange);
 }
 
 .wt-badge-main {
-  background: var(--accent-bg, rgba(74, 144, 217, 0.12));
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color, #4a90d9);
 }
 
 .wt-badge-clean {
-  background: var(--success-bg, rgba(40, 167, 69, 0.12));
-  color: var(--success-color, #28a745);
+  background: color-mix(in srgb, var(--color-green) 12%, transparent);
+  color: var(--color-green);
 }
 
 .wt-badge-locked {
@@ -189,7 +189,7 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-badge-missing {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.12));
-  color: var(--danger-color, #dc3545);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  color: var(--color-red);
 }
 </style>

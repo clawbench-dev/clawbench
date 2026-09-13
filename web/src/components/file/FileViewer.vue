@@ -922,7 +922,7 @@ defineExpose({
     align-items: center;
     gap: var(--space-3);
     background: rgba(239, 68, 68, 0.1);
-    color: var(--error-color, #dc2626);
+    color: var(--color-red);
     padding: var(--space-3) var(--space-6);
     border-radius: 20px;
     font-size: var(--font-size-md);
@@ -946,7 +946,7 @@ defineExpose({
     gap: var(--space-3);
     padding: var(--space-3) var(--space-6);
     background: rgba(245, 158, 11, 0.1);
-    color: var(--warning-color, #d97706);
+    color: var(--color-orange);
     font-size: var(--font-size-sm);
     border-bottom: 1px solid rgba(245, 158, 11, 0.2);
 }

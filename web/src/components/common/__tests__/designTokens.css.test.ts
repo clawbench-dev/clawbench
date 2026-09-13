@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 
 /**
  * Drift guard for the design tokens in `css/variables.css`.
@@ -265,5 +265,106 @@ describe('token hygiene (variables.css)', () => {
     const referenced = [...css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1])
     const missing = [...new Set(referenced)].filter((n) => !defined.has(n))
     expect(missing, `undefined tokens referenced: ${missing.join(', ')}`).toEqual([])
+  })
+})
+
+describe('token references across the app', () => {
+  // The checks above only read variables.css, so a component could reference a
+  // token that does not exist and nothing would notice — which is exactly how
+  // `var(--color-text-primary)` (a typo for --text-primary) and a fallback-less
+  // `var(--text-tertiary)` survived in the codebase.
+  const webRoot = (() => {
+    for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+      try {
+        readFileSync(join(base, 'css/variables.css'))
+        return base
+      } catch { /* next */ }
+    }
+    throw new Error('web root not found from ' + process.cwd())
+  })()
+
+  /** Every .css/.vue under css/ and src/, excluding build output and tests. */
+  function collectSources(): { path: string; text: string }[] {
+    const out: { path: string; text: string }[] = []
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name)
+        if (e.isDirectory()) {
+          if (['node_modules', 'dist', '__tests__', 'vendor-build'].includes(e.name)) continue
+          walk(full)
+        } else if (/\.(css|vue)$/.test(e.name)) {
+          out.push({ path: full.slice(webRoot.length + 1), text: readFileSync(full, 'utf8') })
+        }
+      }
+    }
+    walk(join(webRoot, 'css'))
+    walk(join(webRoot, 'src'))
+    return out
+  }
+
+  /** Every .ts/.vue — where a component may set a token at runtime. */
+  function collectScripts(): string[] {
+    const out: string[] = []
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name)
+        if (e.isDirectory()) {
+          if (['node_modules', 'dist', '__tests__', 'vendor-build'].includes(e.name)) continue
+          walk(full)
+        } else if (/\.(ts|vue)$/.test(e.name)) {
+          out.push(readFileSync(full, 'utf8'))
+        }
+      }
+    }
+    walk(join(webRoot, 'src'))
+    return out
+  }
+
+  const sources = collectSources()
+
+  /** Tokens declared anywhere (variables.css plus any local declaration). */
+  const declared = new Set<string>()
+  for (const { text } of sources) {
+    for (const m of text.matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1])
+  }
+
+  /**
+   * Tokens a component writes at runtime (`style.setProperty('--x')` or a
+   * `:style="{ '--x': … }"` binding). They are legitimately absent from
+   * variables.css — the component supplies the value — so they are excluded
+   * from the "undefined" check. Collected from scripts too, since the setter
+   * often lives in a composable rather than the component that reads it.
+   */
+  const runtimeSet = new Set<string>()
+  for (const text of [...sources.map((s) => s.text), ...collectScripts()]) {
+    for (const m of text.matchAll(/['"](--[a-z0-9-]+)['"]\s*:/g)) runtimeSet.add(m[1])
+    for (const m of text.matchAll(/setProperty\(\s*['"](--[a-z0-9-]+)['"]/g)) runtimeSet.add(m[1])
+  }
+
+  it('never references a token that nothing declares', () => {
+    const offenders: string[] = []
+    for (const { path, text } of sources) {
+      // Drop comments first: prose may mention a token family (`var(--bg-*)`)
+      // which is not a real reference.
+      const code = text
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\/\/[^\n]*/g, '')
+      for (const m of code.matchAll(/var\(\s*(--[a-z0-9-]+)\s*(,)?/g)) {
+        const name = m[1]
+        if (declared.has(name) || runtimeSet.has(name)) continue
+        offenders.push(`${path}: ${name}${m[2] ? ' (has fallback)' : ' (NO fallback)'}`)
+      }
+    }
+    // A missing token with a fallback is a latent bug (it will not follow the
+    // theme); without one it is already broken. Both should be fixed, so both
+    // fail — the message marks which is which.
+    expect(offenders, `undefined token references:\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('finds the sources it is meant to guard', () => {
+    // Guard against the walk silently matching nothing (e.g. a cwd change),
+    // which would make the check above vacuously pass.
+    expect(sources.length).toBeGreaterThan(100)
+    expect(declared.size).toBeGreaterThan(50)
   })
 })

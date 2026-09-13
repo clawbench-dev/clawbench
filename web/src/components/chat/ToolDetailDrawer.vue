@@ -179,7 +179,7 @@ function handleBodyInput(event) {
 }
 
 .tool-detail-header-summary {
-  color: var(--text-tertiary, #888);
+  color: var(--text-hint);
   font-size: var(--font-size-sm);
   min-width: 0;
   overflow: hidden;

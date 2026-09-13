@@ -168,7 +168,7 @@ const sortedBranches = computed(() => {
   justify-content: space-between;
   padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-md);
-  color: var(--danger-color, #dc3545);
+  color: var(--color-red);
 }
 
 .retry-btn {

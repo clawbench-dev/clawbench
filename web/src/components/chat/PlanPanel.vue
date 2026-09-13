@@ -269,7 +269,7 @@ watch(
 
 .plan-entry__line--pulsing {
   border-left-style: solid;
-  border-left-color: var(--color-cyan, #06b6d4);
+  border-left-color: var(--color-info);
   animation: pulse-line 1.5s ease-in-out infinite;
 }
 
@@ -305,7 +305,7 @@ watch(
 }
 
 .plan-entry--in_progress .plan-entry__node {
-  border-color: var(--color-cyan, #06b6d4);
+  border-color: var(--color-info);
 }
 
 :root[data-theme-base="dark"] .plan-entry--in_progress .plan-entry__node {
@@ -322,7 +322,7 @@ watch(
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-cyan, #06b6d4);
+  background: var(--color-info);
   animation: pulse 1.5s ease-in-out infinite;
 }
 

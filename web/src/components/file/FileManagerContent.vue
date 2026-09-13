@@ -3124,7 +3124,7 @@ function scrollSelectedIntoView(path) {
 
 @media (hover: hover) {
     .dir-upload-cancel:hover {
-        background: var(--danger-color, #ef4444);
+        background: var(--color-red);
         color: #fff;
     }
 }
@@ -3166,8 +3166,8 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     justify-content: center;
     gap: var(--space-5);
-    background: color-mix(in srgb, var(--success-color, #22c55e) 10%, var(--bg-primary, #fff));
-    color: var(--success-color, #22c55e);
+    background: color-mix(in srgb, var(--color-green) 10%, var(--bg-primary, #fff));
+    color: var(--color-green);
     font-size: var(--font-size-lg);
     font-weight: var(--font-weight-medium);
     pointer-events: none;
@@ -3175,7 +3175,7 @@ function scrollSelectedIntoView(path) {
 }
 
 [data-theme-base="dark"] .paste-overlay {
-    background: color-mix(in srgb, var(--success-color, #22c55e) 12%, var(--bg-primary, #1a1a1a));
+    background: color-mix(in srgb, var(--color-green) 12%, var(--bg-primary, #1a1a1a));
 }
 
 .paste-fade-enter-active,
