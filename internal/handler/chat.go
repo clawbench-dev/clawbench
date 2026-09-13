@@ -338,25 +338,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
 	for _, fEntry := range req.Files {
 		if fEntry.IsURL() {
-			// Path carries the human-readable label (e.g. "owner/repo#123") and
-			// must be preserved: it is the chip text shown after a reload. Only
-			// the filesystem resolution is skipped for URL entries.
-			//
-			// The scheme is restricted to http(s) here, at the boundary, because
-			// this value is persisted and later re-rendered as an anchor href.
-			// A javascript:/data: entry stored once would otherwise become an
-			// executable link on every subsequent load, and client-side guards
-			// are not enough (a different renderer may forget to apply one).
-			url := strings.TrimSpace(fEntry.URL)
-			if !isSafeExternalURL(url) {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidURLAttachment")
+			entry, ok := validatedURLEntry(w, r, fEntry)
+			if !ok {
 				return
 			}
-			validatedFileEntries = append(validatedFileEntries, model.FileEntry{
-				Path: fEntry.Path,
-				Kind: "url",
-				URL:  url,
-			})
+			validatedFileEntries = append(validatedFileEntries, entry)
 			continue
 		}
 		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
@@ -1247,4 +1233,28 @@ func isSafeExternalURL(raw string) bool {
 	}
 	scheme := strings.ToLower(u.Scheme)
 	return (scheme == "http" || scheme == "https") && u.Host != ""
+}
+
+// validatedURLEntry normalizes one URL attachment, writing the error response
+// and returning ok=false when it is unusable.
+//
+// Shared by every endpoint that accepts file entries (chat and queue): both
+// persist the entry and both later render it as a link, so the scheme check and
+// the label handling must not drift apart between them.
+func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.FileEntry) (model.FileEntry, bool) {
+	// Path carries the human-readable label (e.g. "owner/repo#123") and must be
+	// preserved: it is the chip text shown after a reload. Only the filesystem
+	// resolution is skipped for URL entries.
+	//
+	// The scheme is restricted to http(s) here, at the boundary, because this
+	// value is persisted and later re-rendered as an anchor href. A
+	// javascript:/data: entry stored once would otherwise become an executable
+	// link on every subsequent load, and client-side guards are not enough (a
+	// different renderer may forget to apply one).
+	u := strings.TrimSpace(fEntry.URL)
+	if !isSafeExternalURL(u) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidURLAttachment")
+		return model.FileEntry{}, false
+	}
+	return model.FileEntry{Path: fEntry.Path, Kind: "url", URL: u}, true
 }

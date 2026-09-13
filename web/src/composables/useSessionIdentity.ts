@@ -3,6 +3,8 @@ import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
+import { useChatContext } from '@/composables/useChatContext'
+import { buildSendPayload } from '@/utils/fileAttachmentUtils'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
 
 const TAG = 'SessionIdentity'
@@ -645,6 +647,11 @@ const agentHeaderTitle = computed(() => {
 // ───────────────────────────────────────────────────────────
 
 export function useSessionIdentity() {
+  // Shared attachment batch. Only the no-ChatPanel fallback in sendMessage reads
+  // it — the normal path goes through ChatPanelContent, which owns the same
+  // singleton.
+  const { attachedFiles, clearAll } = useChatContext()
+
   /**
    * Switch to a different session. Delegates to ChatPanel's
    * implementation if registered, otherwise falls back to a
@@ -764,11 +771,23 @@ export function useSessionIdentity() {
       // Fallback uses the unified enqueue endpoint (D3). Generate a queueId so
       // the backend can match the optimistic bubble to the DB row at drain.
       const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      await fetch(url, {
+      // Carry the pending attachments. This path used to hardcode an empty
+      // filePaths and omit `files` entirely, silently dropping them — most
+      // visibly a URL attachment added by the issue/PR quote flow, which is the
+      // whole point of that action. Read them synchronously (before the await)
+      // so a concurrent change cannot swap the batch mid-send.
+      const { allFiles, filePaths } = buildSendPayload([], attachedFiles.value)
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, queueId, filePaths: [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
+      if (resp.ok) {
+        // Delivered — drop the batch so it is not sent again on the next message.
+        clearAll()
+      } else {
+        appLog.w(TAG, `sendMessage fallback: enqueue failed with ${resp.status}`)
+      }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)
     }
