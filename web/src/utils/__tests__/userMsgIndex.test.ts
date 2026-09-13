@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { extractPlainText, formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import {
+  extractPlainText,
+  formatUserMsg,
+  matchUserMsg,
+  truncateIndexText,
+  INDEX_TEXT_MAX_LENGTH,
+} from '@/utils/userMsgIndexUtils.ts'
 
 describe('extractPlainText', () => {
   it('returns empty string for empty content', () => {
@@ -139,11 +145,41 @@ describe('extractPlainText', () => {
   })
 })
 
+describe('truncateIndexText', () => {
+  it('leaves text at or below the cap untouched', () => {
+    expect(truncateIndexText('short', 10)).toBe('short')
+    expect(truncateIndexText('a'.repeat(10), 10)).toBe('a'.repeat(10))
+  })
+
+  it('cuts text past the cap and appends an ellipsis', () => {
+    const result = truncateIndexText('a'.repeat(11), 10)
+    expect(result).toBe('a'.repeat(10) + '…')
+    expect([...result]).toHaveLength(11)
+  })
+
+  it('counts code points so surrogate pairs are never split', () => {
+    // Each emoji is one code point but two UTF-16 units.
+    const emoji = '😀'.repeat(5)
+    expect(truncateIndexText(emoji, 3)).toBe('😀😀😀…')
+    expect(truncateIndexText(emoji, 5)).toBe(emoji)
+  })
+
+  it('handles empty input and a non-positive cap', () => {
+    expect(truncateIndexText('', 10)).toBe('')
+    expect(truncateIndexText('anything', 0)).toBe('')
+  })
+})
+
 describe('formatUserMsg', () => {
   const attachmentLabel = 'Attachment'
 
-  it('returns the full text for long content', () => {
-    expect(formatUserMsg({ content: 'a'.repeat(200) }, attachmentLabel)).toBe('a'.repeat(200))
+  it('truncates long content with an ellipsis at the default cap', () => {
+    const result = formatUserMsg({ content: 'a'.repeat(200) }, attachmentLabel)
+    expect(result).toBe('a'.repeat(INDEX_TEXT_MAX_LENGTH) + '…')
+  })
+
+  it('honors an explicit maxLen override', () => {
+    expect(formatUserMsg({ content: 'abcdef' }, attachmentLabel, 3)).toBe('abc…')
   })
 
   it('keeps short text as-is', () => {
