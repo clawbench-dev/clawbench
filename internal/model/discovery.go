@@ -26,6 +26,14 @@ var (
 	discoverFuncsMu sync.RWMutex
 )
 
+// discoverDetailFuncs maps backend ID → a function reporting why the most
+// recent discovery attempt failed. Optional; populated by backends that can
+// explain a failure (e.g. which paths were probed).
+var (
+	discoverDetailFuncs   = make(map[string]func() string)
+	discoverDetailFuncsMu sync.RWMutex
+)
+
 // RegisterDiscoverModelsFunc registers a model discovery function for a backend.
 // Called by backend sub-packages in their init() functions.
 func RegisterDiscoverModelsFunc(backendID string, fn func() []AgentModel) {
@@ -34,11 +42,32 @@ func RegisterDiscoverModelsFunc(backendID string, fn func() []AgentModel) {
 	discoverFuncs[backendID] = fn
 }
 
+// RegisterDiscoverModelsDetailFunc registers an optional function that returns
+// a human-readable reason the last discovery attempt returned no models.
+func RegisterDiscoverModelsDetailFunc(backendID string, fn func() string) {
+	discoverDetailFuncsMu.Lock()
+	defer discoverDetailFuncsMu.Unlock()
+	discoverDetailFuncs[backendID] = fn
+}
+
 // lookupDiscoverFunc returns the registered discovery function for a backend, or nil.
 func lookupDiscoverFunc(backendID string) func() []AgentModel {
 	discoverFuncsMu.RLock()
 	defer discoverFuncsMu.RUnlock()
 	return discoverFuncs[backendID]
+}
+
+// DiscoveryFailureDetail returns a backend-specific explanation for the most
+// recent empty discovery result, or "" if the backend registers no detail
+// function. Best-effort: callers use it only to enrich error messages.
+func DiscoveryFailureDetail(spec BackendSpec) string {
+	discoverDetailFuncsMu.RLock()
+	fn := discoverDetailFuncs[spec.Backend]
+	discoverDetailFuncsMu.RUnlock()
+	if fn == nil {
+		return ""
+	}
+	return fn()
 }
 
 // BackendSpec defines a known AI backend for auto-discovery.
@@ -74,6 +103,23 @@ func BackendSupportsCLI(backendID string) bool {
 		return false
 	}
 	return BackendSupportsCLIFn(backendID)
+}
+
+// BackendSupportsMidTurnFn is set by the backends package at init time to report
+// whether a backend can inject a message into an ALREADY RUNNING turn (rather
+// than queueing it for the next one). Uses function-variable injection to avoid
+// an import cycle (model cannot import ai).
+var BackendSupportsMidTurnFn func(backendID string) bool
+
+// BackendSupportsMidTurn reports whether the given backend can join a running
+// turn. Falls back to false when the function variable is not wired (isolated
+// tests, or a build without the backends package) — callers then use the
+// "interrupt and send" affordance instead.
+func BackendSupportsMidTurn(backendID string) bool {
+	if BackendSupportsMidTurnFn == nil {
+		return false
+	}
+	return BackendSupportsMidTurnFn(backendID)
 }
 
 // BackendRegistry lists all known AI backends for auto-discovery.
@@ -129,7 +175,10 @@ func CheckCLIExists(cmd string) bool {
 
 // CheckCLIExistsErr returns an error describing why the CLI is not available,
 // or nil if the CLI is available. This is used for more specific error reporting.
-func CheckCLIExistsErr(cmd string) error {
+// It is a variable so it can be overridden in tests.
+var CheckCLIExistsErr = checkCLIExistsErr
+
+func checkCLIExistsErr(cmd string) error {
 	if cmd == "" {
 		return fmt.Errorf("empty command")
 	}
@@ -593,6 +642,7 @@ func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]Agent
 		}
 		// Set SupportsCLI from the ai backend factory registry (runtime only)
 		agent.SupportsCLI = BackendSupportsCLI(agent.Backend)
+		agent.SupportsMidTurn = BackendSupportsMidTurn(agent.Backend)
 	}
 
 	// Build common prompt and compose SystemPrompt from commonPrompt + CustomSystemPrompt.

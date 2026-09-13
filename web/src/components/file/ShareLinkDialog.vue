@@ -210,18 +210,18 @@ async function revokeLink() {
 
 <style scoped>
 .share-dialog-body {
-  padding: 12px 16px 14px;
+  padding: var(--space-6) var(--space-7) 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .share-dialog-hint {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #57606a);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 .share-dialog-error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #cf222e;
   word-break: break-word;
 }
@@ -230,24 +230,24 @@ async function revokeLink() {
 .share-dialog-file-block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
-  padding-bottom: 2px;
+  padding-bottom: var(--space-1);
 }
 .share-dialog-file-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1f2328);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .share-dialog-file-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #8b949e);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  line-height: var(--line-height-normal);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -257,9 +257,9 @@ async function revokeLink() {
 .share-notice {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 9px 11px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 12.5px;
   line-height: 1.55;
 }
@@ -281,7 +281,7 @@ async function revokeLink() {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .share-notice-text {
   color: var(--text-secondary, #57606a);
@@ -292,7 +292,7 @@ async function revokeLink() {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
 .share-notice-warning {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   color: #b45309;
   word-break: break-word;
 }
@@ -304,7 +304,7 @@ async function revokeLink() {
 .share-dialog-link-bar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .share-dialog-link-input-wrap {
   position: relative;
@@ -315,11 +315,11 @@ async function revokeLink() {
   flex: 1;
   min-width: 0;
   width: 100%;
-  padding: 7px 84px 7px 10px; /* right padding clears the two embedded buttons */
+  padding:7px 84px 7px var(--space-5); /* right padding clears the two embedded buttons */
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-md);
+  font-family: var(--font-mono);
   background: var(--bg-primary);
   color: var(--text-primary);
   outline: none;
@@ -338,7 +338,7 @@ async function revokeLink() {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -346,7 +346,7 @@ async function revokeLink() {
 .share-dialog-link-btn + .share-dialog-link-btn {
   right: 38px;
 }
-.share-dialog-link-btn:disabled { opacity: 0.5; cursor: default; }
+.share-dialog-link-btn:disabled { opacity: var(--opacity-muted); cursor: default; }
 .share-dialog-spin {
   animation: share-dialog-spin 0.8s linear infinite;
 }

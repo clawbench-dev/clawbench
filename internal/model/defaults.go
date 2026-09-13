@@ -8,6 +8,41 @@ import (
 	"path/filepath"
 )
 
+// FirstRun records whether this process started against a brand-new install.
+// It is captured during ApplyDefaults (before the database is created) and
+// exposed to the client so the frontend can apply out-of-box appearance
+// defaults such as the default theme. It is process-scoped, not persisted:
+// a restart of an existing install re-evaluates to false.
+var FirstRun bool
+
+// HealedBingFetch records that ApplyDefaults repaired an unrepresentable
+// appearance state — the wallpaper mode says Bing while the fetch switch is off
+// — so startup knows the repaired value needs writing to disk. ApplyDefaults
+// fixes the value in memory, so this flag is the only surviving evidence that a
+// write is needed.
+var HealedBingFetch bool
+
+// IsFreshInstall reports whether this is a brand-new installation, which is
+// what gates the out-of-box appearance defaults (Bing daily wallpaper).
+//
+// A missing config.yaml alone is not sufficient evidence: config.yaml is
+// optional and is never written at startup, so a long-running install that
+// simply never changed a setting looks identical to a fresh one. The database
+// file, by contrast, is created on every startup (service.InitDB) and is
+// therefore a reliable "this install has run before" marker.
+func IsFreshInstall(presence map[string]bool) bool {
+	if presence != nil {
+		return false
+	}
+	if DataDir == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(DataDir, "ClawBench.db")); err == nil {
+		return false
+	}
+	return true
+}
+
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
 // keys that were explicitly present. For example, given:
 //
@@ -79,7 +114,44 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Appearance.PanelOpacity <= 0 {
 		cfg.Appearance.PanelOpacity = 0.85
 	}
-	// WallpaperFile empty is the intentional default (no wallpaper set).
+	// Wallpaper source selection. Two independent sources exist (a local
+	// gallery and the Bing daily image) but only one is shown at a time.
+	//
+	// The wallpaper layer itself is OFF out of the box: WallpaperEnabled stays
+	// at its zero value for fresh installs too, so no image is downloaded or
+	// displayed until the user turns the switch on. What a fresh install does
+	// pre-select is the *source* (Bing daily) with its fetch switch on, so that
+	// flipping the switch shows the Bing image immediately rather than an empty
+	// panel with no source chosen.
+	//
+	// Existing installs are deliberately left alone: a user who never enabled a
+	// wallpaper must not have one appear after an upgrade.
+	//
+	// The decision is captured in FirstRun because the database file this check
+	// relies on is created later in startup, so it cannot be re-evaluated once
+	// the server is serving requests.
+	FirstRun = IsFreshInstall(presence)
+	if FirstRun {
+		if cfg.Appearance.WallpaperMode == "" {
+			cfg.Appearance.WallpaperMode = "bing"
+		}
+		cfg.Appearance.Bing.Enabled = true
+		if cfg.Appearance.Bing.Mkt == "" {
+			cfg.Appearance.Bing.Mkt = "zh-CN"
+		}
+	}
+
+	// Bing is the selected source, so its fetch switch must be on. This is
+	// normally kept in step by the mode endpoint, but configs written before
+	// that coupling existed can say mode=bing with the switch off — a state the
+	// settings UI cannot reach or repair, where the worker silently refuses to
+	// fetch and the sync button appears to do nothing.
+	if cfg.Appearance.WallpaperMode == "bing" {
+		// Record that the value needed repairing so startup persists it; the
+		// assignment below destroys the evidence.
+		HealedBingFetch = !cfg.Appearance.Bing.Enabled
+		cfg.Appearance.Bing.Enabled = true
+	}
 
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)
@@ -129,13 +201,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	if cfg.LogMaxDays <= 0 {
 		cfg.LogMaxDays = 7
-	}
-
-	// --- LocalhostAuthExempt ---
-	// Default: true (localhost bypasses auth). Only set to false when explicitly
-	// configured. Use presence map to detect explicit setting.
-	if !presence["localhost_auth_exempt"] {
-		cfg.LocalhostAuthExempt = true
 	}
 
 	// --- Upload ---
@@ -362,5 +427,30 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// Keep Feishu.Enabled in sync with PushMode
 	cfg.Feishu.Enabled = cfg.PushMode == "feishu"
 
+	// --- Forge (GitHub / GitLab integration) ---
+	// Notification toggles default to ENABLED. Go's bool zero value is false, so
+	// without this block every flag would silently default to off — the opposite
+	// of the documented behavior. Presence is used to distinguish "user wrote
+	// false" from "user omitted the field": an absent key means default (true),
+	// a present key means respect the parsed value.
+	applyForgeNotifyDefaults(cfg, presence)
+
 	return autoPassword
+}
+
+// applyForgeNotifyDefaults fills the forge notification toggles, defaulting each
+// absent flag to true. A flag explicitly present in the config file (even as
+// false) is left untouched.
+func applyForgeNotifyDefaults(cfg *Config, presence map[string]bool) {
+	defaultTrue := func(key string, target *bool) {
+		if _, present := presence[key]; !present {
+			*target = true
+		}
+	}
+	defaultTrue("forge.notify.opened", &cfg.Forge.Notify.Opened)
+	defaultTrue("forge.notify.closed", &cfg.Forge.Notify.Closed)
+	defaultTrue("forge.notify.merged", &cfg.Forge.Notify.Merged)
+	defaultTrue("forge.notify.reopened", &cfg.Forge.Notify.Reopened)
+	defaultTrue("forge.notify.commented", &cfg.Forge.Notify.Commented)
+	defaultTrue("forge.notify.pipeline", &cfg.Forge.Notify.Pipeline)
 }

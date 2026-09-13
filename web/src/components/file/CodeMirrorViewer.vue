@@ -34,6 +34,7 @@ import { tags } from '@lezer/highlight'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
+import { parseLineRanges, flattenLineNumbers } from '@/utils/lineRanges.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
 import { LINE_FLASH_MS } from '@/utils/domFlash'
@@ -73,7 +74,7 @@ const dirty = ref(false)
 // Appearance). EditorView.theme emits these as real CSS rules, so a
 // var(--font-mono) reference resolves live against <html> and re-renders
 // automatically when the user changes the font — no watcher needed.
-const MONO_FONT = "var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace)"
+const MONO_FONT = "var(--font-mono)"
 
 const codeMirrorTheme = EditorView.theme({
     '&': {
@@ -82,7 +83,7 @@ const codeMirrorTheme = EditorView.theme({
     },
     '.cm-content': {
         fontFamily: MONO_FONT,
-        fontSize: '13px',
+        fontSize: 'var(--font-size-md)',
         lineHeight: '1.6',
         caretColor: 'var(--accent-color)',
         padding: '0 0 24px 0',
@@ -100,16 +101,16 @@ const codeMirrorTheme = EditorView.theme({
     },
     '.cm-lineNumbers .cm-gutterElement': {
         color: 'var(--text-muted)',
-        opacity: '0.5',
+        opacity: 'var(--opacity-muted)',
         minWidth: '1.2em',
-        padding: '0 6px 0 8px',
+        padding:'0 var(--space-3) 0 var(--space-4)',
     },
     '.cm-lineNumbers .cm-gutterElement:hover': {
         opacity: '1',
         color: 'var(--accent-color)',
     },
     '.cm-diff-gutter .cm-gutterElement': {
-        padding: '0 2px',
+        padding:'0 var(--space-1)',
         minWidth: '18px',
     },
     '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent-color) 7%, transparent)' },
@@ -305,15 +306,26 @@ function centeredScrollTop(editor, pos) {
     const centeredTop = block.top - (viewportHeight - block.height) / 2
     return Math.min(maxScrollTop, Math.max(0, centeredTop))
 }
-function scrollToLine(line, lineEnd) {
+function scrollToLine(line, lineEnd, lineRanges) {
     const editor = view.value
     if (!editor) return
     const target = Math.min(Math.max(1, line || 1), editor.state.doc.lines)
     const pos = editor.state.doc.line(target).from
     editor.scrollDOM.scrollTop = centeredScrollTop(editor, pos)
     const builder = new RangeSetBuilder()
-    const last = Math.min(lineEnd || target, editor.state.doc.lines)
-    for (let n = target; n <= last; n++) {
+    // Multi-range annotations flash every listed line; CodeMirror virtualizes
+    // its DOM so decorations (unlike the sliced preview) are not window-capped.
+    const ranges = lineRanges ? parseLineRanges(lineRanges) : []
+    const lineNumbers = ranges.length > 0
+        ? flattenLineNumbers(ranges, editor.state.doc.lines)
+        : (() => {
+            const last = Math.min(lineEnd || target, editor.state.doc.lines)
+            const out = []
+            for (let n = target; n <= last; n++) out.push(n)
+            return out
+        })()
+    for (const n of lineNumbers) {
+        if (n < 1 || n > editor.state.doc.lines) continue
         const l = editor.state.doc.line(n)
         builder.add(l.from, l.from, Decoration.line({ class: 'line-flash' }))
     }
@@ -400,7 +412,7 @@ function onScrollToLine(e) {
         pendingScrollRequestId = null
         pendingScrollRAF = null
         window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
-        scrollToLine(d.line, d.lineEnd)
+        scrollToLine(d.line, d.lineEnd, d.lineRanges)
         window.dispatchEvent(new CustomEvent('cm-scroll-to-line-handled', { detail: { requestId: d.requestId } }))
     }
     // Always defer the first measurement by one frame so the editor has its
@@ -738,9 +750,9 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .code-editor-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     justify-content: flex-end;
-    padding: 6px 12px;
+    padding: var(--space-3) var(--space-6);
     border-top: 1px solid var(--border-color);
     background: var(--bg-secondary);
     flex-shrink: 0;
@@ -756,23 +768,23 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     border-radius: 50%;
     background: var(--accent-color);
     flex-shrink: 0;
-    transition: opacity 0.2s;
+    transition: opacity var(--duration-slow);
 }
 .editor-btn.icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 8px;
+    padding:5px var(--space-4);
     line-height: 1;
 }
 .editor-btn {
     padding: 5px 14px;
     border: 1px solid var(--border-color);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
 }
 @media (hover: hover) {
@@ -780,7 +792,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   .editor-btn.primary:hover { filter: brightness(1.1); }
 }
 .editor-btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
-.editor-btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+.editor-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; pointer-events: none; }
 </style>
 
 <style>
@@ -831,13 +843,13 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     display: inline-block;
     min-width: 16px;
     text-align: center;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.6;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-relaxed);
     cursor: pointer;
     user-select: none;
-    border-radius: 3px;
-    padding: 0 2px;
+    border-radius: var(--radius-xs);
+    padding:0 var(--space-1);
 }
 @media (hover: hover) {
     .cm-diff-gutter-marker:hover {
@@ -888,10 +900,10 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     min-width: 0;
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
-    opacity: 0.94;
+    opacity: var(--opacity-hover);
     cursor: pointer;
-    font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-md);
     line-height: 20.8px;
     pointer-events: auto;
 }
@@ -905,7 +917,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
    the content text and doesn't overlap the fixed line numbers. */
 .cm-viewer .sticky-line-code {
     position: absolute;
-    left: var(--sticky-left, 0px);
+    left: var(--sticky-left, 0);
     top: 0;
     height: 100%;
     overflow: hidden;
@@ -921,21 +933,21 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer .cm-tooltip {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .cm-viewer .cm-tooltip-autocomplete {
-  font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
   max-height: 200px;
 }
 .cm-viewer .cm-tooltip-autocomplete ul li {
-  padding: 2px 8px 2px 4px;
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
 }
 .cm-viewer .cm-completionIcon {
   width: 16px;
-  font-size: 11px;
-  opacity: 0.7;
+  font-size: var(--font-size-xs);
+  opacity: var(--opacity-soft);
 }
 .cm-viewer .cm-completionIcon-class::after { color: var(--code-syntax-type); }
 .cm-viewer .cm-completionIcon-constant::after { color: var(--code-syntax-number); }
@@ -966,7 +978,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 }
 .cm-viewer .cm-completionMatchedText {
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Search panel (custom-rendered via the shared SearchBar component). The

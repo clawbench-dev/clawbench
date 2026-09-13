@@ -7,7 +7,24 @@ import {
   resolveWallpaperUrl,
   resetWallpaperUrlCache,
   currentThemeIsDark,
-  wallpaperImageUrl,
+  galleryImageUrl,
+  THUMB_WIDTH,
+  invalidateGalleryImageUrls,
+  resolveWallpaperMode,
+  resolveWallpaperEnabled,
+  resolveActiveFile,
+  resolveGalleryItems,
+  resolveGallerySelected,
+  resolveBingStatus,
+  isBingFirstImagePending,
+  bingMktForLocale,
+  uploadGalleryImages,
+  deleteGalleryItem,
+  selectGalleryItem,
+  setWallpaperMode,
+  setWallpaperFromPath,
+  syncBingNow,
+  fetchBingStatus,
 } from '../themeBackground'
 
 // appLog relays to native/server; keep it inert in unit tests.
@@ -22,6 +39,7 @@ describe('themeBackground', () => {
     document.documentElement.style.removeProperty('--wallpaper-scrim')
     document.documentElement.style.removeProperty('--panel-alpha')
     resetWallpaperUrlCache()
+    invalidateGalleryImageUrls()
   })
 
   describe('resolveWallpaperState', () => {
@@ -30,12 +48,132 @@ describe('themeBackground', () => {
       expect(resolveWallpaperState({})).toBe('unknown')
     })
 
-    it('is set when wallpaper_file is non-empty', () => {
-      expect(resolveWallpaperState({ wallpaper_file: 'background.png' })).toBe('set')
+    it('is set when active_file is non-empty', () => {
+      expect(resolveWallpaperState({ active_file: 'local-1-a.png' })).toBe('set')
     })
 
-    it('is unset when wallpaper_file is empty', () => {
-      expect(resolveWallpaperState({ wallpaper_file: '' })).toBe('unset')
+    it('is unset when active_file is empty', () => {
+      expect(resolveWallpaperState({ active_file: '' })).toBe('unset')
+    })
+
+    it('is unset when the wallpaper is globally disabled', () => {
+      // The server clears active_file while disabled, so the gallery can be
+      // retained without the wallpaper being shown.
+      expect(resolveWallpaperState({ active_file: '', wallpaper_enabled: false })).toBe('unset')
+    })
+  })
+
+  describe('resolveWallpaperMode', () => {
+    it('maps the server mode', () => {
+      expect(resolveWallpaperMode({ wallpaper_mode: 'local' })).toBe('local')
+      expect(resolveWallpaperMode({ wallpaper_mode: 'bing' })).toBe('bing')
+    })
+
+    it('is none when unset or unknown', () => {
+      expect(resolveWallpaperMode(undefined)).toBe('none')
+      expect(resolveWallpaperMode({})).toBe('none')
+      expect(resolveWallpaperMode({ wallpaper_mode: 'nonsense' })).toBe('none')
+    })
+  })
+
+  describe('resolveWallpaperEnabled', () => {
+    it('defaults to enabled before the config loads', () => {
+      expect(resolveWallpaperEnabled(undefined)).toBe(true)
+      expect(resolveWallpaperEnabled({})).toBe(true)
+    })
+
+    it('reflects an explicit disable', () => {
+      expect(resolveWallpaperEnabled({ wallpaper_enabled: false })).toBe(false)
+      expect(resolveWallpaperEnabled({ wallpaper_enabled: true })).toBe(true)
+    })
+  })
+
+  describe('resolveActiveFile', () => {
+    it('returns the server-resolved active_file', () => {
+      expect(resolveActiveFile({ active_file: 'local-1-a.png' })).toBe('local-1-a.png')
+    })
+
+    it('is empty when nothing is active', () => {
+      expect(resolveActiveFile(undefined)).toBe('')
+      expect(resolveActiveFile({})).toBe('')
+      expect(resolveActiveFile({ active_file: '' })).toBe('')
+    })
+  })
+
+  describe('resolveGalleryItems', () => {
+    it('returns the items list', () => {
+      const items = [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 2 }]
+      expect(resolveGalleryItems({ local: { items } })).toEqual(items)
+    })
+
+    it('is empty when absent or malformed', () => {
+      expect(resolveGalleryItems(undefined)).toEqual([])
+      expect(resolveGalleryItems({})).toEqual([])
+      expect(resolveGalleryItems({ local: {} })).toEqual([])
+      expect(resolveGalleryItems({ local: { items: 'nope' } })).toEqual([])
+    })
+  })
+
+  describe('resolveGallerySelected', () => {
+    it('returns the selection', () => {
+      expect(resolveGallerySelected({ local: { selected: 'local-1-a.png' } })).toBe('local-1-a.png')
+    })
+
+    it('is empty when absent', () => {
+      expect(resolveGallerySelected(undefined)).toBe('')
+      expect(resolveGallerySelected({})).toBe('')
+    })
+  })
+
+  describe('resolveBingStatus', () => {
+    it('returns the bing section', () => {
+      const bing = resolveBingStatus({ bing: { enabled: true, file: 'bing-20260910.jpg', copyright: '© x' } })
+      expect(bing.enabled).toBe(true)
+      expect(bing.file).toBe('bing-20260910.jpg')
+      expect(bing.copyright).toBe('© x')
+    })
+
+    it('fills in defaults for missing fields', () => {
+      const bing = resolveBingStatus(undefined)
+      expect(bing.enabled).toBe(false)
+      expect(bing.file).toBe('')
+      expect(bing.last_error).toBe('')
+    })
+  })
+
+  describe('bingMktForLocale', () => {
+    it('maps Chinese locales to zh-CN', () => {
+      expect(bingMktForLocale('zh')).toBe('zh-CN')
+      expect(bingMktForLocale('zh-CN')).toBe('zh-CN')
+    })
+
+    it('maps everything else to en-US', () => {
+      expect(bingMktForLocale('en')).toBe('en-US')
+      expect(bingMktForLocale('fr')).toBe('en-US')
+      expect(bingMktForLocale('')).toBe('en-US')
+    })
+  })
+
+  describe('isBingFirstImagePending', () => {
+    it('is true when Bing is active but no image is cached yet', () => {
+      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: true, active_file: '' })).toBe(true)
+    })
+
+    it('is false once an image is available', () => {
+      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: true, active_file: 'bing-20260910.jpg' })).toBe(false)
+    })
+
+    it('is false when the wallpaper is disabled', () => {
+      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: false, active_file: '' })).toBe(false)
+    })
+
+    it('is false for the local source', () => {
+      expect(isBingFirstImagePending({ wallpaper_mode: 'local', wallpaper_enabled: true, active_file: '' })).toBe(false)
+    })
+
+    it('is false before the config loads', () => {
+      expect(isBingFirstImagePending(undefined)).toBe(false)
+      expect(isBingFirstImagePending({})).toBe(false)
     })
   })
 
@@ -74,7 +212,7 @@ describe('themeBackground', () => {
       const html = document.documentElement
       expect(html.classList.contains('wallpaper-active')).toBe(true)
       expect(html.style.getPropertyValue('--wallpaper-url')).toContain('url("')
-      expect(html.style.getPropertyValue('--wallpaper-url')).toContain('/api/file/theme-background')
+      expect(html.style.getPropertyValue('--wallpaper-url')).toContain('/api/file/theme-wallpaper?name=background.png')
       expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.12)')
       expect(html.style.getPropertyValue('--panel-alpha')).toBe('90%')
     })
@@ -103,7 +241,7 @@ describe('themeBackground', () => {
     it('does not regenerate the image URL on alpha-only updates (slider drag)', () => {
       applyWallpaper('background.png', 0.9, false)
       const urlBefore = document.documentElement.style.getPropertyValue('--wallpaper-url')
-      expect(urlBefore).toContain('/api/file/theme-background')
+      expect(urlBefore).toContain('/api/file/theme-wallpaper?name=background.png')
 
       // Alpha/scrim-only refresh (simulates an opacity-slider tick) must keep
       // the SAME URL — a fresh one would re-download the wallpaper every tick.
@@ -144,9 +282,210 @@ describe('themeBackground', () => {
     })
   })
 
-  describe('wallpaperImageUrl', () => {
-    it('points at the theme-background endpoint', () => {
-      expect(wallpaperImageUrl()).toContain('/api/file/theme-background?v=')
+
+  describe('galleryImageUrl', () => {
+    it('points at the by-name wallpaper endpoint', () => {
+      expect(galleryImageUrl('local-1-a.png')).toContain('/api/file/theme-wallpaper?name=local-1-a.png')
+    })
+
+    it('encodes the file name', () => {
+      expect(galleryImageUrl('local 1 a.png')).toContain('name=local%201%20a.png')
+    })
+
+    it('caches per file so re-renders do not re-download the gallery', () => {
+      // Gallery tiles call this on every render; a fresh URL each time would
+      // bypass the server's immutable caching and re-download every image.
+      const first = galleryImageUrl('local-1-a.png')
+      expect(galleryImageUrl('local-1-a.png')).toBe(first)
+      expect(galleryImageUrl('local-2-b.png')).not.toBe(first)
+    })
+
+    it('regenerates after invalidateGalleryImageUrls', () => {
+      const before = galleryImageUrl('local-1-a.png')
+      invalidateGalleryImageUrls(['local-1-a.png'])
+      expect(galleryImageUrl('local-1-a.png')).not.toBe(before)
+    })
+
+    it('regenerates for all files when no names are given', () => {
+      const a = galleryImageUrl('local-1-a.png')
+      const b = galleryImageUrl('local-2-b.png')
+      invalidateGalleryImageUrls()
+      expect(galleryImageUrl('local-1-a.png')).not.toBe(a)
+      expect(galleryImageUrl('local-2-b.png')).not.toBe(b)
+    })
+
+    it('uses the server thumbnail endpoint when an absolute path is given', () => {
+      // Regression: the tile is 72px wide but the full image was downloaded —
+      // 2.4MB for the Bing 4K wallpaper, ~470x more than needed.
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
+
+      expect(url).toContain('/api/file/thumb?path=')
+      expect(url).toContain(encodeURIComponent('/data/theme/local/local-1-a.png'))
+      expect(url).toContain(`w=${THUMB_WIDTH}`)
+      expect(url).not.toContain('theme-wallpaper')
+    })
+
+    it('falls back to the full-size endpoint without an absolute path', () => {
+      // An older server (or an unresolvable name) sends no abs_path.
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.png')
+
+      expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.png')
+      expect(url).not.toContain('/api/file/thumb')
+    })
+
+    it('falls back to the full-size endpoint for SVG', () => {
+      // /api/file/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
+      // keep using the wallpaper endpoint (which serves it under a sandbox CSP).
+      invalidateGalleryImageUrls()
+      const url = galleryImageUrl('local-1-a.svg', '/data/theme/local/local-1-a.svg')
+
+      expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.svg')
+      expect(url).not.toContain('/api/file/thumb')
+    })
+
+    it('caches the thumbnail URL per file', () => {
+      invalidateGalleryImageUrls()
+      const first = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
+      expect(galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')).toBe(first)
+    })
+  })
+
+  describe('gallery API', () => {
+    it('uploads all files under the files field', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ items: [{ file: 'local-1-a.png' }], errors: [] }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const f1 = new File(['a'], 'a.png', { type: 'image/png' })
+        const f2 = new File(['b'], 'b.png', { type: 'image/png' })
+        const out = await uploadGalleryImages([f1, f2])
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/api/theme/local/upload')
+        expect(init.method).toBe('POST')
+        const form = init.body as FormData
+        expect(form.getAll('files')).toHaveLength(2)
+        expect(out.items).toHaveLength(1)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('throws when the upload request fails', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400 }))
+      try {
+        await expect(uploadGalleryImages([new File(['a'], 'a.png')])).rejects.toThrow('400')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('deletes by name in the query string', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ active_file: '' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await deleteGalleryItem('local-1-a.png')
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/api/theme/local/item?name=local-1-a.png')
+        expect(init.method).toBe('DELETE')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('selects by JSON body', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ active_file: 'local-1-a.png' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await selectGalleryItem('local-1-a.png')
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/api/theme/local/select')
+        expect(JSON.parse(init.body as string)).toEqual({ name: 'local-1-a.png' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('sets a wallpaper from a server file by reading bytes then uploading+selecting', async () => {
+      const blob = new Blob(['png-bytes'], { type: 'image/png' })
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, blob: async () => blob })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ file: 'local-9-z.png' }], errors: [] }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ active_file: 'local-9-z.png' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const out = await setWallpaperFromPath('assets/wall.png')
+
+        // 1. Read the source file bytes through the local-file endpoint.
+        expect(fetchMock.mock.calls[0][0]).toContain('/api/local-file/assets/wall.png')
+        // 2. Upload the bytes into the gallery.
+        expect(fetchMock.mock.calls[1][0]).toBe('/api/theme/local/upload')
+        const form = fetchMock.mock.calls[1][1].body as FormData
+        expect((form.getAll('files')[0] as File).name).toBe('wall.png')
+        // 3. Select the new gallery entry as the active wallpaper.
+        expect(fetchMock.mock.calls[2][0]).toBe('/api/theme/local/select')
+        expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({ name: 'local-9-z.png' })
+        expect(out.active_file).toBe('local-9-z.png')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('throws when the gallery upload rejects the source image', async () => {
+      const blob = new Blob(['x'], { type: 'image/png' })
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, blob: async () => blob })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [], errors: [{ name: 'wall.png', error: 'unsupported image' }] }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await expect(setWallpaperFromPath('assets/wall.png')).rejects.toThrow('unsupported image')
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('sets the mode via the wallpaper endpoint', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ mode: 'bing' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await setWallpaperMode({ mode: 'bing', enabled: true })
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/api/theme/wallpaper')
+        expect(JSON.parse(init.body as string)).toEqual({ mode: 'bing', enabled: true })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('syncs Bing and reads the status', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ enabled: true, file: 'bing-1.jpg' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        const sync = await syncBingNow()
+        expect(fetchMock.mock.calls[0][0]).toBe('/api/theme/bing/sync')
+        expect(fetchMock.mock.calls[0][1].method).toBe('POST')
+        expect(sync.file).toBe('bing-1.jpg')
+
+        const status = await fetchBingStatus()
+        expect(fetchMock.mock.calls[1][0]).toBe('/api/theme/bing/status')
+        expect(status.enabled).toBe(true)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('throws when a Bing sync fails', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
+      try {
+        await expect(syncBingNow()).rejects.toThrow('500')
+      } finally {
+        vi.unstubAllGlobals()
+      }
     })
   })
 
@@ -158,7 +497,7 @@ describe('themeBackground', () => {
     it('reuses the cached URL for the same file', () => {
       const a = resolveWallpaperUrl('background.png')
       const b = resolveWallpaperUrl('background.png')
-      expect(a).toContain('/api/file/theme-background?v=')
+      expect(a).toContain('/api/file/theme-wallpaper?name=background.png&v=')
       expect(b).toBe(a)
     })
 

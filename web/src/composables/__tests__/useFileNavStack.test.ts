@@ -170,6 +170,33 @@ describe('useFileNavStack', () => {
       expect(nav.currentLocation.value?.lineStart).toBe(10)
     })
 
+    it('stores and restores a multi-range target', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/docs/a.md')
+      nav.openFile('/src/main.rs', { lineStart: 90, lineEnd: 91, lineRanges: '90-91,309' })
+
+      expect(nav.currentLocation.value).toEqual({
+        path: '/src/main.rs',
+        lineStart: 90,
+        lineEnd: 91,
+        lineRanges: '90-91,309',
+      })
+
+      nav.goBack()
+      nav.goForward()
+      expect(nav.currentLocation.value?.lineRanges).toBe('90-91,309')
+    })
+
+    it('treats a different multi-range list in one file as a separate visit', () => {
+      const nav = useFileNavStack()
+      nav.openFile('/src/main.rs', { lineRanges: '90-91,309' })
+      nav.openFile('/src/main.rs', { lineRanges: '10-20' })
+
+      expect(nav.canGoBack.value).toBe(true)
+      nav.goBack()
+      expect(nav.currentLocation.value?.lineRanges).toBe('90-91,309')
+    })
+
     it('openFile after going back discards the forward branch', () => {
       const nav = useFileNavStack()
       nav.openFile('/src/a.ts')

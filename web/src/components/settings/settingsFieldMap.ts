@@ -252,6 +252,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
     ]}},
     { type: 'item', spec: { labelKey: 'settings.items.markdownCodeLinkPreview', descriptionKey: 'settings.items.markdownCodeLinkPreviewDesc', key: 'markdownCodeLinkPreview', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.filePreviewMode', descriptionKey: 'settings.items.filePreviewModeDesc', key: 'filePreviewMode', type: 'switch', source: 'local', sectionHeader: 'settings.items.fileDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server', sectionHeader: 'settings.items.uploadSection' } },
   ],
@@ -260,9 +261,23 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local', appOnly: true, sectionHeader: 'settings.items.debugSection' } },
   ],
   security: [
-    { type: 'item', spec: { labelKey: 'settings.items.localhostAuthExempt', descriptionKey: 'settings.items.localhostAuthExemptDesc', key: 'localhost_auth_exempt', type: 'switch', source: 'server', sectionHeader: 'settings.items.securitySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.securitySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
+  ],
+  forgeIntegration: [
+    // Credentials row is a dedicated component (tokens are write-only; the
+    // server never returns them, so a plain text field cannot round-trip).
+    { type: 'item', spec: { labelKey: 'settings.items.forgeCredentials', descriptionKey: 'settings.items.forgeCredentialsDesc', key: 'forgeCredentials', type: 'info', source: 'server', sectionHeader: 'settings.items.forgeSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyOpened', descriptionKey: 'settings.items.forgeNotifyOpenedDesc', key: 'forge.notify.opened', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyClosed', descriptionKey: 'settings.items.forgeNotifyClosedDesc', key: 'forge.notify.closed', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyMerged', descriptionKey: 'settings.items.forgeNotifyMergedDesc', key: 'forge.notify.merged', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyReopened', descriptionKey: 'settings.items.forgeNotifyReopenedDesc', key: 'forge.notify.reopened', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyCommented', descriptionKey: 'settings.items.forgeNotifyCommentedDesc', key: 'forge.notify.commented', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeNotifyPipeline', descriptionKey: 'settings.items.forgeNotifyPipelineDesc', key: 'forge.notify.pipeline', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeNotifySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.forgeInsecureTLS', descriptionKey: 'settings.items.forgeInsecureTLSDesc', key: 'forge.insecure_tls', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeTlsSection' } },
+    // Global kill-switch for event-triggered AI tasks. Notifications and unread
+    // keep working while it is on; only automatic task firing stops.
+    { type: 'item', spec: { labelKey: 'settings.items.forgePauseEventTasks', descriptionKey: 'settings.items.forgePauseEventTasksDesc', key: 'forge.pause_event_tasks', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
   ],
   notification: [
     { type: 'item', spec: { labelKey: 'settings.items.notificationSound', descriptionKey: 'settings.items.notificationSoundDesc', key: 'notificationSound', type: 'switch', source: 'local', sectionHeader: 'settings.items.notificationSoundSection' } },

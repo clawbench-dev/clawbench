@@ -73,7 +73,7 @@ func buildPiStreamArgs(req ai.ChatRequest) []string {
 		slog.Warn("cli: --continue fallback (pi, session_id missing)",
 			slog.String("backend", "pi"))
 	case req.ScheduledExecution:
-		// Scheduled tasks are independent executions — no need to persist sessions.
+		// Tasks are independent executions — no need to persist sessions.
 		args = append(args, "--no-session")
 	}
 	// Default: new interactive session without --no-session so Pi creates

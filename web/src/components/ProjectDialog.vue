@@ -296,8 +296,8 @@ onBeforeUnmount(() => {
 .dialog-toolbar-row {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 10px 3px;
+  gap: var(--space-2);
+  padding:3px var(--space-5) 3px;
 }
 
 .dialog-toolbar-row :deep(.search-pill) {
@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
 }
 
 .dialog-nav :deep(.dir-breadcrumb) {
-  padding: 0 10px 3px;
+  padding:0 var(--space-5) 3px;
 }
 
 /* Toolbar buttons */
@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
   background: var(--bg-tertiary, #f0f0f0);
   color: var(--text-secondary, #666);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
   flex-shrink: 0;
 }
 .toolbar-btn svg {
@@ -337,24 +337,24 @@ onBeforeUnmount(() => {
     color: var(--accent-color, #0066cc);
   }
 }
-.toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.toolbar-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* Content */
 .dialog-content {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
   min-height: 200px;
 }
 
 .dialog-item {
   display: flex;
   align-items: center;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   min-height: 44px;
   cursor: pointer;
-  gap: 8px;
-  transition: background 0.1s;
+  gap: var(--space-4);
+  transition: background var(--duration-fast);
 }
 .dialog-item + .dialog-item {
   border-top: 1px solid var(--border-color, #e5e5e5);
@@ -366,7 +366,7 @@ onBeforeUnmount(() => {
 .dialog-item.selected .item-name { color: #fff; }
 
 .item-icon { flex-shrink: 0; width: 28px; height: 28px; }
-.item-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item-name { flex: 1; font-size: var(--font-size-md); font-weight: var(--font-weight-medium); color: var(--text-primary, #1a1a1a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Item action buttons */
 .item-action-btn {
@@ -377,12 +377,12 @@ onBeforeUnmount(() => {
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 @media (hover: hover) {
   .item-action-btn:hover {
@@ -405,8 +405,8 @@ onBeforeUnmount(() => {
 
 .dialog-empty {
   text-align: center;
-  padding: 40px 20px;
+  padding:40px var(--space-8);
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 </style>

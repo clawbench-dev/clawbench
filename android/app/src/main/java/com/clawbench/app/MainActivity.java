@@ -310,7 +310,9 @@ public class MainActivity extends AppCompatActivity {
         // Apply theme-based colors to native UI (status bar, nav bar, splash)
         applyThemeColors();
 
-        // Clean up legacy native version mismatch skip preference (now handled in WebView)
+        // Clean up the legacy version-mismatch skip preference. The gate is now native
+        // and intentionally never persists a skip (the dialog re-appears every launch),
+        // so this key is unused — removing it avoids confusion with older installs.
         if (prefs.contains("skip_version_mismatch")) {
             prefs.edit().remove("skip_version_mismatch").apply();
         }
@@ -1364,6 +1366,126 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * The installed APK's versionName, or null when it cannot be read.
+     *
+     * <p>Returns null (rather than a placeholder) so a PackageManager failure makes
+     * the version gate fail open — an unreadable version must never block login.
+     */
+    String getAppVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            AppLog.w(TAG, "Could not read app version", e);
+            return null;
+        }
+    }
+
+    /**
+     * Navigate to {@code url}, unless the installed APK is older than the server — in
+     * which case show the blocking upgrade dialog first and only navigate if the user
+     * force-skips.
+     *
+     * <p>Must be called on the UI thread (it may construct an AlertDialog). Fails open:
+     * an unparseable or missing version on either side navigates immediately.
+     *
+     * @param url           server base URL being connected to
+     * @param serverVersion version reported by {@code /api/health}, may be null
+     * @param proceed       navigation to run when there is no mismatch (or after skip)
+     */
+    void gateVersionMismatchAndProceed(String url, String serverVersion, Runnable proceed) {
+        String appVersion = getAppVersionName();
+        if (VersionCompare.shouldShowMismatch(appVersion, serverVersion)) {
+            showVersionMismatchDialog(url, appVersion, serverVersion, proceed);
+        } else {
+            proceed.run();
+        }
+    }
+
+    /**
+     * Blocking dialog shown before the WebView loads when the APK is older than the
+     * server. Mirrors {@link #showSslConfirmationDialog}: framework AlertDialog,
+     * locale-aware strings, not cancelable so BACK/tap-outside cannot bypass it.
+     *
+     * @param onSkip navigation to run when the user chooses to continue on the old APK
+     */
+    void showVersionMismatchDialog(String url, String appVersion, String serverVersion, Runnable onSkip) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this)
+                .setTitle(userLangString(R.string.version_mismatch_title))
+                .setMessage(userLangString(R.string.version_mismatch_message, appVersion, serverVersion))
+                .setPositiveButton(userLangString(R.string.version_mismatch_download), (dialog, which) ->
+                        onVersionMismatchDownload(url))
+                .setNegativeButton(userLangString(R.string.version_mismatch_skip), (dialog, which) ->
+                        onSkip.run())
+                .setCancelable(false)
+                .show();
+    }
+
+    /**
+     * "Download APK" action: start the download, then return to the native login page.
+     *
+     * <p>Returning to the login page (rather than waiting on the splash) avoids leaving
+     * the user stuck if they abandon the install. The download itself continues in the
+     * background with a system notification, and {@link #waitForApkInstall} launches the
+     * installer on completion.
+     */
+    void onVersionMismatchDownload(String url) {
+        startApkDownload(url);
+        showLoginPage(null);
+    }
+
+    /** Download the embedded APK from the given server base URL. */
+    void startApkDownload(String serverUrl) {
+        if (serverUrl == null || serverUrl.isEmpty()) return;
+        downloadFileViaManager(serverUrl + "/api/apk", "clawbench-android.apk");
+    }
+
+    /**
+     * Download a file at an already-resolved full URL via DownloadManager, carrying any
+     * auth cookie for that URL. For APK files, {@link #waitForApkInstall} polls until the
+     * download finishes and then launches the system installer.
+     *
+     * <p>Shared by the JS bridge ({@code ClawBenchNative.downloadUrl}) and the native
+     * version-mismatch dialog, so the two paths cannot drift.
+     *
+     * @param fullUrl  absolute URL to download
+     * @param fileName optional file name override; derived from the URL when empty
+     */
+    void downloadFileViaManager(String fullUrl, String fileName) {
+        new Thread(() -> {
+            try {
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(fullUrl));
+                // Carry auth cookies so the download is authorized
+                String cookies = CookieManager.getInstance().getCookie(fullUrl);
+                if (cookies != null) {
+                    request.addRequestHeader("Cookie", cookies);
+                }
+                String resolvedName = (fileName != null && !fileName.isEmpty())
+                        ? fileName : Uri.parse(fullUrl).getLastPathSegment();
+                if (resolvedName == null || resolvedName.isEmpty()) resolvedName = "download";
+                final String finalFileName = resolvedName;
+                request.setTitle(finalFileName);
+                request.setDescription(getString(R.string.download_description));
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
+                        "ClawBench/" + finalFileName);
+                request.setNotificationVisibility(
+                        DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                long downloadId = dm.enqueue(request);
+
+                // For APK files, poll until download completes then trigger installer
+                if (finalFileName.toLowerCase().endsWith(".apk")) {
+                    waitForApkInstall(dm, downloadId, finalFileName);
+                }
+            } catch (Exception e) {
+                AppLog.e(TAG, "downloadFileViaManager failed", e);
+                runOnUiThread(() ->
+                        Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show());
+            }
+        }).start();
+    }
+
+    /**
      * Build an OkHttpClient that trusts all SSL certificates (self-signed, hostname mismatch, etc.).
      * Used after the user explicitly confirms they trust the server's certificate.
      */
@@ -1422,10 +1544,11 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> showLoginPage(result.error));
                     return;
                 }
-                runOnUiThread(() -> {
+                final String serverVersion = result.serverVersion;
+                runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, () -> {
                     webView.loadUrl(url);
                     startConnectionTimeout();
-                });
+                }));
             } catch (javax.net.ssl.SSLException e) {
                 AppLog.w(TAG, "SSL error during health check, showing confirmation dialog", e);
                 runOnUiThread(() -> showSslConfirmationDialog(() -> {
@@ -1436,10 +1559,11 @@ public class MainActivity extends AppCompatActivity {
                             runOnUiThread(() -> showLoginPage(result.error));
                             return;
                         }
-                        runOnUiThread(() -> {
+                        final String retryServerVersion = result.serverVersion;
+                        runOnUiThread(() -> gateVersionMismatchAndProceed(url, retryServerVersion, () -> {
                             webView.loadUrl(url);
                             startConnectionTimeout();
-                        });
+                        }));
                     } catch (Exception retryEx) {
                         AppLog.w(TAG, "SSL health check retry failed", retryEx);
                         runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
@@ -1585,8 +1709,9 @@ public class MainActivity extends AppCompatActivity {
                 AppLog.w(TAG, "Failed to inject auth cookie", e);
             }
             // Auth success — verify this is a ClawBench server before navigating WebView
+            HealthCheckResult healthResult;
             try {
-                HealthCheckResult healthResult = performHealthCheck(url, client);
+                healthResult = performHealthCheck(url, client);
                 if (healthResult.error != null) {
                     runOnUiThread(() -> showLoginPage(healthResult.error));
                     return;
@@ -1596,12 +1721,14 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
                 return;
             }
-            // Health check passed — promote server to head of list, then navigate
-            runOnUiThread(() -> {
+            // Health check passed — prompt if the APK is older than the server, otherwise
+            // promote the server to head of the list and navigate.
+            final String serverVersion = healthResult.serverVersion;
+            runOnUiThread(() -> gateVersionMismatchAndProceed(url, serverVersion, () -> {
                 saveServerInternal(url, password);
                 webView.loadUrl(url);
                 startConnectionTimeout();
-            });
+            }));
         } else if (statusCode == 401) {
             // Wrong password — go back to login page with error
             runOnUiThread(() -> showLoginPage(
@@ -1712,11 +1839,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Bring the main activity to the front from the desktop floating status window
-     * (capsule tap). Static so BackgroundService can invoke it without an activity
-     * reference. Carries the tapped session id as a deep link for the frontend.
-     * No project path is available for capsule taps (it opens the most recently
-     * seen session), so this delegates to the two-arg variant with a null path.
+     * Bring the main activity to the front from the desktop floating status
+     * window, without a session deep link. Static so BackgroundService can
+     * invoke it without an activity reference. Delegates to the two-arg variant
+     * with a null path.
      */
     public static void launchFromFloatingWindow(String sessionId) {
         launchFromFloatingWindow(sessionId, null);
@@ -2935,41 +3061,10 @@ public class MainActivity extends AppCompatActivity {
          */
         @JavascriptInterface
         public void downloadUrl(String url, String fileName) {
-            new Thread(() -> {
-                try {
-                    String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
-                    if (serverUrl.isEmpty()) return;
-                    String fullUrl = url.startsWith("http") ? url : serverUrl + url;
-
-                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(fullUrl));
-                    // Carry auth cookies so the download is authorized
-                    String cookies = CookieManager.getInstance().getCookie(fullUrl);
-                    if (cookies != null) {
-                        request.addRequestHeader("Cookie", cookies);
-                    }
-                    String resolvedName = (fileName != null && !fileName.isEmpty())
-                            ? fileName : Uri.parse(fullUrl).getLastPathSegment();
-                    if (resolvedName == null || resolvedName.isEmpty()) resolvedName = "download";
-                    final String finalFileName = resolvedName;
-                    request.setTitle(finalFileName);
-                    request.setDescription(activity.getString(R.string.download_description));
-                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS,
-                            "ClawBench/" + finalFileName);
-                    request.setNotificationVisibility(
-                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                    DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
-                    long downloadId = dm.enqueue(request);
-
-                    // For APK files, poll until download completes then trigger installer
-                    if (finalFileName.toLowerCase().endsWith(".apk")) {
-                        activity.waitForApkInstall(dm, downloadId, finalFileName);
-                    }
-                } catch (Exception e) {
-                    AppLog.e(TAG, "downloadUrl failed", e);
-                    activity.runOnUiThread(() ->
-                            Toast.makeText(activity, R.string.download_failed, Toast.LENGTH_SHORT).show());
-                }
-            }).start();
+            String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
+            if (serverUrl.isEmpty()) return;
+            String fullUrl = url.startsWith("http") ? url : serverUrl + url;
+            activity.downloadFileViaManager(fullUrl, fileName);
         }
 
         /**

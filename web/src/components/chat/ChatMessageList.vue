@@ -74,6 +74,8 @@
       :active="active"
       :isLastAssistant="isLastAssistant(msg, i)"
       :isLastMessage="i === messages.length - 1"
+      :midTurnSupported="midTurnSupported"
+      :pendingActionBusy="pendingActionBusy === msg.queueId || pendingActionBusy === String(msg.id)"
       @toggle-tool="$emit('toggle-tool', $event)"
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
@@ -87,6 +89,7 @@
       @reset-session="$emit('reset-session', $event)"
 
       @remove-pending="$emit('remove-pending', $event)"
+      @pending-action="$emit('pending-action', $event)"
       @fork-from-message="$emit('fork-from-message', $event)"
       @rewind-from-message="$emit('rewind-from-message', $event)"
     />
@@ -195,13 +198,18 @@ const props = defineProps({
   totalMessages: { type: Number, default: 0 },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
+  /** Whether the active backend can inject into the running turn (drives the
+   *  queued bubble's single action label: insert vs interrupt). */
+  midTurnSupported: { type: Boolean, default: false },
+  /** queueId (or id) of the queued bubble whose action request is in flight. */
+  pendingActionBusy: { type: String, default: '' },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'pending-action', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
-const { openFilePath } = useFilePathAnnotation()
+const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 'chat' })
@@ -380,20 +388,22 @@ async function handleChatClick(event) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = linkOrBtn.getAttribute('data-file-path')
-    const lineStart = linkOrBtn.getAttribute('data-line-start')
-    const lineEnd = linkOrBtn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
     if (filePath) {
-      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'chat')
+      const ok = lineRanges
+        ? await openFilePath(filePath, lineStart, lineEnd, 'chat', lineRanges)
+        : await openFilePath(filePath, lineStart, lineEnd, 'chat')
       if (ok) chatUI.navigateToFileViewer?.()
     }
     return
   }
 
-  handleDblClick(event, async (href, lineStart, lineEnd) => {
+  handleDblClick(event, async (href, lineStart, lineEnd, lineRanges) => {
     event.stopPropagation()
     codeLinkPreview.close()
-    const ok = await openFilePath(href, lineStart, lineEnd, 'chat')
+    const ok = lineRanges
+      ? await openFilePath(href, lineStart, lineEnd, 'chat', lineRanges)
+      : await openFilePath(href, lineStart, lineEnd, 'chat')
     if (ok) chatUI.navigateToFileViewer?.()
   })
 }
@@ -1260,40 +1270,40 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: var(--space-6) 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Message list container */
 .chat-messages-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-8);
 }
 
 .chat-empty {
   text-align: center;
-  padding: 32px 16px;
+  padding:32px var(--space-7);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: var(--space-7);
   flex: 1;
 }
 
 .agent-welcome {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: var(--space-6);
+  padding:14px var(--space-7);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   max-width: 280px;
   width: 100%;
   text-align: left;
@@ -1307,7 +1317,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .agent-welcome-info {
@@ -1319,15 +1329,15 @@ defineExpose({
 }
 
 .agent-welcome-name {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
 .agent-welcome-specialty {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -1337,15 +1347,15 @@ defineExpose({
 
 .agent-welcome-tags {
   display: flex;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .agent-welcome-tag {
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 
@@ -1364,42 +1374,42 @@ defineExpose({
 }
 
 .agent-welcome-hint {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: color-mix(in srgb, var(--text-muted) 70%, transparent);
 }
 
 /* No agents empty state */
 .no-agents-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .no-agents-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
 .no-agents-desc {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   max-width: 240px;
   text-align: center;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .no-agents-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1434,13 +1444,13 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 5px 12px;
-  font-size: 12px;
+  gap: var(--space-3);
+  padding:5px var(--space-6);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -1449,12 +1459,12 @@ defineExpose({
 
 .chat-load-hint {
   cursor: pointer;
-  transition: color 0.15s, opacity 0.15s, background 0.15s;
+  transition: color var(--duration-base), opacity var(--duration-base), background var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
 .chat-load-hint:active {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 @media (hover: hover) {
@@ -1468,10 +1478,10 @@ defineExpose({
 
 /* Transition for load hint switching */
 .load-hint-fade-enter-active {
-  transition: opacity 0.2s ease-out;
+  transition: opacity var(--duration-slow) ease-out;
 }
 .load-hint-fade-leave-active {
-  transition: opacity 0.15s ease-in;
+  transition: opacity var(--duration-base) ease-in;
 }
 .load-hint-fade-enter-from,
 .load-hint-fade-leave-to {
@@ -1487,10 +1497,10 @@ defineExpose({
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   z-index: 3;
   pointer-events: none;
-  padding: 6px 0;
+  padding: var(--space-3) 0;
 }
 
 .scroll-fab-bottom {
@@ -1500,16 +1510,16 @@ defineExpose({
 .scroll-fab-dir {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 /* Direction swap transition (out-in) */
 .scroll-fab-swap-enter-active {
-  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+  transition: opacity var(--duration-base) ease-out, transform var(--duration-base) ease-out;
 }
 
 .scroll-fab-swap-leave-active {
-  transition: opacity 0.1s ease-in, transform 0.1s ease-in;
+  transition: opacity var(--duration-fast) ease-in, transform var(--duration-fast) ease-in;
 }
 
 .scroll-fab-swap-enter-from {
@@ -1535,8 +1545,8 @@ defineExpose({
   border-radius: 50%;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  opacity: 0.6;
-  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s, opacity 0.15s;
+  opacity: var(--opacity-muted);
+  transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base), opacity var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1571,7 +1581,7 @@ defineExpose({
   transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .scroll-fab-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 .scroll-fab-bottom.scroll-fab-enter-from {
   opacity: 0;

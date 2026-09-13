@@ -814,7 +814,7 @@ func TestMapACPSessionUpdate_PlanUpdate(t *testing.T) {
 
 	mapACPSessionUpdate(update, ch, ctx, nil, nil)
 
-	// Drain events, skipping raw_output, expect exactly 1 plan_update
+	// Drain events, expect exactly 1 plan_update
 	events := drainACPEvents(ch, 1)
 	require.Len(t, events, 1)
 	assert.Equal(t, "plan_update", events[0].Type)
@@ -971,73 +971,6 @@ func TestMapACPSessionUpdate_AgentMessageChunk(t *testing.T) {
 	assert.Equal(t, "hello world", events[1].Content)
 
 	assertNoMoreACPEvents(ch, t)
-}
-
-func TestMapACPSessionUpdate_RawOutputAccumulatedOnConn(t *testing.T) {
-	// Raw ACP notification payloads are now accumulated on ACPConn.rawOutputBuf
-	// instead of being sent through the channel (to avoid consuming channel buffer
-	// space that would cause content events to be dropped).
-	// When conn is nil, raw output is not accumulated.
-	// When conn is provided, raw output is accumulated on the connection.
-	ch := make(chan StreamEvent, 10)
-	ctx := context.Background()
-
-	// With conn=nil: no raw_output event in channel
-	update := acp.SessionUpdate{
-		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{
-				Text: &acp.ContentBlockText{Text: "hello"},
-			},
-		},
-	}
-
-	mapACPSessionUpdate(update, ch, ctx, nil, nil)
-
-	// Drain all events — should NOT contain raw_output
-	var rawEvents []StreamEvent
-	var otherEvents []StreamEvent
-	for {
-		select {
-		case event := <-ch:
-			if event.Type == "raw_output" {
-				rawEvents = append(rawEvents, event)
-			} else {
-				otherEvents = append(otherEvents, event)
-			}
-		default:
-			goto done
-		}
-	}
-done:
-
-	assert.Len(t, rawEvents, 0, "raw_output should not be sent through channel anymore")
-	assert.Len(t, otherEvents, 2, "should have thinking_done + content")
-
-	// With conn provided: raw output is accumulated on the connection
-	conn := &ACPConn{
-		agent: &model.Agent{ID: "test"},
-	}
-	ch2 := make(chan StreamEvent, 10)
-	mapACPSessionUpdate(update, ch2, ctx, conn, nil)
-
-	// Drain events from ch2
-	var otherEvents2 []StreamEvent
-	for {
-		select {
-		case event := <-ch2:
-			otherEvents2 = append(otherEvents2, event)
-		default:
-			goto done2
-		}
-	}
-done2:
-
-	// No raw_output in channel
-	assert.Len(t, otherEvents2, 2, "should have thinking_done + content, no raw_output")
-
-	// Raw output should be accumulated on the connection
-	rawOutput := conn.ResetRawOutput()
-	assert.Contains(t, rawOutput, "agent_message_chunk", "raw output should be accumulated on ACPConn")
 }
 
 func TestMapACPSessionUpdate_AgentMessageChunk_NilText(t *testing.T) {
@@ -2434,17 +2367,12 @@ func TestExtractModelListFromOpts_NoModelCategory(t *testing.T) {
 
 // --- ACP test helpers ---
 
-// drainACPEvents reads exactly count non-raw_output events from ch, skipping raw_output events.
-// It reads up to count*2 events to account for interleaved raw_output events.
+// drainACPEvents reads exactly count events from ch.
 func drainACPEvents(ch chan StreamEvent, count int) []StreamEvent {
 	events := make([]StreamEvent, 0, count)
-	maxReads := count * 3 // allow for interleaved raw_output events
-	for range maxReads {
+	for range count * 3 {
 		select {
 		case event := <-ch:
-			if event.Type == "raw_output" {
-				continue // skip debug raw output events
-			}
 			events = append(events, event)
 			if len(events) == count {
 				return events
@@ -2456,76 +2384,15 @@ func drainACPEvents(ch chan StreamEvent, count int) []StreamEvent {
 	return events
 }
 
-// assertNoMoreACPEvents fails the test if there are pending non-raw_output events on ch.
+// assertNoMoreACPEvents fails the test if there are pending events on ch.
 func assertNoMoreACPEvents(ch chan StreamEvent, t *testing.T) {
 	t.Helper()
 	for {
 		select {
 		case event := <-ch:
-			if event.Type == "raw_output" {
-				continue // skip debug raw output events
-			}
 			t.Fatalf("expected no more events on channel, got %q", event.Type)
 		default:
 			return
 		}
 	}
-}
-
-// --- ACPConn raw output buffer tests ---
-
-func TestACPConn_AppendRawOutput(t *testing.T) {
-	conn := &ACPConn{}
-
-	conn.AppendRawOutput(`{"type":"agent_message_chunk"}`)
-	assert.Equal(t, `{"type":"agent_message_chunk"}`, conn.rawOutputBuf.String())
-
-	conn.AppendRawOutput(`{"type":"tool_call_update"}`)
-	assert.Equal(t, `{"type":"agent_message_chunk"}
-{"type":"tool_call_update"}`, conn.rawOutputBuf.String())
-}
-
-func TestACPConn_ResetRawOutput(t *testing.T) {
-	conn := &ACPConn{}
-
-	// Empty buffer returns empty string
-	s := conn.ResetRawOutput()
-	assert.Equal(t, "", s)
-
-	// After appending, ResetRawOutput returns accumulated and clears
-	conn.AppendRawOutput("line1")
-	conn.AppendRawOutput("line2")
-	s = conn.ResetRawOutput()
-	assert.Equal(t, "line1\nline2", s)
-
-	// Buffer is cleared after reset
-	s = conn.ResetRawOutput()
-	assert.Equal(t, "", s)
-}
-
-func TestACPConn_AppendRawOutput_Concurrent(t *testing.T) {
-	conn := &ACPConn{}
-	done := make(chan struct{})
-
-	// Two goroutines appending concurrently should not race
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for range 100 {
-			conn.AppendRawOutput(`{"goroutine":"a"}`)
-		}
-	}()
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for range 100 {
-			conn.AppendRawOutput(`{"goroutine":"b"}`)
-		}
-	}()
-
-	<-done
-	<-done
-
-	// Should have 200 entries total (separated by newlines)
-	result := conn.ResetRawOutput()
-	lines := strings.Split(result, "\n")
-	assert.Len(t, lines, 200)
 }

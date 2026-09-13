@@ -166,10 +166,22 @@ describe('useSessionManager', () => {
             await mgr.switchSession('session-2')
 
             expect(opts.disconnectStream).toHaveBeenCalled()
-            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2')
+            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2', undefined)
             // Input state (attachments/quotes) is restored after the switch completes.
             expect(opts.clearInputState).toHaveBeenCalled()
             expect(opts.restoreInputState).toHaveBeenCalled()
+        })
+
+        it('forwards the owning project path to switchSessionCore (cross-project mark-read)', async () => {
+            // Without this the core switchSession calls markSessionRead without a
+            // project, the backend falls back to the cookie project and 403s, and
+            // the cross-project session's unread badge never clears.
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            await mgr.switchSession('session-2', '/proj/other')
+
+            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2', '/proj/other')
         })
 
         it('does not explicitly clear pending messages — loadHistory replaces entire messages array', async () => {
@@ -186,7 +198,7 @@ describe('useSessionManager', () => {
             // loadHistory's parseMessages + queueAppend replaces the entire
             // messages array, so old pending messages are naturally removed.
             // The test just verifies switchSession delegates correctly.
-            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2')
+            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2', undefined)
         })
 
         it('calls switchSessionCore to load history including queue data', async () => {
@@ -204,7 +216,7 @@ describe('useSessionManager', () => {
 
             await mgr.switchSession('session-2')
 
-            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2')
+            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2', undefined)
         })
     })
 

@@ -15,30 +15,6 @@ import (
 
 // --- SessionExecutor handleNonTerminalEvent coverage ---
 
-func TestSessionExecutor_HandleNonTerminalEvent_RawOutput(t *testing.T) {
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeScheduled,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   "sess-raw",
-		AgentID:     "test",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	// First raw_output
-	event := ai.StreamEvent{Type: "raw_output", RawOutput: "line1"}
-	executor.handleNonTerminalEvent(event)
-	assert.Equal(t, "line1", executor.rawOutput)
-
-	// Second raw_output should prepend newline
-	event2 := ai.StreamEvent{Type: "raw_output", RawOutput: "line2"}
-	executor.handleNonTerminalEvent(event2)
-	assert.Contains(t, executor.rawOutput, "line1")
-	assert.Contains(t, executor.rawOutput, "line2")
-}
-
 func TestSessionExecutor_HandleNonTerminalEvent_SessionCaptureEmpty(t *testing.T) {
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -237,38 +213,42 @@ func TestSessionExecutor_RunWithChannel_FirstContentMs(t *testing.T) {
 
 // --- drainRemainingEvents ---
 
-func TestDrainRemainingEvents_NilChannel(t *testing.T) {
+func TestDrainRemainingEvents_NilAndEmptyChannel(t *testing.T) {
 	ctx := context.Background()
 	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
-	executor := NewSessionExecutor(ctx, cfg)
-	result := executor.drainRemainingEvents(nil, "existing")
-	assert.Equal(t, "existing", result)
-}
 
-func TestDrainRemainingEvents_EmptyChannel(t *testing.T) {
-	ctx := context.Background()
-	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
+	// nil channel: early return, no panic.
 	executor := NewSessionExecutor(ctx, cfg)
+	executor.drainRemainingEvents(nil)
+	assert.Empty(t, executor.blocks)
+
+	// closed empty channel: loop exits immediately, no panic.
+	executor2 := NewSessionExecutor(ctx, cfg)
 	ch := make(chan ai.StreamEvent)
 	close(ch)
-	result := executor.drainRemainingEvents(ch, "existing")
-	assert.Equal(t, "existing", result)
+	executor2.drainRemainingEvents(ch)
+	assert.Empty(t, executor2.blocks)
 }
 
-func TestDrainRemainingEvents_WithRawOutputEvents(t *testing.T) {
+func TestDrainRemainingEvents_SkipsContentButKeepsToolEvents(t *testing.T) {
 	ctx := context.Background()
 	cfg := RunConfig{SessionID: "test", BackendName: "test", ProjectPath: "/test", AgentID: "test", ChatRequest: ai.ChatRequest{Prompt: "hello"}}
 	executor := NewSessionExecutor(ctx, cfg)
 	ch := make(chan ai.StreamEvent, 3)
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained1"}
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained2"}
-	ch <- ai.StreamEvent{Type: "content", Content: "not raw"} // should be skipped
+	// A content event must NOT be accumulated by the drain path (it only handles
+	// tool/session_capture/metadata), while a tool event in the same batch must be.
+	ch <- ai.StreamEvent{Type: "content", Content: "not accumulated"}
+	ch <- ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "drain-mixed-tool", Input: `{"file_path":"/c.go"}`},
+	}
 	close(ch)
 
-	result := executor.drainRemainingEvents(ch, "")
-	assert.Contains(t, result, "drained1")
-	assert.Contains(t, result, "drained2")
-	assert.NotContains(t, result, "not raw")
+	executor.drainRemainingEvents(ch)
+
+	require.Len(t, executor.blocks, 1, "content must be skipped, tool_use accumulated")
+	assert.Equal(t, "tool_use", executor.blocks[0].Type)
+	assert.Equal(t, "drain-mixed-tool", executor.blocks[0].ID)
 }
 
 func TestDrainRemainingEvents_ToolUseEvents(t *testing.T) {
@@ -299,11 +279,9 @@ func TestDrainRemainingEvents_ToolUseEvents(t *testing.T) {
 		Type: "tool_use",
 		Tool: &ai.ToolCall{Name: "Read", ID: "tool-drain-1", Input: `{"file_path":"/src/main.go"}`},
 	}
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw data"}
 	close(ch)
 
-	result := executor.drainRemainingEvents(ch, "")
-	assert.Contains(t, result, "raw data")
+	executor.drainRemainingEvents(ch)
 
 	// Verify tool call block was accumulated
 	found := false
@@ -358,7 +336,7 @@ func TestDrainRemainingEvents_ToolResultEvents(t *testing.T) {
 	}
 	close(ch)
 
-	executor.drainRemainingEvents(ch, "")
+	executor.drainRemainingEvents(ch)
 
 	// Verify tool result was accumulated into the existing block
 	found := false
@@ -393,11 +371,9 @@ func TestDrainRemainingEvents_SessionCaptureEvent(t *testing.T) {
 
 	ch := make(chan ai.StreamEvent, 2)
 	ch <- ai.StreamEvent{Type: "session_capture", Content: "ext-drain-captured"}
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw"}
 	close(ch)
 
-	result := executor.drainRemainingEvents(ch, "")
-	assert.Contains(t, result, "raw")
+	executor.drainRemainingEvents(ch)
 
 	// Verify external session ID was persisted
 	extID := GetExternalSessionID(sid)
@@ -425,11 +401,9 @@ func TestDrainRemainingEvents_MetadataWithSessionID(t *testing.T) {
 
 	ch := make(chan ai.StreamEvent, 2)
 	ch <- ai.StreamEvent{Type: "metadata", Meta: &ai.Metadata{SessionID: "ext-drain-meta"}}
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw"}
 	close(ch)
 
-	result := executor.drainRemainingEvents(ch, "")
-	assert.Contains(t, result, "raw")
+	executor.drainRemainingEvents(ch)
 
 	// Verify external session ID from metadata was persisted
 	extID := GetExternalSessionID(sid)
@@ -445,8 +419,7 @@ func TestDrainRemainingEvents_MetadataWithNilMeta(t *testing.T) {
 	ch <- ai.StreamEvent{Type: "metadata", Meta: nil}
 	close(ch)
 
-	result := executor.drainRemainingEvents(ch, "")
-	assert.Equal(t, "", result)
+	executor.drainRemainingEvents(ch)
 }
 
 // --- buildContentJSON additional coverage ---

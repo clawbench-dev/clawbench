@@ -24,13 +24,13 @@ import android.widget.TextView;
  *
  * Layout: {@code logo | (green dot + "执行中 N") | (yellow dot + "待审批 N") |
  * (blue dot + "未读 N")}. Each group is an item (dot + label) and is hidden
- * entirely when its count is 0; the running group's dot breathes while any
+ * entirely when its count is 0; the running group's arc spins while any
  * session is running. Session titles are intentionally not shown.
  *
- * When all three counts are 0 the row shows the idle state: {@code logo |
- * "空闲"} — a gray label without a dot. The idle label is a plain TextView
- * with the theme's secondary text color, kept permanently in the row and
- * toggled VISIBLE/GONE by renderStats.
+ * With all three counts at 0 the row holds only the logo. That state is not a
+ * resting state for the window: the controller hides the floating window when
+ * there is nothing worth showing, so a zero-count capsule is only ever built
+ * transiently (e.g. between a terminal event and the overview that hides it).
  *
  * Both the capsule and the panel title bar own their own instance, so the
  * breathing animation is managed independently per instance (a capsule and a
@@ -53,8 +53,6 @@ public class FloatingStatusContentView extends LinearLayout {
     static final int DOT_MARGIN_END_DP = 6;
     static final int TEXT_SIZE_SP = 14;
     static final int LOGO_MARGIN_END_DP = 10;
-    /** Idle-state label shown when every count is 0. */
-    private static final int IDLE_LABEL_RES = R.string.floating_idle;
     // Spin animation: the running arc rotates 0 → 360° forever while any
     // session is running.
     private static final long SPIN_MS = 900;
@@ -65,8 +63,6 @@ public class FloatingStatusContentView extends LinearLayout {
     private final LinearLayout unreadItem;
     private final ObjectAnimator spinAnim;
     private final float density;
-    /** Idle-state label ("空闲"), gray without a dot; VISIBLE only when every count is 0. */
-    private final TextView idleLabel;
     /** Last rendered counts, kept so refreshLocaleText() can re-render after a system locale change. */
     private int lastRunning;
     private int lastPending;
@@ -97,18 +93,6 @@ public class FloatingStatusContentView extends LinearLayout {
         pendingItem = buildStatItem(dot(COLOR_PERMISSION_PENDING), R.string.floating_stat_pending);
         unreadItem = buildStatItem(dot(COLOR_UNREAD), R.string.floating_stat_unread);
 
-        // Idle label: gray text without a dot, shown only while every count
-        // is 0. Plain TextView with the theme's secondary color, so it reads
-        // clearly fainter than the live stat labels.
-        idleLabel = new TextView(context);
-        idleLabel.setText(UserLanguage.resolve(context, IDLE_LABEL_RES));
-        idleLabel.setTextSize(TEXT_SIZE_SP);
-        idleLabel.setSingleLine(true);
-        idleLabel.setIncludeFontPadding(false);
-        idleLabel.setTextColor(FloatingThemeColors.get(getContext())[2]);
-        addView(idleLabel, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
         // Spin animation on the running arc. Loops forever while any session
         // is running; renderStats starts/stops it with the running count.
         // A linear interpolator keeps the rotation perfectly constant-speed —
@@ -125,8 +109,8 @@ public class FloatingStatusContentView extends LinearLayout {
 
     /**
      * Render the three stats into the row. Groups with a count of 0 are
-     * hidden entirely (dot + label); when every count is 0 the idle "空闲"
-     * label is shown instead. UI thread only.
+     * hidden entirely (dot + label); with every count at 0 the row holds only
+     * the logo. UI thread only.
      *
      * The running arc spins (rotation 0 → 360° loop) while the running count
      * is above 0; on zero it stops and the rotation resets. The pending and
@@ -141,8 +125,6 @@ public class FloatingStatusContentView extends LinearLayout {
         setStat(runningItem, running, R.string.floating_stat_running);
         setStat(pendingItem, pending, R.string.floating_stat_pending);
         setStat(unreadItem, unread, R.string.floating_stat_unread);
-        idleLabel.setVisibility(running == 0 && pending == 0 && unread == 0
-                ? VISIBLE : GONE);
         if (running > 0) {
             if (!spinAnim.isRunning()) {
                 spinAnim.start();
@@ -155,12 +137,11 @@ public class FloatingStatusContentView extends LinearLayout {
 
     /**
      * Re-resolve strings after a language change (in-app switch or system
-     * locale change) and re-render the last counts. Stat labels and the idle
-     * label are re-read from resources so the floating capsule follows the
-     * language immediately. UI thread only.
+     * locale change) and re-render the last counts. Stat labels are re-read
+     * from resources so the floating capsule follows the language immediately.
+     * UI thread only.
      */
     public void refreshLocaleText() {
-        idleLabel.setText(UserLanguage.resolve(getContext(), IDLE_LABEL_RES));
         renderStats(lastRunning, lastPending, lastUnread);
     }
 

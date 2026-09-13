@@ -3,7 +3,10 @@ import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
+import { useChatContext } from '@/composables/useChatContext'
+import { buildSendPayload } from '@/utils/fileAttachmentUtils'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
+import { store } from '@/stores/app.ts'
 
 const TAG = 'SessionIdentity'
 
@@ -227,7 +230,7 @@ export function resetIdentity(): void {
 // ───────────────────────────────────────────────────────────
 // Agent preference persistence — stored in agent YAML files via PATCH /api/agents.
 // preferredModel / preferredThinkingEffort are the source of truth for
-// interactive sessions. Scheduled tasks use BaseModelID() and ThinkingEffort
+// interactive sessions. Tasks use BaseModelID() and ThinkingEffort
 // (the agent's original defaults) instead.
 // ───────────────────────────────────────────────────────────
 
@@ -300,17 +303,6 @@ export function updateCommandState(commands: Array<{ name: string; description: 
 /** Clear command state (called on session switch). */
 export function clearCommandState() {
   availableCommands.value = []
-}
-
-/**
- * Slash commands are now populated from GET /api/agents (acpStates.commands)
- * and SSE commands_update events — no separate prefetch HTTP request needed.
- * This function is kept as a no-op for backward compatibility with call sites
- * that haven't been updated yet.
- * @deprecated Use acpStates from /api/agents instead.
- */
-export async function prefetchCommands(_agentId: string) {
-  // No-op: commands are now pre-populated from /api/agents acpStates
 }
 
 /** Update thinking effort state from SSE thinking_effort_update event. */
@@ -444,6 +436,11 @@ export async function renameSession(title: string): Promise<boolean> {
       return false
     }
     currentSessionTitle.value = title
+    // The rename endpoint writes the title but does not emit a WS
+    // session_update, so a mounted session list (drawer/sidebar) would keep
+    // showing the stale title. Bump the list version to trigger its reload
+    // watcher — same signal loadSessionsOnce uses for non-WS refreshes.
+    store.state.sessionListVersion++
     return true
   } catch (err) {
     appLog.e(TAG, 'Failed to rename session:', err)
@@ -459,7 +456,7 @@ export async function renameSession(title: string): Promise<boolean> {
 // proxies, which delegate to ChatPanel's implementation.
 // ───────────────────────────────────────────────────────────
 
-let _switchSession: ((sessionId: string) => Promise<void>) | null = null
+let _switchSession: ((sessionId: string, projectPath?: string) => Promise<void>) | null = null
 let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _archiveSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
 let _destroySession: ((sessionId: string) => Promise<void>) | null = null
@@ -475,7 +472,7 @@ let _sessionDrawerRef: { openAgentSelector: () => void } | null = null
 let _openSessionTabOverride: (() => void) | null = null
 
 export interface SessionActions {
-  switchSession: (sessionId: string) => Promise<void>
+  switchSession: (sessionId: string, projectPath?: string) => Promise<void>
   createSession: (agentId?: string) => Promise<void>
   archiveSession: (sessionId: string, backend?: string) => Promise<void>
   destroySession: (sessionId: string) => Promise<void>
@@ -656,14 +653,23 @@ const agentHeaderTitle = computed(() => {
 // ───────────────────────────────────────────────────────────
 
 export function useSessionIdentity() {
+  // Shared attachment batch. Only the no-ChatPanel fallback in sendMessage reads
+  // it — the normal path goes through ChatPanelContent, which owns the same
+  // singleton.
+  const { attachedFiles, clearAll } = useChatContext()
+
   /**
    * Switch to a different session. Delegates to ChatPanel's
    * implementation if registered, otherwise falls back to a
    * simple API call (pre-ChatPanel mount scenario).
+   *
+   * projectPath is the session's owning project; pass it for cross-project
+   * opens so mark-as-read can prove ownership instead of falling back to the
+   * cookie project (which 403s and leaves the unread badge stuck).
    */
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, projectPath?: string) {
     if (_switchSession) {
-      await _switchSession(sessionId)
+      await _switchSession(sessionId, projectPath)
     }
   }
 
@@ -771,11 +777,23 @@ export function useSessionIdentity() {
       // Fallback uses the unified enqueue endpoint (D3). Generate a queueId so
       // the backend can match the optimistic bubble to the DB row at drain.
       const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      await fetch(url, {
+      // Carry the pending attachments. This path used to hardcode an empty
+      // filePaths and omit `files` entirely, silently dropping them — most
+      // visibly a URL attachment added by the issue/PR quote flow, which is the
+      // whole point of that action. Read them synchronously (before the await)
+      // so a concurrent change cannot swap the batch mid-send.
+      const { allFiles, filePaths } = buildSendPayload([], attachedFiles.value)
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, queueId, filePaths: [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
+      if (resp.ok) {
+        // Delivered — drop the batch so it is not sent again on the next message.
+        clearAll()
+      } else {
+        appLog.w(TAG, `sendMessage fallback: enqueue failed with ${resp.status}`)
+      }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)
     }

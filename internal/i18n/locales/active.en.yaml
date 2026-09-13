@@ -3,6 +3,8 @@ SessionStreamNotFound: Session stream not found
 SessionStreamBusy: Session stream is being viewed on another device
 SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old sessions
 SessionIdRequired: session_id required
+QueueIdRequired: queueId required
+QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
 NewSession: New Session
 NewSessionN: New Session {{.N}}
 FileMessage: File Message
@@ -44,6 +46,7 @@ FileNotFoundShort: File not found
 BrokenSymlink: "Broken symlink: target not found ({{.Target}})"
 DirectoryNotFound: Directory not found
 InvalidFilePath: Invalid file path
+InvalidURLAttachment: URL attachments must be an http(s) address
 FileTooLargeOrInvalid: File too large or invalid form
 NoFileProvided: No file provided
 FileTooLargeShort: File too large
@@ -66,7 +69,10 @@ InvalidPortInQuery: Invalid port number in query
 TaskIdRequired: Task ID required
 TaskNotFound: Task not found
 TaskFieldsRequired: name, cronExpr, agentId, and prompt are required
+TaskEventTypesInvalid: an event task must subscribe to at least one valid event type
+TaskCronRequired: a cron expression is required for a task
 TaskAlreadyRunning: Task is already running, please wait for it to finish
+TaskEventTriggerUnsupported: An event-triggered task cannot be run manually; it runs when a matching event occurs
 TaskExecutionIdRequired: Execution ID is required
 TaskExecutionNotFound: Execution not found or already finished
 DirectoryNameRequired: Directory name required
@@ -94,10 +100,10 @@ CustomURLInvalid: Invalid URL format
 CustomURLInvalidScheme: URL must start with http:// or https://
 CustomURLInvalidHost: URL is missing a valid hostname
 CustomURLUnrecognizedFormat: URL path must end with /chat/completions (OpenAI) or /v1/messages (Anthropic)
-PushTaskCompleted: Scheduled task completed
-PushTaskFailed: Scheduled task failed
-PushTaskCancelled: Scheduled task cancelled
-PushTaskStarted: Scheduled task started
+PushTaskCompleted: Task completed
+PushTaskFailed: Task failed
+PushTaskCancelled: Task cancelled
+PushTaskStarted: Task started
 PushSessionCompleted: Session completed
 PushSessionCancelled: Session cancelled
 PushActionRequired: Action requires approval

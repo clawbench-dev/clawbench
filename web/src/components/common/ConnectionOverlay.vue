@@ -33,7 +33,7 @@ const overlayText = computed(() =>
 .connection-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-popover);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -46,9 +46,9 @@ const overlayText = computed(() =>
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: var(--space-8);
   padding: 40px 48px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--bg-primary);
   box-shadow: var(--shadow-md);
 }
@@ -58,8 +58,8 @@ const overlayText = computed(() =>
 }
 
 .connection-overlay__text {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   white-space: nowrap;
 }
@@ -67,7 +67,7 @@ const overlayText = computed(() =>
 /* Fade transition (teleported to body) */
 .overlay-fade-enter-active,
 .overlay-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 .overlay-fade-enter-from,
 .overlay-fade-leave-to {

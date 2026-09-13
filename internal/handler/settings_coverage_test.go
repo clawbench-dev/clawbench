@@ -393,26 +393,6 @@ func TestServeConfigPatch_TTSModelName(t *testing.T) {
 	assert.Equal(t, "test-tts-model", model.ConfigInstance.TTS.TTSModel)
 }
 
-// --- ServeConfig PATCH: localhost_auth_exempt false ---
-
-func TestServeConfigPatch_LocalhostAuthExemptFalse(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = true
-
-	body := `{"localhost_auth_exempt":false}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, model.ConfigInstance.LocalhostAuthExempt)
-	assert.False(t, model.LocalhostAuthExempt)
-}
-
 // --- hotReloadWarnings ---
 
 func TestAddHotReloadWarning_AndApply(t *testing.T) {

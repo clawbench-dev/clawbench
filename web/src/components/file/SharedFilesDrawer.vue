@@ -210,28 +210,28 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px 16px 16px;
+  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-files-hint {
   padding: 24px 0;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #656d76);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .shared-files-error { color: #cf222e; }
 .shared-files-retry {
-  padding: 6px 14px;
-  border-radius: 6px;
+  padding: var(--space-3) 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-tertiary, #f0f0f0);
   color: var(--text-secondary, #666);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -244,8 +244,8 @@ defineExpose({ open: openDrawer })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 10px 4px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-2);
   border-bottom: 1px solid var(--border-color, rgba(128,128,128,.15));
 }
 .shared-file-row:last-child { border-bottom: none; }
@@ -253,13 +253,13 @@ defineExpose({ open: openDrawer })
 .shared-file-row.clickable:hover { background: var(--bg-tertiary, #eaeef2); }
 .shared-file-row.deleted .shared-file-name,
 .shared-file-row.deleted .shared-file-path {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .shared-file-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -267,19 +267,19 @@ defineExpose({ open: openDrawer })
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .shared-file-name-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .shared-file-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1f2328);
   white-space: nowrap;
   overflow: hidden;
@@ -288,16 +288,16 @@ defineExpose({ open: openDrawer })
 
 .shared-file-badge {
   flex-shrink: 0;
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-sm);
   background: rgba(128,128,128,.15);
   color: var(--text-secondary, #57606a);
 }
 .deleted-badge { color: #cf222e; }
 
 .shared-file-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
   white-space: nowrap;
   overflow: hidden;
@@ -305,14 +305,14 @@ defineExpose({ open: openDrawer })
 }
 
 .shared-file-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #656d76);
 }
 
 .shared-file-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -323,31 +323,31 @@ defineExpose({ open: openDrawer })
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #57606a);
   cursor: pointer;
 }
 .shared-file-btn:hover { background: var(--bg-tertiary, #eaeef2); color: var(--accent-color, #0969da); }
 .shared-file-btn.danger:hover { color: #cf222e; background: #fef2f2; }
-.shared-file-btn:disabled { opacity: 0.4; cursor: default; }
+.shared-file-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .shared-files-clear {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   height: 28px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   margin-left: auto;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #cf222e;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   flex-shrink: 0;
 }
-.shared-files-clear:disabled { opacity: 0.5; cursor: default; }
+.shared-files-clear:disabled { opacity: var(--opacity-muted); cursor: default; }
 .shared-files-clear-spin { animation: shared-files-clear-spin 0.8s linear infinite; }
 @keyframes shared-files-clear-spin {
   from { transform: rotate(0deg); }

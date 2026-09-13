@@ -70,6 +70,6 @@ const initialStyle = computed(() => ({
     border-radius: 20%;
     background: color-mix(in srgb, var(--text-secondary) 18%, transparent);
     color: var(--text-primary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 </style>

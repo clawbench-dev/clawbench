@@ -9,12 +9,12 @@ import {
   statusLabelSimple,
   formatTime,
   askQuestionSummary,
+  extractAskQuestions,
   blockKey,
   blockTaskKey,
   buildTaskKeyIndex,
   hasScheduledTasks,
   scheduledTaskKeys,
-  extractAtCommand,
   extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
@@ -318,6 +318,48 @@ describe('askQuestionSummary', () => {
   })
 })
 
+// ── extractAskQuestions ──
+describe('extractAskQuestions', () => {
+  it('returns renderable questions from an AskUserQuestion input', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q', options: ['A'] }] })
+    expect(out).toHaveLength(1)
+    expect(out[0].question).toBe('Q')
+  })
+
+  it('keeps an entry with options but no question text', () => {
+    const out = extractAskQuestions({ questions: [{ options: ['A'] }] })
+    expect(out).toHaveLength(1)
+  })
+
+  it('keeps an entry with question text but no options', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q' }] })
+    expect(out).toHaveLength(1)
+  })
+
+  it('drops junk entries (no question text, no options)', () => {
+    expect(extractAskQuestions({ questions: [{}] })).toHaveLength(0)
+    expect(extractAskQuestions({ questions: [{ question: '   ' }] })).toHaveLength(0)
+    expect(extractAskQuestions({ questions: [{ options: [] }] })).toHaveLength(0)
+  })
+
+  it('returns only the renderable entries from a mixed array', () => {
+    const out = extractAskQuestions({ questions: [{ question: 'Q1' }, {}, { options: ['A'] }] })
+    expect(out).toHaveLength(2)
+    expect(out[0].question).toBe('Q1')
+  })
+
+  it('returns empty array for non-objects, arrays, and missing/wrongly-typed questions', () => {
+    expect(extractAskQuestions(undefined)).toEqual([])
+    expect(extractAskQuestions(null)).toEqual([])
+    expect(extractAskQuestions('nope')).toEqual([])
+    expect(extractAskQuestions([{ question: 'Q' }])).toEqual([])
+    expect(extractAskQuestions({})).toEqual([])
+    expect(extractAskQuestions({ questions: 'nope' })).toEqual([])
+    expect(extractAskQuestions({ questions: [] })).toEqual([])
+    expect(extractAskQuestions({ ask: '<item>broken</tool>' })).toEqual([])
+  })
+})
+
 // ── blockKey ──
 describe('blockKey', () => {
   it('uses db prefix when msgId is provided', () => {
@@ -406,49 +448,6 @@ describe('scheduledTaskKeys', () => {
   })
 })
 
-// ── extractAtCommand ──
-describe('extractAtCommand', () => {
-  it('extracts @chatsearch with query', () => {
-    const result = extractAtCommand('@chatsearch how to fix bug')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@chatsearch')
-    expect(result!.rest).toBe(' how to fix bug')
-  })
-
-  it('extracts @task with description', () => {
-    const result = extractAtCommand('@task run daily backup')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@task')
-    expect(result!.rest).toBe(' run daily backup')
-  })
-
-  it('extracts @chatsearch with trailing space only', () => {
-    const result = extractAtCommand('@chatsearch ')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@chatsearch')
-    expect(result!.rest).toBe(' ')
-  })
-
-  it('returns null for plain text', () => {
-    expect(extractAtCommand('hello world')).toBeNull()
-  })
-
-  it('returns null for text not starting with known command', () => {
-    expect(extractAtCommand('@other command')).toBeNull()
-  })
-
-  it('returns null for empty string', () => {
-    expect(extractAtCommand('')).toBeNull()
-  })
-
-  it('extracts command without rest text', () => {
-    const result = extractAtCommand('@task')
-    expect(result).not.toBeNull()
-    expect(result!.command).toBe('@task')
-    expect(result!.rest).toBe('')
-  })
-})
-
 // ── extractSlashCommand ──
 describe('extractSlashCommand', () => {
   it('detects /commit with rest text', () => {
@@ -456,6 +455,7 @@ describe('extractSlashCommand', () => {
     expect(result).not.toBeNull()
     expect(result!.command).toBe('/commit')
     expect(result!.rest).toBe(' fix auth bug')
+    expect(result!.clawbench).toBe(false)
   })
 
   it('detects /commit without rest text', () => {
@@ -470,6 +470,38 @@ describe('extractSlashCommand', () => {
     expect(result).not.toBeNull()
     expect(result!.command).toBe('/superpowers:brainstorm')
     expect(result!.rest).toBe(' design')
+  })
+
+  it('marks ClawBench /cb-chatsearch as clawbench', () => {
+    const result = extractSlashCommand('/cb-chatsearch how to fix bug')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-chatsearch')
+    expect(result!.rest).toBe(' how to fix bug')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('marks ClawBench /cb-task as clawbench (no rest)', () => {
+    const result = extractSlashCommand('/cb-task')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-task')
+    expect(result!.rest).toBe('')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('marks ClawBench /cb-usage as clawbench', () => {
+    const result = extractSlashCommand('/cb-usage last week by model')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/cb-usage')
+    expect(result!.rest).toBe(' last week by model')
+    expect(result!.clawbench).toBe(true)
+  })
+
+  it('does not mark a cb-prefixed agent command as clawbench', () => {
+    // Only the known built-ins are ClawBench commands; a hypothetical
+    // agent command named /cb-something must render as an agent badge.
+    const result = extractSlashCommand('/cb-something arg')
+    expect(result).not.toBeNull()
+    expect(result!.clawbench).toBe(false)
   })
 
   it('returns null for plain text', () => {

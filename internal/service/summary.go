@@ -34,7 +34,7 @@ func summarizeMessageOnce(targetID int64, blocks []model.ContentBlock, projectPa
 // Cards (AskUserQuestion only — PermissionApproval is deliberately excluded, see
 // isSummaryCardTool) are extracted unchanged.
 // Both interactive chat (triggerChatSummarization, backfillMissingSummaries)
-// and scheduled tasks (executeTask) route through this function.
+// and tasks (executeTask) route through this function.
 // Returns an error when the summary could not be saved; async callers discard
 // it and rely on the internal logging.
 func summarizeMessage(targetID int64, blocks []model.ContentBlock, projectPath, sessionID string) error {

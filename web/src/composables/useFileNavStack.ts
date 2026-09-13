@@ -12,6 +12,8 @@ export interface FileNavLocation {
   path: string
   lineStart?: number
   lineEnd?: number
+  /** Canonical multi-range suffix ("90-91,309,938-943"), when annotated. */
+  lineRanges?: string
   viewMode?: string
   scrollTop?: number
   scrollEntry?: FileScrollEntry
@@ -52,7 +54,7 @@ export function useFileNavStack() {
     const current = _currentLocation.value
     // Consecutive opens of the same destination update metadata without adding
     // a duplicate history item. Different line targets in one file are distinct.
-    if (current?.path === path && current.lineStart === location.lineStart && current.lineEnd === location.lineEnd) {
+    if (current?.path === path && current.lineStart === location.lineStart && current.lineEnd === location.lineEnd && current.lineRanges === location.lineRanges) {
       _history.value[_historyIndex.value] = { ...current, ...nextLocation }
       return
     }
@@ -81,6 +83,7 @@ export function useFileNavStack() {
     const next = { ...current }
     if (location.lineStart !== undefined) next.lineStart = location.lineStart
     if (location.lineEnd !== undefined) next.lineEnd = location.lineEnd
+    if (location.lineRanges !== undefined) next.lineRanges = location.lineRanges
     if (location.viewMode !== undefined) next.viewMode = location.viewMode
     if (location.scrollTop !== undefined) next.scrollTop = location.scrollTop
     if (location.scrollEntry !== undefined) next.scrollEntry = location.scrollEntry

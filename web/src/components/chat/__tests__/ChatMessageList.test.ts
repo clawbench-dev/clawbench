@@ -524,7 +524,7 @@ describe('ChatMessageList — floating lazy-load hint overlay', () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     expect(source).toMatch(/\.chat-load-more,\s*\.chat-load-hint,\s*\.chat-load-done \{/)
-    expect(source).toContain('border-radius: 999px')
+    expect(source).toContain('border-radius: var(--radius-full)')
     // backdrop background: the pill is not transparent text in the flow anymore
     expect(source).toContain('background: color-mix')
   })

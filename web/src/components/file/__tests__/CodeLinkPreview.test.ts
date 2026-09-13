@@ -1,11 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref, reactive, computed, nextTick } from 'vue'
+import { ref, reactive, computed, nextTick, type Ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
+import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 // Mock highlightCode
 vi.mock('@/utils/globals', () => ({
@@ -17,9 +18,20 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
 }))
 
-// Mock fileType
+// Mock fileType. Label is path-derived so the media meta-row test can assert
+// the real extension label; everything else keeps the TS default.
 vi.mock('@/utils/fileType', () => ({
-  getFileType: () => ({ lang: 'typescript', label: 'TS' }),
+  getFileType: (name: string) => {
+    const lower = String(name || '').toLowerCase()
+    if (lower.endsWith('.webp')) return { lang: 'image', label: 'WEBP', isImage: true }
+    if (lower.endsWith('.png')) return { lang: 'image', label: 'PNG', isImage: true }
+    if (lower.endsWith('.svg')) return { lang: 'image', label: 'SVG', isImage: true }
+    if (lower.endsWith('.mp4')) return { lang: 'video', label: 'MP4', isVideo: true }
+    if (lower.endsWith('.mp3')) return { lang: 'audio', label: 'MP3', isAudio: true }
+    if (lower.endsWith('.pdf')) return { lang: 'pdf', label: 'PDF', isPdf: true }
+    if (lower.endsWith('.md')) return { lang: 'markdown', label: 'MD', isMarkdown: true }
+    return { lang: 'typescript', label: 'TS' }
+  },
   formatFileSize: (bytes: number) => {
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -86,6 +98,7 @@ const i18n = createI18n({
           truncatedNotice: 'Preview truncated (up to {n} lines / {size})',
           lineOutOfRange: 'Requested line is out of file range',
           binaryNotSupported: 'Binary file cannot be previewed',
+          mediaLoadError: 'Failed to load media file',
           fileTooLarge: 'File exceeds 10MiB limit, cannot be previewed online',
           dirNotSupported: 'Directories cannot be previewed as code',
           notFound: 'File not found',
@@ -172,6 +185,18 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const effectiveRenderMode = computed<'rendered' | 'source'>(() =>
     canRenderMarkdown.value ? renderMode.value : 'source'
   )
+
+  // ── Media target state (image / SVG / video / audio / PDF) ──
+  // Driven by a single mediaKind ref so a test only overrides one field and the
+  // derived flags + isMediaTarget all follow. An override ref is adopted here
+  // (not just spread in later) so the computeds below close over it.
+  const mediaKind = (overrides.mediaKind as Ref<'image' | 'video' | 'audio' | 'pdf' | null> | undefined)
+    ?? ref<'image' | 'video' | 'audio' | 'pdf' | null>(null)
+  const isImageTarget = computed(() => mediaKind.value === 'image')
+  const isVideoTarget = computed(() => mediaKind.value === 'video')
+  const isAudioTarget = computed(() => mediaKind.value === 'audio')
+  const isPdfTarget = computed(() => mediaKind.value === 'pdf')
+  const isMediaTarget = computed(() => mediaKind.value !== null)
   const toggleRenderMode = vi.fn(() => {
     if (!canRenderMarkdown.value) return
     renderMode.value = renderMode.value === 'rendered' ? 'source' : 'rendered'
@@ -179,6 +204,7 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
 
   return {
     enabled: ref(true),
+    outsideClickIgnoreSelector: '',
     visible,
     status,
     mode,
@@ -196,6 +222,13 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     hasExplicitLineRange,
     canRenderMarkdown,
     effectiveRenderMode,
+    mediaKind,
+    isImageTarget,
+    isVideoTarget,
+    isAudioTarget,
+    isPdfTarget,
+    isMediaTarget,
+    mediaRefreshNonce: ref(0),
     showPreview: vi.fn(),
     close: vi.fn(() => {
       visible.value = false
@@ -300,6 +333,39 @@ describe('CodeLinkPreview.vue', () => {
     const codeEl = floating?.querySelector('code.hljs')
     expect(codeEl).not.toBeNull()
     expect(codeEl?.textContent).toContain('const a = 1')
+  })
+
+  it('highlights every line in a multi-range slice (highlightRanges)', () => {
+    const preview = createMockPreviewController({
+      status: ref('ready'),
+      slicedCode: ref({
+        code: 'l90\nl91\nl92\nl93\nl94\nl95',
+        startLine: 90,
+        endLine: 95,
+        totalLines: 200,
+        highlightStart: 90,
+        highlightEnd: 95,
+        highlightRanges: [
+          { start: 90, end: 91 },
+          { start: 95, end: 95 },
+        ],
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const rows = document.querySelectorAll('.code-preview-line-row')
+    const highlighted = Array.from(rows)
+      .map((row, i) => ({ line: 90 + i, on: row.classList.contains('is-target-line') }))
+      .filter(r => r.on)
+      .map(r => r.line)
+    // Only 90, 91 and 95 are target lines — not the whole 90-95 span.
+    expect(highlighted).toEqual([90, 91, 95])
   })
 
   it('renders large file notice when isLargeFile is true', () => {
@@ -434,6 +500,39 @@ describe('CodeLinkPreview.vue', () => {
     expect(document.querySelector('.code-link-preview-floating')).not.toBeNull()
 
     // Pointer down on a spot outside the card closes the transient preview
+    document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, target: document.body }))
+    expect(closeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not close when the outside click lands on an ignored element', async () => {
+    // The file manager declares its rows as "ignore" targets: clicking another
+    // row retargets the card in place instead of dismissing it.
+    const closeSpy = vi.fn()
+    const preview = createMockPreviewController({
+      visible: ref(true),
+      mode: ref('transient'),
+      isPinned: ref(false),
+      close: closeSpy,
+      outsideClickIgnoreSelector: '.file-item, .grid-item',
+    })
+
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await nextTick()
+
+    const row = document.createElement('div')
+    row.className = 'file-item'
+    document.body.appendChild(row)
+    const inner = document.createElement('span')
+    row.appendChild(inner)
+
+    // A pointerdown bubbling from inside an ignored row must NOT close the card.
+    inner.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    expect(closeSpy).not.toHaveBeenCalled()
+
+    // A pointerdown elsewhere still closes it.
     document.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, target: document.body }))
     expect(closeSpy).toHaveBeenCalledTimes(1)
   })
@@ -1934,5 +2033,423 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     expect(document.querySelector('.code-preview-sheet-tools .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — media body (image / SVG / video / audio / PDF)', () => {
+  function makeMediaTarget(filePath: string) {
+    return {
+      filePath,
+      anchorEl: document.createElement('span'),
+    }
+  }
+
+  function mountMedia(preview: ReturnType<typeof createMockPreviewController>) {
+    return mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+  }
+
+  it('renders an <img> for an image target and hides the code tools', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('assets/logo.png')),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    const img = document.querySelector('.code-preview-media-img') as HTMLImageElement | null
+    expect(img).not.toBeNull()
+    expect(img!.getAttribute('src')).toContain('/api/local-file/')
+    expect(img!.getAttribute('src')).toContain('assets/logo.png')
+
+    // Text-viewer tools must not show for media.
+    expect(document.querySelector('.code-preview-scroll')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('renders an <img> for an SVG target (served as an image, not source code)', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('diagram.svg')),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media-img')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('renders a <video> for a video target', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('clip.mp4')),
+      mediaKind: ref('video'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    const video = document.querySelector('.code-preview-media-video')
+    expect(video).not.toBeNull()
+    expect(video!.getAttribute('src')).toContain('clip.mp4')
+    wrapper.unmount()
+  })
+
+  it('renders an <audio> player with the file name for an audio target', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('voice.mp3')),
+      mediaKind: ref('audio'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media-audio-player')).not.toBeNull()
+    expect(document.querySelector('.code-preview-media-audio-name')?.textContent).toContain('voice.mp3')
+    wrapper.unmount()
+  })
+
+  it('renders the PDF viewer container for a PDF target', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('report.pdf')),
+      mediaKind: ref('pdf'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media.is-pdf')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('adds the is-media card class and shows the type label in the meta row', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('photo.webp')),
+      mediaKind: ref('image'),
+      // Media targets fetch no JSON content, so there is no slice/size — the
+      // meta row falls back to the file-type label.
+      slicedCode: ref(null),
+      fileContent: ref(null),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    expect(document.querySelector('.code-link-preview-floating.is-media')).not.toBeNull()
+    expect(document.querySelector('.code-preview-meta-info')?.textContent).toContain('WEBP')
+    wrapper.unmount()
+  })
+
+  it('renders the media body in mobile sheet mode too', async () => {
+    const preview = createMockPreviewController({
+      mode: ref('sheet'),
+      target: ref(makeMediaTarget('photo.png')),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media-img')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('shows the load-failure fallback when the media errors', async () => {
+    const preview = createMockPreviewController({
+      target: ref(makeMediaTarget('broken.png')),
+      mediaKind: ref('image'),
+    })
+    const wrapper = mountMedia(preview)
+    await flushPromises()
+
+    const img = document.querySelector('.code-preview-media-img') as HTMLImageElement
+    img.dispatchEvent(new Event('error'))
+    await flushPromises()
+
+    const errEl = document.querySelector('.code-preview-media-error')
+    expect(errEl).not.toBeNull()
+    // Assert the translated text, not just the container — a missing i18n key
+    // would otherwise still pass.
+    expect(errEl!.textContent).toContain('Failed to load media file')
+    wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — media/code target transitions', () => {
+  it('switching from a code target to a media target does not throw', async () => {
+    // Reproduces the crash path: the status/codeLines watchers call
+    // scrollToTargetLine(), and a media body has no such helper.
+    const mediaKind = ref<'image' | 'video' | 'audio' | 'pdf' | null>(null)
+    const target = ref<any>({
+      filePath: 'src/main.ts',
+      anchorEl: document.createElement('span'),
+    })
+    const preview = createMockPreviewController({
+      mediaKind,
+      target,
+      slicedCode: ref({
+        code: 'const x = 1',
+        startLine: 1,
+        endLine: 1,
+        totalLines: 1,
+        lineOutOfRange: false,
+        renderTruncated: false,
+      }),
+    })
+
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    // Switch the card to a media target: this clears the slice and flips the
+    // body, which used to reject inside scrollToTargetLine().
+    target.value = { filePath: 'assets/logo.png', anchorEl: document.createElement('span') }
+    mediaKind.value = 'image'
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media-img')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('hides the quote-to-chat action for media targets', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'clip.mp4', anchorEl: document.createElement('span') }),
+      mediaKind: ref('video'),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    // Quote would stage an empty string for media, so the button is hidden.
+    const quoteBtns = Array.from(document.querySelectorAll('.code-preview-btn, .code-preview-footer-btn'))
+      .filter(el => (el.getAttribute('title') || '').toLowerCase().includes('quote'))
+    expect(quoteBtns).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('keeps the refresh action available for media and forwards the nonce', async () => {
+    const nonce = ref(0)
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'photo.png', anchorEl: document.createElement('span') }),
+      mediaKind: ref('image'),
+      mediaRefreshNonce: nonce,
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    expect(document.querySelector('.code-preview-media')).not.toBeNull()
+    expect(wrapper.findComponent({ name: 'MediaPreviewBody' }).props('refreshNonce')).toBe(0)
+
+    nonce.value = 3
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'MediaPreviewBody' }).props('refreshNonce')).toBe(3)
+    wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — docked pane', () => {
+  it('renders in place (not teleported) when docked and marks the card', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // Teleport disabled → the card lives inside the wrapper, not at body level.
+    const card = wrapper.find('.code-link-preview-floating')
+    expect(card.exists()).toBe(true)
+    expect(card.classes()).toContain('is-docked')
+    wrapper.unmount()
+  })
+
+  it('hides the pin control when docked', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const pinBtns = wrapper.findAll('button').filter(b => (b.attributes('title') || '').toLowerCase().includes('pin'))
+    expect(pinBtns).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('emits closed when the close button is used', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const closeBtn = wrapper.findAll('button').find(b => b.classes().includes('close'))
+    expect(closeBtn).toBeTruthy()
+    await closeBtn!.trigger('click')
+
+    expect(preview.close).toHaveBeenCalled()
+    expect(wrapper.emitted('closed')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps pin/close and no docked class when not docked', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    // Floating path teleports to body.
+    expect(document.querySelector('.code-link-preview-floating.is-docked')).toBeNull()
+    const pinBtns = Array.from(document.querySelectorAll('.code-link-preview-floating button'))
+      .filter(b => (b.getAttribute('title') || '').toLowerCase().includes('pin'))
+    expect(pinBtns.length).toBeGreaterThan(0)
+    wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — docked outside-click behaviour', () => {
+  it('never closes on an outside pointerdown when docked', async () => {
+    // Regression: the file manager's split divider lives OUTSIDE the card. If a
+    // docked card closed on that pointerdown, the pane (and the divider) would
+    // unmount mid-gesture and the browser would start a native HTML5 drag on
+    // the file row revealed underneath.
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    const outside = document.createElement('div')
+    outside.className = 'split-view__divider'
+    document.body.appendChild(outside)
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    expect(preview.close).not.toHaveBeenCalled()
+    outside.remove()
+    wrapper.unmount()
+  })
+
+  it('still closes a floating (non-docked) card on an outside pointerdown', async () => {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: 'src/main.ts', anchorEl: document.createElement('span') }),
+    })
+    const wrapper = mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+    await flushPromises()
+
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+
+    expect(preview.close).toHaveBeenCalled()
+    outside.remove()
+    wrapper.unmount()
+  })
+})
+
+describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
+  it('collapses to a single row: no title row, name+meta and Close in the toolbar row', async () => {
+    _setIsPCForTest(false)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: true },
+        global: { plugins: [i18n] },
+        attachTo: document.body,
+      })
+      await flushPromises()
+
+      const card = wrapper.find('.code-link-preview-floating')
+      expect(card.classes()).toContain('is-compact')
+
+      // The desktop title row (with the file path) is not rendered at all, so
+      // the pane has exactly one row of chrome.
+      expect(wrapper.find('.code-preview-header').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(false)
+
+      // The file name is the only thing on the left — the line/size summary
+      // is deliberately omitted in this mode.
+      expect(wrapper.find('.code-preview-meta .code-preview-compact-name').text()).toBe('build.gradle')
+      expect(wrapper.find('.code-preview-compact-meta').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta-info').text()).toBe('build.gradle')
+
+      // Close lives in that same row, but OUTSIDE the scrollable tool strip —
+      // as a child it would scroll out of reach for a code file (10 tools).
+      const close = wrapper.find('.code-preview-meta > .code-preview-btn.close')
+      expect(close.exists()).toBe(true)
+      expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
+
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('keeps the two-row desktop layout when not compact', async () => {
+    _setIsPCForTest(true)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: true },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+
+      const card = wrapper.find('.code-link-preview-floating')
+      expect(card.classes()).not.toContain('is-compact')
+      // Title row present with the directory path; Close in the header.
+      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(true)
+      expect(wrapper.find('.code-preview-header-actions .close').exists()).toBe(true)
+      // No compact name, and no second close in the meta row.
+      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta > .code-preview-btn.close').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('does not use the compact layout for a floating card on touch', async () => {
+    _setIsPCForTest(false)
+    try {
+      const preview = createMockPreviewController({
+        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+      })
+      const wrapper = mount(CodeLinkPreview, {
+        props: { preview, docked: false },
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
   })
 })

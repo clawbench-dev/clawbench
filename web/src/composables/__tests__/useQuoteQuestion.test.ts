@@ -34,6 +34,7 @@ vi.mock('@/composables/useWideScreenLayout', () => ({
 
 // Import the real useChatContext (not mocked) — it's a singleton
 import { useChatContext } from '../useChatContext.ts'
+import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/utils/chatInputInjection.ts'
 import { useQuoteQuestion } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
 
@@ -50,6 +51,7 @@ describe('useQuoteQuestion', () => {
 
     mockSendMessage.mockReset()
     mockToastShow.mockReset()
+    _resetChatInputInjectionForTesting()
     vi.useFakeTimers()
   })
 
@@ -343,6 +345,179 @@ describe('useQuoteQuestion', () => {
       qq.addToConversation('  Why is this needed?  ')
 
       expect(ctx.stagedQuotes.value[0].note).toBe('Why is this needed?')
+    })
+  })
+
+  describe('composer mode (opened from an entry point, no quote)', () => {
+    it('opens with no quote and only the URL attachment', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      expect(qq.composerMode.value).toBe(true)
+      expect(qq.visible.value).toBe(true)
+      // Crucially NOT the full body: nothing is quoted until the user selects.
+      expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value[0]).toMatchObject({
+        kind: 'url', url: 'https://github.com/acme/widgets/issues/7', path: 'acme/widgets#7',
+      })
+    })
+
+    it('attaches a local file when the composer is opened with filePath', () => {
+      // The file browser header opens the same composer, but its attachment is a
+      // local file rather than an external URL.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      expect(qq.composerMode.value).toBe(true)
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value).toBeNull()
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value[0]).toMatchObject({ path: '/proj/src/main.ts' })
+      // Must not be mistaken for a URL entry.
+      expect(ctx.attachedFiles.value[0].kind).toBeUndefined()
+    })
+
+    it('does not attach twice when the same file composer is opened twice', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('ignores an open request with neither url nor filePath', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ label: 'nothing' })
+
+      expect(qq.composerMode.value).toBe(false)
+      expect(qq.visible.value).toBe(false)
+    })
+
+    it('sends the typed message with the file attached and no quote', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ filePath: '/proj/src/main.ts', label: 'main.ts' })
+
+      await qq.sendMessage('explain this')
+
+      expect(mockSendMessage).toHaveBeenCalledWith('explain this')
+    })
+
+    it('does not add a second chip when opened twice for the same URL', () => {
+      const qq = useQuoteQuestion()
+      const ctxArg = { url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' }
+      qq.openComposer(ctxArg)
+      qq.openComposer(ctxArg)
+
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('sends the user input with no quote at all', async () => {
+      // Regression: sendMessage used to early-return when quoteData was null,
+      // which made the no-selection path impossible.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      await qq.sendMessage('why is this broken?')
+
+      expect(mockSendMessage).toHaveBeenCalledWith('why is this broken?')
+    })
+
+    it('sends the quote block first, then the user input', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+      ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
+
+      await qq.sendMessage('why?')
+
+      expect(mockSendMessage).toHaveBeenCalledWith('```issue:acme/widgets#7\nbuild failed\n```\nwhy?')
+    })
+
+    it('does nothing when there is neither a quote nor input', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      await qq.sendMessage('   ')
+
+      expect(mockSendMessage).not.toHaveBeenCalled()
+    })
+
+    it('leaves composer mode after sending', async () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      await qq.sendMessage('hi')
+
+      expect(qq.composerMode.value).toBe(false)
+      expect(qq.visible.value).toBe(false)
+    })
+
+    it('keeps the bar open when the selection is cleared', () => {
+      // The bar was opened deliberately, so losing the selection must not close
+      // it — otherwise deselecting discards the snippet the user just picked.
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+      ctx.setQuoteData({ text: 'picked', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
+
+      document.dispatchEvent(new Event('selectionchange'))
+      vi.runAllTimers()
+
+      expect(qq.visible.value).toBe(true)
+      expect(ctx.quoteData.value).not.toBeNull()
+    })
+
+    describe('add to conversation', () => {
+      it('injects the block then a newline then the note, and calls onAdd', () => {
+        const onAdd = vi.fn()
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
+        ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
+
+        qq.addToConversation('please fix')
+
+        expect(consumePendingChatInput()).toBe('```issue:acme/widgets#7\nbuild failed\n```\nplease fix')
+        expect(onAdd).toHaveBeenCalledTimes(1)
+      })
+
+      it('leaves a trailing newline when no note was typed', () => {
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+        ctx.setQuoteData({ text: 'build failed', filePath: 'acme/widgets#7', language: 'issue', startLine: 0, endLine: 0 })
+
+        qq.addToConversation('')
+
+        expect(consumePendingChatInput()).toBe('```issue:acme/widgets#7\nbuild failed\n```\n')
+      })
+
+      it('injects nothing when there is no quote and no note, but still navigates', () => {
+        const onAdd = vi.fn()
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7', onAdd })
+
+        qq.addToConversation('')
+
+        expect(consumePendingChatInput()).toBeNull()
+        expect(onAdd).toHaveBeenCalledTimes(1)
+      })
+
+      it('keeps the URL attachment staged for the chat input', () => {
+        const qq = useQuoteQuestion()
+        qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+        qq.addToConversation('')
+
+        expect(ctx.attachedFiles.value).toHaveLength(1)
+      })
+    })
+
+    it('hideComposer closes without leaving composer mode latched', () => {
+      const qq = useQuoteQuestion()
+      qq.openComposer({ url: 'https://github.com/acme/widgets/issues/7', label: 'acme/widgets#7' })
+
+      qq.hideComposer()
+
+      expect(qq.composerMode.value).toBe(false)
+      expect(qq.visible.value).toBe(false)
     })
   })
 

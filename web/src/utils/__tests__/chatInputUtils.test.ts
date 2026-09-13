@@ -27,21 +27,21 @@ describe('computeRecentReferencedFiles', () => {
       { role: 'user', files: [{ path: '/a.go', isDir: false }] },
     ]
     const result = computeRecentReferencedFiles(msgs, [], null)
-    expect(result).toEqual([{ path: '/a.go', count: 1 }])
+    expect(result).toEqual([{ path: '/a.go', count: 1, isDir: false }])
   })
   it('excludes attached files', () => {
     const msgs = [
       { role: 'user', files: ['/a.go', '/b.go'] },
     ]
     const result = computeRecentReferencedFiles(msgs, [{ path: '/a.go', isDir: false }], null)
-    expect(result).toEqual([{ path: '/b.go', count: 1 }])
+    expect(result).toEqual([{ path: '/b.go', count: 1, isDir: false }])
   })
   it('excludes current file', () => {
     const msgs = [
       { role: 'user', files: ['/a.go', '/b.go'] },
     ]
     const result = computeRecentReferencedFiles(msgs, [], '/a.go')
-    expect(result).toEqual([{ path: '/b.go', count: 1 }])
+    expect(result).toEqual([{ path: '/b.go', count: 1, isDir: false }])
   })
   it('sorts by count descending', () => {
     const msgs = [
@@ -69,7 +69,7 @@ describe('computeRecentReferencedFiles', () => {
       { role: 'user', files: [null, undefined, '/a.go'] as any },
     ]
     const result = computeRecentReferencedFiles(msgs, [], null)
-    expect(result).toEqual([{ path: '/a.go', count: 1 }])
+    expect(result).toEqual([{ path: '/a.go', count: 1, isDir: false }])
   })
   it('skips messages without files', () => {
     const msgs = [
@@ -77,7 +77,23 @@ describe('computeRecentReferencedFiles', () => {
       { role: 'user', files: ['/a.go'] },
     ]
     const result = computeRecentReferencedFiles(msgs, [], null)
-    expect(result).toEqual([{ path: '/a.go', count: 1 }])
+    expect(result).toEqual([{ path: '/a.go', count: 1, isDir: false }])
+  })
+  it('propagates isDir for directory references', () => {
+    const msgs = [
+      { role: 'user', files: [{ path: '/src', isDir: true }, { path: '/a.go', isDir: false }] },
+    ]
+    const result = computeRecentReferencedFiles(msgs, [], null)
+    expect(result.find(f => f.path === '/src')?.isDir).toBe(true)
+    expect(result.find(f => f.path === '/a.go')?.isDir).toBe(false)
+  })
+  it('keeps isDir true when a directory is referenced more than once', () => {
+    const msgs = [
+      { role: 'user', files: [{ path: '/src', isDir: true }] },
+      { role: 'user', files: [{ path: '/src', isDir: true }] },
+    ]
+    const result = computeRecentReferencedFiles(msgs, [], null)
+    expect(result).toEqual([{ path: '/src', count: 2, isDir: true }])
   })
 })
 

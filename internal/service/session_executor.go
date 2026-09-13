@@ -22,7 +22,7 @@ import (
 // when the executor finishes (after Finalize has persisted the final content).
 var activeStreams sync.Map // key: sessionID (string), value: *SessionExecutor
 
-// ExecutionMode distinguishes between interactive chat and scheduled task execution.
+// ExecutionMode distinguishes between interactive chat and task execution.
 type ExecutionMode int
 
 // Sentinel errors for RunResult.Err
@@ -42,6 +42,14 @@ const (
 	contentKeyMetadata = "metadata"
 	// cancelReasonUser is the cancel reason when the user explicitly cancels.
 	cancelReasonUser = "user"
+	// cancelReasonInterrupt stops the CURRENT turn so the next queued message can
+	// run, without ending the session or dropping the queue. Set by
+	// InterruptSessionTurn (the "interrupt and send" action on a queued message).
+	//
+	// It is deliberately distinct from cancelReasonUser: the user did not
+	// abandon the reply, they redirected it, so the interrupted turn must NOT be
+	// stamped "cancelled" and the queue must survive.
+	cancelReasonInterrupt = "interrupt"
 	// cancelReasonRestart is set during graceful server shutdown before the
 	// session context is cancelled — the executor persists a restart warning so
 	// the frontend shows the interrupted-response banner after reload.
@@ -144,8 +152,6 @@ type RunResult struct {
 	Blocks []model.ContentBlock
 	// Metadata contains token usage, cost, duration, and other response metadata.
 	Metadata *ai.Metadata
-	// RawOutput is the collected raw AI backend output for debugging.
-	RawOutput string
 
 	// WallMs is the wall-clock duration of the execution in milliseconds.
 	WallMs int
@@ -156,7 +162,7 @@ type RunResult struct {
 }
 
 // SessionExecutor handles the full lifecycle of a single AI session execution.
-// It unifies the event loop logic for both interactive chat and scheduled tasks,
+// It unifies the event loop logic for both interactive chat and tasks,
 // with mode-specific behavior controlled by RunConfig.
 //
 // The caller is responsible for:
@@ -176,7 +182,6 @@ type SessionExecutor struct {
 	// Internal state accumulated during execution
 	blocks           []model.ContentBlock
 	responseMetadata *ai.Metadata
-	rawOutput        string
 	receivedTerminal bool
 	wallStart        int64 // unix millis at execution start
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
@@ -348,9 +353,8 @@ func activeStreamCount() int {
 // It is used by the rewind handler: CancelSession cancels the Go context but is
 // asynchronous — the executor goroutine still drains its event channel and runs
 // Finalize afterwards. Truncating the history in that window lets a late
-// Finalize write the cancelled turn's raw output onto the preserved anchor via
-// GetStreamingMessageID's fallback to the latest streaming=0 row. Waiting for
-// the executor to unregister closes that window.
+// FinalizeStreamingMessage / UpdateStreamingMessage land on the preserved anchor
+// row. Waiting for the executor to unregister closes that window.
 //
 // On timeout it logs a warning and returns (best-effort — same exposure as
 // Archive/Destroy which do not wait at all).
@@ -371,7 +375,7 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
-//nolint:gocyclo,gocognit // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
+//nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// content_reset: clear accumulated blocks from a failed Prompt before retry.
 	// Sent by ACPBackend.ExecuteStream when the first Prompt fails due to peer
@@ -384,7 +388,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 			slog.String("session", e.cfg.SessionID),
 			slog.Int("blocks_before", len(e.blocks)))
 		e.blocks = nil
-		e.rawOutput = ""
 		e.responseMetadata = nil
 		e.lastFlush = time.Time{}
 		e.toolStarts = make(map[string]time.Time)
@@ -425,20 +428,21 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		return
 	}
 
-	// raw_output: accumulate but don't forward or count
-	if event.Type == "raw_output" {
-		if e.rawOutput != "" {
-			e.rawOutput += "\n"
-		}
-		e.rawOutput += event.RawOutput
-		return
-	}
-
 	// session_capture: persist external session ID
 	if event.Type == "session_capture" {
 		if event.Content != "" {
 			e.captureExternalSessionID(event.Content)
 		}
+		return
+	}
+
+	// steer_boundary: a mid-turn injected message just entered the running turn.
+	// Split the assistant reply here so the injected question renders between the
+	// "before" and "after" halves instead of below a reply that is still
+	// streaming. Handled before the generic forward/accumulate path because the
+	// split itself owns persisting and announcing the new row.
+	if event.Type == "steer_boundary" {
+		e.splitAtSteerBoundary(event)
 		return
 	}
 
@@ -639,7 +643,6 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 		Empty:            empty,
 		Blocks:           blocks,
 		Metadata:         e.responseMetadata,
-		RawOutput:        e.rawOutput,
 		WallMs:           wallMs,
 	}
 }
@@ -887,6 +890,133 @@ func (e *SessionExecutor) thinkingPersisted(thinkID string) bool {
 // tool/usage events that did not alter the content JSON still reaches the DB
 // promptly. The streaming row itself is only rewritten when the marshaled
 // content actually changed.
+// splitAtSteerBoundary finalizes the assistant reply accumulated so far and
+// opens a new streaming message for the content that follows a mid-turn
+// injection. It is the executor half of the "split at the insertion point"
+// feature; the ACP layer detects the boundary (see mapACPSessionUpdate's
+// UserMessageChunk branch) and the backend policy registers the echo it expects.
+//
+// Why split at all: without it the injected question is persisted with a higher
+// DB id than the streaming assistant row, so it renders BELOW a reply that is
+// still being generated — the user sees their message with nothing after it.
+// Splitting makes the DB id order match the conversational order:
+//
+//	Q1(1) → assistant·before(2) → Q2 injected(3) → assistant·after(4)
+//
+// which needs no UI special-casing: the plain id sort is already correct.
+//
+// Failure is non-fatal by design. A split is a presentation improvement; if the
+// "before" row cannot be finalized or the "after" row cannot be created, we log
+// and keep accumulating into the ORIGINAL streaming row, degrading to the
+// previous single-message behavior rather than losing content.
+func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
+	if event.SteerBoundary == nil {
+		return
+	}
+	queueID := event.SteerBoundary.ClientUserMessageID
+
+	// No DB (bare executor in a unit test): nothing to split, but the event must
+	// still not reach the generic path (it would be accumulated as a block).
+	if db == nil {
+		return
+	}
+
+	// Serialize against the accumulator and the flush ticker. The split replaces
+	// e.blocks and the streaming-row identity, so it must not interleave with a
+	// concurrent flush.
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Flush batched side-writes for the "before" half first, so tool-call rows
+	// and thinking text produced before the injection belong to it.
+	e.flushPendingToolCalls()
+	e.flushPendingContextState()
+	e.flushPendingThinking()
+
+	// Finalize the "before" half: write its content and clear streaming=1. The
+	// row keeps its id (lower than the injected question's), which is exactly the
+	// ordering we want.
+	beforeContent := e.buildSplitContentLocked()
+	beforeID := e.cfg.StreamingMessageID
+	if _, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, beforeContent); err != nil {
+		slog.Error("session executor: failed to finalize assistant half at steer boundary; "+
+			"continuing in the original row (no split)",
+			slog.String("session", e.cfg.SessionID),
+			slog.Int64("before_msg_id", beforeID),
+			slog.String("err", err.Error()))
+		return
+	}
+
+	// Open the "after" half: a fresh streaming assistant row anchored to the
+	// injected question, so the frontend places it directly below that question.
+	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, queueID)
+	if err != nil {
+		// The "before" half is already durable; the rest of the turn simply keeps
+		// appending to it via UpdateStreamingMessage's "latest streaming row"
+		// lookup... except there is now no streaming row, so the remaining content
+		// would be lost. Re-open one without the anchor to stay safe.
+		slog.Error("session executor: failed to create assistant half at steer boundary; "+
+			"reopening an unanchored row so remaining content is not lost",
+			slog.String("session", e.cfg.SessionID),
+			slog.String("err", err.Error()))
+		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, ""); ferr == nil {
+			e.resetForSplitLocked(fallbackID, "")
+		}
+		return
+	}
+
+	slog.Info("session executor: split assistant reply at steer boundary",
+		slog.String("session", e.cfg.SessionID),
+		slog.Int64("before_msg_id", beforeID),
+		slog.Int64("after_msg_id", afterID),
+		slog.String("queue_id", queueID))
+
+	// Announce the split so every subscribed client (including one that opened
+	// the session mid-turn) creates the second bubble immediately instead of
+	// waiting for a reload.
+	e.forwardEvent(ai.StreamEvent{
+		Type:        "stream_split",
+		StreamSplit: &ai.StreamSplitData{MessageID: afterID, QueueID: queueID},
+	})
+
+	e.resetForSplitLocked(afterID, queueID)
+}
+
+// resetForSplitLocked re-points the executor at a newly created streaming row
+// and clears all per-message accumulation, so the "after" half starts empty.
+// Caller holds e.mu.
+func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string) {
+	e.cfg.StreamingMessageID = newMessageID
+	e.blocks = nil
+	e.responseMetadata = nil
+	e.lastWrittenContent = ""
+	e.lastFlush = time.Time{}
+	e.toolStarts = make(map[string]time.Time)
+	e.pendingToolCalls = make(map[string]struct{})
+	e.pendingContextPatches = make(map[string]string)
+	// Thinking is per-message (chat_thinking rows key off message_id); the
+	// "before" half's thinking was already flushed above, so the "after" half
+	// starts its own cursors.
+	e.thinkingFlushed = make(map[string]*thinkingFlushState)
+	_ = queueID
+}
+
+// buildSplitContentLocked renders the accumulated blocks as the content JSON for
+// the "before" half. Thinking text is split out into chat_thinking exactly like
+// a normal finalize, so the completed half is indistinguishable from any other
+// finalized assistant message. Caller holds e.mu.
+func (e *SessionExecutor) buildSplitContentLocked() string {
+	blocks := e.postProcessBlocks(e.blocks)
+	// Mirror Finalize: ConvertAskQuestionBlocks creates ask-* tool blocks that
+	// the normal upsert path never saw, so persist them against the "before"
+	// row. Without this the completed half would render the question as plain
+	// text after a reload.
+	e.persistAskToolCalls(blocks)
+	content, _ := e.buildContentJSON(blocks, RunResult{Blocks: blocks}, e.responseMetadata)
+	return persistThinkingToDB(content, e.cfg.StreamingMessageID, e.cfg.SessionID)
+}
+
+// flushStreamingMessage writes the accumulated blocks to the database.
 func (e *SessionExecutor) flushStreamingMessage() {
 	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
 	// is nothing to persist to. Guarding here keeps the rate-limited streaming
@@ -1051,6 +1181,27 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 // buildContentJSON serializes blocks and metadata into the DB content format,
 // handling empty-response warnings and cancellation markers.
 func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result RunResult, meta *ai.Metadata) (string, []model.ContentBlock) {
+	// Interrupt: the user redirected the turn ("interrupt and send"), they did
+	// not abandon it. Persist whatever was produced WITHOUT the cancelled badge —
+	// stamping "cancelled" would tell the user their reply was thrown away when
+	// in fact it was cut short on purpose and the next message is already
+	// running. The queue survives (see drainHandleTerminal).
+	if result.CancelReason == cancelReasonInterrupt {
+		// An interrupt that produced nothing must still say something: an empty
+		// blocks array renders as a blank bubble with no explanation. Report it
+		// as an empty result (not a cancellation — the user asked to move on).
+		if len(blocks) == 0 {
+			blocks = append(blocks, model.ContentBlock{
+				Type:   blockTypeWarning,
+				Text:   "AI returned no content",
+				Reason: ai.ReasonEmpty,
+			})
+		}
+		contentMap := map[string]any{contentKeyBlocks: blocks, contentKeyMetadata: meta}
+		blocksJSON, _ := json.Marshal(contentMap)
+		return string(blocksJSON), blocks
+	}
+
 	// User-initiated cancel: just mark cancelled, never add a warning block.
 	// The frontend renders a clean "cancelled" badge — no alarming warning needed.
 	if result.CancelReason == cancelReasonUser {
@@ -1105,10 +1256,9 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 }
 
 // drainRemainingEvents reads all remaining events from the channel until it is
-// closed. In addition to raw_output (for debugging), it also processes
-// tool_use/tool_result events that arrive after the main event loop exited
-// (e.g., debouncer flushAll on cancel), persisting them via AccumulateBlock +
-// upsertToolCallToDB.
+// closed. It processes tool_use/tool_result events that arrive after the main
+// event loop exited (e.g., debouncer flushAll on cancel), persisting them via
+// AccumulateBlock + upsertToolCallToDB.
 //
 // It also processes session_capture and metadata events to persist the external
 // session ID, even when the stream was cancelled before the main loop processed
@@ -1117,17 +1267,12 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 // Draining until close (rather than a one-shot non-blocking scan) guarantees
 // the producer's channel sends never block forever on a full buffer, so the
 // producer goroutine can always exit and close the channel.
-func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
+func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent) {
 	if eventCh == nil {
-		return rawOutput
+		return
 	}
 	for event := range eventCh {
 		switch event.Type {
-		case "raw_output":
-			if rawOutput != "" {
-				rawOutput += "\n"
-			}
-			rawOutput += event.RawOutput
 		case eventTypeToolUse, eventTypeToolResult:
 			e.trackToolDuration(&event)
 			// e.blocks is only touched by this executor's goroutines; a
@@ -1146,25 +1291,24 @@ func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, ra
 			}
 		}
 	}
-	return rawOutput
 }
 
 // Finalize persists the RunResult to the database: builds the content JSON,
-// finalizes the streaming message, saves metadata, drains remaining events,
-// and saves raw output. Returns the finalized RunResult with DB message ID.
+// finalizes the streaming message, saves metadata, and drains remaining events.
+// Returns the finalized RunResult with DB message ID.
 //
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
-	// Drain remaining events first (raw_output + tool calls flushed by debouncer
-	// after the main event loop exited on cancel). This updates e.blocks so that
+	// Drain remaining events first (tool calls flushed by debouncer after the
+	// main event loop exited on cancel). This updates e.blocks so that
 	// buildContentJSON includes the latest tool call data.
 	//
 	// NOTE: not holding e.mu here — drainRemainingEvents blocks until the
 	// producer closes the channel, and it takes e.mu itself around the
 	// AccumulateBlock calls. Holding e.mu across the blocking drain would
 	// deadlock against a producer goroutine that tries to take e.mu.
-	rawOutput := e.drainRemainingEvents(eventCh, result.RawOutput)
+	e.drainRemainingEvents(eventCh)
 
 	// Use e.blocks (may have been updated by drain) instead of result.Blocks
 	// snapshot. Snapshot under lock so FlushStreamingNow (shutdown goroutine)
@@ -1231,21 +1375,9 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 		}
 	}
 
-	// Save raw AI backend output for debugging/analysis
-	if rawOutput != "" {
-		if streamMsgID := GetStreamingMessageID(e.cfg.SessionID); streamMsgID > 0 {
-			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, streamMsgID, rawOutput); err != nil {
-				slog.Error("failed to save raw response",
-					slog.String("session", e.cfg.SessionID),
-					slog.String("err", err.Error()))
-			}
-		}
-	}
-
 	// Update result with finalized blocks and metadata
 	result.Blocks = blocks
 	result.Metadata = responseMetadata
-	result.RawOutput = rawOutput
 	result.MsgID = msgID
 
 	// Stream is fully persisted — stop tracking it for graceful shutdown flushes.

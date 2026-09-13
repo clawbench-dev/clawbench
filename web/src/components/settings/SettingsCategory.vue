@@ -32,6 +32,12 @@
           v-if="card.title === t('settings.items.wallpaperSection')"
           :description="t('settings.items.wallpaperDesc')"
         />
+        <!-- Forge credentials: write-only tokens, so a dedicated row manages
+             per-host tokens and never renders a stored value. -->
+        <ForgeCredentialsRow
+          v-if="card.title === t('settings.items.forgeSection')"
+          :description="t('settings.items.forgeCredentialsDesc')"
+        />
         <SettingsItem
           v-for="item in card.items"
           :key="item.key"
@@ -85,6 +91,7 @@ import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import SettingsCard from './SettingsCard.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
+import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -362,13 +369,6 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
     if (!value) return
   }
 
-  if (item.key === 'localhost_auth_exempt' && value === false) {
-    const confirmed = await dialog.confirm(
-      t('settings.items.localhostAuthExemptConfirm'),
-      { title: t('settings.items.localhostAuthExempt'), dangerous: true }
-    )
-    if (!confirmed) return
-  }
   if (item.source === 'local') {
     setLocalConfig(item.key, value as string | number | boolean)
     if (item.key === 'logCapture') {
@@ -467,7 +467,7 @@ function handleDiscard() {
 
 <style scoped>
 .settings-category {
-  padding: 8px;
+  padding: var(--space-4);
   background: var(--bg-secondary);
 }
 </style>

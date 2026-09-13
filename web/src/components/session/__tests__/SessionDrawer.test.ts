@@ -176,8 +176,16 @@ describe('SessionDrawer', () => {
       wrapper.findComponent(SessionListStub).vm.$emit('select', 's1', 'cli')
       await nextTick()
       expect(wrapper.emitted('select')).toBeTruthy()
-      expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli'])
+      expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli', undefined])
       expect(BottomSheetStub.methods.close).toHaveBeenCalled()
+    })
+
+    it('forwards the owning project path for cross-project selections', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListStub).vm.$emit('select', 's1', 'cli', '/proj/other')
+      await nextTick()
+      expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli', '/proj/other'])
     })
 
     it('forwards archive with backend', async () => {

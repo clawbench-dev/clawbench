@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"encoding/json"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -132,10 +131,7 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 
 		input := parseAskQuestionXML(xmlContent)
 		if input == nil {
-			input = parseAskQuestionJSON(xmlContent)
-		}
-		if input == nil {
-			slog.Error("failed to parse ask-question content (tried XML and JSON)")
+			slog.Error("failed to parse ask-question XML content")
 			continue
 		}
 
@@ -179,33 +175,8 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 	return blocks
 }
 
-// validateAskQuestionJSON checks whether a JSON object contains a valid "questions"
-// array with at least one entry that has both "question" and "options" fields.
-func validateAskQuestionJSON(trimmed string) bool {
-	var data map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &data); err != nil {
-		return false
-	}
-	questions, ok := data["questions"].([]any)
-	if !ok || len(questions) == 0 {
-		return false
-	}
-	for _, q := range questions {
-		qm, ok := q.(map[string]any)
-		if !ok {
-			continue
-		}
-		if _, hasQ := qm["question"]; hasQ {
-			if opts, ok := qm["options"].([]any); ok && len(opts) > 0 {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // extractXMLCandidate checks if the content between <ask-question> tags contains
-// valid XML with <item> child elements or valid JSON with "questions" array.
+// valid XML with <item> child elements.
 func extractXMLCandidate(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -216,11 +187,6 @@ func extractXMLCandidate(raw string) string {
 			return ""
 		}
 		return trimmed
-	}
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"questions"`) {
-		if validateAskQuestionJSON(trimmed) {
-			return trimmed
-		}
 	}
 	return ""
 }
@@ -279,81 +245,6 @@ func parseAskQuestionXML(xmlContent string) map[string]any {
 			options = append(options, opt)
 		}
 
-		if len(options) == 0 {
-			continue
-		}
-
-		questions = append(questions, map[string]any{
-			"header":      header,
-			"multiSelect": multiSelect,
-			"question":    question,
-			"options":     options,
-		})
-	}
-
-	if len(questions) == 0 {
-		return nil
-	}
-
-	return map[string]any{"questions": questions}
-}
-
-// parseJSONOptions converts a list of raw option maps into the format expected
-// by ContentBlock.Input, keeping only options with a non-empty "label" field.
-func parseJSONOptions(rawOptions []any) []map[string]any {
-	var options []map[string]any
-	for _, ro := range rawOptions {
-		opt, ok := ro.(map[string]any)
-		if !ok {
-			continue
-		}
-		label, _ := opt["label"].(string)
-		if label == "" {
-			continue
-		}
-		entry := map[string]any{"label": label}
-		if desc, ok := opt["description"].(string); ok && desc != "" {
-			entry["description"] = desc
-		}
-		options = append(options, entry)
-	}
-	return options
-}
-
-// parseAskQuestionJSON parses JSON-format <ask-question> content into the
-// map[string]any format expected by ContentBlock.Input for "AskUserQuestion" tool.
-func parseAskQuestionJSON(jsonContent string) map[string]any {
-	var data map[string]any
-	if err := json.Unmarshal([]byte(jsonContent), &data); err != nil {
-		return nil
-	}
-
-	rawQuestions, ok := data["questions"].([]any)
-	if !ok || len(rawQuestions) == 0 {
-		return nil
-	}
-
-	var questions []map[string]any
-	for _, rq := range rawQuestions {
-		item, ok := rq.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		question, _ := item["question"].(string)
-		if question == "" {
-			continue
-		}
-
-		header, _ := item["header"].(string)
-		_, multiSelect := item["multiSelect"].(bool)
-
-		rawOpts, ok := item["options"].([]any)
-		if !ok || len(rawOpts) == 0 {
-			continue
-		}
-
-		options := parseJSONOptions(rawOpts)
 		if len(options) == 0 {
 			continue
 		}

@@ -72,7 +72,7 @@ function navigate(target) {
   scrollbar-width: none;
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #6c757d);
 }
 
@@ -82,11 +82,11 @@ function navigate(target) {
 
 /* ── Crumb item ── */
 .crumb {
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
   cursor: default;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 /* ── Clickable crumb ── */
@@ -108,7 +108,7 @@ function navigate(target) {
 
 /* ── Current (active) crumb ── */
 .crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
   cursor: default;
 }
@@ -123,7 +123,7 @@ function navigate(target) {
 /* ── Separator ── */
 .crumb-sep {
   color: var(--text-muted, #6c757d);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   margin: 0 1px;
   user-select: none;
 }

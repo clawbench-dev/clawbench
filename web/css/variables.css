@@ -23,9 +23,68 @@
     /* ── Static layout values (never change with theme) ──────────── */
     --header-height: 36px;
     --header-safe-area-top: env(safe-area-inset-top, 0px);
-    --radius-sm: 6px;
-    --radius-md: 10px;
     --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
+
+    /* ── Corner radii. `full` is the pill/circle form; `0` (square) is
+       written literally where a shape is deliberately sharp, since a token
+       would only obscure that it is a decision. ── */
+    --radius-xs: 3px;      /* tags, tiny chips */
+    --radius-sm: 6px;      /* buttons, inputs, menu rows */
+    --radius-md: 10px;     /* cards, panels, popovers */
+    --radius-lg: 14px;     /* dialogs, large surfaces */
+    --radius-full: 999px;  /* pills, avatars, icon buttons */
+
+    /* ── Spacing scale. Numbers are step names, not sizes: the same step can
+       mean "inset of a dense row" or "gap between cards" depending on where
+       it lands, so semantic names would mislead more than they help. The
+       scale is 4px-based with 2px/6px/10px kept because they are already
+       load-bearing in dense UI (badges, icon padding). ── */
+    --space-1: 2px;
+    --space-2: 4px;
+    --space-3: 6px;
+    --space-4: 8px;
+    --space-5: 10px;
+    --space-6: 12px;
+    --space-7: 16px;
+    --space-8: 20px;
+
+    /* ── Transition durations for colour / opacity / small state changes.
+       Longer durations are deliberately NOT tokenized: the 0.25s+ values
+       drive transforms, widths and max-height, where the extra time is the
+       point (a panel sliding in reads as broken at 0.15s). ── */
+    --duration-fast: 0.1s;   /* hover / active feedback */
+    --duration-base: 0.15s;  /* the default for colour and background */
+    --duration-slow: 0.2s;   /* larger surfaces fading */
+
+    /* ── Stacking order. Only the large, otherwise-mysterious values are
+       named: small integers (0/1/2/3/5/10) read fine in place and usually
+       just order siblings within one container.
+       Each `-backdrop` sits one below its surface so the surface's own
+       children still paint above the scrim. The values are unchanged from
+       the literals they replace — this names the order, it does not retune
+       it. ── */
+    --z-overlay: 1000;              /* welcome / modal / bottom-sheet scrim */
+    --z-overlay-raised: 1001;       /* upgrade prompts, above those scrims */
+    --z-header: 1100;               /* app header */
+    --z-sheet: 1200;                /* fullscreen sheet, code-preview float */
+    --z-preview-tooltip: 1300;      /* tooltip attached to the preview float */
+    --z-header-overlay: 2000;       /* header's own dropdown scrim */
+    --z-quote-bar: 2400;            /* quote-reply bar */
+    --z-context-menu-backdrop: 2499;
+    --z-context-menu: 2500;
+    --z-modal: 3000;                /* install / generic dialog */
+    --z-popover-backdrop: 9998;
+    --z-popover: 9999;              /* menus, dropdowns, tooltips, toasts */
+    --z-lightbox: 10000;            /* image lightbox — topmost */
+
+    /* ── Opacity for de-emphasised content. Named by *why* something is
+       faded rather than by the number, since that is what the value is
+       expressing. `0` (hidden) and `1` (fully shown) stay literal — they
+       are the two ends of the range, not a level of de-emphasis. ── */
+    --opacity-disabled: 0.4;  /* unusable: disabled, missing, locked */
+    --opacity-muted: 0.5;     /* secondary: ambient icons, line numbers */
+    --opacity-soft: 0.7;      /* lightly dimmed: inactive tabs, badges */
+    --opacity-hover: 0.9;     /* transient feedback on hover / press */
 
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.
@@ -45,6 +104,36 @@
        Values here must mirror DEFAULT_UI_STACK / DEFAULT_MONO_STACK. ── */
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
     --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+
+    /* ── Type scale. Fixed px rather than rem on purpose: the appearance
+       "缩放" setting scales the whole UI through `html { zoom }` (see
+       useSettingsConfig.applyUIScale), so px values already follow it.
+       Seven steps cover the sizes the UI actually uses; every one of them
+       maps to a distinct role, so prefer picking the closest step over
+       introducing an eighth. ── */
+    --font-size-2xs: 10px;   /* badges, corner marks, diff gutters */
+    --font-size-xs: 11px;    /* dense meta: tool cards, file paths, diffs */
+    --font-size-sm: 12px;    /* compact body: tool detail, list rows */
+    --font-size-md: 13px;    /* default UI text: chat messages, settings */
+    --font-size-lg: 14px;    /* tool icons, dialog titles, primary buttons */
+    --font-size-xl: 15px;    /* reading text — matches the html/body base */
+    --font-size-2xl: 16px;   /* headings, and inputs kept at 16px so mobile
+                                Safari does not zoom when they gain focus */
+
+    /* ── Weights. Three steps cover the UI; `400` (regular) is the browser
+       default and is left unwritten rather than tokenized, and `800` exists
+       once for terminal keycaps. ── */
+    --font-weight-medium: 500;    /* secondary emphasis, list emphasis */
+    --font-weight-semibold: 600;  /* the workhorse: labels, headings, buttons */
+    --font-weight-bold: 700;      /* strong emphasis, keycaps */
+
+    /* ── Line heights (unitless, so they scale with the element's own font
+       size). `1` on a single-line element and the handful of px values are
+       left as-is. ── */
+    --line-height-tight: 1.2;    /* dense two-line blocks */
+    --line-height-snug: 1.4;     /* compact UI text */
+    --line-height-normal: 1.5;   /* body text */
+    --line-height-relaxed: 1.6;  /* long-form reading (markdown) */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -71,6 +160,7 @@
     --user-msg-color: #5b8fbf;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f6f8fa;
     --table-border: #d0d7de;
     --scrollbar-thumb: #c1c1c1;
@@ -129,6 +219,7 @@
     --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #161b22;
     --table-border: #30363d;
     --scrollbar-thumb: #484f58;
@@ -187,6 +278,7 @@
     --user-msg-color: #3e6a96;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #21252b;
     --table-border: #3e4451;
     --scrollbar-thumb: #4b5263;
@@ -245,6 +337,7 @@
     --user-msg-color: #3a5a8a;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #181825;
     --table-border: #45475a;
     --scrollbar-thumb: #585b70;
@@ -303,6 +396,7 @@
     --user-msg-color: #6b7fbf;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
     --code-bg: #e6e9ef;
     --table-border: #bcc0cc;
     --scrollbar-thumb: #9ca0b0;
@@ -361,6 +455,7 @@
     --user-msg-color: #6d5a99;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #21222c;
     --table-border: #44475a;
     --scrollbar-thumb: #44475a;
@@ -419,6 +514,7 @@
     --user-msg-color: #4a6b8e;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #1b232e;
     --table-border: #38434f;
     --scrollbar-thumb: #3d4a58;
@@ -477,6 +573,7 @@
     --user-msg-color: #3a5a8a;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #16161e;
     --table-border: #292e42;
     --scrollbar-thumb: #3b4261;
@@ -535,6 +632,7 @@
     --user-msg-color: #2a6b76;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #06303b;
     --table-border: #1d4f5e;
     --scrollbar-thumb: #3a6a76;
@@ -593,6 +691,7 @@
     --user-msg-color: #3a6d85;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #101b25;
     --table-border: #2a3a48;
     --scrollbar-thumb: #33506a;
@@ -651,6 +750,7 @@
     --user-msg-color: #6b8fb5;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
     --code-bg: #eee8d5;
     --table-border: #d6ccb6;
     --scrollbar-thumb: #93a1a1;
@@ -709,6 +809,7 @@
     --user-msg-color: #8b6a3c;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #1d2021;
     --table-border: #3c3836;
     --scrollbar-thumb: #504945;
@@ -767,6 +868,7 @@
     --user-msg-color: #8b6a3c;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
     --code-bg: #f2e5bc;
     --table-border: #d5c4a1;
     --scrollbar-thumb: #928374;
@@ -825,6 +927,7 @@
     --user-msg-color: #007aa0;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.6);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.6);
     --code-bg: #0a0a0a;
     --table-border: #555555;
     --scrollbar-thumb: #666666;
@@ -883,6 +986,7 @@
     --user-msg-color: #003377;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.15);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.2);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.2);
     --code-bg: #f5f5f5;
     --table-border: #000000;
     --scrollbar-thumb: #333333;
@@ -941,6 +1045,7 @@
     --user-msg-color: #2a4a6a;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #001122;
     --table-border: #1b3b5b;
     --scrollbar-thumb: #2a4a6a;
@@ -999,6 +1104,7 @@
     --user-msg-color: #6b5a2c;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #0d1017;
     --table-border: #1a1f29;
     --scrollbar-thumb: #2a3040;
@@ -1057,6 +1163,7 @@
     --user-msg-color: #2a5a42;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #181818;
     --table-border: #2e2e2e;
     --scrollbar-thumb: #3a3a3a;
@@ -1115,6 +1222,7 @@
     --user-msg-color: #5a5473;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #1f1d2e;
     --table-border: #413f5e;
     --scrollbar-thumb: #403d5c;
@@ -1173,6 +1281,7 @@
     --user-msg-color: #55684f;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #22282b;
     --table-border: #3d484d;
     --scrollbar-thumb: #3a464b;
@@ -1231,6 +1340,7 @@
     --user-msg-color: #3d4a6b;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #16161d;
     --table-border: #363646;
     --scrollbar-thumb: #363646;
@@ -1289,6 +1399,7 @@
     --user-msg-color: #5b7fbf;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f0f0f0;
     --table-border: #e0e0e0;
     --scrollbar-thumb: #c8c8cd;
@@ -1347,6 +1458,7 @@
     --user-msg-color: #6b8fb5;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f2e9d0;
     --table-border: #d8cdb1;
     --scrollbar-thumb: #b6c0ad;
@@ -1405,6 +1517,7 @@
     --user-msg-color: #c77b3a;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f3f3f3;
     --table-border: #e3e3e3;
     --scrollbar-thumb: #c9c9c9;
@@ -1463,6 +1576,7 @@
     --user-msg-color: #5e7fae;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #e5e9f0;
     --table-border: #d5dbe5;
     --scrollbar-thumb: #b8c0cf;
@@ -1521,6 +1635,7 @@
     --user-msg-color: #5b7fbf;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f3f3f3;
     --table-border: #d4d4d4;
     --scrollbar-thumb: #c1c1c4;
@@ -1579,6 +1694,7 @@
     --user-msg-color: #4a6ea8;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f5f5f5;
     --table-border: #d9d9d9;
     --scrollbar-thumb: #c3c3c3;
@@ -1637,6 +1753,7 @@
     --user-msg-color: #52708c;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #ececec;
     --table-border: #c9c9c9;
     --scrollbar-thumb: #b3b3b3;
@@ -1695,6 +1812,7 @@
     --user-msg-color: #497f6a;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f6f6f4;
     --table-border: #d1d0cb;
     --scrollbar-thumb: #b8b7b3;
@@ -1753,6 +1871,7 @@
     --user-msg-color: #4a6ea8;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #edf1f7;
     --table-border: #d4dae3;
     --scrollbar-thumb: #b8c0cc;
@@ -1811,6 +1930,7 @@
     --user-msg-color: #4a6ea8;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #f0f0f0;
     --table-border: #e0e0e0;
     --scrollbar-thumb: #c0c0c0;
@@ -1869,6 +1989,7 @@
     --user-msg-color: #4a6ea8;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.1);
     --code-bg: #eeeeee;
     --table-border: #d9d9d9;
     --scrollbar-thumb: #b8b8b8;
@@ -1927,6 +2048,7 @@
     --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #252526;
     --table-border: #3c3c3c;
     --scrollbar-thumb: #4d4d4d;
@@ -1985,6 +2107,7 @@
     --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #2e2f29;
     --table-border: #49483e;
     --scrollbar-thumb: #57564a;
@@ -2043,6 +2166,7 @@
     --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #242936;
     --table-border: #3a4151;
     --scrollbar-thumb: #4a5264;
@@ -2101,6 +2225,7 @@
     --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --code-bg: #282828;
     --table-border: #424242;
     --scrollbar-thumb: #555555;

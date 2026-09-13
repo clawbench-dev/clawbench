@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -554,4 +556,199 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 	// the loop finishes with a normal done.
 	assert.Equal(t, int32(1), atomic.LoadInt32(&executeCount))
 	assert.Equal(t, "done", finalEvent.Type)
+}
+
+// TestDrainHandleTerminal_InterruptKeepsQueue is the core guard for the
+// "interrupt and send" action: an interrupted turn must NOT drop the queue and
+// must NOT emit a terminal event, because the queued message is exactly what
+// should run next. Contrast with the user-cancel branch, which clears the queue.
+func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-test-interrupt"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "next message", nil, "q-interrupt", "")
+
+	var finalEvents []ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:            sessionID,
+		MarkDoneAndSendFinal: func(e ai.StreamEvent) { finalEvents = append(finalEvents, e) },
+	}
+
+	done := drainHandleTerminal(cfg, DrainResult{CancelReason: cancelReasonInterrupt})
+
+	if done {
+		t.Fatal("interrupt must NOT end the drain loop — the next queued message still has to run")
+	}
+	if len(finalEvents) != 0 {
+		t.Errorf("interrupt must not emit a terminal event, got %+v", finalEvents)
+	}
+
+	// The queue must survive: this is what separates interrupt from cancel.
+	queued, err := GetQueuedMessages(sessionID)
+	if err != nil {
+		t.Fatalf("GetQueuedMessages failed: %v", err)
+	}
+	if len(queued) != 1 || queued[0].Content != "next message" {
+		t.Fatalf("the queued message must survive an interrupt, got %+v", queued)
+	}
+}
+
+// TestDrainHandleTerminal_UserCancelStillClearsQueue pins the contrast: the
+// existing cancel semantics must be unchanged by the interrupt branch above.
+func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
+	setupDrainTest()
+	sessionID := "drain-test-cancel-contrast"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "dropped", nil, "q-cancel", "")
+
+	var finalEvents []ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:            sessionID,
+		MarkDoneAndSendFinal: func(e ai.StreamEvent) { finalEvents = append(finalEvents, e) },
+	}
+
+	done := drainHandleTerminal(cfg, DrainResult{CancelReason: cancelReasonUser})
+
+	if !done {
+		t.Fatal("user cancel must end the drain loop")
+	}
+	if len(finalEvents) != 1 || finalEvents[0].Type != statusCancelled {
+		t.Errorf("user cancel must emit exactly one cancelled event, got %+v", finalEvents)
+	}
+	queued, _ := GetQueuedMessages(sessionID)
+	if len(queued) != 0 {
+		t.Errorf("user cancel must clear the queue, got %d rows", len(queued))
+	}
+}
+
+// TestInterruptSessionTurn verifies the turn-scoped cancel registry: it must
+// report whether a turn was actually stopped, and record the interrupt reason
+// so the executor finalizes the turn without stamping it "cancelled".
+func TestInterruptSessionTurn(t *testing.T) {
+	sessionID := "interrupt-turn-test"
+
+	// No turn registered → nothing to interrupt.
+	if InterruptSessionTurnIfCurrent(sessionID, 1) {
+		t.Fatal("interrupting with no registered turn must report false")
+	}
+
+	// Register a turn and interrupt it.
+	ctx, cancel := context.WithCancel(context.Background())
+	turnID := RegisterSessionTurnCancel(sessionID, cancel)
+	t.Cleanup(func() { UnregisterSessionTurnCancel(sessionID) })
+
+	if !InterruptSessionTurnIfCurrent(sessionID, turnID) {
+		t.Fatal("interrupting a registered turn must report true")
+	}
+	select {
+	case <-ctx.Done():
+		// expected: the turn's context was cancelled
+	default:
+		t.Fatal("the turn's context must be cancelled")
+	}
+
+	// The reason must be recorded for the executor to read.
+	if reason := GetAndClearCancelReason(sessionID); reason != cancelReasonInterrupt {
+		t.Errorf("cancel reason = %q, want %q", reason, cancelReasonInterrupt)
+	}
+
+	// The registry entry is consumed — a second interrupt is a no-op.
+	if InterruptSessionTurnIfCurrent(sessionID, turnID) {
+		t.Error("a consumed turn must not be interruptible twice")
+	}
+}
+
+// TestInterruptSessionTurn_DoesNotClobberExistingReason is the guard against a
+// real user cancel being swallowed by a concurrent interrupt.
+//
+// sessionCancelReasons is a single slot per session; the executor reads it as
+// "why did this turn end". If InterruptSessionTurn overwrote a "user" reason
+// with "interrupt", the drain loop would keep the queue and treat a genuine
+// cancel as a redirect — the user's cancel would be ignored and later queued
+// messages would run against a cancelled session context.
+func TestInterruptSessionTurn_DoesNotClobberExistingReason(t *testing.T) {
+	sessionID := "interrupt-reason-ownership"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	turnID := RegisterSessionTurnCancel(sessionID, cancel)
+	t.Cleanup(func() { UnregisterSessionTurnCancel(sessionID) })
+
+	// A user cancel lands first (this is what CancelSession does).
+	SetCancelReason(sessionID, cancelReasonUser)
+
+	// The interrupt must still stop the turn (the caller asked to)...
+	if !InterruptSessionTurnIfCurrent(sessionID, turnID) {
+		t.Fatal("interrupt must still stop a registered turn")
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("the turn's context must be cancelled")
+	}
+
+	// ...but it must NOT steal the reason: the user cancel must win.
+	if reason := GetAndClearCancelReason(sessionID); reason != cancelReasonUser {
+		t.Errorf("cancel reason = %q, want %q (the interrupt must not clobber it)",
+			reason, cancelReasonUser)
+	}
+}
+
+// TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn is the guard for the
+// check-then-act race: the caller reads the current turn id, then the old turn
+// finishes and the drain loop starts the NEXT queued message before the
+// interrupt lands. Interrupting that new turn would cut off a reply the user
+// never asked to stop, so the id check must refuse.
+func TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn(t *testing.T) {
+	sessionID := "interrupt-replaced-turn"
+
+	// The turn the caller inspected (T1).
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	t.Cleanup(cancel1)
+	turn1 := RegisterSessionTurnCancel(sessionID, cancel1)
+
+	// T1 ends and the drain loop starts T2 before the interrupt is applied.
+	UnregisterSessionTurnCancel(sessionID)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	t.Cleanup(cancel2)
+	RegisterSessionTurnCancel(sessionID, cancel2)
+	t.Cleanup(func() { UnregisterSessionTurnCancel(sessionID) })
+
+	// The stale id must NOT stop T2.
+	if InterruptSessionTurnIfCurrent(sessionID, turn1) {
+		t.Fatal("a stale turn id must not interrupt the turn that replaced it")
+	}
+	select {
+	case <-ctx2.Done():
+		t.Fatal("the NEW turn must be left running")
+	default:
+	}
+	select {
+	case <-ctx1.Done():
+		t.Fatal("T1 is already over; it must not be touched")
+	default:
+	}
+}
+
+// TestInterruptSessionTurn_ClaimsEmptySlot verifies the normal case: when no
+// reason was recorded, the interrupt records its own so the executor knows the
+// turn was redirected (not cancelled).
+func TestInterruptSessionTurn_ClaimsEmptySlot(t *testing.T) {
+	sessionID := "interrupt-claims-empty"
+
+	_, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	turnID := RegisterSessionTurnCancel(sessionID, cancel)
+	t.Cleanup(func() { UnregisterSessionTurnCancel(sessionID) })
+
+	if !InterruptSessionTurnIfCurrent(sessionID, turnID) {
+		t.Fatal("interrupt must stop a registered turn")
+	}
+	if reason := GetAndClearCancelReason(sessionID); reason != cancelReasonInterrupt {
+		t.Errorf("cancel reason = %q, want %q", reason, cancelReasonInterrupt)
+	}
 }

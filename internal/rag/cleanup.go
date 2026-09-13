@@ -130,7 +130,7 @@ func (w *CleanupWorker) cleanup() {
 		}
 	}
 
-	// 2. Delete SQLite data (ai_raw_responses → chat_history → chat_sessions)
+	// 2. Delete SQLite data (chat_history → chat_sessions)
 	sessionsPurged, messagesPurged, err := w.svc.PurgeArchivedData(sessionIDs)
 	if err != nil {
 		slog.Error("rag cleanup: failed to purge data", slog.String("err", err.Error()))

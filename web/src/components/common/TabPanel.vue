@@ -66,7 +66,7 @@ function handleHeaderClick() {
   flex-direction: column;
   overflow: hidden;
   opacity: 0;
-  transition: opacity 150ms ease;
+  transition: opacity var(--duration-base) ease;
   pointer-events: none;
   /* Create a stacking context so child z-indexes (e.g. .file-overlay's
      z-index:100) stay contained inside this panel instead of escaping to

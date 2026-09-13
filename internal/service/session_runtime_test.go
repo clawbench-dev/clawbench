@@ -1323,6 +1323,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1360,14 +1361,6 @@ CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, creat
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-CREATE TABLE IF NOT EXISTS ai_raw_responses (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	session_id TEXT NOT NULL,
-	message_id INTEGER NOT NULL,
-	backend TEXT NOT NULL DEFAULT '',
-	raw_output TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 `
 
 func setupExecTaskDB(t *testing.T) *sql.DB {
@@ -1426,7 +1419,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	_ = sub
 
 	// Execute the task — should fail at backend creation and emit "failed" event
-	s.executeTask(task, "/test-project", "manual")
+	s.executeTask(task, "/test-project", "manual", nil)
 
 	// Give a small window for async processing
 	time.Sleep(100 * time.Millisecond)
@@ -1501,7 +1494,7 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 	_ = sub
 
 	// Execute the task — should fail at ExecuteStream and emit "failed" event
-	s.executeTask(task, "/test-project", "auto")
+	s.executeTask(task, "/test-project", "auto", nil)
 
 	// Give a small window for async processing
 	time.Sleep(200 * time.Millisecond)
@@ -1576,7 +1569,7 @@ func TestExecuteTask_AgentNotFound(t *testing.T) {
 	defer s.Stop()
 
 	// Execute should pause the task and not panic
-	s.executeTask(task, "/test-project", "auto")
+	s.executeTask(task, "/test-project", "auto", nil)
 
 	// Verify task was paused
 	var status string
@@ -1649,7 +1642,7 @@ func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
 
 	// Step 2: Build event channel with content + terminal event
 	events := []ai.StreamEvent{
-		{Type: "content", Content: "scheduled task output"},
+		{Type: "content", Content: "task output"},
 		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 10, OutputTokens: 20}},
 		{Type: "done"},
 	}

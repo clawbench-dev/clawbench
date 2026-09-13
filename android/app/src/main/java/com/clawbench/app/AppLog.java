@@ -22,7 +22,7 @@ import javax.net.ssl.SSLContext;
 
 /**
  * Drop-in replacement for android.util.Log that also buffers entries and
- * periodically POSTs them to the ClawBench server's /api/android-log endpoint.
+ * periodically POSTs them to the ClawBench server's /api/client-log endpoint.
  *
  * Usage: replace Log.d(TAG, msg) with AppLog.d(TAG, msg) etc.
  *
@@ -109,7 +109,7 @@ public class AppLog {
 
     /**
      * Start capturing logs. Entries will be buffered and periodically flushed
-     * to the server's /api/android-log endpoint.
+     * to the server's /api/client-log endpoint.
      *
      * @param baseUrl the server base URL (e.g. "https://localhost:20000")
      */
@@ -279,7 +279,7 @@ public class AppLog {
     }
 
     private static void postLogPayload(String json) throws Exception {
-        String urlStr = serverBaseUrl + "/api/android-log";
+        String urlStr = serverBaseUrl + "/api/client-log";
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         try {

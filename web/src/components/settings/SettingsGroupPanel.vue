@@ -623,12 +623,12 @@ watch(localValues, () => {
 
 /* Panel title inside the card, distinct from card body and page background */
 .group-panel__header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   position: relative;
   background: var(--bg-tertiary);
 }
@@ -647,11 +647,11 @@ watch(localValues, () => {
   border-radius: 0;
   overflow: hidden;
   background: var(--bg-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 .group-panel__card :deep(.settings-item) {
   background: transparent;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
 }
 .group-panel__card :deep(.settings-item::after) {
   left: 16px;
@@ -665,7 +665,7 @@ watch(localValues, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   min-height: 48px;
   background: transparent;
   position: relative;
@@ -684,11 +684,11 @@ watch(localValues, () => {
 .group-panel__enable-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .group-panel__enable-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
 }
 
@@ -711,9 +711,9 @@ watch(localValues, () => {
 .group-panel__switch-track {
   position: absolute;
   inset: 0;
-  border-radius: 15.5px;
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary);
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
 }
 
 .group-panel__switch-track::after {
@@ -725,7 +725,7 @@ watch(localValues, () => {
   height: 27px;
   border-radius: 50%;
   background: var(--bg-primary);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
@@ -742,7 +742,7 @@ watch(localValues, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   min-height: 48px;
   cursor: pointer;
   background: transparent;
@@ -760,7 +760,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-row--disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   pointer-events: none;
 }
 
@@ -775,7 +775,7 @@ watch(localValues, () => {
 }
 
 .group-panel__entry-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   flex-shrink: 1;
   min-width: 0;
@@ -787,12 +787,12 @@ watch(localValues, () => {
 .group-panel__entry-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .group-panel__entry-value {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -807,12 +807,12 @@ watch(localValues, () => {
 
 /* Section header */
 .group-panel__section-header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 5px 16px 3px;
+  padding:5px var(--space-7) 3px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: var(--bg-tertiary);
 }
 
@@ -824,19 +824,19 @@ watch(localValues, () => {
   align-items: stretch;
   background: transparent;
   border-top: 0.5px solid var(--border-color);
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
 }
 
 .group-panel__save-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* RAG index rebuild actions — destructive, so separated from the save row */
 .group-panel__rag-actions {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .group-panel__rag-actions .fbtn {
@@ -844,10 +844,10 @@ watch(localValues, () => {
 }
 
 .group-panel__restart-hint {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   text-align: center;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 /* Layout only — visuals come from the shared .fbtn pills. */
@@ -857,11 +857,11 @@ watch(localValues, () => {
 
 /* Test results */
 .group-panel__test-result {
-  font-size: 13px;
-  margin: 6px 16px 0;
-  padding: 6px 10px;
-  border-radius: 6px;
-  line-height: 1.4;
+  font-size: var(--font-size-md);
+  margin: var(--space-3) var(--space-7) 0;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-sm);
+  line-height: var(--line-height-snug);
 }
 
 .group-panel__test-result--success {
@@ -876,16 +876,16 @@ watch(localValues, () => {
 
 /* Server error */
 .group-panel__error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #ef4444;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 /* Hot-reload warning */
 .group-panel__warning {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #f59e0b;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
   white-space: pre-line;
 }
 </style>
@@ -896,7 +896,7 @@ watch(localValues, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   cursor: pointer;
   min-height: 44px;
   position: relative;
@@ -931,13 +931,13 @@ watch(localValues, () => {
 }
 
 .group-panel__option-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
 }
 
 .group-panel__option-check {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 </style>

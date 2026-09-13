@@ -71,12 +71,12 @@ defineExpose({ focus, inputRef, focused })
 .search-pill {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 999px;
-  padding: 5px 12px;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  border-radius: var(--radius-full);
+  padding:5px var(--space-6);
+  transition: border-color var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .search-pill.focused {
@@ -97,10 +97,10 @@ defineExpose({ focus, inputRef, focused })
   border: none;
   background: none;
   outline: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   padding: 0;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .search-pill input::placeholder {
@@ -120,7 +120,7 @@ defineExpose({ focus, inputRef, focused })
   color: var(--text-muted);
   flex-shrink: 0;
   padding: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {

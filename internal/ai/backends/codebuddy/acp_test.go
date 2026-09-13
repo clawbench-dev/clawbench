@@ -134,12 +134,6 @@ func TestCodebuddyBackend_PreStart_SetsStdin(t *testing.T) {
 
 // --- DiscoverCodebuddyModels edge cases ---
 
-func TestDiscoverCodebuddyModels_EmptyProductJSON(t *testing.T) {
-	// This just verifies no panic when CLI is not installed
-	models := DiscoverCodebuddyModels()
-	_ = models // may be nil in CI
-}
-
 func TestParseCodebuddyModels_EmptyCommaSeparated(t *testing.T) {
 	// Edge case: "Currently supported: (, , )" — empty parts
 	output := "Currently supported: (, , )"

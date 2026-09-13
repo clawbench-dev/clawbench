@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
+	pinned INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS recent_projects (
 CREATE TABLE IF NOT EXISTS project_meta (
 	project_path TEXT PRIMARY KEY,
 	next_session_number INTEGER NOT NULL DEFAULT 0,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -80,6 +83,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	agent_id TEXT NOT NULL,
 	prompt TEXT NOT NULL,
 	session_id TEXT DEFAULT '',
+	trigger_mode TEXT NOT NULL DEFAULT 'cron',
+	event_types TEXT NOT NULL DEFAULT '',
 	status TEXT DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,
@@ -107,15 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, updated_at DESC, id DESC);
-CREATE TABLE IF NOT EXISTS ai_raw_responses (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	session_id TEXT NOT NULL,
-	message_id INTEGER NOT NULL,
-	backend TEXT NOT NULL DEFAULT '',
-	raw_output TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -364,7 +361,7 @@ func TestCreateSession_DoesNotLockGeneratedTitle(t *testing.T) {
 }
 
 // TestAddChatMessage_AutoTitleSkippedForScheduledSession verifies that a
-// scheduled task session keeps its created title (⏰ <task name>) instead of
+// task session keeps its created title (⏰ <task name>) instead of
 // being overwritten by the task prompt on the first message.
 func TestAddChatMessage_AutoTitleSkippedForScheduledSession(t *testing.T) {
 	setupDB(t)
@@ -399,19 +396,18 @@ func TestAddChatMessage_AutoTitleStillAppliesForChatSession(t *testing.T) {
 	assert.False(t, renamed, "auto-titled sessions must not be marked as renamed")
 }
 
-// TestUpdateSessionTitle_DoesNotMarkRenamed verifies the placeholder title path
-// leaves the lock untouched, so first-message auto-titling still applies.
-func TestUpdateSessionTitle_DoesNotMarkRenamed(t *testing.T) {
+// TestAutoTitleAppliesToPlaceholderSource verifies the placeholder source path
+// (plain CreateSession) leaves the title replaceable, so first-message
+// auto-titling still applies.
+func TestAutoTitleAppliesToPlaceholderSource(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
-	require.NoError(t, service.UpdateSessionTitle(sid, "Placeholder Title"))
-
 	renamed, err := service.GetSessionTitleRenamed(sid)
 	require.NoError(t, err)
 	assert.False(t, renamed)
 
-	// Because it was not locked, the first message may still auto-title it.
+	// Because it is only a placeholder, the first message may auto-title it.
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "overwrites placeholder", nil, false, "NewSession")
 	assert.NoError(t, err)
 	title, err := service.GetSessionTitle(sid)
@@ -1615,6 +1611,44 @@ func TestUpdateLastRead_FallsBackToNowWithoutMessages(t *testing.T) {
 	assert.True(t, lastRead.Valid, "last_read_at should still be set via CURRENT_TIMESTAMP fallback")
 }
 
+func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) {
+	// Regression: when the user cancels the turn they are viewing, the frontend
+	// marks the session read on the "cancelled" session_update event — which is
+	// emitted BEFORE the executor finalizes the interrupted reply (streaming=1
+	// -> 0). Anchoring last_read_at to the newest *finalized* assistant message
+	// therefore anchors DOWN to the previous turn's reply, and the interrupted
+	// reply (created_at is newer) flips the session back to unread once it is
+	// finalized. The user is looking right at the session, so it must stay read.
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Cancel Turn")
+
+	// Previous turn: a finalized assistant reply from an earlier time.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	// Current turn: user cancelled while the reply row is still streaming=1 —
+	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
+		"/project", sid)
+	require.NoError(t, err)
+
+	service.UpdateLastRead(sid)
+
+	// The executor finalizes the interrupted reply immediately after.
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions("/project", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 0, sessions[0].UnreadCount,
+		"the interrupted reply the user was watching must not become unread")
+}
+
 // ---------- GetSessionAgentID ----------
 
 func TestGetSessionAgentID(t *testing.T) {
@@ -1823,9 +1857,6 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
 	_ = service.ArchiveSession("/project", "claude", sid)
 
-	// Add a raw response for this session
-	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
-
 	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{sid})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
@@ -1839,11 +1870,6 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 
 	// Verify messages are completely gone
 	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, count)
-
-	// Verify raw responses are gone
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -1899,7 +1925,6 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Active To HardDelete")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "msg1", nil, false, "NewSession")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
-	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
 
 	err := service.HardDeleteSession(sid)
 	assert.NoError(t, err)
@@ -1910,8 +1935,6 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 	assert.Equal(t, 0, count, "session should be gone")
 	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "messages should be gone")
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count))
-	assert.Equal(t, 0, count, "raw responses should be gone")
 }
 
 func TestHardDeleteSession_ArchivedSession(t *testing.T) {
@@ -2052,7 +2075,7 @@ func TestGetSessionsPaged_NoLimit_ReturnsAll(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore)
@@ -2064,7 +2087,7 @@ func TestGetSessionsPaged_LimitGreaterThanTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S1")
 	helperCreateSession(t, "/project", "claude", "S2")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2077,7 +2100,7 @@ func TestGetSessionsPaged_LimitEqualsTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore) // limit+1=4, only 3 exist, so no more
@@ -2090,7 +2113,7 @@ func TestGetSessionsPaged_LimitLessThanTotal_HasMore(t *testing.T) {
 		helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 	}
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.True(t, hasMore)
@@ -2347,7 +2370,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	}
 
 	// First page: limit=2, no cursor
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2358,7 +2381,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2)
 	assert.True(t, hasMore2)
@@ -2383,7 +2406,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	}
 
 	// First page: limit=3
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil)
 	assert.NoError(t, err)
 	assert.True(t, hasMore)
 
@@ -2392,7 +2415,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2) // only 2 remaining
 	assert.False(t, hasMore2)
@@ -2401,7 +2424,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 func TestGetSessionsPaged_EmptyProject(t *testing.T) {
 	setupDB(t)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Empty(t, sessions)
 	assert.False(t, hasMore)
@@ -2414,7 +2437,7 @@ func TestGetSessionsPaged_FiltersByProject(t *testing.T) {
 	helperCreateSession(t, "/proj1", "claude", "P1-S2")
 	helperCreateSession(t, "/proj2", "claude", "P2-S1")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2428,7 +2451,7 @@ func TestGetSessionsPaged_ExcludesDeletedSessions(t *testing.T) {
 	err := service.ArchiveSession("/project", "claude", archivedSID)
 	assert.NoError(t, err)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.False(t, hasMore)
@@ -2441,7 +2464,7 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "Chat")
 	helperCreateScheduledSession(t, "/project", "claude", "Scheduled")
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, "Chat", sessions[0].Title)
@@ -2463,7 +2486,7 @@ func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
@@ -2490,7 +2513,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	page := 0
 
 	for {
-		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID)
+		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, sessions, "page %d should not be empty", page)
 
@@ -2544,7 +2567,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2554,7 +2577,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID)
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 1) // only 1 remaining
 	assert.False(t, hasMore2)
@@ -2597,7 +2620,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Page 1 (limit=1) → newest session.
-	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "")
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil)
 	assert.NoError(t, err)
 	require.Len(t, page1, 1)
 	assert.Equal(t, sidNew, page1[0].ID)
@@ -2606,7 +2629,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// Page 2 uses the created_at cursor — must be the middle session, NOT a
 	// repeat of page 1.
 	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID)
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil)
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
@@ -2618,7 +2641,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	err = service.UnsafeDBForTest().QueryRow(
 		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
-	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID)
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil)
 	assert.NoError(t, err)
 	require.Len(t, badCursor, 1)
 	assert.Equal(t, sidNew, badCursor[0].ID,
@@ -3280,7 +3303,7 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "msg", nil, false, "")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil)
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, 1, sessions[0].UnreadCount)
@@ -3850,80 +3873,6 @@ func TestGetStreamingMessageInfo_NoStreamingRow(t *testing.T) {
 	id, queueID := service.GetStreamingMessageInfo(sid)
 	assert.Equal(t, int64(0), id)
 	assert.Equal(t, "", queueID)
-}
-
-// ---------- SaveRawResponse ----------
-
-func TestSaveRawResponse(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Raw Test")
-
-	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "test", nil, false, "")
-	assert.NoError(t, err)
-
-	msgID := service.GetStreamingMessageID(sid)
-
-	err = service.SaveRawResponse(sid, "claude", msgID, "raw output data")
-	assert.NoError(t, err)
-
-	// Verify it was saved
-	var rawOutput string
-	err = service.UnsafeDBForTest().QueryRow("SELECT raw_output FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&rawOutput)
-	assert.NoError(t, err)
-	assert.Equal(t, "raw output data", rawOutput)
-}
-
-func TestPruneRawResponses(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Prune Test")
-
-	// Insert 10 raw responses
-	for i := range 10 {
-		_, err := service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("msg %d", i), nil, false, "")
-		assert.NoError(t, err)
-		msgID := service.GetStreamingMessageID(sid)
-		err = service.SaveRawResponse(sid, "claude", msgID, fmt.Sprintf("raw %d", i))
-		assert.NoError(t, err)
-	}
-
-	// Count before prune
-	var countBefore int
-	err := service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countBefore)
-	assert.NoError(t, err)
-	assert.Equal(t, 10, countBefore)
-
-	// Prune to keep 3 most recent
-	service.PruneRawResponses(3)
-
-	var countAfter int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, countAfter)
-
-	// Verify the 3 kept are the newest (IDs 8, 9, 10 — raw "7", "8", "9")
-	var outputs []string
-	rows, err := service.UnsafeDBForTest().Query("SELECT raw_output FROM ai_raw_responses ORDER BY id ASC")
-	assert.NoError(t, err)
-	defer rows.Close()
-	for rows.Next() {
-		var o string
-		assert.NoError(t, rows.Scan(&o))
-		outputs = append(outputs, o)
-	}
-	assert.NoError(t, rows.Err())
-	assert.Equal(t, []string{"raw 7", "raw 8", "raw 9"}, outputs)
-
-	// Prune with limit larger than count — no-op
-	service.PruneRawResponses(100)
-	var countAfter2 int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter2)
-	assert.NoError(t, err)
-	assert.Equal(t, 3, countAfter2)
-
-	// Prune with zero — no-op
-	service.PruneRawResponses(0)
 }
 
 // ---------- GetUnindexedMessages / MarkMessageIndexed / UnindexedCount ----------
@@ -5315,7 +5264,7 @@ func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Enqueue Start")
 
 	// Verify running state becomes true (goroutine started).
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5357,7 +5306,7 @@ func TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued(t *testing
 
 	// EnqueueAndMaybeStart wins the idle-session claim and runs "current"
 	// directly via cfg.Message. It must consume only its own row.
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5411,7 +5360,7 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+			started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 				SessionID:   sid,
 				ProjectPath: "/project",
 				BackendName: backendID,
@@ -5484,7 +5433,7 @@ func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
 	// Mark session as already running.
 	service.SetSessionRunning(sid, true)
 
-	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5626,4 +5575,135 @@ func TestPatchContextStateMerge_UsageFirstWriteAsIs(t *testing.T) {
 	assert.Equal(t, 0, state.Usage.Used)
 	assert.Equal(t, 0, state.Usage.Size)
 	assert.Equal(t, 0.5, state.Usage.Cost)
+}
+
+func TestPinnedSessionSortOrder(t *testing.T) {
+	db := setupDB(t)
+	projectPath := "/test/pinned-sort"
+
+	// Create sessions with different pinned states
+	s1 := helperCreateSession(t, projectPath, "claude", "First")
+	s2 := helperCreateSession(t, projectPath, "claude", "Second")
+	s3 := helperCreateSession(t, projectPath, "claude", "Third")
+
+	// Pin is a UI preference, not session activity: it must not bump updated_at,
+	// which drives the relative-time label and GetLatestSessionID's "most recent"
+	// pick. Backdate updated_at first so a bump would be visible.
+	_, err := service.WriteExec(
+		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2)
+	require.NoError(t, err)
+
+	// Pin the second session (oldest by creation)
+	require.NoError(t, service.UpdateSessionPinned(s2, true))
+
+	var updatedAt string
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s2).Scan(&updatedAt))
+	assert.Contains(t, updatedAt, "2020-01-01",
+		"pinning must not rewrite updated_at")
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+
+	// Pinned session must be first regardless of created_at
+	assert.Equal(t, s2, sessions[0].ID, "pinned session should be first")
+	assert.True(t, sessions[0].Pinned, "pinned session should have Pinned=true")
+	assert.False(t, sessions[1].Pinned, "non-pinned session should have Pinned=false")
+
+	// Unpin — should revert to created_at order
+	require.NoError(t, service.UpdateSessionPinned(s2, false))
+	sessions, err = service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	assert.False(t, sessions[0].Pinned, "after unpin, first session should not be pinned")
+	assert.False(t, sessions[1].Pinned, "after unpin, second session should not be pinned")
+	assert.False(t, sessions[2].Pinned, "after unpin, third session should not be pinned")
+
+	// Pin multiple — all pinned sessions come before unpinned ones
+	require.NoError(t, service.UpdateSessionPinned(s1, true))
+	require.NoError(t, service.UpdateSessionPinned(s3, true))
+	sessions, err = service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	// Collect pinned and unpinned IDs
+	var pinnedIDs []string
+	var unpinnedIDs []string
+	for _, s := range sessions {
+		if s.Pinned {
+			pinnedIDs = append(pinnedIDs, s.ID)
+		} else {
+			unpinnedIDs = append(unpinnedIDs, s.ID)
+		}
+	}
+	assert.ElementsMatch(t, []string{s1, s3}, pinnedIDs, "pinned sessions should be s1 and s3")
+	assert.ElementsMatch(t, []string{s2}, unpinnedIDs, "unpinned session should be s2")
+	// Verify order: all pinned before unpinned
+	require.Len(t, sessions, 3)
+	assert.True(t, sessions[0].Pinned, "first session should be pinned")
+	assert.True(t, sessions[1].Pinned, "second session should be pinned")
+	assert.False(t, sessions[2].Pinned, "third session should not be pinned")
+
+	_ = db
+}
+
+// TestPinnedSessionPaginationNoDuplicates guards the keyset cursor against the
+// pinned column. Ordering is (pinned DESC, created_at DESC, id DESC); paging on
+// created_at alone re-returns every pinned row on each page because a pinned row
+// sorts first no matter how old it is. The cursor must carry pinned too.
+func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/pinned-pagination"
+
+	// Six sessions with strictly increasing created_at (helperCreateSession
+	// assigns CURRENT_TIMESTAMP, so make the order deterministic explicitly).
+	ids := make([]string, 0, 6)
+	for _, title := range []string{"A", "B", "C", "D", "E", "F"} {
+		ids = append(ids, helperCreateSession(t, projectPath, "claude", title))
+		_, err := service.WriteExec(
+			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
+			fmt.Sprintf("2024-0%d-01 00:00:00", len(ids)+1), ids[len(ids)-1],
+		)
+		require.NoError(t, err)
+	}
+
+	// Pin the OLDEST session. It now sorts first while its created_at is the
+	// smallest — exactly the case that broke the created_at-only cursor.
+	require.NoError(t, service.UpdateSessionPinned(ids[0], true))
+
+	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil)
+	require.NoError(t, err)
+	require.True(t, hasMore, "there are more rows after page 1")
+	require.Len(t, page1, 3)
+	// Pinned row leads regardless of created_at.
+	assert.Equal(t, ids[0], page1[0].ID)
+	assert.True(t, page1[0].Pinned)
+
+	last1 := page1[len(page1)-1]
+	page2, _, err := service.GetSessionsPaged(
+		projectPath, "", 3,
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &last1.Pinned,
+	)
+	require.NoError(t, err)
+
+	seen := map[string]int{}
+	for _, s := range append(append([]model.ChatSession{}, page1...), page2...) {
+		seen[s.ID]++
+	}
+	for id, n := range seen {
+		assert.Equalf(t, 1, n, "session %s must appear exactly once across pages", id)
+	}
+	assert.Len(t, seen, 6, "both pages together must cover every session")
+
+	// The legacy (nil cursorPinned) predicate is retained for older clients that
+	// do not send cursor_pinned. It compares created_at only, so the pinned row
+	// is returned again — that is the very duplication this fix addresses, and
+	// pinning it here keeps the compatibility path intentional rather than a
+	// silent regression.
+	legacyPage2, _, err := service.GetSessionsPaged(
+		projectPath, "", 3,
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, nil,
+	)
+	require.NoError(t, err)
+	require.NotEmpty(t, legacyPage2)
+	assert.Equal(t, ids[0], legacyPage2[0].ID,
+		"legacy created_at-only cursor still returns the pinned row first")
 }

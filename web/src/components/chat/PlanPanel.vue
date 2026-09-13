@@ -4,6 +4,7 @@
     <div v-if="collapsed" class="plan-chip" :class="{ 'plan-chip--updated': hasUpdate }" @click="$emit('toggle-collapse')">
       <span class="plan-chip__pulse"></span>
       <span class="plan-chip__text">{{ chipText }}</span>
+      <span class="plan-chip__count">{{ progressText }}</span>
       <ChevronDown :size="12" class="plan-chip__toggle" />
     </div>
 
@@ -11,6 +12,7 @@
     <div v-else class="plan-expanded">
       <div class="plan-expanded__header" @click="$emit('toggle-collapse')">
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
+        <span class="plan-expanded__count">{{ progressText }}</span>
         <ChevronUp :size="12" class="plan-expanded__toggle" />
       </div>
       <div ref="timelineRef" class="plan-expanded__timeline">
@@ -58,12 +60,13 @@ defineEmits<{
 
 const { t } = useI18n()
 
+const completedCount = computed(() => props.entries.filter(e => e.status === 'completed').length)
+const totalCount = computed(() => props.entries.length)
+const progressText = computed(() => `${completedCount.value}/${totalCount.value}`)
+
 const chipText = computed(() => {
   const inProgress = props.entries.find(e => e.status === 'in_progress')
-  if (inProgress) return inProgress.content
-  const completed = props.entries.filter(e => e.status === 'completed').length
-  const total = props.entries.length
-  return t('chat.plan.completedCount', { completed, total })
+  return inProgress ? inProgress.content : t('chat.plan.title')
 })
 
 // ── Active-entry centering ─────────────────────────────────
@@ -135,16 +138,16 @@ watch(
 <style scoped>
 .plan-panel {
   width: auto;
-  margin: 0 10px 8px;
+  margin:0 var(--space-5) var(--space-4);
 }
 
 /* ── Collapsed chip ── */
 .plan-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 16px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary, #e9ecef);
   border: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
@@ -175,11 +178,18 @@ watch(
 
 .plan-chip__text {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.plan-chip__count {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #6c757d);
+  white-space: nowrap;
 }
 
 .plan-chip__toggle {
@@ -191,27 +201,35 @@ watch(
 .plan-expanded {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-6);
 }
 
 .plan-expanded__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
   cursor: pointer;
 }
 
 .plan-expanded__title {
-  font-size: 12px;
-  font-weight: 600;
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
+}
+
+.plan-expanded__count {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #6c757d);
+  white-space: nowrap;
 }
 
 .plan-expanded__toggle {
   color: var(--text-muted, #6c757d);
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .plan-expanded__timeline {
@@ -226,9 +244,9 @@ watch(
   display: flex;
   align-items: flex-start;
   position: relative;
-  padding-left: 20px;
+  padding-left: var(--space-8);
   min-height: 28px;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Vertical line segment */
@@ -251,7 +269,7 @@ watch(
 
 .plan-entry__line--pulsing {
   border-left-style: solid;
-  border-left-color: var(--color-cyan, #06b6d4);
+  border-left-color: var(--color-info);
   animation: pulse-line 1.5s ease-in-out infinite;
 }
 
@@ -287,7 +305,7 @@ watch(
 }
 
 .plan-entry--in_progress .plan-entry__node {
-  border-color: var(--color-cyan, #06b6d4);
+  border-color: var(--color-info);
 }
 
 :root[data-theme-base="dark"] .plan-entry--in_progress .plan-entry__node {
@@ -295,7 +313,7 @@ watch(
 }
 
 .plan-entry__check {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: #fff;
   line-height: 1;
 }
@@ -304,7 +322,7 @@ watch(
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-cyan, #06b6d4);
+  background: var(--color-info);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
@@ -322,11 +340,14 @@ watch(
 /* Entry text */
 .plan-entry__text {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
-  line-height: 1.4;
-  padding-top: 2px;
+  line-height: var(--line-height-snug);
+  padding-top: var(--space-1);
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .plan-entry__text--done {
@@ -357,12 +378,12 @@ watch(
 /* ── Animations ── */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: var(--opacity-disabled); }
 }
 
 @keyframes pulse-line {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: var(--opacity-disabled); }
 }
 
 @keyframes check-in {

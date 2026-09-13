@@ -105,7 +105,7 @@ function handleClose() {
 .copy-agent-dialog__body {
   display: flex;
   flex-direction: column;
-  padding: 14px 16px 6px;
+  padding:14px var(--space-7) var(--space-3);
 }
 
 .copy-agent-dialog__field {
@@ -114,18 +114,18 @@ function handleClose() {
 
 .copy-agent-dialog__label {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 .copy-agent-dialog__input {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
-  font-size: 15px;
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -137,11 +137,11 @@ function handleClose() {
 }
 
 .copy-agent-dialog__error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: #e74c3c;
-  margin-bottom: 12px;
-  padding: 8px 12px;
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-6);
   background: rgba(231, 76, 60, 0.1);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 </style>

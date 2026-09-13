@@ -122,6 +122,49 @@ describe('codeLinkPreview utils', () => {
       expect(res.endLine - res.startLine + 1).toBe(MAX_RENDER_LINES)
     })
 
+    describe('multi-range annotations', () => {
+      const lines300 = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n')
+
+      it('anchors the window at the earliest range and reports all in-window ranges', () => {
+        const res = sliceCodeForPreview(lines300, 90, 91, {
+          lineRanges: [
+            { start: 90, end: 91 },
+            { start: 95, end: 95 },
+            { start: 110, end: 110 },
+          ],
+        })
+        expect(res.startLine).toBe(60) // 90 - 30 context
+        expect(res.highlightRanges).toEqual([
+          { start: 90, end: 91 },
+          { start: 95, end: 95 },
+          { start: 110, end: 110 },
+        ])
+        // Overall min/max remain the legacy span.
+        expect(res.highlightStart).toBe(90)
+        expect(res.highlightEnd).toBe(110)
+      })
+
+      it('clamps out-of-window ranges away when they exceed the 200-line cap', () => {
+        // Window = [90-30, 300+30] capped to 200 lines → [60, 259]; the 300
+        // range falls outside and must not be highlighted in the slice.
+        const res = sliceCodeForPreview(lines300, 90, 91, {
+          lineRanges: [
+            { start: 90, end: 91 },
+            { start: 300, end: 300 },
+          ],
+        })
+        expect(res.endLine - res.startLine + 1).toBeLessThanOrEqual(MAX_RENDER_LINES)
+        expect(res.highlightRanges).toEqual([{ start: 90, end: 91 }])
+        expect(res.highlightEnd).toBe(300)
+      })
+
+      it('keeps a single-range list equivalent to the legacy pair', () => {
+        const res = sliceCodeForPreview(lines300, 100, 100, { lineRanges: [{ start: 100, end: 100 }] })
+        expect(res.highlightRanges).toEqual([{ start: 100, end: 100 }])
+        expect(res.highlightStart).toBe(100)
+      })
+    })
+
     it('truncates when total bytes exceed MAX_RENDER_BYTES (512 KiB)', () => {
       // Create 100 lines each ~10 KiB -> total ~1 MiB
       const bigLine = 'a'.repeat(10 * 1024)

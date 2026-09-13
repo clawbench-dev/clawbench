@@ -13,8 +13,8 @@ import (
 	"clawbench/internal/service"
 )
 
-// ServeTasks handles GET (list) and POST (create) for scheduled tasks.
-func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method task list handler
+// ServeTasks handles GET (list) and POST (create) for tasks.
+func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-method task list handler: one switch arm per verb plus enrichment, splitting would scatter the shared validation
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
@@ -54,13 +54,36 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			RepeatMode string `json:"repeat_mode"`
 			MaxRuns    int    `json:"max_runs"`
 			SessionID  string `json:"session_id"`
+			// TriggerMode is "cron" (default) or "event".
+			TriggerMode string `json:"trigger_mode"`
+			// EventTypes is the comma-separated event subscription (event mode).
+			// An event task always watches its project's bound repository, so
+			// there is no repository parameter.
+			EventTypes string `json:"event_types"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if req.Name == "" || req.CronExpr == "" || req.AgentID == "" || req.Prompt == "" {
+		if req.Name == "" || req.AgentID == "" || req.Prompt == "" {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
 			return
+		}
+		if req.TriggerMode == "" {
+			req.TriggerMode = "cron"
+		}
+		// An event task is driven by forge events and needs no cron expression;
+		// a cron task still requires one.
+		if req.TriggerMode == "cron" && req.CronExpr == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskFieldsRequired")
+			return
+		}
+		// Validate the event subscription up front so a bad configuration is a
+		// 400 (a client error) rather than the 500 AddTask would produce.
+		if req.TriggerMode == "event" {
+			if err := service.ValidateEventSubscription(req.EventTypes); err != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskEventTypesInvalid")
+				return
+			}
 		}
 		if req.RepeatMode == "" {
 			req.RepeatMode = "unlimited"
@@ -75,6 +98,8 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			RepeatMode:  req.RepeatMode,
 			MaxRuns:     req.MaxRuns,
 			SessionID:   req.SessionID,
+			TriggerMode: req.TriggerMode,
+			EventTypes:  req.EventTypes,
 		}
 
 		if err := service.GlobalScheduler.AddTask(task); err != nil {
@@ -89,11 +114,55 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 	}
 }
 
+// serveTaskSubRoute dispatches the recognized sub-resources of a task:
+//
+//	GET  /api/tasks/{id}/executions                     → execution history
+//	GET  /api/tasks/{id}/executions/{execId}/continue   → continue-session check
+//	POST /api/tasks/{id}/executions/{execId}/continue   → continue session
+//
+// A recognized sub-resource reached with the wrong method yields 405; an
+// unrecognized one yields 404. Both outcomes are terminal — the caller
+// (ServeTaskByID) returns immediately afterwards so a sub-path can never
+// alias onto the parent task's CRUD operations.
+func serveTaskSubRoute(w http.ResponseWriter, r *http.Request, taskID int64, subPath, projectPath string) {
+	if subPath == "executions" {
+		if r.Method != http.MethodGet {
+			writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+			return
+		}
+		serveTaskExecutions(w, r, taskID, projectPath)
+		return
+	}
+
+	if rest, ok := strings.CutPrefix(subPath, "executions/"); ok {
+		execIDStr, execSubPath, _ := strings.Cut(rest, "/")
+		// Only `executions/{execId}/continue` is a valid sub-resource. Anything
+		// else — a bare execution ID, an unknown trailing segment, or a missing
+		// ID — is not part of the API surface.
+		if execSubPath != "continue" || execIDStr == "" {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+			return
+		}
+		execID, err := strconv.ParseInt(execIDStr, 10, 64)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "ExecutionIdInvalid")
+			return
+		}
+		serveContinueConversation(w, r, taskID, execID, projectPath)
+		return
+	}
+
+	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+}
+
 // ServeTaskByID handles operations on a single task by ID.
 // GET /api/tasks/{id} - get task details
 // PUT /api/tasks/{id} - update task (pause/resume)
 // DELETE /api/tasks/{id} - delete task
 // GET /api/tasks/{id}/executions - get execution history
+//
+// Sub-resource paths are dispatched by serveTaskSubRoute and never fall
+// through to the task-level operations.
 func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-method task CRUD handler
 	// Require project ownership for all task operations
 	projectPath, ok := requireProject(w, r)
@@ -121,29 +190,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		return
 	}
 
-	// Handle sub-paths
-	if subPath == "executions" && r.Method == http.MethodGet {
-		serveTaskExecutions(w, r, taskID, projectPath)
+	// Sub-path dispatch is exclusive: a request that carries a sub-resource
+	// suffix is fully handled here and must never fall through to the
+	// task-level CRUD switch below. Otherwise an unrecognized suffix would
+	// silently alias onto the parent task — e.g. DELETE on
+	// /api/tasks/{id}/executions would delete the entire task instead of
+	// being rejected.
+	if subPath != "" {
+		serveTaskSubRoute(w, r, taskID, subPath, projectPath)
 		return
-	}
-
-	// Handle executions/{execId}/continue sub-path
-	if strings.HasPrefix(subPath, "executions/") {
-		execParts := strings.SplitN(strings.TrimPrefix(subPath, "executions/"), "/", 2)
-		execIDStr := execParts[0]
-		execSubPath := ""
-		if len(execParts) > 1 {
-			execSubPath = execParts[1]
-		}
-		if execSubPath == "continue" && execIDStr != "" {
-			execID, err := strconv.ParseInt(execIDStr, 10, 64)
-			if err != nil {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "ExecutionIdInvalid")
-				return
-			}
-			serveContinueConversation(w, r, taskID, execID, projectPath)
-			return
-		}
 	}
 
 	switch r.Method {
@@ -172,6 +227,12 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			Prompt      string `json:"prompt"`
 			RepeatMode  string `json:"repeat_mode"`
 			MaxRuns     *int   `json:"max_runs"` // pointer to distinguish "not provided" (nil) from "set to 0" (ISS-043)
+			// TriggerMode is "cron" or "event"; empty means "leave unchanged".
+			TriggerMode string `json:"trigger_mode"`
+			// EventTypes configures an event-triggered task. The watched
+			// repository is always the project's binding, so it is not a
+			// per-task parameter.
+			EventTypes string `json:"event_types"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -221,6 +282,15 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			return
 		}
 		if req.Action == "trigger" {
+			// An event task's prompt is written against the event context the
+			// trigger injects ({{TITLE}}, {{URL}}, ...). A manual run has no
+			// event to inject, so the prompt would execute with its placeholders
+			// unsubstituted — a meaningless run the user cannot distinguish from
+			// a real one. Refuse instead of producing it.
+			if task.IsEventTriggered() {
+				writeLocalizedErrorf(w, r, http.StatusConflict, "TaskEventTriggerUnsupported")
+				return
+			}
 			if err := service.GlobalScheduler.TriggerTask(taskID); err != nil {
 				// TriggerTask now returns error if task already running (ISS-187)
 				if strings.Contains(err.Error(), "already has a running execution") {
@@ -297,11 +367,37 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		if req.RepeatMode != "" {
 			task.RepeatMode = req.RepeatMode
 		}
+		// Trigger configuration. Event fields are only meaningful in event mode;
+		// switching modes leaves the other mode's fields untouched so a user can
+		// switch back without retyping (validated below).
+		if req.TriggerMode != "" {
+			task.TriggerMode = req.TriggerMode
+		}
+		if req.EventTypes != "" {
+			task.EventTypes = req.EventTypes
+		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).
 		// Go's JSON decoder leaves pointer fields nil when the key is absent,
 		// so we can distinguish "not provided" from "set to 0".
 		if req.MaxRuns != nil {
 			task.MaxRuns = *req.MaxRuns
+		}
+
+		// Validate the resulting configuration before persisting. A task created
+		// in event mode has no cron expression stored, so switching it back to
+		// cron without supplying one must be a 400 — otherwise UpdateTask would
+		// fail on cron.ParseStandard("") and surface as a 500.
+		switch task.TriggerMode {
+		case "event":
+			if err := service.ValidateEventSubscription(task.EventTypes); err != nil {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskEventTypesInvalid")
+				return
+			}
+		default:
+			if task.CronExpr == "" {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "TaskCronRequired")
+				return
+			}
 		}
 
 		// Editing a completed task implies reactivation — the user wants it to run again.
@@ -382,11 +478,15 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		Summary     *string `json:"summary"`
 		CreatedAt   string  `json:"createdAt"`
 		IsUnread    bool    `json:"isUnread"`
+		// EventURL/EventSummary identify the forge event that triggered this
+		// run, so the user can trace a notification back to the issue/PR.
+		EventURL     string `json:"eventUrl,omitempty"`
+		EventSummary string `json:"eventSummary,omitempty"`
 	}
 
 	query := `
 		SELECT te.id, ch.id, te.session_id, te.trigger_type, te.status, te.created_at,
-		       te.read_at, sm.summary,
+		       te.read_at, sm.summary, te.event_url, te.event_summary,
 		       ch.content AS assistant_content
 		FROM task_executions te
 		LEFT JOIN chat_history ch ON ch.id = (
@@ -428,7 +528,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		var summary sql.NullString
 		var readAt sql.NullTime
 		var messageID sql.NullInt64
-		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &content); err != nil {
+		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &exec.EventURL, &exec.EventSummary, &content); err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to scan execution record")))
 			return
 		}

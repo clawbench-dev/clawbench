@@ -1307,6 +1307,45 @@ describe('annotateFilePaths', () => {
         expect(result.detectedPaths).toContain('internal/handler/chat.go')
         expect(result.html).toContain('data-line-start="10"')
       })
+
+      it('annotates a comma-separated multi-range suffix', () => {
+        const input = '<p>see internal/rag/store_sqlite.go:90-91,309,324,343,938-943 now</p>'
+        const result = annotateFilePaths(input, { projectRoot })
+        expect(result.detectedPaths).toContain('internal/rag/store_sqlite.go')
+        // Earliest range drives the legacy single-target attrs.
+        expect(result.html).toContain('data-line-start="90"')
+        expect(result.html).toContain('data-line-end="91"')
+        // Full list rides in data-line-ranges.
+        expect(result.html).toContain('data-line-ranges="90-91,309,324,343,938-943"')
+        // The rendered text keeps the original annotation.
+        expect(result.html).toContain('internal/rag/store_sqlite.go:90-91,309,324,343,938-943')
+      })
+
+      it('normalizes multi-range order and whitespace in data-line-ranges', () => {
+        const input = '<p>see internal/rag/store_sqlite.go:343, 90-91 ,309</p>'
+        const result = annotateFilePaths(input, { projectRoot })
+        expect(result.html).toContain('data-line-ranges="90-91,309,343"')
+        expect(result.html).toContain('data-line-start="90"')
+      })
+
+      it('annotates a multi-range <code> tag', () => {
+        const input = '<p>check <code>internal/rag/store_sqlite.go:90-91,309</code></p>'
+        const result = annotateFilePaths(input, { projectRoot })
+        expect(result.html).toContain('data-line-ranges="90-91,309"')
+      })
+
+      it('does not treat prose after a comma as a range', () => {
+        const input = '<p>see src/main.go:10, and then the rest</p>'
+        const result = annotateFilePaths(input, { projectRoot })
+        expect(result.html).toContain('data-line-start="10"')
+        expect(result.html).not.toContain('data-line-ranges')
+      })
+
+      it('button includes data-line-ranges for a multi-range path', () => {
+        const input = '<p>see internal/rag/store_sqlite.go:90-91,309</p>'
+        const result = annotateFilePaths(input, { projectRoot })
+        expect(result.html).toMatch(/chat-file-open-btn[^>]*data-line-ranges="90-91,309"/)
+      })
     })
   })
 })
@@ -1785,6 +1824,60 @@ describe('openFilePath', () => {
     vi.unstubAllGlobals()
   })
 
+  it('dispatches open-file-overlay with lineRanges for a multi-range target', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go', 90, 91, undefined, '90-91,309,938-943')
+
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls).toHaveLength(1)
+    expect(overlayCalls[0][0].detail).toEqual({
+      path: 'src/main.go',
+      lineStart: 90,
+      lineEnd: 91,
+      lineRanges: '90-91,309,938-943',
+    })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
+  it('derives lineRanges from a path carrying its own multi-range suffix', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go:90-91,309')
+
+    expect(mockSelectFile).toHaveBeenCalledWith('src/main.go')
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls[0][0].detail).toEqual({
+      path: 'src/main.go',
+      lineStart: 90,
+      lineEnd: 91,
+      lineRanges: '90-91,309',
+    })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
   it('dispatches open-file-overlay with lineStart only (no lineEnd)', async () => {
     mockSelectFile.mockResolvedValue(true)
     const mockFetch = vi.fn()
@@ -2208,6 +2301,76 @@ describe('openFilePath', () => {
       expect(r.path).toBe('C:\\repo\\src\\main.go')
       expect(r.lineStart).toBe(10)
       expect(r.lineEnd).toBe(20)
+    })
+
+    it('parses a comma-separated multi-range colon suffix', () => {
+      const r = parseFileUri('/home/X02454/clawbench/internal/rag/store_sqlite.go:90-91,309,324,343,938-943')
+      expect(r.path).toBe('/home/X02454/clawbench/internal/rag/store_sqlite.go')
+      expect(r.lineRanges).toEqual([
+        { start: 90, end: 91 },
+        { start: 309, end: 309 },
+        { start: 324, end: 324 },
+        { start: 343, end: 343 },
+        { start: 938, end: 943 },
+      ])
+      // Earliest range drives the legacy single-target fields.
+      expect(r.lineStart).toBe(90)
+      expect(r.lineEnd).toBe(91)
+    })
+
+    it('parses a multi-range hash fragment (#L90-L91,309)', () => {
+      const r = parseFileUri('src/main.go#L90-L91,309')
+      expect(r.path).toBe('src/main.go')
+      expect(r.lineRanges).toEqual([
+        { start: 90, end: 91 },
+        { start: 309, end: 309 },
+      ])
+    })
+
+    it('parses multi-range with spaces and L prefixes, sorting ascending', () => {
+      const r = parseFileUri('src/main.go:L343, L90-L91, L309')
+      expect(r.path).toBe('src/main.go')
+      expect(r.lineRanges).toEqual([
+        { start: 90, end: 91 },
+        { start: 309, end: 309 },
+        { start: 343, end: 343 },
+      ])
+    })
+
+    it('treats a multi-range suffix as a single range when it collapses', () => {
+      const r = parseFileUri('src/main.go:5,5,5')
+      expect(r.lineRanges).toEqual([{ start: 5, end: 5 }])
+      expect(r.lineStart).toBe(5)
+      expect(r.lineEnd).toBeUndefined()
+    })
+
+    it('does not absorb prose after a comma into the range list', () => {
+      const r = parseFileUri('src/main.go:10, and then')
+      expect(r.path).toBe('src/main.go:10, and then')
+      expect(r.lineRanges).toEqual([])
+    })
+
+    it('parses :1,5 as two distinct ranges', () => {
+      const r = parseFileUri('src/main.go:1,5')
+      expect(r.path).toBe('src/main.go')
+      expect(r.lineRanges).toEqual([{ start: 1, end: 1 }, { start: 5, end: 5 }])
+    })
+
+    it('does not strip a Windows drive letter as a line suffix', () => {
+      const r = parseFileUri('C:/repo/src/main.go')
+      expect(r.path).toBe('C:/repo/src/main.go')
+      expect(r.lineRanges).toEqual([])
+    })
+
+    it('parses a Windows drive path with a multi-range suffix', () => {
+      const r = parseFileUri('E:\\git\\app\\src\\a.ts:10-11,20')
+      expect(r.path).toBe('E:\\git\\app\\src\\a.ts')
+      expect(r.lineRanges).toEqual([{ start: 10, end: 11 }, { start: 20, end: 20 }])
+    })
+
+    it('does not treat a bare number list as a line suffix', () => {
+      expect(parseFileUri('1,2,3').path).toBe('1,2,3')
+      expect(parseFileUri('1,2,3').lineRanges).toEqual([])
     })
   })
 

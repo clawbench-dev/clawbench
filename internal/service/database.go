@@ -267,6 +267,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: add project_meta.forge_bind_opt_out before createTables runs.
+	// The CREATE TABLE below is a no-op on an existing database, so the column
+	// would never appear there. On a fresh database the table does not exist yet
+	// and the CREATE TABLE (which now includes the column) covers it — hence the
+	// existence guard rather than an unconditional ALTER.
+	var projectMetaExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&projectMetaExists)
+	if projectMetaExists > 0 {
+		var hasCol int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_meta') WHERE name='forge_bind_opt_out'").Scan(&hasCol)
+		if hasCol == 0 {
+			if _, err := WriteExec("ALTER TABLE project_meta ADD COLUMN forge_bind_opt_out INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add project_meta.forge_bind_opt_out column: %w", err)
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
@@ -309,6 +326,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE TABLE IF NOT EXISTS project_meta (
 			project_path TEXT PRIMARY KEY,
 			next_session_number INTEGER NOT NULL DEFAULT 0,
+			-- Set when the user explicitly unbinds the forge repository, so the
+			-- auto-bind on GET does not immediately bind it straight back.
+			forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -340,21 +360,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL REFERENCES chat_history(id),
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-
 		-- Create indexes for efficient queries
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
-		CREATE INDEX IF NOT EXISTS idx_raw_responses_session ON ai_raw_responses(session_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_raw_responses_message ON ai_raw_responses(message_id);
 		CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_path, archived);
 
@@ -609,6 +618,36 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	// Forge repo bindings (GitHub / GitLab). Defined in project_forges.go as a
+	// constant so tests share one source of truth for the schema.
+	if _, err := WriteExec(ProjectForgesDDL); err != nil {
+		return fmt.Errorf("failed to create project_forges table: %w", err)
+	}
+	// Forge sync state: snapshot rows, watermark, and derived events.
+	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL} {
+		if _, err := WriteExec(ddl); err != nil {
+			return fmt.Errorf("failed to create forge sync tables: %w", err)
+		}
+	}
+	// forge_items.comments_baselined: distinguishes "comments fetched, none
+	// exist" from "comments never fetched". Without it, a first pass that
+	// skipped comments leaves a zero baseline and the next pass replays every
+	// historical comment as new. Existing rows are backfilled to 1 only when
+	// they already have a comment id, so genuinely unbaselined items stay
+	// unbaselined and are silently absorbed on their next comment pass.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_items') WHERE name='comments_baselined'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE forge_items ADD COLUMN comments_baselined INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add forge_items.comments_baselined column: %w", err)
+			}
+			if _, err := WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
+				return fmt.Errorf("failed to backfill forge_items.comments_baselined: %w", err)
+			}
+		}
+	}
+
 	// Create agent store tables.
 	// Defined in agent_store.go as AgentDDL constant.
 	if _, err := WriteExec(AgentDDL); err != nil {
@@ -618,11 +657,42 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Schema migrations: add columns that may not exist in older databases.
 	// NOTE: Migration reads use db (write pool) directly, NOT dbRead, because
 	// dbRead is not initialized until after all migrations complete.
+	// Forge event-triggered tasks: trigger_mode selects cron vs event, and
+	// event_types scopes which forge events fire the task. The watched
+	// repository is always the task project's binding, so no repo column exists.
+	for _, col := range []struct{ name, ddl string }{
+		{"trigger_mode", "ALTER TABLE scheduled_tasks ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'cron'"},
+		{"event_types", "ALTER TABLE scheduled_tasks ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add scheduled_tasks.%s column: %w", col.name, err)
+			}
+		}
+	}
+
 	var hasReadAt int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
 	if hasReadAt == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
+		}
+	}
+
+	// Migrate: record the forge event that triggered an execution, so the run is
+	// traceable back to the originating issue/PR.
+	for _, col := range []struct{ name, ddl string }{
+		{"event_url", "ALTER TABLE task_executions ADD COLUMN event_url TEXT NOT NULL DEFAULT ''"},
+		{"event_summary", "ALTER TABLE task_executions ADD COLUMN event_summary TEXT NOT NULL DEFAULT ''"},
+	} {
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec(col.ddl); err != nil {
+				return fmt.Errorf("failed to add task_executions.%s column: %w", col.name, err)
+			}
 		}
 	}
 
@@ -734,11 +804,54 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add title_renamed column. Set to 1 when the user manually renames
 	// a session, so the first-message auto-title does not overwrite their choice.
+	// DEPRECATED: superseded by title_source below; retained for old readers only.
 	var hasTitleRenamed int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_renamed'").Scan(&hasTitleRenamed)
 	if hasTitleRenamed == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_renamed INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add title_renamed column: %w", err)
+		}
+	}
+
+	// Migrate: add title_source column — the source/priority of the session
+	// title: 'placeholder' (auto placeholder like "New Session 3", replaceable
+	// by the first message) < 'auto' (derived from the first user message) <
+	// 'custom' (deliberately chosen: manual rename, meaningful title at
+	// creation, task name, fork, imported title). A write may only overwrite a
+	// title of strictly lower rank, so a custom title is never clobbered by the
+	// first-message auto-title. This replaces title_renamed as the source of
+	// truth (see the deprecation note on title_renamed above).
+	var hasTitleSource int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_source'").Scan(&hasTitleSource)
+	if hasTitleSource == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add title_source column: %w", err)
+		}
+		// Backfill existing rows: title_renamed=1 -> custom; otherwise a session
+		// with at least one user message was auto-titled -> auto; a session with
+		// no user messages still holds its creation placeholder -> placeholder.
+		// (title_renamed alone cannot distinguish placeholder from auto.)
+		if _, err := WriteExec(`UPDATE chat_sessions SET title_source = CASE
+			WHEN title_renamed = 1 THEN 'custom'
+			WHEN EXISTS (SELECT 1 FROM chat_history h WHERE h.session_id = chat_sessions.id AND h.role = 'user') THEN 'auto'
+			ELSE 'placeholder' END`); err != nil {
+			return fmt.Errorf("failed to backfill title_source: %w", err)
+		}
+	}
+
+	// Migrate: add pinned column for session pin-to-top feature
+	var hasPinned int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='pinned'").Scan(&hasPinned)
+	if hasPinned == 0 {
+		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add pinned column: %w", err)
+		}
+		// Rebuild covering index to include pinned for optimal ORDER BY pinned DESC, created_at DESC
+		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
+		}
+		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
+			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
 	}
 
@@ -832,6 +945,28 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to create new tts_summaries table: %w", err)
 		}
 	}
+	// Migrate: drop the legacy ai_raw_responses table. Raw ACP/CLI backend
+	// output used to be persisted there for debugging, but a single turn could
+	// produce a multi-hundred-MB row whose INSERT held the global write lock for
+	// tens of seconds — stalling other sessions' streaming flushes and causing
+	// their stream events to be dropped (silent assistant-output truncation).
+	// The feature is removed, so drop any leftover table (and its indexes).
+	// NOTE: DROP TABLE only frees pages to the freelist — the DB file keeps its
+	// high-water mark. Reclaiming disk requires an offline `VACUUM`, which is
+	// deliberately NOT run here (a full-file rewrite holding writeMu at startup
+	// would be the very kind of long blocking write this removal is fixing).
+	var hasRawResponses int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'").Scan(&hasRawResponses)
+	if hasRawResponses > 0 {
+		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_session")
+		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_message")
+		if _, err := WriteExec("DROP TABLE ai_raw_responses"); err != nil {
+			slog.Warn("failed to drop legacy ai_raw_responses table", slog.String("err", err.Error()))
+		} else {
+			slog.Info("dropped legacy ai_raw_responses table")
+		}
+	}
+
 	// Create new tts_summaries table if it doesn't exist yet (fresh install)
 	var hasTTSSummaries int
 	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
@@ -914,11 +1049,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if len(orphans) > 0 {
 			slog.Info("cleaned up orphaned streaming messages", slog.Int("count", len(orphans)))
 		}
-	}
-
-	// Prune ai_raw_responses: keep only recent 200 rows for debugging.
-	if isServerStartup {
-		PruneRawResponses(200)
 	}
 
 	// Migrate: add ACP transport columns to agents table.
@@ -1040,7 +1170,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	MigrateMetadataFromContent()
 
 	// Migrate: convert task_execution summaries to chat_message summaries.
-	// Scheduled tasks now store summaries as target_type='chat_message' keyed by
+	// Tasks now store summaries as target_type='chat_message' keyed by
 	// the assistant message ID (chat_history.id), same as interactive sessions.
 	// This converts any existing 'task_execution' summaries to the new format.
 	MigrateTaskExecutionSummaries()

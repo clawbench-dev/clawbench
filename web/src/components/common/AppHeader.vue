@@ -808,12 +808,12 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     align-items: center;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     flex: 0 1 auto;
     min-width: 0;
     max-width: calc(100% - 50px); /* leave room for logo + server button */
     overflow: hidden;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -842,20 +842,20 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .project-switch-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    gap: var(--space-3);
+    padding:0 var(--space-5);
     height: 24px;
     border: none;
     background: transparent;
     cursor: pointer;
     color: var(--text-primary);
     border-radius: 0;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
-    transition: background 0.15s, border-color 0.15s, color 0.25s ease;
+    transition: background var(--duration-base), border-color var(--duration-base), color 0.25s ease;
     line-height: 1;
 }
 
@@ -876,7 +876,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     color: var(--text-primary);
 }
 
@@ -884,21 +884,21 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .branch-badge {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    gap: var(--space-3);
+    padding:0 var(--space-5);
     height: 24px;
     background: transparent;
     border: none;
     border-radius: 0;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.25s ease;
+    transition: background var(--duration-base), border-color var(--duration-base), color 0.25s ease;
     line-height: 1;
 }
 
@@ -913,21 +913,21 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .current-file-badge {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    gap: var(--space-3);
+    padding:0 var(--space-5);
     height: 24px;
     background: transparent;
     border: none;
     border-radius: 0;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     flex: 0 1 auto;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
     cursor: pointer;
-    transition: background 0.15s, color 0.3s;
+    transition: background var(--duration-base), color 0.3s;
     line-height: 1;
 }
 
@@ -940,7 +940,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .current-file-badge:disabled {
     cursor: default;
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     transform: none;
 }
 
@@ -954,7 +954,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     color: var(--text-primary);
 }
 
@@ -998,17 +998,17 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
 }
 
 /* Quick theme picker */
 .theme-quick-toggle {
-    padding: 10px;
+    padding: var(--space-5);
     border: none;
     background: transparent;
     cursor: pointer;
     border-radius: var(--radius-sm);
-    transition: background 0.15s, color 0.3s;
+    transition: background var(--duration-base), color 0.3s;
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1026,13 +1026,13 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 /* Server icon button — merged gauge + status dot */
 .server-toggle {
-    padding: 10px;
+    padding: var(--space-5);
     margin-left: -8px;
     border: none;
     background: transparent;
     cursor: pointer;
     border-radius: var(--radius-sm);
-    transition: background 0.15s, color 0.3s;
+    transition: background var(--duration-base), color 0.3s;
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1043,7 +1043,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .header-tips {
     flex: 1;
     min-width: 0;
-    margin: 0 8px;
+    margin:0 var(--space-4);
     height: 100%;
     overflow: hidden;
 }
@@ -1069,7 +1069,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 @keyframes status-pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50% { opacity: var(--opacity-disabled); }
 }
 
 /* Pressure alert — red metric icon during blink */
@@ -1093,9 +1093,9 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-    z-index: 9999;
+    z-index: var(--z-popover);
     overflow: hidden;
     max-width: calc(100vw - 16px);
     padding: 3px 0;
@@ -1104,9 +1104,9 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .app-menu-title {
-    padding: 5px 12px 4px;
-    font-size: 11px;
-    font-weight: 600;
+    padding:5px var(--space-6) var(--space-2);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
@@ -1122,26 +1122,26 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .app-menu-message {
     text-align: center;
-    padding: 10px 12px;
+    padding: var(--space-5) var(--space-6);
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
 }
 
 .app-menu-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 10px;
+    gap: var(--space-3);
+    padding:5px var(--space-5);
     cursor: pointer;
-    transition: background 0.1s;
-    font-size: 12px;
+    transition: background var(--duration-fast);
+    font-size: var(--font-size-sm);
 }
 
 /* Stacked (two-line) rows: name on line 1, path on line 2. Tight, compact
    spacing — row padding is reduced and the two lines share a 3px gap. */
 .app-menu-item--stacked {
-    padding-top: 4px;
-    padding-bottom: 4px;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
     align-items: center;
 }
 
@@ -1158,11 +1158,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .app-menu-item.app-menu-item--stacked .item-path {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1223,7 +1223,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
    so its colored glyph stays readable instead of blending into the accent row. */
 .app-menu-item.active .item-icon.file-type-icon {
     background: rgba(255, 255, 255, 0.18);
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     padding: 1px;
 }
 
@@ -1233,14 +1233,14 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .app-menu-item .item-path {
     flex: 1 1 auto;
     min-width: 0;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1256,7 +1256,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     height: 18px;
     padding: 0;
     border: 0;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -1285,13 +1285,13 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .menu-divider {
     height: 1px;
     background: var(--border-color);
-    margin: 2px 0;
+    margin: var(--space-1) 0;
 }
 
 /* Dropdown transition (teleported to body) */
 .dropdown-enter-active,
 .dropdown-leave-active {
-    transition: opacity 0.15s, transform 0.15s;
+    transition: opacity var(--duration-base), transform var(--duration-base);
 }
 
 .dropdown-enter-from,
@@ -1305,7 +1305,7 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .ht-dirty-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2000;
+    z-index: var(--z-header-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1314,8 +1314,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .ht-dirty-dialog {
     background: var(--bg-primary, #fff);
-    border-radius: 12px;
-    padding: 20px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-8);
     width: min(320px, 85vw);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
@@ -1323,18 +1323,18 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .ht-dirty-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 16px;
-    font-weight: 600;
+    gap: var(--space-4);
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary, #1a1a1a);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-4);
 }
 
 .ht-dirty-title-icon {
     flex-shrink: 0;
     width: 24px;
     height: 24px;
-    border-radius: 7px;
+    border-radius: var(--radius-sm);
     color: var(--accent-color, #0066cc);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
     display: inline-flex;
@@ -1343,36 +1343,35 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .ht-dirty-msg {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-secondary, #666);
-    margin: 0 0 16px;
-    line-height: 1.5;
+    margin:0 0 var(--space-7);
+    line-height: var(--line-height-normal);
     white-space: pre-line;
     word-break: break-word;
-    overflow-wrap: break-word;
 }
 
 .ht-dirty-actions {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-4);
 }
 
 .ht-dirty-btn {
     width: 100%;
-    padding: 10px;
-    border-radius: 8px;
+    padding: var(--space-5);
+    border-radius: var(--radius-sm);
     border: 1px solid;
-    font-size: 14px;
-    font-weight: 500;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     text-align: center;
     background: transparent;
-    transition: opacity 0.15s;
+    transition: opacity var(--duration-base);
 }
 
 .ht-dirty-btn:active {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
 }
 
 .ht-dirty-stash {
@@ -1381,8 +1380,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .ht-dirty-force {
-    border-color: var(--danger-color, #dc3545);
-    color: var(--danger-color, #dc3545);
+    border-color: var(--color-red);
+    color: var(--color-red);
 }
 
 .ht-dirty-cancel {
@@ -1417,12 +1416,12 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 .theme-item + .theme-item { border-top: 1px solid var(--border-color); }
 .theme-item {
-  display: flex; align-items: center; gap: 6px;
-  width: 100%; padding: 5px 10px; border: none; border-radius: 0;
+  display: flex; align-items: center; gap: var(--space-3);
+  width: 100%; padding:5px var(--space-5); border: none; border-radius: 0;
   background: var(--tterm-preview-bg, transparent);
   color: var(--tterm-preview-fg, var(--text-primary));
-  font-size: 12px; text-align: left; cursor: pointer;
-  transition: background 0.1s, box-shadow 0.1s;
+  font-size: var(--font-size-sm); text-align: left; cursor: pointer;
+  transition: background var(--duration-fast), box-shadow var(--duration-fast);
 }
 .theme-item:focus-visible {
   outline: 2px solid var(--accent-color);
@@ -1436,9 +1435,9 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
   }
 }
 .theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
-.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 50%; }
+.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
 .theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
 .theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
 .theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

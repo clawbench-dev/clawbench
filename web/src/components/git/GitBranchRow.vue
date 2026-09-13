@@ -57,12 +57,12 @@ function handleClick() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: var(--space-2) var(--space-4);
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -72,13 +72,13 @@ function handleClick() {
 }
 
 .git-branch-row.current {
-  background: var(--bg-accent-subtle, rgba(74, 144, 217, 0.08));
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   cursor: default;
 }
 
 .git-branch-row.current .branch-name {
   color: var(--accent-color, #4a90d9);
-  font-weight: bold;
+  font-weight: var(--font-weight-bold);
 }
 
 [data-app-mode] .git-branch-row.current .branch-name {
@@ -86,14 +86,14 @@ function handleClick() {
 }
 
 .git-branch-row.switching {
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
   pointer-events: none;
 }
 
 .branch-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
 }
@@ -104,8 +104,8 @@ function handleClick() {
 }
 
 .branch-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -115,33 +115,33 @@ function handleClick() {
 .branch-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
-  margin-left: 8px;
-  font-size: 11px;
-  font-weight: 600;
+  margin-left: var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .branch-default-badge {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #4a90d9);
   color: #fff;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
 
 .track-ahead {
-  color: var(--success-color, #28a745);
+  color: var(--color-green);
 }
 
 .track-behind {
-  color: var(--warning-color, #e67e22);
+  color: var(--color-orange);
 }
 
 .branch-spinner {
-  margin-left: 6px;
+  margin-left: var(--space-3);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -158,19 +158,19 @@ function handleClick() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
   .branch-action-btn:hover {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
 .branch-action-btn:active {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
+  background: color-mix(in srgb, var(--color-red) 15%, transparent);
 }
 
 </style>

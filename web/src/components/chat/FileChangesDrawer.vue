@@ -63,17 +63,17 @@ function baseName(path) {
 
 <style scoped>
 .fc-content {
-  padding: 8px 0 16px;
+  padding: var(--space-4) 0 var(--space-7);
 }
 
 .fc-section + .fc-section {
-  margin-top: 8px;
+  margin-top: var(--space-4);
 }
 
 .fc-section-title {
-  padding: 4px 16px 6px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-2) var(--space-7) var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -87,8 +87,8 @@ function baseName(path) {
 .fc-file-item {
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  transition: background 0.15s;
+  padding:0 var(--space-7);
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -104,10 +104,10 @@ function baseName(path) {
 .fc-file-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 1;
   min-width: 0;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -121,8 +121,8 @@ function baseName(path) {
 }
 
 .fc-file-name {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -138,13 +138,13 @@ function baseName(path) {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
-  margin-left: 4px;
+  margin-left: var(--space-2);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {

@@ -125,28 +125,28 @@ const detailItems = computed(() => {
 
 <style scoped>
 .details-title {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
 }
 
 .details-body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
 }
 
 .details-row {
   display: flex;
   align-items: center;
-  padding: 10px 16px;
+  padding: var(--space-5) var(--space-7);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
 .details-label {
   width: 80px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
 }
 
@@ -154,13 +154,13 @@ const detailItems = computed(() => {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .details-value {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   word-break: break-all;
 }
@@ -177,9 +177,9 @@ const detailItems = computed(() => {
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: 2px;
-  border-radius: 3px;
-  transition: color 0.15s, background 0.15s;
+  padding: var(--space-1);
+  border-radius: var(--radius-xs);
+  transition: color var(--duration-base), background var(--duration-base);
 }
 @media (hover: hover) {
   .details-copy-btn:hover {

@@ -22,21 +22,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 30px;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   border-radius: 15px;
   border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 40%, transparent);
   background: var(--bg-tertiary, #f1f3f5);
   color: var(--text-secondary, #4b5563);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   white-space: nowrap;
   cursor: pointer;
   box-sizing: border-box;
   user-select: none;
   text-decoration: none;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--duration-base) ease, border-color var(--duration-base) ease;
 }
 
 .fbtn svg {
@@ -62,7 +62,7 @@
 }
 
 .fbtn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -93,7 +93,7 @@
   color: #b91c1c;
 }
 
-/* Warn: amber-tinted pill (e.g. pause a scheduled task). */
+/* Warn: amber-tinted pill (e.g. pause a task). */
 .fbtn-warn {
   background: color-mix(in srgb, #ca8a04 15%, var(--bg-tertiary, #f1f3f5));
   border-color: color-mix(in srgb, #ca8a04 55%, #b45309);

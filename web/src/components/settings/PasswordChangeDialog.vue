@@ -311,7 +311,7 @@ function onModalClose() {
 .password-dialog__body {
   display: flex;
   flex-direction: column;
-  padding: 14px 16px 6px;
+  padding:14px var(--space-7) var(--space-3);
 }
 
 .password-dialog__field {
@@ -320,9 +320,9 @@ function onModalClose() {
 
 .password-dialog__label {
   display: block;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 .password-dialog__input-row {
@@ -334,10 +334,10 @@ function onModalClose() {
 .password-dialog__input {
   width: 100%;
   min-width: 0;
-  padding: 10px 40px 10px 12px;
-  font-size: 15px;
+  padding: var(--space-5) 40px var(--space-5) var(--space-6);
+  font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -356,9 +356,9 @@ function onModalClose() {
   justify-content: center;
   background: none;
   border: none;
-  color: var(--text-tertiary);
+  color: var(--text-hint);
   cursor: pointer;
-  padding: 2px;
+  padding: var(--space-1);
 }
 
 @media (hover: hover) {
@@ -368,13 +368,13 @@ function onModalClose() {
 }
 
 .password-dialog__hints {
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 .password-dialog__hint {
-  font-size: 12px;
-  margin-top: 2px;
-  padding-left: 2px;
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-1);
+  padding-left: var(--space-1);
 }
 
 .password-dialog__hint--error {
@@ -384,22 +384,22 @@ function onModalClose() {
 .password-dialog__strength {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .password-dialog__strength-bar {
   flex: 1;
   height: 4px;
   background: var(--bg-tertiary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
 .password-dialog__strength-fill {
   height: 100%;
-  border-radius: 2px;
-  transition: width 0.2s, background 0.2s;
+  border-radius: var(--radius-xs);
+  transition: width var(--duration-slow), background var(--duration-slow);
 }
 
 .password-dialog__strength-fill--weak {
@@ -418,17 +418,17 @@ function onModalClose() {
 }
 
 .password-dialog__strength-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .password-dialog__error {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--color-red, #e74c3c);
-  margin-bottom: 12px;
-  padding: 8px 12px;
+  margin-bottom: var(--space-6);
+  padding: var(--space-4) var(--space-6);
   background: color-mix(in srgb, var(--color-red, #e74c3c) 10%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 </style>

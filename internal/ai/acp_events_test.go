@@ -1501,7 +1501,7 @@ func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
 
 	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
 
-	// Should get 1 event: usage_update (raw_output is now accumulated on ACPConn, not sent through channel)
+	// Should get 1 event: usage_update
 	var foundUsage bool
 	for range 1 {
 		select {
@@ -1642,4 +1642,93 @@ func TestMapACPToolCall_ClaudeParentToolUseID(t *testing.T) {
 	evt := mapACPToolCall(tc, "claude")
 	require.NotNil(t, evt.Tool)
 	assert.Equal(t, "toolu_parent_9", evt.Tool.ParentToolCallID)
+}
+
+// ---------------------------------------------------------------------------
+// Steer boundary observation (mid-turn injection split)
+// ---------------------------------------------------------------------------
+
+// newBoundaryTestConn builds a minimal ACPConn whose only meaningful state is
+// the pending-steer registry used by the boundary gate.
+func newBoundaryTestConn() *ACPConn {
+	return &ACPConn{clawbenchSID: "boundary-test"}
+}
+
+// TestMapACPSessionUpdate_SteerBoundary_OnlyForOurOwnInjections is the core gate
+// test: user_message_chunk is ALSO used for LoadSession replay and multi-page
+// history broadcasts, so a boundary may only be emitted for an id this host
+// actually issued. Otherwise those replays would wrongly split the assistant
+// reply.
+func TestMapACPSessionUpdate_SteerBoundary_OnlyForOurOwnInjections(t *testing.T) {
+	conn := newBoundaryTestConn()
+	ch := make(chan StreamEvent, 10)
+
+	chunk := func(id string) acp.SessionUpdate {
+		return acp.SessionUpdate{
+			UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+				Meta:          map[string]any{metaKeyCodeBuddyMessageID: id},
+				Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "injected text", Type: "text"}},
+				SessionUpdate: "user_message_chunk",
+			},
+		}
+	}
+
+	// (a) An id we never issued (replay / broadcast) → NO boundary, and nothing
+	//     forwarded as content either (the user bubble is owned by the handler).
+	mapACPSessionUpdate(chunk("someone-elses-message"), ch, context.Background(), conn, nil)
+	if len(ch) != 0 {
+		t.Errorf("expected no events for a foreign user_message_chunk, got %d", len(ch))
+	}
+
+	// (b) An id we registered → exactly one steer_boundary carrying that id.
+	conn.ExpectSteerEcho("our-injection-1")
+	mapACPSessionUpdate(chunk("our-injection-1"), ch, context.Background(), conn, nil)
+	if len(ch) != 1 {
+		t.Fatalf("expected exactly 1 event for our own injection, got %d", len(ch))
+	}
+	evt := <-ch
+	assert.Equal(t, "steer_boundary", evt.Type)
+	require.NotNil(t, evt.SteerBoundary)
+	assert.Equal(t, "our-injection-1", evt.SteerBoundary.ClientUserMessageID)
+
+	// (c) The echo is consumed: a duplicate (replay after reconnect) must NOT
+	//     fire a second boundary — that would split the reply twice.
+	mapACPSessionUpdate(chunk("our-injection-1"), ch, context.Background(), conn, nil)
+	if len(ch) != 0 {
+		t.Errorf("a replayed echo must not fire a second boundary, got %d events", len(ch))
+	}
+}
+
+// TestMapACPSessionUpdate_SteerBoundary_NoConnIsSafe verifies a nil conn (the
+// LoadSession replay path calls the mapper with nil) neither panics nor emits.
+func TestMapACPSessionUpdate_SteerBoundary_NoConnIsSafe(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	update := acp.SessionUpdate{
+		UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
+			Meta:          map[string]any{metaKeyCodeBuddyMessageID: "x"},
+			Content:       acp.ContentBlock{Text: &acp.ContentBlockText{Text: "t", Type: "text"}},
+			SessionUpdate: "user_message_chunk",
+		},
+	}
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+	assert.Empty(t, ch, "no boundary can be derived without a connection")
+}
+
+// TestACPConn_ForgetSteerEcho verifies a declined injection leaves no
+// registration behind (otherwise a later unrelated chunk carrying that id could
+// fire a spurious boundary, and the map would grow for the connection's life).
+func TestACPConn_ForgetSteerEcho(t *testing.T) {
+	conn := newBoundaryTestConn()
+	conn.ExpectSteerEcho("declined-1")
+	conn.ForgetSteerEcho("declined-1")
+	assert.False(t, conn.claimPendingSteerID("declined-1"), "forgotten id must not be claimable")
+}
+
+// TestACPConn_ClaimSteerEchoIsSingleUse verifies claim semantics.
+func TestACPConn_ClaimSteerEchoIsSingleUse(t *testing.T) {
+	conn := newBoundaryTestConn()
+	conn.ExpectSteerEcho("once-1")
+	assert.True(t, conn.claimPendingSteerID("once-1"), "first claim should succeed")
+	assert.False(t, conn.claimPendingSteerID("once-1"), "second claim must fail")
+	assert.False(t, conn.claimPendingSteerID(""), "empty id is never claimable")
 }

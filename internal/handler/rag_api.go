@@ -351,72 +351,13 @@ func ServeRAGSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeRAGReset handles POST /api/rag/reset — full rebuild: clears all RAG
-// index data (chunks, FTS, vectors) and resets message indexed flags so the
-// indexer will rebuild from scratch. Requires auth.
-//
-// No project-scoping: Unlike other RAG endpoints that isolate by project cookie,
-// this reset intentionally operates globally because the RAG store (rag_chunks,
-// rag_chunks_fts, rag_vec) is shared across all projects, and ResetAllIndexed
-// must reset every message's indexed flag for consistency — a partial reset
-// would leave orphaned vectors from other projects.
-func ServeRAGReset(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-
-	if rag.GlobalStore == nil {
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotAvailable")
-		return
-	}
-
-	// Prevent concurrent resets
-	if ragResetting.Swap(true) {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "RAGResetInProgress")
-		return
-	}
-	defer ragResetting.Store(false)
-
-	// Determine new embedding dimension (if embedder is available)
-	newDim := 0
-	if rag.GlobalEmbedder != nil {
-		newDim = rag.GlobalEmbedder.Dim()
-	}
-
-	// Clear all RAG data (chunks, FTS, vec0) and reset embedding dimension
-	if err := rag.GlobalStore.ResetForDimensionMismatch(newDim); err != nil {
-		slog.Error("rag: full reset failed", slog.String("err", err.Error()))
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
-		return
-	}
-
-	// The store's dimension changed out of band; let the indexer re-sync on its
-	// next health check instead of trusting its stale latch.
-	rag.ResetIndexerDimensionSync()
-
-	// Reset all messages' indexed flag so indexer will re-process them
-	affected, err := service.ResetAllIndexed()
-	if err != nil {
-		slog.Error("rag: reset indexed flags failed", slog.String("err", err.Error()))
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "RAGResetFailed")
-		return
-	}
-
-	slog.Info("rag: full rebuild triggered", slog.Int64("messages_reset", affected))
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":         "ok",
-		"messages_reset": affected,
-	})
-}
-
 // ServeRAGRebuildFTS handles POST /api/rag/rebuild-fts — full-text index rebuild
 // that is independent of the vector layer: it regenerates rag_chunks_fts from the
 // existing chunk text without re-chunking, re-embedding, or resetting message
 // indexed flags. Vector embeddings and chunk rows are left untouched.
 //
 // No project-scoping: the RAG store is shared across all projects, so the FTS
-// index is rebuilt globally (same rationale as ServeRAGReset).
+// index is rebuilt globally (same rationale as the removed full-reset endpoint).
 func ServeRAGRebuildFTS(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return

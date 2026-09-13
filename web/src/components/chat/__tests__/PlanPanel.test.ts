@@ -12,7 +12,6 @@ const i18n = createI18n({
       chat: {
         plan: {
           title: 'Execution Plan',
-          completedCount: '{completed}/{total} done',
         },
       },
     },
@@ -49,6 +48,23 @@ describe('PlanPanel', () => {
     const wrapper = mountPanel({ collapsed: true })
     await wrapper.get('.plan-chip').trigger('click')
     expect(wrapper.emitted('toggle-collapse')).toHaveLength(1)
+  })
+
+  it('shows total and completed count in the expanded header', () => {
+    const wrapper = mountPanel({ collapsed: false })
+    expect(wrapper.get('.plan-expanded__count').text()).toBe('1/3')
+  })
+
+  it('updates the header count as entries advance', async () => {
+    const wrapper = mountPanel({ collapsed: false })
+    const next = entries.map(e => ({ ...e, status: 'completed' as const }))
+    await wrapper.setProps({ entries: next })
+    expect(wrapper.get('.plan-expanded__count').text()).toBe('3/3')
+  })
+
+  it('shows progress count on the collapsed chip too', () => {
+    const wrapper = mountPanel({ collapsed: true })
+    expect(wrapper.get('.plan-chip__count').text()).toBe('1/3')
   })
 
   describe('active-entry centering', () => {

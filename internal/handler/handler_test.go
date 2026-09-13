@@ -3,11 +3,13 @@ package handler
 import (
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -755,4 +757,75 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 		session := s.(map[string]interface{})
 		assert.False(t, firstIDs[session["id"].(string)], "second page should not contain sessions from first page")
 	}
+}
+
+// TestServeSessionsPaginationWithPinned verifies the HTTP layer wires
+// cursor_pinned through to the keyset cursor. Ordering is (pinned DESC,
+// created_at DESC, id DESC), so paging on created_at alone re-returns a pinned
+// row on every page; the pinned flag must travel with the cursor.
+func TestServeSessionsPaginationWithPinned(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Six sessions, oldest created first. Pin the OLDEST one: it sorts first
+	// despite having the smallest created_at — the case that broke the cursor.
+	var oldestID string
+	for i, title := range []string{"A", "B", "C", "D", "E", "F"} {
+		id, err := service.CreateSession(env.ProjectDir, "claude", title, "claude", "", "default", "chat")
+		require.NoError(t, err)
+		if i == 0 {
+			oldestID = id
+		}
+		_, err = service.UnsafeDBForTest().Exec(
+			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
+			fmt.Sprintf("2024-0%d-01 00:00:00", i+1), id,
+		)
+		require.NoError(t, err)
+	}
+	require.NoError(t, service.UpdateSessionPinned(oldestID, true))
+
+	fetchPage := func(limit int, cursor, cursorID, cursorPinned string) []map[string]interface{} {
+		params := url.Values{}
+		params.Set("limit", strconv.Itoa(limit))
+		if cursor != "" {
+			params.Set("cursor", cursor)
+			params.Set("cursor_id", cursorID)
+			params.Set("cursor_pinned", cursorPinned)
+		}
+		req := newRequest(t, http.MethodGet, "/api/ai/sessions?"+params.Encode(), nil)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeSessions, req)
+		assertOK(t, w)
+		var page map[string]interface{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+		raw := page["sessions"].([]interface{})
+		out := make([]map[string]interface{}, 0, len(raw))
+		for _, s := range raw {
+			out = append(out, s.(map[string]interface{}))
+		}
+		return out
+	}
+
+	page1 := fetchPage(3, "", "", "")
+	require.Len(t, page1, 3)
+	require.Equal(t, oldestID, page1[0]["id"], "pinned session must lead the first page")
+
+	last := page1[len(page1)-1]
+	cursor := strings.ReplaceAll(last["createdAt"].(string), "T", " ")
+	cursor = strings.TrimSuffix(cursor, "Z")
+	pinnedFlag := "0"
+	if last["pinned"] == true {
+		pinnedFlag = "1"
+	}
+
+	page2 := fetchPage(3, cursor, last["id"].(string), pinnedFlag)
+
+	seen := map[string]int{}
+	for _, s := range append(append([]map[string]interface{}{}, page1...), page2...) {
+		seen[s["id"].(string)]++
+	}
+	for id, n := range seen {
+		assert.Equalf(t, 1, n, "session %s must appear exactly once across pages", id)
+	}
+	assert.Len(t, seen, 6, "both pages must cover every session")
 }

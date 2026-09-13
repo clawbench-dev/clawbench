@@ -80,7 +80,7 @@
         </div>
       </Transition>
       <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="quoteItems.length > 0 || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+      <div v-if="hasAttachmentTags" class="chat-attachment-tags">
         <!-- Staged quote cards (same size as file cards, accent-colored) -->
         <span v-for="(quote, quoteIndex) in quoteItems" :key="quote.id || quoteIndex" class="chat-file-attachment attachment-quote" :title="quote.note || quote.filePath" @click="$emit('quote-click', quote)">
           <Code2 :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
@@ -174,22 +174,26 @@
         @switch-transport="handleSwitchTransport"
       />
       <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
-      <!-- @ command autocomplete menu (ClawBench built-in) -->
-      <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
-        <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
-        <button v-for="(cmd, idx) in atMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === atMenuIndex }" :data-at-idx="idx" @mousedown.prevent="handleAtSelect(cmd)">
-          <span class="at-menu-label" v-html="highlightText(cmd.label, cmd.query)" />
-          <span class="at-menu-desc">{{ cmd.description }}</span>
-        </button>
-      </PopupMenu>
-      <!-- Slash command autocomplete menu (ACP backend commands — only in acp-stdio transport) -->
-      <PopupMenu v-if="isACPTransport && availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" anchor="left" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
-        <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
-        <button v-for="(cmd, idx) in slashMenuItems" :key="cmd.key" class="at-menu-item" :class="{ 'at-menu-selected': idx === slashMenuIndex }" :data-slash-idx="idx" @mousedown.prevent="handleSlashSelect(cmd)">
-          <span class="at-menu-label slash-label" v-html="highlightText(cmd.label, cmd.query)" />
-          <span class="at-menu-desc">{{ cmd.description }}</span>
-        </button>
-      </PopupMenu>
+      <!-- Unified completion menus (shared component).
+           Slash commands ("/" prefix) and @ file references share the same
+           interaction + rendering; only the trigger parser, data source and
+           select behaviour differ. -->
+      <CompletionMenu
+        :items="commandMenuItems"
+        :active-index="commandMenuIndex"
+        :show="showCommandMenu"
+        :target-element="textareaRef"
+        @select="handleCommandSelect"
+        @update:show="onCommandMenuShowChange"
+      />
+      <CompletionMenu
+        :items="fileMenuItems"
+        :active-index="fileMenuIndex"
+        :show="showFileMenu"
+        :target-element="textareaRef"
+        @select="handleFileSelect"
+        @update:show="onFileMenuShowChange"
+      />
       <!-- Context usage detail popup -->
       <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
@@ -309,14 +313,18 @@
 
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
+import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
 import { Code2, List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
-import { highlightText } from '@/utils/searchUtils.ts'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
+import { joinPath } from '@/utils/path.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import CompletionMenu from '@/components/common/CompletionMenu.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
@@ -336,6 +344,12 @@ import { useVoiceInput } from '@/composables/useVoiceInput'
 import { useChatRecommendation } from '@/composables/useChatRecommendation'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useChatContext } from '@/composables/useChatContext'
+import { setChatDraft, getChatDraft, hasChatDraft, deleteChatDraft } from '@/utils/chatDraftStore.ts'
+import { useCompletionMenu } from '@/composables/useCompletionMenu'
+import { useRecentFiles } from '@/composables/useRecentFiles'
+import { useShareIn } from '@/composables/useShareIn'
+import { useUploadRecent } from '@/composables/useUploadRecent'
+import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 
 const { t } = useI18n()
@@ -498,6 +512,7 @@ const placeholderHints = computed(() => {
     hints.push(t('chat.input.placeholderQuickSend'))
   }
   hints.push(t('chat.input.placeholderCommand'))
+  hints.push(t('chat.input.placeholderFileRef'))
   return hints
 })
 
@@ -785,164 +800,274 @@ function openSettingsDrawer(tab) {
 // ── Context usage popup ──
 const showUsagePopup = ref(false)
 const usageElRef = ref(null)
-const atCommands = computed(() => {
+// ── Unified completion menus (slash commands + @ file references) ──
+// Both menus share useCompletionMenu (state/keyboard/select) and
+// CompletionMenu.vue (rendering); they differ only in trigger parsing, data
+// source and select behaviour:
+//   - slash: input starts with "/" and has no space; selecting writes the
+//            command back and closes.
+//   - at:    an "@" preceded by whitespace; selecting attaches the file,
+//            removes the "@query" and keeps the menu open for multi-select.
+const clawbenchCommands = computed(() => {
   return [
-    { key: '@chatsearch', label: '@chatsearch', description: t('chat.atCommand.chatsearchDesc') },
-    { key: '@task', label: '@task', description: t('chat.atCommand.taskDesc') },
+    { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
+    { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
+    { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
   ]
 })
 
-// ── Slash command autocomplete (ACP backend commands) ──
-const showSlashMenu = ref(false)
-const slashMenuIndex = ref(-1)
-
-// ── @ command autocomplete ──
-const showAtMenu = ref(false)
-const atMenuIndex = ref(-1)
-
-const atMenuItems = computed(() => {
-  const text = inputText.value
-  if (!text.startsWith('@')) return []
-  const query = text.slice(1) // strip leading '@'
-  const cmds = atCommands.value // unwrap computed ref
-  if (!query) return cmds.map(cmd => ({ ...cmd, query: '' })) // empty query → show all
-  const lowerQ = query.toLowerCase()
-  return cmds
-    .filter(cmd => cmd.key.toLowerCase().includes(lowerQ))
-    .map(cmd => ({ ...cmd, query }))
-})
-
-const slashMenuItems = computed(() => {
-  const text = inputText.value
-  if (!text.startsWith('/')) return []
-  const query = text.slice(1) // strip leading '/'
-  // Command names arrive inconsistently: CodeBuddy ACP reports skills slashless
-  // ("mmx-cli"), while pre-scanned names may keep a leading "/". Normalize for
-  // display and dedupe on the canonical (slash-stripped) name so the same
-  // command cannot appear twice — otherwise each duplicate renders as a
-  // double-slash entry.
-  const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
-  const seen = new Set()
+// Slash candidates. Command names arrive inconsistently: CodeBuddy ACP reports
+// skills slashless ("mmx-cli"), while pre-scanned names may keep a leading "/".
+// Normalize for display and dedupe on the canonical (slash-stripped) name so
+// the same command cannot appear twice.
+const slashCandidates = computed(() => {
   const items = []
-  for (const cmd of availableCommands.value) {
-    const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
-    if (!canonical || seen.has(canonical)) continue
-    seen.add(canonical)
-    items.push({
-      key: toSlash(cmd.name),
-      label: toSlash(cmd.name),
-      description: cmd.description,
-      inputHint: cmd.inputHint || '',
-      query: query.toLowerCase(),
+  for (const cmd of clawbenchCommands.value) {
+    items.push({ key: cmd.key, label: cmd.label, description: cmd.description, source: 'clawbench' })
+  }
+  if (isACPTransport.value) {
+    const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
+    const seen = new Set()
+    for (const cmd of availableCommands.value) {
+      const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
+      if (!canonical || seen.has(canonical)) continue
+      seen.add(canonical)
+      items.push({ key: toSlash(cmd.name), label: toSlash(cmd.name), description: cmd.description, source: 'agent' })
+    }
+  }
+  return items
+})
+
+const commandMenuItems = computed(() => {
+  // Establish the reactive dependency on the caret position.
+  void caretVersion.value
+  const trigger = parseSlashQuery(inputText.value, currentCaret())
+  const all = slashCandidates.value
+  if (!trigger) return []
+  if (!trigger.query) return all
+  const matched = []
+  for (const item of all) {
+    const m = fuzzyMatch(trigger.query, item.label)
+    if (!m) continue
+    matched.push({ ...item, positions: m.positions, score: m.score })
+  }
+  matched.sort((a, b) => (b.score || 0) - (a.score || 0))
+  return matched
+})
+
+const commandMenu = useCompletionMenu({
+  items: commandMenuItems,
+  getTrigger: () => parseSlashQuery(inputText.value, currentCaret()),
+  getText: () => inputText.value,
+  closeOnSelect: true,
+  onSelect: () => {
+    nextTick(() => textareaRef.value?.focus())
+  },
+  // Replace the typed "/query" token in place with "/command " so any text the
+  // user already typed around the slash survives (mirrors the @ menu's
+  // range-based edit; only the replacement differs).
+  buildReplacement: (item) => item.key + ' ',
+  applyText: (value, caret) => {
+    inputText.value = value
+    nextTick(() => {
+      const el = textareaRef.value
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
     })
-  }
-  if (!query) return items
-  const lowerQ = query.toLowerCase()
-  return items.filter(item => item.label.toLowerCase().includes(lowerQ))
+  },
 })
 
-// Directly control menu visibility from inputText changes
+// ── @ file reference candidates ──
+const recentFiles = useRecentFiles()
+const { recentShares, fetchRecentShares } = useShareIn()
+const { recentUploads, fetchRecentUploads } = useUploadRecent()
+const fileSourcesLoaded = ref(false)
+
+/**
+ * Caret position for @-trigger parsing. The textarea's selectionStart is only
+ * meaningful while it is focused and its DOM value matches the bound text;
+ * otherwise (programmatic draft restore, blurred input) treat the caret as the
+ * end of the text so a trailing "@query" still resolves.
+ */
+function currentCaret() {
+  const el = textareaRef.value
+  if (!el || el.value !== inputText.value) return inputText.value.length
+  if (typeof el.selectionStart === 'number') return el.selectionStart
+  return inputText.value.length
+}
+
+// selectionStart is a plain DOM property — Vue cannot track it. This counter is
+// bumped on every caret move so computeds that parse the caret re-evaluate
+// (otherwise the candidate list would stay filtered by the previous query).
+const caretVersion = ref(0)
+
+const fileMenuItems = computed(() => {
+  // Establish the reactive dependency on the caret position.
+  void caretVersion.value
+  const sources = {
+    recentOpen: recentFiles.entries.value.map(e => ({ path: e.path })),
+    // Every entry type the listing can return — files, images AND directories.
+    // Filtering on `type === 'file'` silently dropped images/PDFs (the backend
+    // tags them 'image') and directories. isDir rides along so the select
+    // handler can attach a directory with the right flag.
+    currentDir: store.state.dirEntries.map(e => ({
+      path: joinPath(store.state.currentDir, e.name),
+      isDir: e.type === 'dir',
+    })),
+    recentRef: recentReferencedFiles.value.map(r => ({ path: r.path, isDir: r.isDir })),
+    recentUpload: recentUploads.value.map(u => ({ path: u.path })),
+    recentShare: recentShares.value.map(s => ({ path: s.path })),
+  }
+  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+  const attached = props.attachedFiles.map(f => f.path)
+  // Every file row shows its type icon (the shared menu renders it when present).
+  // The project root lets absolute attachment paths match relative candidates.
+  return buildFileCandidates(sources, query, attached, store.state.projectRoot)
+    .map(item => ({ ...item, icon: FileIcon }))
+})
+
+const fileMenu = useCompletionMenu({
+  items: fileMenuItems,
+  getTrigger: () => parseAtQuery(inputText.value, currentCaret()),
+  getText: () => inputText.value,
+  closeOnSelect: false,
+  stickyAfterSelect: true,
+  onSelect: (item) => {
+    emit('add-attached', item.key, item.isDir === true)
+  },
+  applyText: (value, caret) => {
+    inputText.value = value
+    nextTick(() => {
+      const el = textareaRef.value
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+    })
+  },
+})
+
+// Lazily load the share/upload sources the first time an @ trigger appears,
+// then merge them in. Menus elsewhere only fetch these when the attach drawer
+// opens. After the fetch resolves the candidate list changes, so the menu is
+// refreshed — otherwise an @ typed while both sources (and the current dir)
+// were empty would leave the menu hidden until the next keystroke.
+//
+// The refresh is gated on the textarea still being focused: this fetch is slow
+// enough that the user can type "@", click away (blur closes the menu) and only
+// then have it resolve. Without the guard the late refresh would resurrect a
+// menu the user had already dismissed — refresh() has no way to tell "the menu
+// was never shown" from "the user just closed it".
+let fileSourcesPromise = null
+function ensureFileSourcesLoaded() {
+  if (fileSourcesLoaded.value) return fileSourcesPromise
+  fileSourcesLoaded.value = true
+  fileSourcesPromise = Promise.all([fetchRecentShares(), fetchRecentUploads()])
+    .then(() => {
+      if (isTextareaFocused.value) fileMenu.refresh()
+    })
+    .catch(() => {
+      // Allow a later attempt after a transient failure.
+      fileSourcesLoaded.value = false
+      fileSourcesPromise = null
+    })
+  return fileSourcesPromise
+}
+
+// Menu visibility: driven by the composables' refresh(), which reads the
+// current trigger from the text/caret. Kept as refs so the rest of the
+// component (and existing tests) can observe them.
+const showCommandMenu = commandMenu.show
+const commandMenuIndex = commandMenu.activeIndex
+const showFileMenu = fileMenu.show
+const fileMenuIndex = fileMenu.activeIndex
+
+function onCommandMenuShowChange(v) {
+  if (!v) commandMenu.close()
+}
+function onFileMenuShowChange(v) {
+  if (!v) fileMenu.close()
+}
+
+/**
+ * Dismiss both completion popups together.
+ *
+ * The slash-command and @ file menus are the same kind of popup anchored to the
+ * same textarea, so every dismissal site must close both — otherwise one menu
+ * survives a lifecycle event that dismisses the other (the @ menu used to stay
+ * open after a blank click or a tab switch, because only the command menu was
+ * closed on blur).
+ */
+function closeCompletionMenus() {
+  commandMenu.close()
+  fileMenu.close()
+}
+
+// Recompute both menus whenever the input text changes. A history entry loaded
+// by ArrowUp/ArrowDown must not pop the menu. currentCaret() tolerates the
+// textarea DOM lagging the ref (programmatic restore), so this stays sync.
+// Share/upload sources are fetched as soon as an @ trigger appears — not only
+// once the menu is visible, so an empty current dir does not suppress the
+// merge from those two remote sources.
 watch(inputText, () => {
-  const text = inputText.value
-  // @ command menu
-  const shouldShowAt = text.startsWith('@')
-    && !text.includes(' ')
-    && atMenuItems.value.length > 0
-  // Slash command menu
-  const shouldShowSlash = text.startsWith('/')
-    && !text.includes(' ')
-    && slashMenuItems.value.length > 0
-  // A history entry loaded by ArrowUp/ArrowDown must not pop the menu.
   if (historyNavSuppressMenu) return
-  if (shouldShowAt && !showAtMenu.value) atMenuIndex.value = 0
-  showAtMenu.value = shouldShowAt
-  if (shouldShowSlash && !showSlashMenu.value) slashMenuIndex.value = 0
-  showSlashMenu.value = shouldShowSlash
+  commandMenu.refresh()
+  if (parseAtQuery(inputText.value, currentCaret())) ensureFileSourcesLoaded()
+  fileMenu.refresh()
 })
 
-// Default to first item when menu items change (VSCode-style: first item pre-selected)
-watch(slashMenuItems, () => { slashMenuIndex.value = slashMenuItems.value.length > 0 ? 0 : -1 })
-watch(atMenuItems, () => { atMenuIndex.value = atMenuItems.value.length > 0 ? 0 : -1 })
-
-// Scroll selected menu item into view
-watch(slashMenuIndex, (idx) => {
-  if (idx < 0) return
-  nextTick(() => {
-    // Menus are teleported to <body>, so query from document, not rootRef.
-    const el = document.querySelector('[data-slash-idx="' + idx + '"]')
-    el?.scrollIntoView({ block: 'nearest' })
-  })
-})
-watch(atMenuIndex, (idx) => {
-  if (idx < 0) return
-  nextTick(() => {
-    // Menus are teleported to <body>, so query from document, not rootRef.
-    const el = document.querySelector('[data-at-idx="' + idx + '"]')
-    el?.scrollIntoView({ block: 'nearest' })
-  })
-})
-
-function handleAtSelect(cmd) {
-  inputText.value = cmd.key + ' '
-  showAtMenu.value = false
-  atMenuIndex.value = -1
-  nextTick(() => {
-    const el = textareaRef.value
-    if (el) el.focus()
-  })
+// Selection/caret moves (arrow keys inside the textarea, clicks) can enter or
+// leave a trigger without changing the text — re-evaluate both menus on those
+// events (both are caret-aware now).
+// The counter is only bumped when the caret actually moved: applyText() calls
+// setSelectionRange(), which synchronously fires selectionchange again, and an
+// unconditional bump would loop forever.
+let lastCaret = -1
+function onTextareaSelectionChange() {
+  if (historyNavSuppressMenu) return
+  // selectionchange is a document-level event: it also fires when the user
+  // selects text anywhere else — e.g. clicking a chat message to select a word.
+  // The caret is only meaningful while the textarea owns focus. Refreshing on
+  // an unfocused change reopens the menu that the blur just closed, so a click
+  // on chat text appeared to "not close" the menu (it closed, then immediately
+  // reopened) and needed several clicks to win.
+  if (!isTextareaFocused.value) return
+  const caret = currentCaret()
+  if (caret !== lastCaret) {
+    lastCaret = caret
+    caretVersion.value++
+  }
+  if (parseAtQuery(inputText.value, caret)) ensureFileSourcesLoaded()
+  commandMenu.refresh()
+  fileMenu.refresh()
 }
 
-function handleSlashSelect(cmd) {
-  inputText.value = cmd.key + ' '
-  showSlashMenu.value = false
-  slashMenuIndex.value = -1
+// Default to first item when the command list changes (VSCode-style).
+watch(commandMenuItems, () => {
+  if (commandMenu.show.value && commandMenuIndex.value < 0) commandMenuIndex.value = 0
+})
+
+// Scroll the highlighted item into view. Menus are teleported to <body>, so
+// query from document rather than the component root.
+function scrollActiveIntoView(idx) {
+  if (idx < 0) return
   nextTick(() => {
-    const el = textareaRef.value
-    if (el) el.focus()
+    const el = document.querySelector('[data-completion-idx="' + idx + '"]')
+    el?.scrollIntoView({ block: 'nearest' })
   })
 }
+watch(commandMenuIndex, scrollActiveIntoView)
+watch(fileMenuIndex, scrollActiveIntoView)
 
-// ── Menu keyboard navigation (PC: ArrowUp/Down + Enter/Tab + Escape) ──
-function handleMenuKeydown(e) {
-  // IME composition (e.g. Chinese pinyin candidate selection): let the IME own
-  // the keystroke — Enter commits the candidate, never selects a menu item.
-  if (isImeCompositionEvent(e)) return false
+function handleCommandSelect(cmd) {
+  // Route through the composable so the trigger range is removed + menu closed
+  // with the same code path as the keyboard. `source` disambiguates a built-in
+  // and an agent command that share a name.
+  commandMenu.selectByKey(cmd.key, cmd.source)
+}
 
-  // Determine which menu is active (slash takes priority if both open)
-  const isSlash = showSlashMenu.value
-  const isAt = showAtMenu.value
-  if (!isSlash && !isAt) return false
-
-  // Escape closes the active menu
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    if (isSlash) { showSlashMenu.value = false; slashMenuIndex.value = -1 }
-    else { showAtMenu.value = false; atMenuIndex.value = -1 }
-    return true
-  }
-
-  const items = isSlash ? slashMenuItems.value : atMenuItems.value
-  const indexRef = isSlash ? slashMenuIndex : atMenuIndex
-  if (items.length === 0) return false
-
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    indexRef.value = (indexRef.value + 1) % items.length
-    return true
-  }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    indexRef.value = indexRef.value <= 0 ? items.length - 1 : indexRef.value - 1
-    return true
-  }
-  if ((e.key === 'Enter' || e.key === 'Tab') && indexRef.value >= 0 && indexRef.value < items.length) {
-    e.preventDefault()
-    const selected = items[indexRef.value]
-    if (isSlash) handleSlashSelect(selected)
-    else handleAtSelect(selected)
-    return true
-  }
-  return false
+function handleFileSelect(item) {
+  fileMenu.selectByKey(item.key)
 }
 
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
@@ -1132,8 +1257,9 @@ function onTextareaKeydown(e) {
   // owns the keystroke — Enter commits the candidate to the input instead of
   // submitting the message.
   if (isImeCompositionEvent(e)) return
-  // Menu keyboard navigation takes priority
-  if (handleMenuKeydown(e)) return
+  // Menu keyboard navigation takes priority (slash menu first, then @ files).
+  if (commandMenu.handleKeydown(e)) return
+  if (fileMenu.handleKeydown(e)) return
   // Input history navigation (ArrowUp/ArrowDown), only when the input is active
   if (handleHistoryKeydown(e)) return
   // Default: Enter (without modifier) sends
@@ -1166,9 +1292,10 @@ function handleStopClick() {
   }
 }
 
-// Per-session draft cache: save input text when switching away, restore when switching back
-const draftCache = new Map()
-
+// Per-session draft cache: save input text when switching away, restore when
+// switching back. Backed by a module-level store (not component state) so the
+// draft survives the component remount caused by an SPA project switch — see
+// chatDraftStore.ts for why.
 watch(() => props.currentSessionId, (newId, oldId) => {
   // History navigation is per-session: a session switch must start fresh from
   // the new session's newest history entry.
@@ -1177,14 +1304,16 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   if (oldId) {
     const text = inputText.value
     if (text) {
-      draftCache.set(oldId, text)
+      setChatDraft(oldId, text)
     }
     // Don't delete existing draft when inputText is empty — saveDraft() may have
     // already saved it before clearInputPreserveDraft() cleared the visible text.
     // Only clearInput() (called after message send) explicitly deletes the draft.
   }
-  // Restore draft for the new session (or clear if none)
-  inputText.value = newId ? (draftCache.get(newId) || '') : ''
+  // Restore draft for the new session (or clear if none). This also runs on the
+  // remount after a project switch: currentSessionId is reset to '' first, then
+  // initSessionFromAPI() sets the restored session id, firing this watcher.
+  inputText.value = newId ? getChatDraft(newId) : ''
   // autoResizeTextarea is called automatically by the inputText watcher
 })
 
@@ -1213,6 +1342,16 @@ watch(() => props.loading, (val) => {
 })
 
 const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || quoteItems.value.length > 0)
+
+// The tags row must render only when it has VISIBLE children. pendingFiles
+// retains completed (non-uploading) entries as a mirror of attachedFiles, but
+// AttachmentTags only draws in-flight ones — counting those mirrors here would
+// mount a childless container whose padding shows as dead vertical space.
+const hasAttachmentTags = computed(() =>
+  quoteItems.value.length > 0
+  || props.attachedFiles.length > 0
+  || pendingFiles.value.some(f => f.uploading),
+)
 
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {
@@ -1282,17 +1421,28 @@ function onTextareaBlur() {
   if (!inputText.value.trim()) {
     startPlaceholderRotation()
   }
-  // Close @ and / command menus when textarea loses focus (clicking menu items uses
-  // @mousedown.prevent so blur won't fire for those interactions)
+  // Close BOTH completion menus when the textarea loses focus (clicking menu
+  // items uses @mousedown.prevent so blur won't fire for those interactions).
+  // Both menus share one lifecycle: they are the same kind of popup anchored to
+  // the same textarea, so a blur that dismisses one must dismiss the other.
+  // Closing only the command menu left the @ file menu hovering after a click
+  // on blank space or a switch to another tab.
   nextTick(() => {
-    showAtMenu.value = false
-    showSlashMenu.value = false
+    closeCompletionMenus()
   })
 }
 
 // Watch inputText changes (both user input and programmatic changes like draft restore)
 // to ensure textarea height stays in sync with content
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
+
+// Drain text queued by other features (e.g. "analyze this issue/PR"). The
+// producer may run before this component is mounted, so the value is polled
+// reactively rather than delivered via an event.
+watch(pendingChatInputRef, () => {
+  const pending = consumePendingChatInput()
+  if (pending) injectToInput(pending)
+}, { immediate: true })
 
 function onPaste(e) {
   const now = Date.now()
@@ -1456,7 +1606,7 @@ function clearInput() {
   inputText.value = ''
   // Also clear the draft cache for current session so it doesn't linger
   if (props.currentSessionId) {
-    draftCache.delete(props.currentSessionId)
+    deleteChatDraft(props.currentSessionId)
   }
   // A new message starts fresh history navigation from the newest entry.
   resetInputHistory()
@@ -1468,19 +1618,14 @@ function clearInput() {
 function restoreInput(text) {
   inputText.value = text ?? ''
   if (props.currentSessionId && text) {
-    draftCache.set(props.currentSessionId, text)
+    setChatDraft(props.currentSessionId, text)
   }
 }
 
 /** Save current input text to draft cache without clearing it (called before session switch). */
 function saveDraft() {
   if (props.currentSessionId) {
-    const text = inputText.value
-    if (text) {
-      draftCache.set(props.currentSessionId, text)
-    } else {
-      draftCache.delete(props.currentSessionId)
-    }
+    setChatDraft(props.currentSessionId, inputText.value)
   }
 }
 
@@ -1544,10 +1689,8 @@ function injectToInput(text) {
  *  re-editing (replace + focus, unlike injectToInput which appends). */
 function prefillInput(text) {
   inputText.value = text ?? ''
-  if (props.currentSessionId && text) {
-    draftCache.set(props.currentSessionId, text)
-  } else if (props.currentSessionId) {
-    draftCache.delete(props.currentSessionId)
+  if (props.currentSessionId) {
+    setChatDraft(props.currentSessionId, text ?? '')
   }
   resetInputHistory()
   nextTick(() => {
@@ -1580,11 +1723,12 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSlashMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); showUsagePopup.value = false } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; fileMenu.close() } })
+watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; commandMenu.close() } })
+watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
 
 onMounted(() => {
   fetchItems()
@@ -1594,6 +1738,9 @@ onMounted(() => {
   window.addEventListener('keyup', onVoiceShortcutUp)
   window.addEventListener('blur', onVoiceBlurStop)
   window.addEventListener('clawbench-recommendation', onRecommendationEvent)
+  // Caret moves (clicks / arrow keys) can enter or leave an @ trigger without
+  // changing the text, so the @ menu must re-evaluate on selection changes.
+  document.addEventListener('selectionchange', onTextareaSelectionChange)
   measureActionLabels()
   if (typeof ResizeObserver !== 'undefined' && actionBarRef.value) {
     actionBarObserver = new ResizeObserver(() => scheduleMeasureActionLabels())
@@ -1602,12 +1749,24 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // The SPA project switch (App.vue hotSwitchProject) calls resetIdentity() and
+  // changes :key="projectKey" in the SAME synchronous tick. Vue then replaces
+  // the whole keyed subtree, so this component is unmounted with its props still
+  // pointing at the OLD session — the currentSessionId watcher above never
+  // observes the change and never saves. Persist the draft here so it survives
+  // the remount and can be restored when the user switches back.
+  // Only write when there is text: an empty input must not delete a draft that
+  // saveDraft() already stored before clearInputPreserveDraft() hid the text.
+  if (props.currentSessionId && inputText.value) {
+    setChatDraft(props.currentSessionId, inputText.value)
+  }
   pasteUploadGeneration++
   window.removeEventListener('paste', handleWindowPaste, true)
   window.removeEventListener('keydown', onVoiceShortcutDown)
   window.removeEventListener('keyup', onVoiceShortcutUp)
   window.removeEventListener('blur', onVoiceBlurStop)
   window.removeEventListener('clawbench-recommendation', onRecommendationEvent)
+  document.removeEventListener('selectionchange', onTextareaSelectionChange)
   stopMachine.destroy()
   if (voicePressTimer) {
     clearTimeout(voicePressTimer)
@@ -1642,9 +1801,9 @@ defineExpose({
   clearInputPreserveDraft,
   clearRecommendation,
   inputText,
-  deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
-  hasDraft: (sessionId) => draftCache.has(sessionId),
-  getDraft: (sessionId) => draftCache.get(sessionId) ?? null,
+  deleteDraft: (sessionId) => { deleteChatDraft(sessionId) },
+  hasDraft: (sessionId) => hasChatDraft(sessionId),
+  getDraft: (sessionId) => (hasChatDraft(sessionId) ? getChatDraft(sessionId) : null),
   injectToInput,
   prefillInput,
   handleQuickSendClick,
@@ -1660,8 +1819,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  margin: 0 0 8px;
-  padding: 8px 8px 0;
+  margin:0 0 var(--space-4);
+  padding: var(--space-4) var(--space-4) 0;
   box-shadow: inset 0 1px 0 var(--border-color, #e5e5e5);
 }
 
@@ -1670,10 +1829,10 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
-  padding: 4px 8px 0;
-  font-size: 11px;
-  line-height: 1.4;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
   color: var(--text-muted, #999);
   overflow: hidden;
   white-space: nowrap;
@@ -1690,7 +1849,7 @@ defineExpose({
   text-overflow: ellipsis;
   min-width: 14px;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -1738,7 +1897,7 @@ defineExpose({
   position: relative;
   width: 28px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   overflow: hidden;
   flex-shrink: 0;
@@ -1749,7 +1908,7 @@ defineExpose({
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease, background 0.3s ease;
 }
 
@@ -1757,8 +1916,8 @@ defineExpose({
 .chat-top-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
   /* When labels are briefly rendered during measurement (or when the chat pane
      is too narrow), allow horizontal scroll with a hidden scrollbar instead of
      clipping the trailing buttons. */
@@ -1774,7 +1933,7 @@ defineExpose({
    action bar can be measured with labels forced on (see .measure-labels);
    hidden unless the container proves it has room for them. */
 .chat-action-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
   white-space: nowrap;
   flex-shrink: 0;
@@ -1814,18 +1973,18 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 6px;
+    padding:5px var(--space-3);
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f0f0f0);
     pointer-events: none;
     user-select: none;
     border-right: 1px solid var(--border-color, #e5e5e5);
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     line-height: 1.3;
 }
 
 .chat-action-group .chat-action-btn:last-child {
-    border-radius: 0 999px 999px 0;
+    border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .chat-action-btn {
@@ -1836,11 +1995,11 @@ defineExpose({
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 11px;
+  padding:5px var(--space-4);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-xs);
   line-height: 1;
-  transition: color 0.15s, background 0.15s, transform 0.1s;
+  transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
@@ -1870,7 +2029,7 @@ defineExpose({
 
 .chat-action-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   color: var(--text-muted, #999);
 }
 
@@ -1880,24 +2039,24 @@ defineExpose({
 
 @media (hover: hover) {
   .chat-action-btn-archive:not(.disabled):hover {
-    color: var(--color-warning, #e6a23c);
-    background: color-mix(in srgb, var(--color-warning, #e6a23c) 10%, transparent);
+    color: var(--color-orange);
+    background: color-mix(in srgb, var(--color-orange) 10%, transparent);
   }
 }
 
 .chat-action-btn-archive:not(.disabled):active {
-  color: var(--color-warning, #e6a23c);
-  background: color-mix(in srgb, var(--color-warning, #e6a23c) 18%, transparent);
+  color: var(--color-orange);
+  background: color-mix(in srgb, var(--color-orange) 18%, transparent);
   transform: scale(0.92);
 }
 
 .chat-action-btn-archive.disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
 .acp-sync-btn.disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -1928,10 +2087,6 @@ defineExpose({
     overflow: hidden;
     color: var(--accent-color, #0066cc);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
-}
-
-/* When both unread and running, keep running's background as-is */
-.chat-action-btn.has-unread.has-running {
 }
 
 .chat-action-btn.has-running:active {
@@ -1977,7 +2132,7 @@ defineExpose({
   border-radius: 20px;
   overflow: hidden;
   position: relative;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .chat-input-container:focus-within {
@@ -1992,11 +2147,11 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
   color: var(--accent-color, #0066cc);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   border-radius: 20px;
   pointer-events: none;
 }
@@ -2027,12 +2182,12 @@ defineExpose({
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: 4px;
+  padding: var(--space-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  border-radius: var(--radius-xs);
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2043,7 +2198,7 @@ defineExpose({
 }
 
 .chat-attach-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -2052,8 +2207,8 @@ defineExpose({
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -2106,14 +2261,14 @@ defineExpose({
 .recommendation-chip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 6px;
-  padding: 6px 10px;
-  border-radius: 10px;
+  gap: var(--space-4);
+  margin:0 0 var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
-  font-size: 12px;
-  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 
 .recommendation-icon {
@@ -2140,9 +2295,9 @@ defineExpose({
   border: none;
   background: var(--accent-color, #0066cc);
   color: #fff;
-  border-radius: 8px;
-  padding: 3px 10px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  padding:3px var(--space-5);
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -2150,18 +2305,18 @@ defineExpose({
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
   height: 40px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   padding-right: 24px;
   flex-shrink: 0;
   max-width: 150px;
   position: relative;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -2170,8 +2325,8 @@ defineExpose({
 }
 
 .attachment-filename {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2179,7 +2334,7 @@ defineExpose({
 }
 
 .attachment-filesize {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2192,7 +2347,7 @@ defineExpose({
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .attachment-thumb-img {
@@ -2218,19 +2373,19 @@ defineExpose({
   border: none;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   z-index: 1;
 }
 
 @media (hover: hover) {
   .attachment-close-btn:hover {
-    background: var(--danger-color, #dc3545);
+    background: var(--color-red);
   }
 }
 
@@ -2271,17 +2426,17 @@ defineExpose({
 .chat-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  padding: 4px 6px 6px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .chat-textarea {
   flex: 1;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   line-height: 20px;
   outline: none;
   resize: none;
@@ -2296,7 +2451,7 @@ defineExpose({
 }
 
 .chat-textarea:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .chat-send-btn {
@@ -2311,14 +2466,14 @@ defineExpose({
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s, transform 0.15s;
+  transition: background var(--duration-base), opacity var(--duration-base), transform var(--duration-base);
   flex-shrink: 0;
 }
 @media (hover: hover) {
   .chat-send-btn:hover { background: #0055aa; }
 }
-.chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.chat-send-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-send-btn:disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
+.chat-send-btn.disabled { opacity: var(--opacity-muted); cursor: not-allowed; }
 
 /* Send button in queue mode: orange to distinguish from normal send */
 .chat-send-btn.queued {
@@ -2344,25 +2499,25 @@ defineExpose({
   width: 28px;
   height: 28px;
   padding: 0;
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 40%, transparent);
-  color: color-mix(in srgb, #fff 60%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 40%, transparent);
+  color: color-mix(in srgb, #fff 60%, var(--color-red));
   border: none;
   border-radius: 50%;
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   flex-shrink: 0;
 }
-.chat-stop-btn:active { opacity: 0.75; }
+.chat-stop-btn:active { opacity: var(--opacity-soft); }
 
 /* Light theme: boost stop button default visibility */
 :not([data-theme-base="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 55%, transparent);
-  color: color-mix(in srgb, #fff 75%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 55%, transparent);
+  color: color-mix(in srgb, #fff 75%, var(--color-red));
 }
 
 /* Stop button — primed (first click, awaiting confirmation): bright red + heartbeat */
 .chat-stop-btn.primed {
-  background: var(--danger-color, #dc3545);
+  background: var(--color-red);
   color: #fff;
   transform: scale(1.15);
   animation: stop-heartbeat 0.8s ease-in-out infinite;
@@ -2370,8 +2525,8 @@ defineExpose({
 
 /* Stop button — cancelling (API request in flight): spinner, dimmed */
 .chat-stop-btn.cancelling {
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 25%, transparent);
-  color: color-mix(in srgb, #fff 50%, var(--danger-color, #dc3545));
+  background: color-mix(in srgb, var(--color-red) 25%, transparent);
+  color: color-mix(in srgb, #fff 50%, var(--color-red));
   cursor: wait;
   animation: none;
   transform: none;
@@ -2410,7 +2565,7 @@ defineExpose({
 .voice-wave {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   height: 14px;
 }
 .voice-wave i {
@@ -2438,26 +2593,26 @@ defineExpose({
 <style>
 /* Quick-send menu content styles */
 .quick-send-title {
-  padding: 6px 14px 2px;
-  font-size: 11px;
+  padding: var(--space-3) 14px var(--space-1);
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.3px;
 }
 
 .quick-send-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 4px 14px;
+  padding: var(--space-2) 14px;
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
   position: relative;
   overflow: hidden;
   /* Clicking the row sends directly; the trailing icon injects into the input box. */
@@ -2476,7 +2631,7 @@ defineExpose({
 /* Label (flex-shrink 0) + command (ellipsis) + trailing inject icon */
 .qs-label {
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   max-width: 110px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2487,8 +2642,8 @@ defineExpose({
   flex: 1;
   min-width: 0;
   color: var(--text-muted, #999);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2502,10 +2657,10 @@ defineExpose({
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted, #999);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2518,129 +2673,62 @@ defineExpose({
 .quick-send-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 3px 6px;
+  margin:3px var(--space-3);
 }
 
-/* @ command autocomplete menu styles */
-.at-menu-title {
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted, #999);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.at-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.at-menu-item.at-menu-selected {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-}
-@media (hover: hover) {
-  .at-menu-item:hover {
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  }
-}
-
-.at-menu-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #8b5cf6;
-  white-space: nowrap;
-}
-
-:root[data-theme-base="dark"] .at-menu-label {
-  color: #a78bfa;
-}
-
-.at-menu-label.slash-label {
-  color: #0ea5e9;
-}
-
-:root[data-theme-base="dark"] .at-menu-label.slash-label {
-  color: #38bdf8;
-}
-
-.at-menu-label mark {
-  background: rgba(255, 230, 0, 0.5);
-  color: inherit;
-  padding: 0 1px;
-  font-weight: 700;
-}
-
-:root[data-theme-base="dark"] .at-menu-label mark {
-  background: rgba(255, 230, 0, 0.35);
-}
-
-.at-menu-desc {
-  font-size: 12px;
-  color: var(--text-secondary, #495057);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Unified command autocomplete menu styles moved to
+   components/common/CompletionMenu.vue (shared with the @ file menu). */
 
 /* Context usage detail popup */
 .usage-popup {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   min-width: 180px;
 }
 
 .usage-popup-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .usage-popup-section-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
-  margin-top: 8px;
-  margin-bottom: 4px;
-  padding-top: 6px;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border-color);
 }
 
 .usage-popup-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .usage-popup-bar-track {
   flex: 1;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 15%, transparent);
   overflow: hidden;
 }
 
 .usage-popup-bar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease, background 0.3s ease;
 }
 
 .usage-popup-pct {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
   flex-shrink: 0;
   min-width: 36px;
   text-align: right;
@@ -2651,7 +2739,7 @@ defineExpose({
   justify-content: space-between;
   align-items: center;
   padding: 3px 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .usage-popup-label {
@@ -2660,13 +2748,13 @@ defineExpose({
 
 .usage-popup-value {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
 .usage-popup-compact {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
   display: flex;
   justify-content: center;
@@ -2678,20 +2766,20 @@ defineExpose({
   gap: 5px;
   background: none;
   border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  padding: 5px 12px;
+  padding:5px var(--space-6);
   color: var(--text-secondary, #6c757d);
-  font-size: 12px;
-  line-height: 1.4;
-  transition: color 0.15s, border-color 0.15s;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
+  transition: color var(--duration-base), border-color var(--duration-base);
   user-select: none;
   -webkit-user-select: none;
 }
 
 .usage-popup-compact-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
 }
 
 .usage-popup-compact-btn:active:not(:disabled) {

@@ -90,6 +90,16 @@
             <p class="ug-error">{{ t('upgrade.installDirNotWritableBody', { dir: installDir || '—' }) }}</p>
             <p class="ug-error-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
           </template>
+          <template v-else-if="state.error_code === ERR_SELF_PATH_UNRESOLVED">
+            <p class="ug-error-title">{{ t('upgrade.selfPathUnresolvedTitle') }}</p>
+            <p class="ug-error">{{ t('upgrade.selfPathUnresolvedBody') }}</p>
+            <p class="ug-error-hint">{{ t('upgrade.selfPathUnresolvedHint') }}</p>
+          </template>
+          <template v-else-if="state.error_code === ERR_RESTART_FAILED">
+            <p class="ug-error-title">{{ t('upgrade.restartFailedTitle') }}</p>
+            <p class="ug-error">{{ t('upgrade.restartFailedBody') }}</p>
+            <p class="ug-error-hint">{{ t('upgrade.restartFailedHint') }}</p>
+          </template>
           <template v-else>
             <p>{{ t('upgrade.failed') }}</p>
             <p class="ug-error">{{ state.error }}</p>
@@ -115,7 +125,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE } from '@/composables/useUpgrade'
+import { useUpgrade, ERR_INSTALL_DIR_NOT_WRITABLE, ERR_SELF_PATH_UNRESOLVED, ERR_RESTART_FAILED } from '@/composables/useUpgrade'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import '@/assets/modal-footer-btn.css'
 
@@ -206,23 +216,23 @@ watch(visible, (v) => {
 .ug-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1001;
+  z-index: var(--z-overlay-raised);
   display: flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  padding: 16px;
+  padding: var(--space-7);
 }
 
 .ug-panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 380px;
-  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
@@ -230,13 +240,13 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 8px;
+  padding:14px var(--space-7) var(--space-4);
 }
 
 .ug-header h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
@@ -251,7 +261,7 @@ watch(visible, (v) => {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -262,21 +272,21 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 12px 16px;
-  font-size: 14px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
+  font-size: var(--font-size-lg);
 }
 
 .ug-ver-current { color: var(--text-secondary); }
 .ug-arrow { color: var(--text-muted); }
-.ug-ver-latest { color: var(--accent-color); font-weight: 600; }
+.ug-ver-latest { color: var(--accent-color); font-weight: var(--font-weight-semibold); }
 
 .ug-release-link {
   display: block;
   text-align: center;
-  margin: 0 16px 12px;
-  font-size: 13px;
-  font-weight: 500;
+  margin:0 var(--space-7) var(--space-6);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color);
   text-decoration: none;
   cursor: pointer;
@@ -287,7 +297,7 @@ watch(visible, (v) => {
 }
 
 .ug-progress-area {
-  padding: 20px 16px;
+  padding: var(--space-8) var(--space-7);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -298,150 +308,150 @@ watch(visible, (v) => {
   width: 100%;
   height: 6px;
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
 .ug-progress-fill {
   height: 100%;
   background: var(--accent-color);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease;
 }
 
 .ug-message {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
 }
 
 .ug-completed, .ug-failed {
-  padding: 16px;
+  padding: var(--space-7);
   text-align: center;
 }
 
 .ug-success {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 600;
+  margin:0 0 var(--space-4);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
 .ug-backup-path {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   word-break: break-all;
 }
 
 .ug-no-upgrade {
-  padding: 16px;
+  padding: var(--space-7);
   text-align: center;
 }
 
 .ug-no-upgrade p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
 }
 
 .ug-error {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--text-danger, #e53e3e);
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-red);
   word-break: break-word;
 }
 
 /* Pre-flight install-directory warning (amber, non-fatal) */
 .ug-warn {
-  margin: 0 16px 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text-warning, #d69e2e) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-warning, #d69e2e) 35%, transparent);
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-orange) 35%, transparent);
   text-align: left;
 }
 
 .ug-warn-title {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-warning, #d69e2e);
+  margin:0 0 var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-orange);
 }
 
 .ug-warn-body {
-  margin: 0 0 6px;
-  font-size: 12px;
+  margin:0 0 var(--space-3);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
 }
 
 .ug-warn-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
 /* Docker advisory (informational, non-fatal) */
 .ug-hint {
-  margin: 0 16px 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   text-align: left;
 }
 
 .ug-hint-title {
-  margin: 0 0 6px;
-  font-size: 13px;
-  font-weight: 600;
+  margin:0 0 var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
 .ug-hint-body {
-  margin: 0 0 8px;
-  font-size: 12px;
+  margin:0 0 var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
 }
 
 .ug-hint-cmd {
   display: block;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-primary);
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
   word-break: break-all;
   user-select: all;
 }
 
 .ug-hint-warn {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--text-warning, #d69e2e);
-  line-height: 1.5;
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-orange);
+  line-height: var(--line-height-normal);
 }
 
 .ug-error-title {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-danger, #e53e3e);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-red);
 }
 
 .ug-error-hint {
-  margin: 6px 0 0;
-  font-size: 12px;
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
 .ug-footer {
-  padding: 8px 16px 14px;
+  padding: var(--space-4) var(--space-7) 14px;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Layout only — visual styles come from the shared .fbtn pills. */
@@ -449,7 +459,7 @@ watch(visible, (v) => {
   flex: 1;
 }
 
-.ug-fade-enter-active { transition: opacity 0.2s ease; }
-.ug-fade-leave-active { transition: opacity 0.15s ease; }
+.ug-fade-enter-active { transition: opacity var(--duration-slow) ease; }
+.ug-fade-leave-active { transition: opacity var(--duration-base) ease; }
 .ug-fade-enter-from, .ug-fade-leave-to { opacity: 0; }
 </style>

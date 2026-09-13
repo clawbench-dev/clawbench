@@ -42,19 +42,19 @@ function close() {
 
 <style scoped>
 .ios-install-steps {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .ios-step {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .ios-step-num {
@@ -66,8 +66,8 @@ function close() {
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
   flex-shrink: 0;
 }
 

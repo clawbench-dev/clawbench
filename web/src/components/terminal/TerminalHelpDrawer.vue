@@ -97,7 +97,7 @@ const sections = computed<HelpSection[]>(() => {
 
 <style>
 .th-content {
-  padding: 2px 16px 16px;
+  padding: var(--space-1) var(--space-7) var(--space-7);
 }
 
 .th-section {
@@ -108,9 +108,9 @@ const sections = computed<HelpSection[]>(() => {
 }
 
 .th-section-title {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 700;
+  margin:0 0 var(--space-4);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
   color: var(--text-secondary, #495057);
   letter-spacing: 0.02em;
 }
@@ -121,26 +121,26 @@ const sections = computed<HelpSection[]>(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .th-item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
-  font-size: 13px;
-  line-height: 1.4;
+  gap: var(--space-6);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
 }
 
 .th-name {
   flex-shrink: 0;
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary, #1a1a1a);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary, #f1f3f5);
   white-space: nowrap;
 }

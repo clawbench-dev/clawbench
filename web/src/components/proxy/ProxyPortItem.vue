@@ -92,13 +92,13 @@ const statusTitle = computed(() => {
 .proxy-port-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: var(--space-4);
+  padding: var(--space-6) 14px;
   border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   position: relative;
   overflow: hidden;
 }
@@ -118,28 +118,28 @@ const statusTitle = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .port-badges {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .port-number {
-  font-size: 18px;
-  font-weight: 700;
-  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  font-family: var(--font-mono);
   color: var(--text-primary, #1a1a1a);
   line-height: 1;
 }
 
 .port-protocol {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 6px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  padding: var(--space-1) var(--space-3);
   border-radius: 0;
   text-transform: uppercase;
   line-height: 1;
@@ -185,7 +185,7 @@ const statusTitle = computed(() => {
 
 .port-status.disabled {
   background: #9ca3af;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 @keyframes pulse-red {
@@ -199,7 +199,7 @@ const statusTitle = computed(() => {
 
 @keyframes pulse-yellow {
   0%, 100% {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
     box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
   }
   50% {
@@ -218,12 +218,12 @@ const statusTitle = computed(() => {
 .toggle-switch {
   width: 38px;
   height: 20px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: none;
   background: var(--bg-tertiary, #e9ecef);
   position: relative;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
   padding: 0;
   flex-shrink: 0;
 }
@@ -233,7 +233,7 @@ const statusTitle = computed(() => {
 }
 
 .toggle-switch:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -246,7 +246,7 @@ const statusTitle = computed(() => {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .toggle-switch.on .toggle-thumb {
@@ -258,13 +258,13 @@ const statusTitle = computed(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
-  padding-left: 2px;
+  padding-left: var(--space-1);
 }
 
 .port-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -274,20 +274,20 @@ const statusTitle = computed(() => {
 }
 
 .port-target {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  font-weight: 500;
-  padding: 1px 6px;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-medium);
+  padding:1px var(--space-3);
   border-radius: 0;
   background: rgba(59, 130, 246, 0.1);
   color: #3b82f6;
 }
 
 .port-host {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  font-weight: 500;
-  padding: 1px 6px;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-medium);
+  padding:1px var(--space-3);
   border-radius: 0;
   background: rgba(107, 114, 128, 0.1);
   color: var(--text-secondary, #666);
@@ -296,10 +296,10 @@ const statusTitle = computed(() => {
 /* Actions row */
 .port-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--space-1);
   align-items: center;
   border-top: 1px solid var(--border-color, #e5e5e5);
-  padding-top: 6px;
+  padding-top: var(--space-3);
 }
 
 .port-actions-spacer {
@@ -317,7 +317,7 @@ const statusTitle = computed(() => {
   align-items: center;
   justify-content: center;
   border-radius: 0;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -349,6 +349,6 @@ const statusTitle = computed(() => {
 
 .port-action-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
 }
 </style>

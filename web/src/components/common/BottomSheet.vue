@@ -188,7 +188,7 @@ defineExpose({
   right: 0;
   bottom: var(--dock-height, 0);
   background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
+  z-index: var(--z-overlay);
   display: flex;
   align-items: flex-end;
   overflow: hidden;
@@ -208,7 +208,7 @@ defineExpose({
   top: 0;
   background: var(--bg-secondary, #fff);
   border-top: none;
-  border-radius: 16px 16px 0 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
@@ -273,7 +273,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 0 6px;
+  padding:0 var(--space-3);
   height: var(--header-height);
   border-bottom: none;
   box-shadow: 0 1px 0 var(--border-color, #e5e5e5);
@@ -291,9 +291,9 @@ defineExpose({
   transform: translateX(-50%);
   width: 32px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--text-muted, #bbb);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* Handle-only header — compact, no box-shadow, centered handle */
@@ -312,7 +312,7 @@ defineExpose({
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   display: inline-flex;
@@ -321,20 +321,20 @@ defineExpose({
 }
 
 .bs-header-title {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
   flex-shrink: 0;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .bs-header-description {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;
@@ -356,10 +356,10 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Transparent overlay — clickable but see-through */
@@ -372,7 +372,7 @@ defineExpose({
 .bs-overlay.bs-overlay-fullscreen {
   top: 0;
   bottom: 0;
-  z-index: 1200;
+  z-index: var(--z-sheet);
 }
 
 /* ── Wide-screen auto mode: centered floating card ── */

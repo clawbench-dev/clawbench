@@ -126,21 +126,21 @@ async function saveCommand() {
 
 <style>
 .qce-edit-content {
-  padding: 12px;
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #666);
 }
 
@@ -149,14 +149,14 @@ async function saveCommand() {
 }
 
 .form-input {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .form-input:focus {
@@ -166,20 +166,20 @@ async function saveCommand() {
 .form-textarea {
   resize: vertical;
   min-height: 80px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   font-family: inherit;
 }
 
 .form-error {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #e53e3e;
 }
 
 .form-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -192,11 +192,11 @@ async function saveCommand() {
   margin: 0;
   flex-shrink: 0;
   border: 1.5px solid var(--border-color, #999);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-secondary, #fff);
   cursor: pointer;
   position: relative;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 .form-checkbox input[type="checkbox"]:checked {
@@ -222,7 +222,7 @@ async function saveCommand() {
 }
 
 .form-hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   padding-left: 24px;
 }

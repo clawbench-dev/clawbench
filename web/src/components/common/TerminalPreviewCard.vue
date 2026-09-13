@@ -64,9 +64,9 @@ const fileStyle = computed(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
-  font-family: var(--font-mono, 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace);
+  font-family: var(--font-mono);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
 }
@@ -78,8 +78,8 @@ const fileStyle = computed(() => {
 .tpc-titlebar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 6px;
+  gap: var(--space-2);
+  padding:0 var(--space-3);
   height: 16px;
   flex-shrink: 0;
   background: rgba(0, 0, 0, 0.15);
@@ -97,24 +97,24 @@ const fileStyle = computed(() => {
 
 .tpc-body {
   flex: 1;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   justify-content: center;
 }
 
 .tpc-line {
-  font-size: 10px;
-  line-height: 1.2;
+  font-size: var(--font-size-2xs);
+  line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .tpc-prompt {
-  font-weight: 700;
-  margin-right: 4px;
+  font-weight: var(--font-weight-bold);
+  margin-right: var(--space-2);
   color: var(--text-secondary);
 }
 
@@ -124,6 +124,6 @@ const fileStyle = computed(() => {
 }
 
 .tpc-file {
-  margin-left: 6px;
+  margin-left: var(--space-3);
 }
 </style>

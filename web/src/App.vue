@@ -18,7 +18,6 @@
           :src="wallpaperUrl"
           class="wallpaper-image"
           :class="{
-            'wallpaper-image--blurred': wallpaperBlurPx > 0,
             'wallpaper-image--edge-fade': wallpaperEdgeFade,
           }"
           :style="wallpaperImageStyle"
@@ -28,7 +27,6 @@
         <div class="wallpaper-scrim"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
-      <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <UpgradePromptOverlay ref="upgradePromptOverlay" />
       <UpgradeDialog ref="upgradeDialogRef" />
       <AppHeader
@@ -144,6 +142,7 @@
                       @navigate-forward="handleFileHistoryForward"
                       @capture-scroll="handleCaptureFileScroll"
                       @share-link="openShareLinkDialog"
+                      @quote-in-chat="handleFileQuoteInChat"
                       @set-as-background="handleSetAsBackground"
                     />
                     <div v-else class="view-panel-empty" :class="recentFileEntries.length ? 'has-recent' : 'no-recent'">
@@ -211,6 +210,16 @@
                   />
                 </TabPanel>
 
+                <!-- Issues & PRs Tab -->
+                <TabPanel tabId="forge" :activeTab="leftPanelActive" :noHeader="true">
+                  <ForgePanelContent
+                    :active="panelIsActive('forge')"
+                    :project-path="store.state.projectRoot"
+                    @request-project="switchTab('chat')"
+                    @quote="handleForgeQuote"
+                  />
+                </TabPanel>
+
                 <!-- Tasks Tab -->
                 <TabPanel tabId="tasks" :activeTab="leftPanelActive" :noHeader="true">
                   <TaskTab :active="panelIsActive('tasks')" @open-file="handleTaskOpenFile" />
@@ -231,15 +240,17 @@
             <template #right>
               <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <div class="col-right-chat">
-                  <!-- Shared chat title bar: spans both the chat panel and the
-                       session sidebar so they read as one column. -->
+                  <div class="chat-panel-row">
+                  <!-- Chat column: title bar + chat panel. Keeping the title
+                       bar inside this column (rather than spanning the whole
+                       right pane) leaves the session sidebar full-height. -->
+                  <div class="chat-col">
                   <div class="chat-title-bar">
                     <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
                   </div>
-                  <div class="chat-panel-row">
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
                     <ChatPanelContent
@@ -252,6 +263,7 @@
                       @open-session-search="sessionSearchDrawer.open()"
                     />
                   </TabPanel>
+                  </div>
                   <div v-if="chatDropActive" class="chat-drop-hint">
                     <Paperclip :size="16" />
                     {{ t('file.dropToAttach') }}
@@ -303,6 +315,7 @@
       <QuoteQuestionBar
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
+        :composerMode="quoteQuestion.composerMode.value"
         @add="quoteQuestion.addToConversation($event)"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
@@ -373,6 +386,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
                 <component :is="dockTabIcon(tab)" />
               </button>
+              <span v-if="tab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="tab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -382,6 +396,7 @@
               <button class="dock-btn" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
                 <component :is="dockTabIcon(singleDirectTab)" />
               </button>
+              <span v-if="singleDirectTab === 'forge' && forgeUnreadCount > 0 && activeTab !== 'forge'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': forgeBadgeAnim }" @animationend="forgeBadgeAnim = false">{{ formatBadgeCount(forgeUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
               <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="singleDirectTab === 'proxy' && store.state.portForwardEnabledCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
@@ -410,6 +425,11 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
+          <button v-if="popupOverflowTabs.includes('forge')" class="dock-overflow-item" :class="{ active: activeTab === 'forge' }" @click.stop="handleOverflowSelect('forge')">
+            <component :is="dockTabIcon('forge')" :size="16" />
+            <span>{{ t('nav.forge') }}</span>
+            <span v-if="forgeUnreadCount > 0" class="dock-overflow-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
+          </button>
           <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
             <Clock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
@@ -449,13 +469,13 @@ import { appLog, setLogCaptureEnabled, stopFlushTimer } from '@/utils/appLog'
 import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3 } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Network, SquareTerminal as TerminalIcon, Clock, MoreHorizontal, Settings, Paperclip, FileText, X, BarChart3, Github, Gitlab } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -466,6 +486,7 @@ import FileIcon from './components/common/FileIcon.vue'
 import { baseName, dirName } from '@/utils/path.ts'
 import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
+import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
@@ -474,7 +495,6 @@ const TerminalPanelContent = defineAsyncComponent({
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
-import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
 import UpgradePromptOverlay from './components/UpgradePromptOverlay.vue'
 import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
@@ -520,6 +540,7 @@ import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { openFilePath } from './composables/useFilePathAnnotation'
+import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { flashElement } from './utils/domFlash'
 import { useGlobalEvents } from './composables/useGlobalEvents'
@@ -539,6 +560,8 @@ import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
+import { useForgeUnread } from './composables/useForgeUnread.ts'
+import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -608,6 +631,11 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: newProjectPath })
       }).catch(() => {})
+    } else if (msgKey === 'AccessDenied') {
+      // The project path exists in the session DB but is no longer under the
+      // configured root paths — e.g. a cross-project session row pointing at a
+      // project the admin has since removed from the roots.
+      toast.show(t('appHeader.projectPathNotAllowed'), { icon: '⚠️', type: 'error', duration: 3000 })
     } else {
       toast.show(t('appHeader.switchProjectFailed', { error: err.message }), { icon: '⚠️', type: 'error', duration: 3000 })
     }
@@ -699,7 +727,11 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
         if (id) {
           stopWatch()
           switchTab('chat')
-          sessionIdentity.switchSession(pendingSessionId)
+          // Pass the (now-current) project path so the mark-as-read call can
+          // prove ownership. Without it the backend falls back to the cookie
+          // project and 403s, leaving the cross-project session's unread badge
+          // stuck — the whole point of opening it from the cross-project tab.
+          sessionIdentity.switchSession(pendingSessionId, resolvedProjectPath)
         }
       },
       { immediate: true }
@@ -786,6 +818,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab, force = false) {
+  // Opening the Issues & PRs tab clears its unread badge.
+  if (tab === 'forge') {
+    void markForgeRead()
+  }
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -968,7 +1004,9 @@ const wallpaperImageStyle = computed(() =>
 function refreshWallpaper() {
   const appearance = serverConfig.value?.appearance ?? {}
   const state = resolveWallpaperState(serverConfig.value?.appearance)
-  const file = String(appearance.wallpaper_file ?? '')
+  // The server resolves which image is active (mode + enabled + selection);
+  // an empty value means no wallpaper, including the globally-disabled case.
+  const file = resolveActiveFile(serverConfig.value?.appearance)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
   wallpaperActive.value = state === 'set'
@@ -978,7 +1016,33 @@ function refreshWallpaper() {
   // panel-alpha CSS variables + wallpaper-active class.
   wallpaperUrl.value = resolveWallpaperUrl(file, false)
   applyWallpaper(file, resolvePanelOpacity(appearance), dark, false)
+
+  scheduleBingFirstImagePoll()
 }
+
+// On a fresh install the Bing wallpaper is enabled but its first fetch runs in
+// the background, so the initial config has no image yet. Poll briefly so the
+// factory wallpaper appears on its own instead of requiring a manual refresh.
+let bingPollTimer = null
+let bingPollAttempts = 0
+const BING_POLL_MAX_ATTEMPTS = 20
+const BING_POLL_INTERVAL_MS = 5000
+
+function scheduleBingFirstImagePoll() {
+  if (bingPollTimer) return
+  if (!isBingFirstImagePending(serverConfig.value?.appearance)) return
+  if (bingPollAttempts >= BING_POLL_MAX_ATTEMPTS) return
+
+  bingPollAttempts += 1
+  bingPollTimer = setTimeout(async () => {
+    bingPollTimer = null
+    try { await loadConfig() } catch { /* keep the current state */ }
+  }, BING_POLL_INTERVAL_MS)
+}
+
+onUnmounted(() => {
+  if (bingPollTimer) clearTimeout(bingPollTimer)
+})
 
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
@@ -1069,7 +1133,7 @@ function projectBaseName(path) {
     return idx >= 0 ? trimmed.slice(idx + 1) : trimmed
 }
 
-// AI 完成弹窗：任何会话/定时任务完成时，若用户当前未在查看该会话，入队弹出。
+// AI 完成弹窗：任何会话/任务完成时，若用户当前未在查看该会话，入队弹出。
 // 后端 session_update/task_update 的 completed 事件已携带 session_title 与
 // response_preview（Markdown 原文）；useGlobalEvents 已按事件 ID 全局去重。
 //
@@ -1209,7 +1273,19 @@ watch(sessionSidebarRef, (ref) => {
 // openAgentSelector is NOT registered here — it's handled via
 // registerSessionDrawerRef above, which is independent.
 
-function handleSessionSelect(sessionId, _backend) {
+function handleSessionSelect(sessionId, _backend, projectPath) {
+  // Cross-project selection: the session belongs to another project, so switch
+  // projects first (hotSwitchProject's Phase 7 opens the session once the new
+  // project's identity is ready). Must run BEFORE the already-active guard —
+  // the guard compares session ids only, and a same-id session cannot exist in
+  // another project (chat_sessions.id is a global PRIMARY KEY).
+  if (projectPath && projectPath !== store.state.projectRoot) {
+    sessionIdentity.sessionDrawer.close()
+    hotSwitchProject(projectPath, sessionId).catch(() => {
+      appLog.w(TAG, 'cross-project session switch failed')
+    })
+    return
+  }
   // Selecting the ALREADY-ACTIVE session must be a no-op for the message list.
   // Without this guard, an Enter keypress anywhere outside the chat input
   // (document-level list navigation in SessionSidebar falls back to item 0,
@@ -1474,7 +1550,6 @@ async function handleLoginSuccess() {
       onUnmounted(() => dockResizeObs.disconnect())
     }
     welcomeOverlay.value?.show()
-    versionMismatchOverlay.value?.show()
     checkForUpgrade()
 
     // Handle pending navigation
@@ -1483,7 +1558,6 @@ async function handleLoginSuccess() {
 const projectDialogOpen = ref(false)
 const shareLinkOpen = ref(false)
 const welcomeOverlay = ref(null)
-const versionMismatchOverlay = ref(null)
 const upgradePromptOverlay = ref(null)
 const upgradeDialogRef = ref(null)
 
@@ -1809,7 +1883,7 @@ function handleDockTerminal() {
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
 const overflowTabs = computed(() => {
-  const tabs = ['tasks']
+  const tabs = ['forge', 'tasks']
   if (!isTerminalDisabled.value) tabs.push('terminal')
   if (!isSSHDisabled.value) tabs.push('proxy')
   tabs.push('stats')
@@ -1817,6 +1891,7 @@ const overflowTabs = computed(() => {
   return tabs
 })
 const overflowTabMeta = {
+  forge:   { icon: Github, titleKey: 'nav.forge' },
   tasks:   { icon: Clock, titleKey: 'nav.tasks' },
   proxy:   { icon: Network, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
@@ -1868,6 +1943,12 @@ watch(() => localConfig.uiScale, () => {
 
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
+  // The forge tab serves both GitHub and GitLab. GitHub is the default brand
+  // (including before a repository is bound); the icon only switches to GitLab
+  // once a GitLab repository is actually bound.
+  if (tab === 'forge') {
+    return forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github
+  }
   return overflowTabMeta[tab]?.icon ?? Clock
 }
 function dockTabTitle(tab) {
@@ -1958,6 +2039,36 @@ function handleWideDockTabClick(tab) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
+const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+// The forge dock icon reflects the bound platform (GitHub vs GitLab).
+const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
+
+// "Quote in chat" from the issue/PR detail header. Opens the shared quote bar in
+// composer mode: the issue/PR URL is attached, and NO body text is quoted by
+// default — the user selects the part they care about, then types their message.
+// The bar is global (position: fixed), so no tab switch is needed on open; the
+// add path switches to chat via onAdd.
+function handleForgeQuote(payload) {
+  const it = payload?.item
+  if (!it) return
+  quoteQuestion.openComposer({
+    url: it.url,
+    label: `${it.slug}#${it.number}`,
+    onAdd: () => switchTab('chat'),
+  })
+}
+
+// "Quote in chat" from the file browser header. Same composer as the forge
+// header, but the attachment is the local file instead of an external URL, and
+// no quote text is pre-filled — the user types the instruction themselves.
+function handleFileQuoteInChat(path) {
+  if (!path) return
+  quoteQuestion.openComposer({
+    filePath: path,
+    label: baseName(path),
+    onAdd: () => switchTab('chat'),
+  })
+}
 const { uploadAndAttach } = useFileUpload()
 const chatDropActive = ref(false)
 let chatDropCounter = 0
@@ -2021,6 +2132,7 @@ const wideScreenTabMeta = {
   browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
   view: { icon: FileText, titleKey: 'nav.fileView' },
   history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
+  forge: overflowTabMeta.forge,
   tasks: overflowTabMeta.tasks,
   proxy: overflowTabMeta.proxy,
   terminal: overflowTabMeta.terminal,
@@ -2029,6 +2141,9 @@ const wideScreenTabMeta = {
 }
 
 function wideDockTabIcon(tab) {
+  // Route forge through the same platform-aware logic as the compact dock, so
+  // the wide-screen dock shows the GitHub/GitLab brand too.
+  if (tab === 'forge') return dockTabIcon('forge')
   return wideScreenTabMeta[tab]?.icon ?? FolderOpen
 }
 function wideDockTabTitle(tab) {
@@ -2048,6 +2163,7 @@ function wideDockBtnClass(tab) {
 function wideDockBadgeCount(tab) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
+    case 'forge': return forgeUnreadCount.value
     case 'tasks': return store.state.taskUnreadCount
     case 'terminal': return store.state.terminalSessionCount
     case 'proxy': return store.state.portForwardEnabledCount
@@ -2060,6 +2176,7 @@ function wideDockBadgeVisible(tab) {
 function wideDockBadgeAnim(tab) {
   switch (tab) {
     case 'history': return historyBadgeAnim.value
+    case 'forge': return forgeBadgeAnim.value
     case 'tasks': return taskBadgeAnim.value
     case 'terminal': return terminalBadgeAnim.value
     case 'proxy': return proxyBadgeAnim.value
@@ -2069,6 +2186,7 @@ function wideDockBadgeAnim(tab) {
 function wideDockBadgeAnimEnd(tab) {
   switch (tab) {
     case 'history': historyBadgeAnim.value = false; break
+    case 'forge': forgeBadgeAnim.value = false; break
     case 'tasks': taskBadgeAnim.value = false; break
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
@@ -2111,6 +2229,7 @@ const overflowButtonIcon = computed(() => {
 // Dock badge change animations
 const chatBadgeAnim = ref(false)
 const historyBadgeAnim = ref(false)
+const forgeBadgeAnim = ref(false)
 const taskBadgeAnim = ref(false)
 const terminalBadgeAnim = ref(false)
 const proxyBadgeAnim = ref(false)
@@ -2143,12 +2262,14 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
 })
 
 const overflowBadgeCount = computed(() => {
-  let count = store.state.taskUnreadCount
+  let count = forgeUnreadCount.value + store.state.taskUnreadCount
   if (!isSSHDisabled.value) count += store.state.portForwardEnabledCount
   if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
-  // Subtract counts for ALL inline overflow tabs
+  // Subtract counts for ALL inline overflow tabs, so the aggregate badge only
+  // reflects what is hidden behind the overflow button.
   for (const tab of allInlineOverflowTabs.value) {
-    if (tab === 'tasks') count -= store.state.taskUnreadCount
+    if (tab === 'forge') count -= forgeUnreadCount.value
+    else if (tab === 'tasks') count -= store.state.taskUnreadCount
     else if (tab === 'proxy') count -= store.state.portForwardEnabledCount
     else if (tab === 'terminal') count -= store.state.terminalSessionCount
   }
@@ -2209,9 +2330,15 @@ function handleOpenTerminal(cwd) {
 let activeLineScrollCancel = null
 let lineScrollRequestId = 0
 
-function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, anchorId) {
+function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, anchorId, lineRanges) {
     const startLine = Math.max(1, line)
     const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
+    // Multi-range annotations flash every listed line (clamped to a sane cap);
+    // otherwise the single [startLine, endLine] span is flashed.
+    const parsedRanges = lineRanges ? parseLineRanges(lineRanges) : []
+    const flashLines = parsedRanges.length > 0
+        ? flattenLineNumbers(parsedRanges, 2000)
+        : (() => { const out = []; for (let i = startLine; i <= endLine; i++) out.push(i); return out })()
     const selector = `.code-line[data-line="${startLine}"]`
     const requestId = ++lineScrollRequestId
     const maxAttempts = 60
@@ -2244,7 +2371,7 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
         // CodeMirror may mount asynchronously when a rendered Markdown file is
         // switched to source mode. Retry the same request until it acknowledges it.
         window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
-            detail: { line: startLine, lineEnd, path, requestId },
+            detail: { line: startLine, lineEnd, path, requestId, lineRanges },
         }))
         if (handled) return
 
@@ -2254,8 +2381,8 @@ function scrollToLine(line, lineEnd, path = store.state.currentFile?.path, ancho
             // so it doesn't override our scroll target
             window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
             firstEl.scrollIntoView({ behavior: 'auto', block: 'center' })
-            // Flash the range
-            for (let i = startLine; i <= endLine; i++) {
+            // Flash the target lines (all ranges, or the single span)
+            for (const i of flashLines) {
                 const el = document.querySelector(`.code-line[data-line="${i}"]`)
                 if (el) {
                     flashElement(el)
@@ -2378,7 +2505,7 @@ function playQuoteEmitAnimation(e) {
     position: fixed; width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent-color, #0066cc);
     box-shadow: 0 0 10px 3px color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent);
-    z-index: 9999; pointer-events: none; left: 0; top: 0; will-change: transform, opacity;
+    z-index: var(--z-popover); pointer-events: none; left: 0; top: 0; will-change: transform, opacity;
   `
   document.body.appendChild(dot)
   const duration = 420, start = performance.now()
@@ -2406,6 +2533,10 @@ function playQuoteEmitAnimation(e) {
 
 onMounted(async () => {
     applyTheme(theme.value)
+    // Prime the forge unread badge (server-authoritative; independent of the
+    // notification toggles) and the bound platform (drives the dock icon).
+    void refreshForgeUnread()
+    void refreshForgePlatform()
     let resp
     try {
         resp = await fetch('/api/me')
@@ -2455,7 +2586,6 @@ onMounted(async () => {
     applyFontConfig()
     startDockResize()
     welcomeOverlay.value?.show()
-    versionMismatchOverlay.value?.show()
     checkForUpgrade()
 
     // Handle pending navigation from push notification deep link
@@ -2695,7 +2825,7 @@ onUnmounted(() => {
     text-decoration: underline;
 }
 .app-container {
-    transition: opacity 0.15s ease;
+    transition: opacity var(--duration-base) ease;
 }
 .app-container.project-switching {
     opacity: 0;
@@ -2730,8 +2860,8 @@ onUnmounted(() => {
 .view-panel-empty.has-recent {
   align-items: stretch;
   justify-content: flex-start;
-  gap: 12px;
-  padding: 16px 20px 20px;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-8) var(--space-8);
   text-align: left;
 }
 
@@ -2739,7 +2869,7 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -2748,7 +2878,7 @@ onUnmounted(() => {
 .view-panel-empty.has-recent .view-empty-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -2762,24 +2892,24 @@ onUnmounted(() => {
 .view-panel-empty.no-recent {
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 32px 16px;
+  gap: var(--space-7);
+  padding:32px var(--space-7);
   text-align: center;
 }
 
 .view-empty-icon {
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .view-empty-no-recent-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted);
 }
 
 .view-empty-recent-title {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   text-align: left;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -2789,12 +2919,12 @@ onUnmounted(() => {
 .view-empty-recent-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .view-empty-recent-text {
@@ -2802,7 +2932,7 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .view-empty-recent-item:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
@@ -2814,7 +2944,7 @@ onUnmounted(() => {
 
 .view-empty-recent-name {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2830,11 +2960,11 @@ onUnmounted(() => {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 .view-empty-recent-item:hover .view-empty-recent-remove {
@@ -2853,7 +2983,7 @@ onUnmounted(() => {
 
 .view-empty-recent-dir {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2864,15 +2994,15 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 9px 16px;
+  gap: var(--space-4);
+  padding:9px var(--space-7);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .view-empty-manager-btn:hover {
@@ -2897,20 +3027,20 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
 }
-/* Shared chat title bar sits above the chat panel + session sidebar row. */
+/* Chat title bar: scoped to the chat column (see .chat-col below). */
 .chat-title-bar {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 2px 8px;
+    gap: var(--space-4);
+    padding: var(--space-1) var(--space-4);
     height: var(--header-height);
     background: var(--bg-secondary, #fff);
     border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
     overflow: hidden;
     white-space: nowrap;
 }
-/* Chat tab panel + session sidebar live in this row below the title bar. */
+/* Chat column + session sidebar live in this row below the right pane top. */
 .chat-panel-row {
     position: relative;
     flex: 1;
@@ -2918,13 +3048,24 @@ onUnmounted(() => {
     display: flex;
     flex-direction: row;
 }
-/* Chat tab panel participates in the chat-panel-row flex row so the session
-   sidebar can sit inline beside it (instead of the global absolute inset:0
-   .tab-panel default which would cover the sidebar). */
-.chat-panel-row > .chat-tab-panel {
+/* Chat column: title bar stacked above the chat tab panel. Keeping the title
+   bar scoped here (not spanning the whole right pane) lets the session
+   sidebar render full-height beside it. */
+.chat-col {
     position: relative;
     flex: 1;
     min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+/* Chat tab panel fills the chat column below the title bar (instead of the
+   global absolute inset:0 .tab-panel default which would cover the sidebar). */
+.chat-col > .chat-tab-panel {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
 }
 
 /* Drag file/dir onto the chat column (wide-screen) — highlight the drop target */
@@ -2946,15 +3087,15 @@ onUnmounted(() => {
     transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 18px;
-    border-radius: 999px;
+    gap: var(--space-3);
+    padding: var(--space-5) 18px;
+    border-radius: var(--radius-full);
     background: var(--bg-primary);
     border: 1px solid var(--accent-color, #0066cc);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
     color: var(--accent-color, #0066cc);
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
     pointer-events: none;
     z-index: 11;
 }
@@ -3001,7 +3142,7 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-6);
     /* Keep in sync with the JS constant WIDE_DOCK_PAD_TOP — the absolute
        active indicator offsets by the same value to stay centered. */
     padding-top: v-bind(WIDE_DOCK_PAD_TOP + 'px');
@@ -3019,7 +3160,7 @@ onUnmounted(() => {
 .wide-dock-bottom {
     flex-shrink: 0;
     margin-top: auto;
-    padding-bottom: 8px;
+    padding-bottom: var(--space-4);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3040,7 +3181,7 @@ onUnmounted(() => {
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     /* Base uses a springy overshoot (for the bottom-dock water-drop); a smooth
        ease-out reads better on a full-width highlight. */
-    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform var(--duration-slow) cubic-bezier(0.16, 1, 0.3, 1);
 }
 .wide-dock .wide-dock-active-indicator::before {
     content: '';
@@ -3064,20 +3205,20 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px 8px;
+    padding: var(--space-3) var(--space-4);
     background: var(--bg-primary);
     border-top: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
 }
 
 .dock-safe-area {
-    height: env(safe-area-inset-bottom, 0px);
+    height: env(safe-area-inset-bottom, 0);
 }
 
 .dock-center {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-6);
     position: relative;
     /* Use margin:auto instead of justify-content:center so absolute-positioned
        indicator at left:0 aligns exactly with the first button */
@@ -3110,7 +3251,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: color 0.25s, transform 0.15s;
+    transition: color 0.25s, transform var(--duration-base);
     z-index: 1;
 }
 
@@ -3136,7 +3277,7 @@ onUnmounted(() => {
 }
 
 .dock-btn.disabled {
-    opacity: 0.3;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 
@@ -3166,10 +3307,10 @@ onUnmounted(() => {
     width: auto;
     height: auto;
     min-width: 16px;
-    padding: 0 4px;
-    border-radius: 8px;
-    font-size: 10px;
-    font-weight: 700;
+    padding:0 var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
     line-height: 16px;
     text-align: center;
     color: #fff;
@@ -3266,10 +3407,10 @@ onUnmounted(() => {
 .dock-overflow-popup {
     background: var(--bg-elevated, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
-    border-radius: 12px;
-    padding: 4px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-2);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-    z-index: 9999;
+    z-index: var(--z-popover);
     min-width: 140px;
 }
 
@@ -3289,16 +3430,16 @@ onUnmounted(() => {
 .dock-overflow-item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-5);
     width: 100%;
-    padding: 8px 12px;
+    padding: var(--space-4) var(--space-6);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base);
     white-space: nowrap;
 }
 
@@ -3323,11 +3464,11 @@ onUnmounted(() => {
     margin-left: auto;
     min-width: 18px;
     padding: 0 5px;
-    border-radius: 9px;
+    border-radius: var(--radius-md);
     background: var(--accent-color);
     color: #fff;
-    font-size: 11px;
-    font-weight: 700;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-bold);
     line-height: 18px;
     text-align: center;
     flex-shrink: 0;
@@ -3336,10 +3477,10 @@ onUnmounted(() => {
 
 /* Popup transition */
 .dock-popup-enter-active {
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
 }
 .dock-popup-leave-active {
-    transition: opacity 0.1s ease, transform 0.1s ease;
+    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
 }
 .dock-popup-enter-from,
 .dock-popup-leave-to {

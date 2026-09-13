@@ -379,39 +379,18 @@ func TestStripMarkdown_AskQuestion_RegularCodeBlockUnaffected(t *testing.T) {
 	assert.Contains(t, result, "Yes")
 }
 
-func TestStripMarkdown_AskQuestion_JSONFormat(t *testing.T) {
+func TestStripMarkdown_AskQuestion_JSONContentStripped(t *testing.T) {
 	input := `<ask-question>
-{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}
+{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"}]}]}
 </ask-question>`
 	result := StripMarkdown(input)
+	// JSON is no longer parsed; the tag is stripped and the raw text remains.
 	assert.NotContains(t, result, "<ask-question>")
 	assert.NotContains(t, result, "</ask-question>")
 	assert.Contains(t, result, "Which approach?")
-	assert.Contains(t, result, "Option A")
-	assert.Contains(t, result, "Safe")
 }
 
-func TestStripMarkdown_AskQuestion_JSONFormat_MultipleQuestions(t *testing.T) {
-	input := `<ask-question>
-{"questions":[{"header":"Q1","multiSelect":false,"question":"First?","options":[{"label":"A"}]},{"header":"Q2","multiSelect":true,"question":"Second?","options":[{"label":"B","description":"Beta"}]}]}
-</ask-question>`
-	result := StripMarkdown(input)
-	assert.Contains(t, result, "First?")
-	assert.Contains(t, result, "Second?")
-	assert.Contains(t, result, "B")
-	assert.Contains(t, result, "Beta")
-}
-
-func TestStripMarkdown_AskQuestion_JSONFormat_NoDescription(t *testing.T) {
-	input := `<ask-question>
-{"questions":[{"header":"Pick","multiSelect":false,"question":"Choose","options":[{"label":"Yes"}]}]}
-</ask-question>`
-	result := StripMarkdown(input)
-	assert.Contains(t, result, "Choose")
-	assert.Contains(t, result, "Yes")
-}
-
-func TestStripMarkdown_AskQuestion_InvalidJSON(t *testing.T) {
+func TestStripMarkdown_AskQuestion_InvalidContent(t *testing.T) {
 	input := `<ask-question>
 {not valid json}
 </ask-question>`

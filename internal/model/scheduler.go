@@ -1,16 +1,28 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ScheduledTask represents a cron-scheduled AI task.
 type ScheduledTask struct {
-	ID                int64                  `json:"id"`
-	ProjectPath       string                 `json:"projectPath"`
-	Name              string                 `json:"name"`
-	Description       string                 `json:"description,omitempty"`
-	CronExpr          string                 `json:"cronExpr"`
-	AgentID           string                 `json:"agentId"`
-	Prompt            string                 `json:"prompt"`
+	ID          int64  `json:"id"`
+	ProjectPath string `json:"projectPath"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	CronExpr    string `json:"cronExpr"`
+	AgentID     string `json:"agentId"`
+	Prompt      string `json:"prompt"`
+	// TriggerMode selects how the task runs: "cron" (default) or "event".
+	TriggerMode string `json:"triggerMode,omitempty"`
+	// EventTypes lists the forge event types that trigger an event task
+	// (comma-separated: opened,closed,merged,reopened,commented,pipeline_done).
+	//
+	// An event task always watches its own project's bound repository, so there
+	// is deliberately no repository field: the binding is the single source of
+	// truth and cannot drift from the task configuration.
+	EventTypes        string                 `json:"eventTypes,omitempty"`
 	SessionID         string                 `json:"sessionId,omitempty"`
 	Status            string                 `json:"status"`     // active / paused / completed
 	RepeatMode        string                 `json:"repeatMode"` // once / limited / unlimited
@@ -24,6 +36,33 @@ type ScheduledTask struct {
 	UpdatedAt         time.Time              `json:"updatedAt"`
 	RunningExecutions []RunningExecutionView `json:"runningExecutions,omitempty"`
 	RunningCount      int                    `json:"runningCount,omitempty"`
+}
+
+// IsEventTriggered reports whether the task runs on forge events rather than a
+// cron schedule.
+func (t *ScheduledTask) IsEventTriggered() bool {
+	return t.TriggerMode == "event"
+}
+
+// EventTypeList splits the stored comma-separated event types.
+func (t *ScheduledTask) EventTypeList() []string {
+	return SplitEventTypes(t.EventTypes)
+}
+
+// SplitEventTypes parses a comma-separated event subscription into a clean list,
+// dropping empty entries so "a,, b" yields ["a", "b"].
+func SplitEventTypes(eventTypes string) []string {
+	if eventTypes == "" {
+		return nil
+	}
+	parts := strings.Split(eventTypes, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // RunningExecutionView is the frontend-facing representation of a running task execution.

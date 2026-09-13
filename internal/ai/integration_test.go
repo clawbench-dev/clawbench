@@ -1026,12 +1026,6 @@ func testCLIStreamEvents(t *testing.T, cfg cliTestConfig) {
 	} else if cfg.HasSessionIDInMeta {
 		assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
 	}
-
-	// Most CLI backends emit raw_output for debugging (except CodeWhale which has its own parser)
-	if cfg.Backend != "deepseek" {
-		rawEvents := findEvents(events, "raw_output")
-		assert.NotEmpty(t, rawEvents, "should have raw_output event")
-	}
 }
 
 // --- 3. Session Resume (2-turn) ---

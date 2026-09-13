@@ -30,11 +30,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
-    font-size: 11px;
-    line-height: 1.4;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-snug);
     user-select: none;
     min-height: 22px;
 }
@@ -42,16 +42,16 @@
 /* ─── Language label ─── */
 .code-block-lang {
     color: var(--text-muted);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     text-transform: lowercase;
-    font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
+    font-family: var(--font-mono);
 }
 
 /* ─── Actions group (right side) ─── */
 .code-block-header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
 }
 
 /* ─── Header buttons: copy + wrap toggle ─── */
@@ -64,13 +64,13 @@
     width: 22px;
     height: 22px;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
-    opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
 }
@@ -90,7 +90,7 @@
 
 /* ─── Active wrap state ─── */
 .code-block-wrap-btn.is-wrapped {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     color: var(--accent-color);
 }
 
@@ -103,12 +103,12 @@
     opacity: 1;
     color: var(--accent-color);
     width: auto;
-    padding: 0 4px;
+    padding:0 var(--space-2);
 }
 
 .code-block-copied-text {
-    font-size: 11px;
-    font-weight: 500;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
 }
 
 /* ─── Code block inside wrapper: override default pre styles ─── */
@@ -166,11 +166,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
-    font-size: 11px;
-    line-height: 1.4;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-snug);
     user-select: none;
     min-height: 22px;
 }
@@ -178,16 +178,16 @@
 /* ─── Label ─── */
 .table-block-label {
     color: var(--text-muted);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
     text-transform: lowercase;
-    font-family: var(--font-mono, 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace);
+    font-family: var(--font-mono);
 }
 
 /* ─── Actions group (right side) ─── */
 .table-block-header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
 }
 
 /* ─── Header buttons: copy + wrap toggle ─── */
@@ -200,13 +200,13 @@
     width: 22px;
     height: 22px;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
-    opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
 }
@@ -227,7 +227,7 @@
 
 /* ─── Active wrap state ─── */
 .table-block-wrap-btn.is-wrapped {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     color: var(--accent-color);
 }
 
@@ -240,12 +240,12 @@
     opacity: 1;
     color: var(--accent-color);
     width: auto;
-    padding: 0 4px;
+    padding:0 var(--space-2);
 }
 
 .table-block-copied-text {
-    font-size: 11px;
-    font-weight: 500;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
 }
 
 /* ─── Copy dropdown trigger (copy icon + chevron) ─── */
@@ -262,7 +262,7 @@
 }
 
 .table-block-copy-btn svg:last-child {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
 }
 
 .table-block-copy-btn[aria-expanded="true"] {
@@ -278,7 +278,7 @@
     right: 0;
     z-index: 100;
     min-width: 140px;
-    padding: 4px 0;
+    padding: var(--space-2) 0;
     background: var(--code-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md, 6px);
@@ -289,11 +289,11 @@
 .table-block-copy-menu-item {
     display: block;
     width: 100%;
-    padding: 7px 12px;
+    padding:7px var(--space-6);
     border: none;
     background: none;
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
@@ -305,7 +305,7 @@
 
 .table-block-copy-menu-item.is-copied {
     color: var(--accent-color);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 /* ─── Table-wrap inside wrapper ─── */
@@ -331,7 +331,6 @@
 .table-block-wrapper td {
     white-space: normal !important;  /* override white-space:nowrap from ChatMessageItem */
     word-break: break-word !important;
-    overflow-wrap: break-word !important;
 }
 
 /* ─── No-wrap mode: horizontal scroll (toggled off) ─── */

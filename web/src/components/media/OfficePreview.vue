@@ -265,7 +265,7 @@ defineExpose({
 
 /* Excel overrides: small font, limit cell width, hide toolbar */
 .office-preview-body :deep(.x-spreadsheet table) {
-  font-size: 11px !important;
+  font-size: var(--font-size-xs) !important;
 }
 
 .office-preview-body :deep(.x-spreadsheet td),
@@ -291,7 +291,7 @@ defineExpose({
 
 .office-preview-body :deep(.pptx-preview-slide-wrapper) {
   width: 100% !important;
-  margin: 0 auto 10px !important;
+  margin:0 auto var(--space-5) !important;
 }
 
 .office-preview-body :deep(.slide-wrapper),
@@ -321,42 +321,42 @@ defineExpose({
 .office-error-overlay > svg {
   width: 48px;
   height: 48px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .office-error-title {
-  font-size: 16px;
-  font-weight: 500;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .office-error-desc {
-  font-size: 14px;
-  margin-bottom: 20px;
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--space-8);
   max-width: 400px;
   word-break: break-word;
 }
 
 .office-error-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .office-retry-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 16px;
+  padding: var(--space-3) var(--space-7);
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 14px;
-  font-size: 13px;
-  font-weight: 500;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  gap: 6px;
-  transition: all 0.15s;
+  gap: var(--space-3);
+  transition: all var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -370,17 +370,17 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 16px;
+  padding: var(--space-3) var(--space-7);
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  gap: 6px;
-  transition: filter 0.15s;
+  gap: var(--space-3);
+  transition: filter var(--duration-base);
 }
 
 @media (hover: hover) {

@@ -142,6 +142,28 @@ describe('CodeMirrorViewer (real CodeMirror)', () => {
     expect(() => wrapper.vm.scrollToLine(8)).not.toThrow()
   })
 
+  it('scrolls and flashes a multi-range target without throwing', async () => {
+    const wrapper = mountViewer({
+      file: { path: '/tmp/multi.ts', name: 'multi.ts' },
+      content: Array.from({ length: 50 }, (_, i) => `line${i + 1}`).join('\n') + '\n',
+    })
+    await sleep(80)
+
+    const handled = vi.fn()
+    window.addEventListener('cm-scroll-to-line-handled', handled)
+
+    window.dispatchEvent(new CustomEvent('cm-scroll-to-line', {
+      detail: { line: 5, path: '/tmp/multi.ts', requestId: 7, lineRanges: '5,20-21,49' },
+    }))
+    await sleep(20)
+
+    expect(handled).toHaveBeenCalledTimes(1)
+    expect(handled.mock.calls[0][0].detail).toEqual({ requestId: 7 })
+
+    window.removeEventListener('cm-scroll-to-line-handled', handled)
+    wrapper.unmount()
+  })
+
   it('acknowledges matching delayed line navigation and ignores another file', async () => {
     const wrapper = mountViewer({
       file: { path: '/tmp/current.ts', name: 'current.ts' },

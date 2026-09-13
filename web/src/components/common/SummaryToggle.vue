@@ -5,7 +5,7 @@
     <FileText v-else :size="14" />
     <span>{{ showingSummary ? labelOriginal : labelSummary }}</span>
   </button>
-  <!-- Tab mode: segmented control in task exec detail -->
+  <!-- Tab mode: page tabs in task exec detail -->
   <div v-else class="summary-toggle-bar">
     <button class="summary-toggle-tab" :class="{ active: showingSummary }" @click="!showingSummary && $emit('toggle')">
       <Sparkles :size="14" />
@@ -42,44 +42,55 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
 </script>
 
 <style scoped>
-/* ── Tab mode ── */
+/* ── Tab mode — matches the stats panel tab bar: connected rectangular tabs
+   where the active one gets a tinted background and a bottom accent line. ── */
 .summary-toggle-bar {
   display: flex;
-  gap: 2px;
-  margin-bottom: 12px;
-  background: var(--bg-secondary, #f1f5f9);
-  border-radius: 0;
-  padding: 3px;
+  align-items: stretch;
+  height: 34px;
+  margin-bottom: var(--space-6);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .summary-toggle-tab {
   flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary, #6b7280);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 0;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  text-align: center;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-}
-
-.summary-toggle-tab.active {
-  background: var(--bg-tertiary, #e2e8f0);
-  color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  gap: 5px;
+  padding:0 var(--space-7);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
 
 @media (hover: hover) {
   .summary-toggle-tab:not(.active):hover {
-    color: var(--text-primary, #1a1a1a);
-    background: var(--bg-tertiary, #e2e8f0);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
   }
+}
+
+.summary-toggle-tab.active {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.summary-toggle-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent-color);
 }
 </style>

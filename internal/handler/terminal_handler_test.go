@@ -18,7 +18,7 @@ import (
 // decodeRespJSON is already defined in testutil_test.go but we need json for QuickCommand
 var _ = json.Marshal // ensure json is used
 
-func TestTerminalConfigRouteRequiresAuth(t *testing.T) {
+func TestTerminalStatusRouteRequiresAuth(t *testing.T) {
 	origToken := model.SessionToken
 	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
@@ -32,13 +32,13 @@ func TestTerminalConfigRouteRequiresAuth(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/terminal/config", http.NoBody)
+	req := httptest.NewRequest(http.MethodGet, "/api/terminal/status", http.NoBody)
 	req.RemoteAddr = "203.0.113.10:12345"
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected terminal config to require auth, got status %d body %s", w.Code, w.Body.String())
+		t.Fatalf("expected terminal status to require auth, got status %d body %s", w.Code, w.Body.String())
 	}
 }
 
@@ -68,49 +68,6 @@ func TestTerminalWebSocketRejectsInvalidCwdBeforeUpgrade(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected invalid cwd to be rejected before websocket upgrade, got status %d body %s", w.Code, w.Body.String())
 	}
-}
-
-// ---------- TerminalConfigHandler ----------
-
-func TestTerminalConfig_NilManager(t *testing.T) {
-	origMgr := GetTerminalManager()
-	t.Cleanup(func() { SetTerminalManager(origMgr) })
-	SetTerminalManager(nil)
-
-	req := newRequest(t, http.MethodGet, "/api/terminal/config", nil)
-	w := callHandler(TerminalConfigHandler, req)
-	assertOK(t, w)
-
-	var result map[string]any
-	decodeRespJSON(t, w.Body, &result)
-	assert.Equal(t, false, result["enabled"])
-}
-
-func TestTerminalConfig_EnabledManager(t *testing.T) {
-	origMgr := GetTerminalManager()
-	t.Cleanup(func() {
-		curMgr := GetTerminalManager()
-		if curMgr != nil && curMgr != origMgr {
-			curMgr.Close()
-		}
-		SetTerminalManager(origMgr)
-	})
-
-	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
-		Enabled:      true,
-		IdleTimeout:  "1m",
-		BufferLines:  100,
-		MaxLineBytes: 65536,
-		MaxBufferMB:  4,
-	}, 20000))
-
-	req := newRequest(t, http.MethodGet, "/api/terminal/config", nil)
-	w := callHandler(TerminalConfigHandler, req)
-	assertOK(t, w)
-
-	var result map[string]any
-	decodeRespJSON(t, w.Body, &result)
-	assert.Equal(t, true, result["enabled"])
 }
 
 // ---------- TerminalStatus ----------

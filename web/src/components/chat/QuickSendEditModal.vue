@@ -106,21 +106,21 @@ async function saveItem() {
 
 <style>
 .qse-edit-content {
-  padding: 12px;
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #666);
 }
 
@@ -129,14 +129,14 @@ async function saveItem() {
 }
 
 .form-input {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .form-input:focus {
@@ -146,20 +146,20 @@ async function saveItem() {
 .form-textarea {
   resize: vertical;
   min-height: 160px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   font-family: inherit;
 }
 
 .form-error {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #e53e3e;
 }
 
 .form-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
 }

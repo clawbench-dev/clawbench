@@ -83,6 +83,6 @@ const initialStyle = computed(() => ({
     border-radius: 20%;
     background: var(--bg-tertiary);
     color: var(--text-secondary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 </style>

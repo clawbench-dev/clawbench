@@ -110,15 +110,15 @@ function handleClose() {
 
 .kcd-tab {
   flex: 1;
-  padding: 10px 0;
+  padding: var(--space-5) 0;
   border: none;
   background: none;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
   color: var(--text-muted, #999);
   cursor: pointer;
   position: relative;
-  transition: color 0.2s;
+  transition: color var(--duration-slow);
   font-family: inherit;
   -webkit-tap-highlight-color: transparent;
 }
@@ -134,7 +134,7 @@ function handleClose() {
   left: 20%;
   right: 20%;
   height: 2px;
-  background: var(--accent, #4f8ef7);
+  background: var(--accent-color);
   border-radius: 1px;
 }
 
@@ -150,7 +150,7 @@ function handleClose() {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
 }
 </style>

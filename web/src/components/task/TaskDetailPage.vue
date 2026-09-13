@@ -28,7 +28,11 @@
       </button>
 
       <template v-if="taskStatus === 'active'">
-        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <!-- An event task has no event to inject on a manual run, so its
+             {{TITLE}}/{{URL}} placeholders would go unsubstituted. The backend
+             rejects such a trigger (409); hide the button rather than offer an
+             action that can only fail. -->
+        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -42,7 +46,7 @@
         </button>
       </template>
       <template v-else-if="taskStatus === 'paused'">
-        <button class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+        <button v-if="!isEventTriggered" class="fbtn fbtn-primary" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -102,6 +106,10 @@ const { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask } = useTas
 const taskStatus = computed(() => props.task.status as string)
 const taskRunningCount = computed(() => props.task.runningCount as number)
 
+// An absent triggerMode is the cron default (tasks created before event mode
+// existed carry no field). Same reading as TaskListPage / TaskOverviewTab.
+const isEventTriggered = computed(() => (props.task.triggerMode as string) === 'event')
+
 const refreshing = ref(false)
 const scrollRef = ref<HTMLElement | null>(null)
 const historyTabRef = ref<InstanceType<typeof TaskHistoryTab> | null>(null)
@@ -139,18 +147,18 @@ async function onRefresh() {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .header-btn {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -158,11 +166,11 @@ async function onRefresh() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -190,18 +198,18 @@ async function onRefresh() {
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--border-color, #e5e5e5);
-  padding: 8px;
-  gap: 6px;
+  padding: var(--space-4);
+  gap: var(--space-3);
 }
 
 .history-section-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
+  gap: var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
-  padding: 2px 0;
+  padding: var(--space-1) 0;
   flex-shrink: 0;
 }
 
@@ -209,16 +217,16 @@ async function onRefresh() {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -236,8 +244,8 @@ async function onRefresh() {
 .detail-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;

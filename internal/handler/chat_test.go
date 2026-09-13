@@ -424,117 +424,6 @@ func TestBlocksSerialization_RoundTrip(t *testing.T) {
 // ============================================================================
 // HTTP-level handler tests
 // ============================================================================
-
-// --- ServeChatHistory ---
-
-func TestServeChatHistory_Get_NoSessions(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/ai/history", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeChatHistory, req)
-	assertOK(t, w)
-
-	var result map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.NotNil(t, result["sessionId"])
-	assert.NotNil(t, result["messages"])
-}
-
-func TestServeChatHistory_Get_WithExistingSession(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Create a session first
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test session", "", "", "default", "chat")
-	assert.NoError(t, err)
-
-	// Add a message to that session
-	_, err = service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "hello", nil, false, "NewSession")
-	assert.NoError(t, err)
-
-	req := newRequest(t, http.MethodGet, "/api/ai/history", nil)
-	withProjectCookie(req, env.ProjectDir)
-	withSessionCookie(req, sessionID)
-
-	w := callHandler(ServeChatHistory, req)
-	assertOK(t, w)
-
-	var result map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, sessionID, result["sessionId"])
-
-	messages, ok := result["messages"].([]interface{})
-	assert.True(t, ok)
-	assert.Len(t, messages, 1)
-}
-
-func TestServeChatHistory_Post_AddMessage(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Create a session first
-	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test session", "", "", "default", "chat")
-	assert.NoError(t, err)
-
-	body := map[string]string{
-		"role":       "user",
-		"content":    "Hello AI",
-		"session_id": sessionID,
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/history", body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeChatHistory, req)
-	assertOK(t, w)
-
-	var result map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, true, result["ok"])
-	assert.NotNil(t, result["savedAt"])
-}
-
-func TestServeChatHistory_Post_InvalidRole(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	body := map[string]string{
-		"role":    "admin",
-		"content": "Hello",
-	}
-	req := newRequest(t, http.MethodPost, "/api/ai/history", body)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeChatHistory, req)
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestServeChatHistory_Post_InvalidBody(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// Send invalid JSON by using raw bytes
-	req := httptest.NewRequest(http.MethodPost, "/api/ai/history", strings.NewReader("not json"))
-	req.Header.Set("Content-Type", "application/json")
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeChatHistory, req)
-	assertStatus(t, w, http.StatusBadRequest)
-}
-
-func TestServeChatHistory_NoProjectCookie(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/ai/history", nil)
-	// No project cookie set
-
-	w := callHandler(ServeChatHistory, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
 // --- ServeSessions ---
 
 func TestServeSessions_Get(t *testing.T) {
@@ -957,45 +846,6 @@ func TestCancelChat_StuckSessionForceClears(t *testing.T) {
 	assert.True(t, service.TrySetSessionRunning(sid))
 }
 
-// --- ServeAISession ---
-
-func TestServeAISession_DeleteNonExistentDir(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodDelete, "/api/ai/session", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeAISession, req)
-	assertOK(t, w)
-
-	var result map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, true, result["ok"])
-	assert.Equal(t, float64(0), result["deleted"])
-}
-
-func TestServeAISession_WrongMethod(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodPost, "/api/ai/session", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeAISession, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
-
-func TestServeAISession_NoProjectCookie(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodDelete, "/api/ai/session", nil)
-
-	w := callHandler(ServeAISession, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
 // --- ServeAISessionUpdate (PATCH /api/ai/session/update) ---
 
 func TestServeAISessionUpdate_NoSessionID(t *testing.T) {
@@ -1410,6 +1260,157 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 // running and a message is enqueued via POST /api/ai/chat, the user message
 // IS persisted to the database (queued-message-persistence plan). The row is
 // queued=1 and discovered via the queued-message query.
+// TestAIChat_URLAttachment_PreservesLabel verifies that a URL attachment keeps
+// its human-readable label (Path) through validation and persistence.
+//
+// Regression: the URL branch rebuilt the entry as {Kind, URL} only, dropping
+// Path. After a reload the chip had no text, because the renderer uses Path as
+// the label for URL entries.
+func TestAIChat_URLAttachment_PreservesLabel(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-attach", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "analyze this issue",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#451",
+			Kind: "url",
+			URL:  "https://github.com/acme/widgets/issues/451",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Files, 1, "the URL entry must survive validation")
+
+	got := messages[0].Files[0]
+	assert.Equal(t, "url", got.Kind)
+	assert.Equal(t, "https://github.com/acme/widgets/issues/451", got.URL)
+	assert.Equal(t, "acme/widgets#451", got.Path,
+		"the URL label must be preserved so the chip is not blank after a reload")
+}
+
+// TestAIChat_URLAttachment_RejectsUnsafeScheme verifies a non-http(s) URL is
+// rejected at the boundary.
+//
+// The URL is persisted and re-rendered as an anchor href on every later load,
+// so a javascript:/data: value stored once would become an executable link
+// forever. Client-side guards are not sufficient: any renderer that forgets
+// one re-opens the hole. Rejecting here keeps every renderer safe.
+func TestAIChat_URLAttachment_RejectsUnsafeScheme(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Note: an entry with kind=url but an EMPTY url is not a URL entry at all
+	// (model.FileEntry.IsURL requires a non-empty address), so it falls through
+	// to normal path validation instead — covered by the not-found path, not
+	// here.
+	unsafe := []string{
+		"javascript:alert(1)",
+		"JavaScript:alert(1)", // scheme match must be case-insensitive
+		"data:text/html,<script>alert(1)</script>",
+		"file:///etc/passwd",
+		"vbscript:msgbox(1)",
+		"not a url",
+		"//example.com/no-scheme", // protocol-relative: no scheme
+		"ftp://example.com/x",
+	}
+	for _, raw := range unsafe {
+		t.Run(raw, func(t *testing.T) {
+			sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-unsafe", "", "", "default", "chat")
+			assert.NoError(t, err)
+
+			body := map[string]any{
+				"message": "x",
+				"files": []model.FileEntry{{
+					Path: "label", Kind: "url", URL: raw,
+				}},
+			}
+			req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+			withProjectCookie(req, env.ProjectDir)
+
+			w := callHandler(AIChat, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code,
+				"a non-http(s) URL attachment must be rejected, got %s", w.Body.String())
+
+			// Nothing may have been persisted.
+			msgs, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+			assert.NoError(t, err)
+			assert.Empty(t, msgs, "a rejected request must not persist a message")
+		})
+	}
+}
+
+// TestAIChat_URLAttachment_AcceptsHTTPS confirms the happy path still works and
+// the address is stored as given.
+func TestAIChat_URLAttachment_AcceptsHTTPS(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-https", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "x",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#1", Kind: "url", URL: "https://github.com/acme/widgets/issues/1",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	assertOK(t, callHandler(AIChat, req))
+}
+
+// TestAIChat_URLAttachment_NotResolvedAsPath verifies a URL entry is never
+// treated as a filesystem path (which would 404 since it does not exist).
+func TestAIChat_URLAttachment_NotResolvedAsPath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "url-nopath", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueuedMessages(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "check",
+		"files": []model.FileEntry{{
+			Path: "acme/widgets#9",
+			Kind: "url",
+			URL:  "https://github.com/acme/widgets/issues/9",
+		}},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	// A non-existent path would fail validation with 404; a URL must not.
+	assertOK(t, w)
+}
+
 func TestAIChat_EnqueuePath_PersistsToDB(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -2712,7 +2713,8 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 
 	// buildChatRequestFromQueue should use the session model
 	qMsg := model.QueuedMessage{Text: "next message", CreatedAt: time.Now().Format(time.RFC3339)}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
 }
@@ -2730,7 +2732,8 @@ func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
 		Files:     []model.FileEntry{{Path: "/some/path/file.go"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.True(t, req.HasAttachments)
 	assert.Contains(t, req.SystemPrompt, "Media File Handling")
 }
@@ -2747,7 +2750,8 @@ func TestBuildChatRequestFromQueue_HasAttachments_NoFiles(t *testing.T) {
 		Text:      "just text",
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.False(t, req.HasAttachments)
 	assert.NotContains(t, req.SystemPrompt, "Media File Handling")
 }
@@ -3189,7 +3193,7 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 	defer teardown()
 
 	// Create a scheduled session with external_session_id set
-	schedSessionID, err := service.CreateSession(env.ProjectDir, "pi", "Scheduled Task", "", "", "default", "scheduled")
+	schedSessionID, err := service.CreateSession(env.ProjectDir, "pi", "Task", "", "", "default", "scheduled")
 	assert.NoError(t, err)
 	err = service.UpdateExternalSessionID(schedSessionID, "pi-cli-session-abc")
 	assert.NoError(t, err)
@@ -3859,7 +3863,8 @@ func TestBuildChatRequestFromQueue_LineNumbers(t *testing.T) {
 		},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	require.NoError(t, err)
 	assert.Contains(t, req.Prompt, "/src/foo.ts:10-20", "prompt should include line range for foo.ts")
 	assert.Contains(t, req.Prompt, "/src/bar.go:5", "prompt should include single line for bar.go")
 	assert.Contains(t, req.Prompt, "/src/baz.rs", "prompt should include path without line info for baz.rs")

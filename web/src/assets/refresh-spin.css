@@ -14,11 +14,11 @@
  * rendered via <Teleport to="body"> (dropdowns, menus).
  */
 .refresh-spin {
-    transition: opacity 0.15s;
+    transition: opacity var(--duration-base);
 }
 
 .refresh-spin svg {
-    transition: transform 0.2s ease;
+    transition: transform var(--duration-slow) ease;
 }
 
 /* Active spinning state — applied while a refresh is in-flight.
@@ -33,7 +33,7 @@
 /* Disabled state (visual only; the component owns the actual :disabled attr) */
 .refresh-spin--active,
 .refresh-spin[disabled] {
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
     cursor: not-allowed;
 }
 

@@ -20,7 +20,7 @@ import (
 // The real background-task bug (TaskOutput "not found") is covered by
 // codebuddy_background_task_test.go. This file verifies the broader scheduled
 // execution path: auto-approve enabled + ScheduledExecution=true, matching
-// what the scheduler does for ACP scheduled tasks. It asserts that tool calls
+// what the scheduler does for ACP tasks. It asserts that tool calls
 // in this mode complete with status "success" rather than "error"/"failed".
 
 // scheduledCodeBuddyACPAgent returns a CodeBuddy ACP agent for scheduled mode.
@@ -64,7 +64,7 @@ func setupScheduledCodebuddyEnv(t *testing.T) (*ACPBackend, *acpTestEnv, string)
 	model.RootPaths = []string{"/"}
 	t.Cleanup(func() { model.RootPaths = origRoots })
 
-	// The scheduler enables auto-approve for ACP scheduled tasks.
+	// The scheduler enables auto-approve for ACP tasks.
 	SetAutoApproveGetter(func(_ string) bool { return true })
 	t.Cleanup(func() { SetAutoApproveGetter(func(_ string) bool { return false }) })
 

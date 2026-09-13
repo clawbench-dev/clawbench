@@ -36,6 +36,7 @@
       @export-html="handleExportHtml"
       @fit-width="handleFitWidth"
       @set-as-background="(path) => emit('setAsBackground', path)"
+      @quote-in-chat="(path) => emit('quoteInChat', path)"
     />
 
     <!-- Content row: file content + (wide-screen) inline TOC dock -->
@@ -355,7 +356,7 @@ const props = defineProps({
     canNavigateBack: Boolean,
     backLabel: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
 
 const fileNav = useFileNavStack()
 const { active: textSelecting } = useTextSelectionActive()
@@ -775,10 +776,10 @@ defineExpose({
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    gap: 10px;
+    gap: var(--space-5);
     z-index: 5;
-    opacity: 0.55;
-    transition: opacity 0.15s;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base);
     pointer-events: none;
 }
 
@@ -802,7 +803,7 @@ defineExpose({
     justify-content: center;
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-    transition: background 0.15s, color 0.15s, transform 0.1s;
+    transition: background var(--duration-base), color var(--duration-base), transform var(--duration-fast);
 }
 
 .file-nav-float .file-nav-btn:not(:disabled):active {
@@ -811,7 +812,7 @@ defineExpose({
 }
 
 .file-nav-float .file-nav-btn:disabled {
-    opacity: 0.35;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 
@@ -829,44 +830,44 @@ defineExpose({
     width: 48px;
     height: 48px;
     color: var(--text-muted);
-    margin-bottom: 12px;
+    margin-bottom: var(--space-6);
 }
 
 .unsupported-title {
-    font-size: 16px;
-    font-weight: 500;
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-4);
     word-break: break-all;
 }
 
 .unsupported-desc {
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     color: var(--text-muted);
-    margin-bottom: 20px;
+    margin-bottom: var(--space-8);
 }
 
 .unsupported-actions {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-5);
 }
 
 .open-as-text-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 12px;
+    padding:5px var(--space-6);
     background: transparent;
     color: var(--text-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 14px;
-    font-size: 12px;
-    font-weight: 500;
+    border-radius: var(--radius-lg);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: all 0.15s;
-    gap: 4px;
+    transition: all var(--duration-base);
+    gap: var(--space-2);
     line-height: 1;
 }
 
@@ -885,16 +886,16 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 12px;
+    padding:5px var(--space-6);
     background: var(--accent-color);
     color: #fff;
     border: none;
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     text-decoration: none;
-    font-size: 12px;
-    font-weight: 500;
-    transition: filter 0.15s;
-    gap: 4px;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    transition: filter var(--duration-base);
+    gap: var(--space-2);
     line-height: 1;
 }
 
@@ -919,15 +920,15 @@ defineExpose({
 .error-bubble {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     background: rgba(239, 68, 68, 0.1);
-    color: var(--error-color, #dc2626);
-    padding: 6px 12px;
+    color: var(--color-red);
+    padding: var(--space-3) var(--space-6);
     border-radius: 20px;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     margin: 24px auto;
     max-width: 90%;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     align-self: center;
 }
 
@@ -942,11 +943,11 @@ defineExpose({
 .truncated-notice {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-6);
     background: rgba(245, 158, 11, 0.1);
-    color: var(--warning-color, #d97706);
-    font-size: 12px;
+    color: var(--color-orange);
+    font-size: var(--font-size-sm);
     border-bottom: 1px solid rgba(245, 158, 11, 0.2);
 }
 </style>

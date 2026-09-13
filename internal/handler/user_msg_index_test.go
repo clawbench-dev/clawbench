@@ -151,23 +151,3 @@ func TestServeUserMessageIndex_NoProject(t *testing.T) {
 	w := callHandler(ServeUserMessageIndex, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
-
-// --- ServeChatCount archived session (GetSessionBackend guard) ---
-
-func TestServeChatCount_DeletedSession(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
-	require.NoError(t, err)
-
-	// Archive the session
-	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sessionID)
-	require.NoError(t, err)
-
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/count?session_id="+sessionID, nil)
-	req = withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeChatCount, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}

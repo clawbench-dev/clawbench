@@ -113,7 +113,6 @@ func TestClaudeACP_LoadSession_ReplayParsing(t *testing.T) {
 
 	// Step 7: Verify the events are properly parsed, not raw JSON
 	contentEvents := findACPEvents(allEvents, "content")
-	rawOutputEvents := findACPEvents(allEvents, "raw_output")
 
 	// There should be at least content events from the replayed assistant messages
 	assert.NotEmpty(t, contentEvents,
@@ -126,10 +125,6 @@ func TestClaudeACP_LoadSession_ReplayParsing(t *testing.T) {
 			"content event[%d] looks like raw JSON instead of parsed text: %s",
 			i, truncate(e.Content, 100))
 	}
-
-	// raw_output events should be present (they're always emitted for debugging)
-	assert.NotEmpty(t, rawOutputEvents,
-		"LoadSession replay should emit raw_output events for each notification")
 
 	// Log event type summary
 	typeCounts := make(map[string]int)

@@ -8,7 +8,7 @@
          algorithm fails to correctly transition between different Fragment
          structures (summary div vs blocks template v-for). -->
     <div v-if="!nested" v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
-    <!-- Summary mode: render structured cards (tools / scheduled tasks / ask-questions)
+    <!-- Summary mode: render structured cards (tools / tasks / ask-questions)
          directly from summaryCards — NOT by traversing blocks (which may be empty in
          summary-first loading). -->
     <template v-if="!nested && showingSummary && summary">
@@ -50,9 +50,12 @@
       <!-- Tool cards from summaryCards.tools (AskUserQuestion only —
            PermissionApproval is filtered out upstream in summaryTools) -->
       <template v-for="(tool, ti) in summaryTools" :key="'sum-tool-' + ti">
+        <!-- Ask tool absorbed into the merged summary ask card below (only when it
+             actually contributed questions; a malformed ask tool keeps its own card). -->
+        <template v-if="isAskQuestion(tool.name || '') && shouldMergeSummaryAskCards && extractAskQuestions(tool.input).length > 0"></template>
         <!-- Answerable interactive tool: unified card
              (header strip + body in one box). -->
-        <div v-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpandTool(tool.name || '') && isUnifiedCardTool(tool.name)" class="tool-detail chat-inline-card" :class="!tool.done ? 'is-pending' : ''" :data-tool-name="tool.name" :data-category="getToolIcon(tool.name).category" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleSummaryToolClick(tool, ti)">
             <component :is="getToolIcon(tool.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(tool.name, tool.input, tool.display_name) }}</span>
@@ -76,7 +79,7 @@
           </div>
         </template>
       </template>
-      <!-- Scheduled task cards from summaryCards.taskIDs (task data fetched in real time) -->
+      <!-- Task cards from summaryCards.taskIDs (task data fetched in real time) -->
       <template v-for="tid in summaryTaskIDs" :key="'sum-task-' + tid">
         <div class="scheduled-task-card" :class="{ deleted: summaryTaskData[tid]?.deleted }" @click="!summaryTaskData[tid]?.deleted && !summaryTaskData[tid]?.loading && summaryTaskData[tid]?.task && $emit('task-card-click', tid)">
           <div class="stask-header">
@@ -101,8 +104,11 @@
           </div>
         </div>
       </template>
-      <!-- Ask-question cards from summaryCards.askQuestions (rendered via formatToolInput) -->
-      <template v-if="summaryAskQuestions.length">
+      <!-- Ask-question card. Sources: summaryCards.askQuestions (<ask-question> XML
+           cards, already aggregated into one array) and AskUserQuestion tool cards
+           whose input carries questions. When more than one source exists they are
+           merged into this single card so every question is answered with one submit. -->
+      <template v-if="summaryAskQuestions.length || shouldMergeSummaryAskCards">
         <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="$emit('toggle-tool', 'summary-ask')">
             <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
@@ -110,7 +116,7 @@
             <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput({ questions: summaryAskQuestions }, 'AskUserQuestion')"></div>
+            <div v-html="formatToolInput({ questions: mergedSummaryAskQuestions }, 'AskUserQuestion')"></div>
           </div>
         </div>
       </template>
@@ -162,9 +168,11 @@
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
+        <!-- Ask card absorbed into the merged card rendered at the anchor block -->
+        <template v-if="isSuppressedAskCard(bi)"></template>
         <!-- AskUserQuestion / PermissionApproval: unified interactive card
              (status strip + body in one box). -->
-        <div v-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
+        <div v-else-if="shouldAutoExpand(block) && isUnifiedCardTool(block.name)" class="tool-detail chat-inline-card" :class="!block.done ? 'is-pending' : ''" :data-tool-name="block.name" :data-category="getToolIcon(block.name).category" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick" @input="handleToolDetailInput">
           <div class="chat-card-strip" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ unifiedCardTitle(block.name, block.input, block.display_name) }}</span>
@@ -172,14 +180,18 @@
             <!-- Pending spinner: only meaningful when the tool is actually answerable.
                  Malformed AskUserQuestion input (no valid questions) can never be answered,
                  so it renders as a done card with an invalid-format notice instead. -->
-            <LoadingIndicator v-if="showAskPending(block)" class="tool-spinner" size="sm" inline />
+            <LoadingIndicator v-if="askCardPending(bi, block)" class="tool-spinner" size="sm" inline />
             <!-- Done with error: red X -->
             <XCircle v-else-if="block.status === 'error'" :size="14" color="#ef4444" class="tool-error-icon" />
             <!-- Done (success or unknown): green check -->
             <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
           </div>
           <div class="chat-card-body">
-            <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
+            <!-- Merged card: one body holding every question in the message. Only
+                 the anchor hosts it — a malformed/slim ask block keeps its own body
+                 (invalid-format notice / lazy input) instead of duplicating it. -->
+            <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
+            <div v-else v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
           </div>
         </div>
         <template v-else>
@@ -306,7 +318,7 @@
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
-      <!-- Scheduled task card(s) — simplified: click navigates to Tasks tab -->
+      <!-- Task card(s) — simplified: click navigates to Tasks tab -->
       <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
@@ -338,7 +350,7 @@
       <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
-        <template v-if="blockAskQuestions[blockTaskKey(bi)]">
+        <template v-if="blockAskQuestions[blockTaskKey(bi)] && !isSuppressedAskCard(bi)">
           <div class="tool-detail chat-inline-card done" data-category="ask" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" @input="handleToolDetailInput">
             <div class="chat-card-strip" @click.stop="$emit('toggle-tool', key(bi))">
               <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
@@ -347,20 +359,17 @@
               <CheckCircle2 :size="14" color="#f59e0b" class="tool-warn" />
             </div>
             <div class="chat-card-body">
-              <div v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
+              <!-- Merged card: one body holding every question in the message. -->
+              <div v-if="isMergedAskAnchor(bi)" v-html="formatToolInput({ questions: mergedAskQuestions }, 'AskUserQuestion')"></div>
+              <div v-else v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
             </div>
           </div>
         </template>
       </template>
 
-      <!-- Text block with @ command badge (user message starting with @chatsearch/@task) -->
-      <template v-else-if="block.type === 'text' && extractAtCommand(block.text || '')">
-        <span class="at-command-badge">{{ extractAtCommand(block.text)!.command }}</span>
-        <span v-if="extractAtCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text)!.rest.trim() }}</span>
-      </template>
-      <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
+      <!-- Text block with slash command badge (agent /command or ClawBench /cb-* command) -->
       <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
-        <span class="slash-command-badge">{{ extractSlashCommand(block.text)!.command }}</span>
+        <span class="slash-command-badge" :class="{ 'clawbench-command-badge': extractSlashCommand(block.text)!.clawbench }">{{ extractSlashCommand(block.text)!.command }}</span>
         <span v-if="extractSlashCommand(block.text)!.rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text)!.rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
@@ -404,12 +413,12 @@ import {
   statusLabelSimple as statusLabelSimpleUtil,
   formatTime as formatTimeUtil,
   askQuestionSummary as askQuestionSummaryUtil,
+  extractAskQuestions,
   blockKey,
   blockTaskKey as blockTaskKeyUtil,
   buildTaskKeyIndex,
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
-  extractAtCommand,
   extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
@@ -651,15 +660,119 @@ function detectAskQuestionInText(block: any) {
   return block.text && block.text.includes('<ask-question')
 }
 
-// Pre-computed index: block index → sorted array of scheduled task keys.
+// ── Multi ask-card merging ──
+// One assistant message can carry several question cards (e.g. two
+// AskUserQuestion tool calls, or a tool call plus a text <ask-question> tag).
+// Rendered separately, each card has its own Submit that fires a message
+// immediately — answering one leaves the others stranded with no way to reply.
+// When a message has MORE THAN ONE answerable ask card we render a single merged
+// card (at the first card's position) holding every question, so the user
+// selects all answers and submits once. A message with a single ask card is
+// untouched.
+
+/** Renderable questions contributed by one block (empty when it has no ask card). */
+function askQuestionsOfBlock(bi: number, block: any): Array<Record<string, unknown>> {
+  if (block?.type === 'tool_use' && isAskQuestion(block.name || '')) {
+    return extractAskQuestions(block.input)
+  }
+  if (block?.type === 'text') {
+    const parsed = props.blockAskQuestions[blockTaskKey(bi)]
+    if (parsed && Array.isArray(parsed.questions)) return extractAskQuestions(parsed)
+  }
+  return []
+}
+
+/** True when this block's ask card is actually rendered by the template branch
+ *  chain. A text block carrying BOTH a <scheduled-task> and an <ask-question>
+ *  tag hits the scheduled-task branch first, so its ask card never renders — it
+ *  must not host the merged card. AskUserQuestion tool blocks always render. */
+function rendersAskCard(bi: number, block: any): boolean {
+  if (block?.type === 'tool_use') return isAskQuestion(block.name || '')
+  if (block?.type === 'text') return !hasScheduledTasks(bi)
+  return false
+}
+
+/** Local indices of blocks contributing renderable questions in THIS flat
+ *  stream. Blocks rendered under a sibling sub-agent group are excluded: they
+ *  render nested in a recursive instance, which performs its own merge among its
+ *  own children — merging here would pull a sub-agent's question into the main
+ *  agent's card. Orphans (parent id absent from this array) render flat in this
+ *  stream, so they merge here like any other flat card. */
+const answerableAskIndices = computed(() => {
+  const out: number[] = []
+  const blocks = props.blocks || []
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi]
+    if (isChildBlock(block)) continue
+    if (askQuestionsOfBlock(bi, block).length > 0) out.push(bi)
+  }
+  return out
+})
+
+/** Answerable blocks that actually render an ask card — the only valid homes for
+ *  the merged card. */
+const renderableAskIndices = computed(() =>
+  answerableAskIndices.value.filter(bi => rendersAskCard(bi, props.blocks[bi])),
+)
+
+/** Merge when more than one ask card is answerable AND at least one of them
+ *  actually renders (otherwise there is nowhere to host the merged card, and
+ *  suppressing the rest would silently drop every question). */
+const shouldMergeAskCards = computed(() =>
+  answerableAskIndices.value.length > 1 && renderableAskIndices.value.length > 0,
+)
+
+/** Block index hosting the merged card (first renderable ask card); -1 when not merging. */
+const mergedAskAnchorIdx = computed(() =>
+  shouldMergeAskCards.value ? renderableAskIndices.value[0] : -1,
+)
+
+/** Every question across the message's ask cards, in order. */
+const mergedAskQuestions = computed(() => {
+  const out: Array<Record<string, unknown>> = []
+  for (const bi of answerableAskIndices.value) {
+    out.push(...askQuestionsOfBlock(bi, props.blocks[bi]))
+  }
+  return out
+})
+
+/** True when this block's ask card is absorbed into the merged card (render nothing). */
+function isSuppressedAskCard(bi: number): boolean {
+  return shouldMergeAskCards.value && bi !== mergedAskAnchorIdx.value && answerableAskIndices.value.includes(bi)
+}
+
+/** True when this block hosts the merged multi-question card. */
+function isMergedAskAnchor(bi: number): boolean {
+  return shouldMergeAskCards.value && bi === mergedAskAnchorIdx.value
+}
+
+/**
+ * Pending spinner for an ask card. The merged card stays pending while ANY
+ * contributing tool_use ask block is still awaiting an answer (text-mode
+ * <ask-question> cards are already resolved when they render, so they never keep
+ * it pending). Every other card mirrors its own showAskPending — a malformed or
+ * still-loading ask block keeps its own spinner/notice instead of inheriting the
+ * merged card's state.
+ */
+function askCardPending(bi: number, block: any): boolean {
+  if (isMergedAskAnchor(bi)) {
+    return answerableAskIndices.value.some(i => {
+      const b = props.blocks[i]
+      return b?.type === 'tool_use' && showAskPending(b)
+    })
+  }
+  return showAskPending(block)
+}
+
+// Pre-computed index: block index → sorted array of task keys.
 const taskKeyIndex = computed(() => buildTaskKeyIndex(props.msgId, props.blockTasks))
 
-// Check if a block has any scheduled tasks
+// Check if a block has any tasks
 function hasScheduledTasks(bi: number) {
   return hasScheduledTasksUtil(taskKeyIndex.value, bi)
 }
 
-// Return all scheduled task keys for a block, sorted by tag index
+// Return all task keys for a block, sorted by tag index
 function scheduledTaskKeys(bi: number) {
   return scheduledTaskKeysUtil(taskKeyIndex.value, bi)
 }
@@ -673,6 +786,32 @@ const summaryTools = computed(() => (props.summaryCards?.tools || []).filter((t:
 const summaryTaskIDs = computed(() => props.summaryCards?.taskIDs || [])
 const summaryAskQuestions = computed(() => props.summaryCards?.askQuestions || [])
 const summaryWarnings = computed(() => props.summaryCards?.warnings || [])
+
+// Summary mode has no content blocks, so its ask cards come from two places:
+// summaryCards.askQuestions (<ask-question> XML cards) and summaryCards.tools
+// entries whose input carries a questions array (AskUserQuestion tool calls).
+// When a message has more than one such card, merge them into ONE card so the
+// user can answer every question with a single submit (mirrors block mode).
+const summaryAskSources = computed<Array<Record<string, unknown>>>(() => {
+  const sources: Array<Record<string, unknown>> = []
+  if (summaryAskQuestions.value.length > 0) {
+    sources.push({ questions: summaryAskQuestions.value })
+  }
+  for (const tool of summaryTools.value) {
+    if (!isAskQuestion(tool?.name || '')) continue
+    const questions = extractAskQuestions(tool.input)
+    if (questions.length > 0) sources.push({ questions })
+  }
+  return sources
+})
+const shouldMergeSummaryAskCards = computed(() => summaryAskSources.value.length > 1)
+const mergedSummaryAskQuestions = computed(() => {
+  const out: Array<Record<string, unknown>> = []
+  for (const src of summaryAskSources.value) {
+    out.push(...(src.questions as Array<Record<string, unknown>>))
+  }
+  return out
+})
 
 // ── Sub-agent grouping (recursive) ──
 // Blocks carrying a `parent_tool_call_id` were produced by a sub-agent spawned
@@ -1283,21 +1422,21 @@ onUnmounted(() => {
 .streaming-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .streaming-elapsed {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .placeholder-dots {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   align-items: center;
-  padding: 8px 0 4px;
+  padding: var(--space-4) 0 var(--space-2);
 }
 .placeholder-dots span {
   width: 7px; height: 7px;
@@ -1310,7 +1449,7 @@ onUnmounted(() => {
 .placeholder-dots span:nth-child(3) { animation-delay: 0.4s; }
 
 @keyframes dot-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  0%, 80%, 100% { transform: scale(0.6); opacity: var(--opacity-disabled); }
   40% { transform: scale(1); opacity: 1; }
 }
 
@@ -1318,9 +1457,9 @@ onUnmounted(() => {
 .thinking-load-error {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 12px;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-sm);
   color: #dc2626;
 }
 
@@ -1328,9 +1467,9 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, #ef4444 40%, var(--border-color));
   background: transparent;
   color: #dc2626;
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  padding:1px var(--space-4);
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 
@@ -1342,11 +1481,11 @@ onUnmounted(() => {
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */
 .chat-cancelled-mark-inline {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   margin-left: auto;
 }
 
@@ -1357,9 +1496,9 @@ onUnmounted(() => {
 .chat-error-card {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin: 2px 0;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  margin: var(--space-1) 0;
   border-left: 3px solid var(--color-red, #ef4444);
   background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
 }
@@ -1370,8 +1509,8 @@ onUnmounted(() => {
 }
 
 .chat-error-card .error-text {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-red, #dc2626);
 }
 
@@ -1391,9 +1530,9 @@ onUnmounted(() => {
 .chat-warning-card {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin: 2px 0;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  margin: var(--space-1) 0;
   border-left: 3px solid var(--color-yellow, #f59e0b);
   background: color-mix(in srgb, var(--color-yellow, #f59e0b) 8%, transparent);
 }
@@ -1404,8 +1543,8 @@ onUnmounted(() => {
 }
 
 .chat-warning-card .warning-text {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-yellow, #d97706);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1426,12 +1565,12 @@ onUnmounted(() => {
 
 .error-source-chip {
   flex-shrink: 0;
-  margin-left: 8px;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 999px;
-  line-height: 1.6;
+  margin-left: var(--space-4);
+  padding:1px var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  border-radius: var(--radius-full);
+  line-height: var(--line-height-relaxed);
   white-space: nowrap;
 }
 
@@ -1447,8 +1586,8 @@ onUnmounted(() => {
 }
 
 .error-source-chip.src-network {
-  color: var(--color-blue, #2563eb);
-  background: color-mix(in srgb, var(--color-blue, #3b82f6) 12%, transparent);
+  color: var(--color-info);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
 }
 
 :root[data-theme-base="dark"] .error-source-chip.src-agent {
@@ -1460,21 +1599,21 @@ onUnmounted(() => {
 }
 
 :root[data-theme-base="dark"] .error-source-chip.src-network {
-  color: var(--color-blue, #93c5fd);
+  color: var(--color-info);
 }
 
 .chat-warning-card .warning-continue-btn {
   flex-shrink: 0;
   margin-left: auto;
-  padding: 2px 10px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-5);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -1488,15 +1627,15 @@ onUnmounted(() => {
 .warning-reset-btn {
   flex-shrink: 0;
   margin-left: auto;
-  padding: 2px 10px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-5);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -1512,8 +1651,8 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--thinking-accent) 4%, transparent);
   border: none;
   border-left: 3px solid color-mix(in srgb, var(--thinking-accent) 50%, transparent);
-  border-radius: 0 6px 6px 0;
-  margin: 6px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: var(--space-3) 0;
   width: 100%;
 }
 
@@ -1523,7 +1662,7 @@ onUnmounted(() => {
 
 /* Collapsed state: pill-shaped clickable chip */
 .chat-thinking.thinking-collapsed {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
@@ -1559,7 +1698,7 @@ onUnmounted(() => {
 
 /* Collapse animation state: transitioning border from callout to pill */
 .chat-thinking.thinking-collapsing {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
@@ -1584,19 +1723,19 @@ onUnmounted(() => {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows var(--thinking-transition), opacity 200ms ease, padding 200ms ease;
+  transition: grid-template-rows var(--thinking-transition), opacity var(--duration-slow) ease, padding var(--duration-slow) ease;
 }
 
 .thinking-content-wrapper.thinking-content-open {
   grid-template-rows: 1fr;
   opacity: 1;
-  padding: 0 10px 3px;
+  padding:0 var(--space-5) 3px;
 }
 
 .thinking-inline-content {
   overflow: hidden;
   min-height: 0;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.65;
   color: var(--text-secondary);
   word-break: break-word;
@@ -1636,8 +1775,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 10px;
-  font-size: 12px;
+  padding:3px var(--space-5);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
@@ -1647,9 +1786,9 @@ onUnmounted(() => {
 }
 
 .thinking-label {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--thinking-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   letter-spacing: 0.02em;
 }
 
@@ -1662,8 +1801,8 @@ onUnmounted(() => {
 .thinking-chevron {
   flex-shrink: 0;
   margin-left: auto;
-  color: var(--text-tertiary, #999);
-  transition: color 0.15s;
+  color: var(--text-hint);
+  transition: color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -1678,15 +1817,15 @@ onUnmounted(() => {
 .thinking-inline-content p:last-child { margin-bottom: 0; }
 .thinking-inline-content pre {
   margin: 0.5em 0;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-xs);
   overflow-x: auto;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .thinking-inline-content code {
-  font-size: 11px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .thinking-inline-content pre code {
   padding: 0;
@@ -1694,14 +1833,14 @@ onUnmounted(() => {
 }
 .thinking-inline-content blockquote {
   margin: 0.5em 0;
-  padding: 4px 8px;
-  border-left: 2px solid var(--text-tertiary, #aaa);
+  padding: var(--space-2) var(--space-4);
+  border-left: 2px solid var(--text-hint);
 }
 .thinking-inline-content h1,
 .thinking-inline-content h2,
 .thinking-inline-content h3 {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   margin: 0.5em 0 0.3em;
 }
 .thinking-inline-content ul,
@@ -1712,19 +1851,19 @@ onUnmounted(() => {
 .thinking-inline-content table {
   border-collapse: collapse;
   margin: 0.5em 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .thinking-inline-content th,
 .thinking-inline-content td {
   border: 1px solid var(--border-color);
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
 }
 .thinking-inline-content th {
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 .thinking-inline-content strong {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .thinking-inline-content em {
@@ -1733,8 +1872,8 @@ onUnmounted(() => {
 .thinking-inline-content mark {
   background: rgba(245, 158, 11, 0.2);
   color: inherit;
-  padding: 1px 2px;
-  border-radius: 2px;
+  padding:1px var(--space-1);
+  border-radius: var(--radius-xs);
 }
 
 /* Tool calls display */
@@ -1744,15 +1883,15 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
-  padding: 3px 8px;
-  border-radius: 999px;
+  padding:3px var(--space-4);
+  border-radius: var(--radius-full);
   cursor: pointer;
   width: 100%;
-  margin-top: 4px;
+  margin-top: var(--space-2);
   overflow: hidden;
 }
 
@@ -1779,13 +1918,13 @@ onUnmounted(() => {
 }
 
 .chat-tool-call .tool-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--tool-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .chat-tool-call .tool-summary {
-  color: var(--text-tertiary, #888);
+  color: var(--text-hint);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1817,13 +1956,13 @@ onUnmounted(() => {
    styling. */
 .subagent-group {
   --subagent-accent: #ec4899;
-  margin: 0 0 4px;
+  margin:0 0 var(--space-2);
 }
 
 /* Only when expanded does the pill's shape change: it becomes the rounded-
    rectangle top half of the group (small radius, not a pill). */
 .chat-tool-call-group-open {
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .subagent-group-open > .subagent-group-body-wrapper {
@@ -1836,7 +1975,7 @@ onUnmounted(() => {
 }
 
 .subagent-group-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -1848,12 +1987,12 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
   padding: 0;
-  margin-left: 2px;
+  margin-left: var(--space-1);
   border: none;
   background: none;
   cursor: pointer;
-  color: var(--text-tertiary, #999);
-  transition: color 0.15s;
+  color: var(--text-hint);
+  transition: color var(--duration-base);
 }
 
 .subagent-group-toggle:hover {
@@ -1865,7 +2004,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 200ms ease, opacity 200ms ease;
+  transition: grid-template-rows var(--duration-slow) ease, opacity var(--duration-slow) ease;
 }
 
 .subagent-group-body-wrapper.subagent-group-body-open {
@@ -1885,7 +2024,7 @@ onUnmounted(() => {
 }
 
 .subagent-group-body-open .subagent-group-body {
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
 }
 
 /* Bottom "collapse" affordance shown only while the group is open. */
@@ -1893,17 +2032,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   width: 100%;
-  margin-top: 6px;
-  padding: 4px 0;
-  font-size: 11px;
+  margin-top: var(--space-3);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   background: none;
   border: none;
   border-top: 1px solid color-mix(in srgb, var(--subagent-accent) 20%, var(--border-color));
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .subagent-group-footer:hover {
@@ -1912,12 +2051,12 @@ onUnmounted(() => {
 
 /* Inline tool detail — only used by AskUserQuestion (other tools use ToolDetailDrawer) */
 .tool-detail {
-  margin: 2px 0 4px 0;
-  padding: 6px 8px;
-  font-size: 11px;
-  line-height: 1.4;
+  margin: var(--space-1) 0 var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
   background: var(--bg-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-color);
   white-space: normal;
   overflow-x: clip;
@@ -1933,12 +2072,12 @@ onUnmounted(() => {
 }
 
 .scheduled-task-card {
-  margin: 8px 0;
+  margin: var(--space-4) 0;
   border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 30%, var(--border-color, #dee2e6));
   border-radius: 0;
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 6%, var(--bg-primary, #fff));
   cursor: pointer;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: box-shadow var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -1949,7 +2088,7 @@ onUnmounted(() => {
 }
 
 .scheduled-task-card.deleted {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   border-color: var(--border-color, #dee2e6);
   background: var(--bg-secondary);
   cursor: default;
@@ -1966,30 +2105,30 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
   color: var(--accent-color, #4a90d9);
-  font-weight: 600;
-  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 15%, var(--border-color, #dee2e6));
   cursor: pointer;
 }
 
 .stask-icon {
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: var(--space-1);
 }
 
 .stask-body {
-  padding: 10px 12px;
-  font-size: 12px;
-  line-height: 1.6;
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
 }
 
 .stask-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .stask-row strong {
@@ -2005,18 +2144,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 6px 0;
-  font-size: 12px;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .stask-status-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
-  font-weight: 500;
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
   margin-left: auto;
 }
 
@@ -2030,7 +2169,7 @@ onUnmounted(() => {
   border-radius: 50%;
   flex-shrink: 0;
   align-self: center;
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 .stask-status-dot.status-active {
@@ -2045,43 +2184,18 @@ onUnmounted(() => {
   background: #9e9e9e;
 }
 
-/* @ command badge in user messages */
-.at-command-badge {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, #8b5cf6 15%, transparent);
-  color: #8b5cf6;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 4px;
-  vertical-align: baseline;
-  line-height: 1.6;
-}
-
-:root[data-theme-base="dark"] .at-command-badge {
-  background: color-mix(in srgb, #a78bfa 15%, transparent);
-  color: #a78bfa;
-}
-
-/* Inside user bubble: use white-based palette for contrast against colored background */
-.chat-message.user .at-command-badge {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 0.95);
-}
-
-/* Slash command badge in user messages (ACP backend commands) */
+/* Slash command badge in user messages (agent commands from ACP) */
 .slash-command-badge {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
+  padding:1px var(--space-4);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
   color: #0ea5e9;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 4px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  margin-right: var(--space-2);
   vertical-align: baseline;
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 :root[data-theme-base="dark"] .slash-command-badge {
@@ -2091,6 +2205,22 @@ onUnmounted(() => {
 
 /* Inside user bubble: use white-based palette for contrast against colored background */
 .chat-message.user .slash-command-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* ClawBench built-in command badge (/cb-*) — purple, distinct from agent blue */
+.slash-command-badge.clawbench-command-badge {
+  background: color-mix(in srgb, #8b5cf6 15%, transparent);
+  color: #8b5cf6;
+}
+
+:root[data-theme-base="dark"] .slash-command-badge.clawbench-command-badge {
+  background: color-mix(in srgb, #a78bfa 15%, transparent);
+  color: #a78bfa;
+}
+
+.chat-message.user .slash-command-badge.clawbench-command-badge {
   background: rgba(255, 255, 255, 0.2);
   color: rgba(255, 255, 255, 0.95);
 }
@@ -2112,25 +2242,25 @@ onUnmounted(() => {
 
 /* Tool output section */
 .content-blocks .tool-detail .tool-output-section {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   border-top: 1px solid var(--border-color);
-  padding-top: 6px;
+  padding-top: var(--space-3);
 }
 
 .content-blocks .tool-detail .tool-output-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .content-blocks .tool-detail .tool-output-label {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .tool-output-label {
@@ -2139,10 +2269,10 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-output-status {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-semibold);
 }
 
 .content-blocks .tool-detail .tool-output-success {
@@ -2168,32 +2298,32 @@ onUnmounted(() => {
 .content-blocks .tool-detail .tool-output-body {
   max-height: 200px;
   overflow-y: auto;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .tool-output-body pre {
   margin: 0;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .content-blocks .tool-detail .tool-output-content pre {
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  padding: var(--space-3) var(--space-4);
 }
 
 .content-blocks .tool-detail .tool-file-header {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
   padding-right: 22px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -2207,9 +2337,9 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .tool-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   word-break: break-all;
   flex: 1;
@@ -2219,17 +2349,17 @@ onUnmounted(() => {
 .content-blocks .tool-detail .edit-diff-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .edit-diff-replace-all {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -2239,9 +2369,9 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .edit-diff-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   min-width: max-content;
 }
 
@@ -2275,15 +2405,15 @@ onUnmounted(() => {
 .content-blocks .tool-detail .file-preview-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .file-preview-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2295,17 +2425,17 @@ onUnmounted(() => {
 .content-blocks .tool-detail .file-write-view {
   display: flex;
   flex-direction: column;
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .file-write-badge {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -2316,9 +2446,9 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .file-write-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2329,9 +2459,9 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-json-body {
   white-space: pre;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   overflow-x: auto;
 }
 
@@ -2344,28 +2474,28 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .bash-terminal-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .content-blocks .tool-detail .bash-terminal-body {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  padding: var(--space-3) var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .content-blocks .tool-detail .bash-prompt {
   color: #16a34a;
-  font-weight: 700;
-  margin-right: 4px;
+  font-weight: var(--font-weight-bold);
+  margin-right: var(--space-2);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .bash-prompt {
@@ -2384,10 +2514,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin: 6px 0 2px;
+  margin: var(--space-3) 0 var(--space-1);
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--tool-accent) 25%, var(--border-color));
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   overflow: hidden;
   max-height: none;
@@ -2398,11 +2528,11 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 12%, var(--border-color));
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
   overflow: hidden;
@@ -2420,14 +2550,14 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--tool-accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   flex-shrink: 0;
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-strip .tool-summary {
-  color: var(--text-tertiary, #888);
+  color: var(--text-hint);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2444,7 +2574,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-body {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   overflow-y: auto;
   max-height: 500px;
 }
@@ -2465,17 +2595,17 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .content-blocks .tool-detail .ask-question-empty {
   color: var(--text-muted, #999);
   font-style: italic;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-invalid {
-  padding: 2px 0;
+  padding: var(--space-1) 0;
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-invalid .ask-question-empty {
@@ -2490,12 +2620,12 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .ask-question-header {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: #f97316;
 }
 
@@ -2504,9 +2634,9 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2514,18 +2644,18 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .content-blocks .tool-detail .ask-question-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2547,7 +2677,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-option-indicator {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   line-height: 1.3;
   color: var(--text-muted, #999);
   user-select: none;
@@ -2565,23 +2695,23 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-option-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
 
 .content-blocks .tool-detail .ask-option-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .content-blocks .tool-detail .ask-option-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2589,19 +2719,19 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .content-blocks .tool-detail .ask-question-recommend {
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   border: 1px solid #8b5cf6;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #8b5cf6;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2636,15 +2766,15 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-question-submit {
   align-self: flex-end;
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   border: 1px solid #f97316;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #f97316;
   color: white;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2654,7 +2784,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-submit:disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -2688,28 +2818,28 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-supplementary-label {
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
 }
 
 .content-blocks .tool-detail .ask-supplementary-input {
   width: 100%;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 
 .content-blocks .tool-detail .ask-supplementary-input::placeholder {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .content-blocks .tool-detail .ask-supplementary-input:focus {
@@ -2724,28 +2854,28 @@ onUnmounted(() => {
 .content-blocks .tool-detail .grep-search-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  line-height: 1.5;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .grep-pattern-row,
 .content-blocks .tool-detail .grep-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .grep-label {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .grep-label {
@@ -2755,8 +2885,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .grep-pattern-text,
 .content-blocks .tool-detail .grep-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -2769,17 +2899,17 @@ onUnmounted(() => {
 .content-blocks .tool-detail .glob-tags-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .content-blocks .tool-detail .grep-mode-tag {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .grep-mode-tag {
@@ -2791,28 +2921,28 @@ onUnmounted(() => {
 .content-blocks .tool-detail .glob-pattern-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  line-height: 1.5;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .glob-pattern-row,
 .content-blocks .tool-detail .glob-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .glob-label {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .glob-label {
@@ -2822,8 +2952,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .glob-pattern-text,
 .content-blocks .tool-detail .glob-path-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -2831,21 +2961,21 @@ onUnmounted(() => {
 
 /* ── WebSearch view ── */
 .content-blocks .tool-detail .web-search-view {
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .web-search-query {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--text-primary);
 }
 
 .content-blocks .tool-detail .web-search-icon {
   flex-shrink: 0;
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
 }
 
 .content-blocks .tool-detail .web-search-text {
@@ -2857,27 +2987,27 @@ onUnmounted(() => {
 .content-blocks .tool-detail .web-fetch-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  line-height: 1.5;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .web-fetch-url-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .web-fetch-label {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .web-fetch-label {
@@ -2886,8 +3016,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .web-fetch-link {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--accent-color);
   text-decoration: none;
   word-break: break-all;
@@ -2898,8 +3028,8 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .web-fetch-text {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-primary);
@@ -2907,7 +3037,7 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .web-fetch-prompt {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2916,25 +3046,25 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 11px;
-  line-height: 1.5;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .agent-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .content-blocks .tool-detail .agent-type-badge {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -2945,19 +3075,19 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .agent-call-desc {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .content-blocks .tool-detail .agent-call-prompt {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: normal;
   word-break: break-word;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-family: inherit;
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 .content-blocks .tool-detail .agent-call-prompt p:first-child {
   margin-top: 0;
@@ -2969,73 +3099,73 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt h2,
 .content-blocks .tool-detail .agent-call-prompt h3,
 .content-blocks .tool-detail .agent-call-prompt h4 {
-  font-size: 12px;
-  font-weight: 600;
-  margin: 8px 0 4px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  margin: var(--space-4) 0 var(--space-2);
   color: var(--text-primary);
 }
 .content-blocks .tool-detail .agent-call-prompt ul,
 .content-blocks .tool-detail .agent-call-prompt ol {
-  margin: 4px 0;
-  padding-left: 20px;
+  margin: var(--space-2) 0;
+  padding-left: var(--space-8);
 }
 .content-blocks .tool-detail .agent-call-prompt li {
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .content-blocks .tool-detail .agent-call-prompt code {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt pre {
-  margin: 4px 0;
-  padding: 6px 8px;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow-x: auto;
 }
 .content-blocks .tool-detail .agent-call-prompt pre code {
   background: none;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt strong {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 .content-blocks .tool-detail .agent-call-prompt hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 6px 0;
+  margin: var(--space-3) 0;
 }
 
 /* ── Skill call view ── */
 .content-blocks .tool-detail .skill-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 11px;
-  line-height: 1.5;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .content-blocks .tool-detail .skill-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .skill-call-icon {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-shrink: 0;
 }
 
 .content-blocks .tool-detail .skill-call-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: #0891b2;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .skill-call-name {
@@ -3044,28 +3174,28 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .skill-call-args {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  line-height: 1.5;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  line-height: var(--line-height-normal);
 }
 
 /* ── PermissionApproval card (body inside the unified inline card) ── */
 .content-blocks .tool-detail .permission-approval-view {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .content-blocks .tool-detail .permission-tool-name {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
+  font-family: var(--font-mono);
   letter-spacing: 0.2px;
   text-transform: uppercase;
 }
@@ -3073,7 +3203,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-tool-detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -3082,12 +3212,12 @@ onUnmounted(() => {
    content height. */
 .content-blocks .tool-detail .permission-detail-label {
   align-self: flex-start;
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
   color: #b45309;
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   letter-spacing: 0.4px;
   text-transform: uppercase;
   white-space: nowrap;
@@ -3100,23 +3230,22 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-tool-detail code {
   display: block;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 11px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: anywhere;
 }
 
 .content-blocks .tool-detail .permission-options {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -3126,13 +3255,13 @@ onUnmounted(() => {
    blocks in the same card). Only the interaction-state keep-alive stays here. */
 .content-blocks .tool-detail .permission-options .permission-btn {
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Buttons keep their normal shape; disabled buttons get the shared .fbtn
    opacity treatment only (the JS no longer forces an extra inline opacity). */
 .content-blocks .tool-detail .permission-options .fbtn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* After a user responds (before the SSE result re-renders the badge), the
@@ -3170,11 +3299,11 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-result {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  margin-top: 6px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  margin-top: var(--space-3);
 }
 
 .content-blocks .tool-detail .permission-result-approved {
@@ -3199,10 +3328,10 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-result-auto-approved {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   background: #dcfce7;
   color: #15803d;
   border: 1px solid #bbf7d0;

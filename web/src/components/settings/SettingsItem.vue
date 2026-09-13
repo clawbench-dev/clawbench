@@ -571,10 +571,10 @@ function confirmEdit() {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   min-height: 0;
   cursor: pointer;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-primary);
   position: relative;
 }
@@ -594,14 +594,14 @@ function confirmEdit() {
 }
 
 .settings-item--disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   pointer-events: none;
 }
 
 .settings-item__left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 1;
   min-width: 0;
 }
@@ -609,12 +609,12 @@ function confirmEdit() {
 .settings-item__text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .settings-item__label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -622,9 +622,9 @@ function confirmEdit() {
 }
 
 .settings-item__badge {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
   white-space: nowrap;
@@ -634,9 +634,9 @@ function confirmEdit() {
 /* Inline description (always visible below label row) */
 .settings-item__desc {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   word-break: break-word;
   margin-top: 0;
 }
@@ -644,12 +644,12 @@ function confirmEdit() {
 .settings-item__right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .settings-item__value {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -662,28 +662,28 @@ function confirmEdit() {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .settings-item__info-detail {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
   word-break: break-all;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 /* Progress bar for info-type items (rendered via parent, not in info-row) */
 .settings-item__progress {
   width: 100%;
-  margin-top: 8px;
+  margin-top: var(--space-4);
 }
 
 .settings-item__progress-track {
   height: 3px;
   background: var(--bg-tertiary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: visible;
   position: relative;
 }
@@ -691,7 +691,7 @@ function confirmEdit() {
 .settings-item__progress-bar {
   height: 100%;
   background: var(--accent-color);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   transition: width 0.5s ease;
 }
 
@@ -719,12 +719,12 @@ function confirmEdit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: var(--space-3);
   margin: -6px 0;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s ease;
+  transition: color var(--duration-base) ease;
 }
 
 .settings-item__refresh.refresh-spin--active {
@@ -739,12 +739,12 @@ function confirmEdit() {
 
 /* Section header */
 .settings-item__header {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 16px 16px 4px;
+  padding: var(--space-7) var(--space-7) var(--space-2);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 /* iOS-style switch toggle */
@@ -766,9 +766,9 @@ function confirmEdit() {
 .settings-item__switch-track {
   position: absolute;
   inset: 0;
-  border-radius: 15.5px;
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary);
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
 }
 
 .settings-item__switch-track::after {
@@ -780,7 +780,7 @@ function confirmEdit() {
   height: 27px;
   border-radius: 50%;
   background: var(--bg-primary);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
@@ -794,7 +794,7 @@ function confirmEdit() {
 
 /* Slider */
 .settings-item__slider-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   min-width: 36px;
   text-align: right;
@@ -807,12 +807,12 @@ function confirmEdit() {
 }
 
 .settings-item__slider-reset {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-muted);
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   line-height: 1;
 }
 
@@ -824,25 +824,25 @@ function confirmEdit() {
 .settings-item__editor {
   background: var(--bg-primary);
   border-top: 0.5px solid var(--border-color);
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 
 /* Input row (number / text / password) */
 .settings-item__input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-7);
 }
 
 .settings-item__number-input,
 .settings-item__text-input {
   flex: 1;
   min-width: 0;
-  padding: 8px 12px;
-  font-size: 14px;
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-size-lg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -856,24 +856,24 @@ function confirmEdit() {
 /* Password toggle button */
 .settings-item__editor-toggle {
   flex-shrink: 0;
-  padding: 8px;
+  padding: var(--space-4);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   cursor: pointer;
   line-height: 1;
 }
 
 .settings-item__editor-confirm {
   flex-shrink: 0;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
 }
 
@@ -891,19 +891,19 @@ function confirmEdit() {
 .settings-item__textarea-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-7);
 }
 
 .settings-item__textarea-input {
   width: 100%;
   min-height: 120px;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-size-md);
   font-family: inherit;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -920,10 +920,10 @@ function confirmEdit() {
 }
 
 .settings-item__textarea-warning {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 4px 16px 8px;
-  line-height: 1.4;
+  padding: var(--space-2) var(--space-7) var(--space-4);
+  line-height: var(--line-height-snug);
 }
 </style>
 
@@ -932,8 +932,8 @@ function confirmEdit() {
 .settings-item__option {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
   cursor: pointer;
   min-height: 44px;
   position: relative;
@@ -968,37 +968,37 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--text-primary);
   flex: 1;
   min-width: 0;
 }
 
 .settings-item__option-check {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   color: var(--accent-color);
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   margin-left: auto;
 }
 
 /* Group header inside the select option list (font picker). */
 .settings-item__option-group {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 10px 16px 4px;
+  padding: var(--space-5) var(--space-7) var(--space-2);
   background: var(--bg-secondary);
 }
 
 /* Small badge (e.g. "内置" for bundled fonts). */
 .settings-item__option-badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   flex-shrink: 0;
@@ -1009,8 +1009,8 @@ function confirmEdit() {
 .theme-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 10px;
-  padding: 12px 16px 20px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7) var(--space-8);
 }
 
 .theme-picker-grid--wide {
@@ -1023,28 +1023,28 @@ function confirmEdit() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
 }
 
 .theme-picker-error-text {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: #ef4444;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
 }
 
 .theme-picker-error-retry {
   flex-shrink: 0;
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-6);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
 }
 
@@ -1064,18 +1064,18 @@ function confirmEdit() {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--space-3);
   cursor: pointer;
   position: relative;
 }
 
 .theme-picker-swatch {
   height: 64px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   position: relative;
   overflow: hidden;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: box-shadow var(--duration-base) ease, transform var(--duration-base) ease;
 }
 
 .theme-picker-swatch--auto {
@@ -1099,12 +1099,12 @@ function confirmEdit() {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
 }
 
 .theme-picker-swatch-label-text {
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   line-height: 1.3;
   color: inherit;
   display: -webkit-box;
@@ -1124,7 +1124,7 @@ function confirmEdit() {
 }
 
 .theme-picker-cell-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   text-align: center;
   white-space: nowrap;
@@ -1141,8 +1141,8 @@ function confirmEdit() {
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
   display: flex;
   align-items: center;
   justify-content: center;

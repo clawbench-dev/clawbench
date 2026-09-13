@@ -1,0 +1,3394 @@
+openapi: "3.0.3"
+info:
+  title: ClawBench API
+  description: |
+    ClawBench 的完整 HTTP API。所有 `/api/` 路由默认经 `middleware.Auth`
+    鉴权（会话 Cookie），少数端点刻意免鉴权（见各 operation 的 `security: []`）。
+    聊天流式内容通过 WebSocket 推送（见 `/api/ai/events/ws`），不在本文件建模。
+
+    约定：
+    - 统一错误体见 `components/schemas/ErrorResponse`。
+    - 项目范围通过 `clawbench_project` Cookie 或 `project_path` 查询参数传递。
+    - 时间戳为 epoch 毫秒（除显式说明外）。
+  version: "1.0.0"
+
+servers:
+  - url: /
+    description: 同源（文件管理器内的 Swagger UI 直接可用）
+
+tags:
+  - name: Auth
+    description: 登录、会话与健康检查
+  - name: System
+    description: 系统资源与统计
+  - name: Config
+    description: 服务端配置读写与自检
+  - name: Theme
+    description: 壁纸与外观
+  - name: Projects
+    description: 项目与根目录
+  - name: Chat
+    description: 聊天、消息与推荐
+  - name: Sessions
+    description: 会话生命周期
+  - name: Queue
+    description: 排队消息
+  - name: Events
+    description: 事件推送与离线补偿
+  - name: Git
+    description: Git 仓库操作
+  - name: Files
+    description: 文件浏览、读写与目录
+  - name: Share
+    description: 文件分享链接
+  - name: Forge
+    description: GitHub / GitLab 集成
+  - name: Agents
+    description: AI Agent 与后端
+  - name: TTS
+    description: 语音合成
+  - name: STT
+    description: 语音识别
+  - name: Terminal
+    description: Web 终端
+  - name: Tasks
+    description: 任务
+  - name: RAG
+    description: 检索增强
+  - name: Upgrade
+    description: 应用自升级
+  - name: Proxy
+    description: 端口转发与 CORS 代理
+  - name: SSH/FRP
+    description: 隧道状态
+  - name: Fonts
+    description: 自定义字体
+  - name: Upload
+    description: 上传与最近记录
+  - name: ClientLogs
+    description: 客户端日志回传
+  - name: APK
+    description: Android 安装包
+
+security:
+  - cookieAuth: []
+
+paths:
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /login:
+    get:
+      tags: [Auth]
+      summary: 登录页面
+      description: 返回登录 HTML 页面（非 API）。
+      operationId: loginPage
+      security: []
+      responses:
+        "200":
+          description: 登录页 HTML
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [Auth]
+      summary: 登录
+      description: 校验密码并下发会话 Cookie。无需鉴权（登录本身即入口）。
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: 登录成功，设置会话 Cookie
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/health:
+    get:
+      tags: [Auth]
+      summary: 健康检查
+      description: 免鉴权的存活探针。
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: 服务存活
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app:
+                    type: string
+                  version:
+                    type: string
+
+  /api/me:
+    get:
+      tags: [Auth]
+      summary: 当前会话状态
+      description: 免鉴权，供前端判断是否需要登录（返回是否已认证）。
+      operationId: me
+      security: []
+      responses:
+        "200":
+          description: 认证状态
+
+  /api/config/password:
+    post:
+      tags: [Auth]
+      summary: 修改密码
+      operationId: configPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+      responses:
+        "200":
+          description: 修改成功
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          description: 当前密码错误
+        "429":
+          description: 尝试过于频繁
+
+  # ── System ────────────────────────────────────────────────────────────────
+  /api/system/resources:
+    get:
+      tags: [System]
+      summary: 系统资源实时指标
+      description: CPU、内存、磁盘、网络等指标快照，供资源面板轮询。
+      operationId: systemResources
+      responses:
+        "200":
+          description: 指标快照
+
+  /api/roots:
+    get:
+      tags: [System]
+      summary: 可访问的根路径
+      operationId: roots
+      responses:
+        "200":
+          description: 根路径列表
+
+  /api/usage/stats:
+    get:
+      tags: [System]
+      summary: 用量统计
+      description: |
+        按维度聚合 `chat_metadata` 的 token / 成本统计。
+
+        项目范围通过项目 Cookie 传递，不是查询参数——`dims` 里**没有** `project`。
+
+        **响应结构**：
+        - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
+          `cacheMiss` / `credit` / `costUsd` / `messageCnt`。
+        - `rows[]`：每个 dim 组合一行。`key` 是对象，键即请求的 dims
+          （如 `{"model":"...","backend":"..."}`），行上带有与 `totals` 相同的字段。
+          行的顺序由 `sort` / `order` 决定，`limit` 截断。
+        - `trend[]`：仅 `trend=1` 时返回，在 `rows[]` 的基础上多一个 `day`
+          （`YYYY-MM-DD`），用于按天走势图。
+
+        注意 `chat_metadata.created_at` 记录的是元数据**最终写入**时刻
+        （约等于助手回复完成），不是用户提问时刻。
+      operationId: usageStats
+      parameters:
+        - name: start
+          in: query
+          required: true
+          description: 起始时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          description: 结束时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: dims
+          in: query
+          required: true
+          description: |
+            聚合维度。**重复该参数**以多维分组（1..3 个，不可重复）——
+            例如 `dims=model&dims=backend`。逗号分隔会被拒绝。
+            合法值仅 `model` / `backend` / `agent`。
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [model, backend, agent]
+        - name: metrics
+          in: query
+          required: true
+          description: |
+            指标。**重复该参数**（至少 1 个）——例如 `metrics=input&metrics=total`。
+            逗号分隔会被拒绝。
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [input, output, total, cacheHit, credit, cost]
+        - name: sort
+          in: query
+          description: 排序用的指标 id，默认 `total`。
+          schema:
+            type: string
+        - name: order
+          in: query
+          description: 排序方向，默认 `desc`。
+          schema:
+            type: string
+            enum: [asc, desc]
+        - name: trend
+          in: query
+          description: 传 `1` 时额外返回按天分组的 `trend[]`。
+          schema:
+            type: string
+        - name: top
+          in: query
+          description: trend 模式下保留的 dim 组合数，默认 10。
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          description: 最大行数，默认 50，上限 200。
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 聚合结果
+
+  /api/git/stats:
+    get:
+      tags: [System]
+      summary: Git 仓库统计
+      description: 代码增量统计（时间窗内）。
+      operationId: gitStats
+      parameters:
+        - name: start
+          in: query
+          required: true
+          description: 起始时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          description: 结束时间（RFC3339）。
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: 提交数、贡献者等
+
+  /api/git/cloc:
+    get:
+      tags: [System]
+      summary: 代码行数统计
+      operationId: gitCloc
+      responses:
+        "200":
+          description: 按语言的行数统计
+
+  # ── Config ────────────────────────────────────────────────────────────────
+  /api/config:
+    get:
+      tags: [Config]
+      summary: 读取服务端配置
+      description: |
+        返回完整配置（密码等敏感字段被剥离）。`appearance.active_file` 由服务端
+        按 mode/enabled/选中项解析后下发。
+      operationId: getConfig
+      responses:
+        "200":
+          description: 配置对象
+    patch:
+      tags: [Config]
+      summary: 局部更新配置
+      description: |
+        仅白名单内的键可写；类型不符直接 400（避免写入后 `yaml.Unmarshal` 失败）。
+        文件名类键（`appearance.local.selected`/`local.items`/`bing.file`）不在白名单，
+        须经专用端点写入。
+      operationId: patchConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: 更新结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  needs_restart:
+                    type: boolean
+                  changed_cold_fields:
+                    type: array
+                    items:
+                      type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          $ref: "#/components/responses/Error"
+
+  /api/config/test:
+    post:
+      tags: [Config]
+      summary: 测试配置连通性
+      description: 例如测试 TTS/推送/模型服务连通性。
+      operationId: configTest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category:
+                  type: string
+                values:
+                  type: object
+      responses:
+        "200":
+          description: 测试结果
+
+  /api/config/restart:
+    post:
+      tags: [Config]
+      summary: 重启服务
+      operationId: configRestart
+      responses:
+        "200":
+          description: 已触发重启
+
+  # ── Theme ─────────────────────────────────────────────────────────────────
+  /api/theme/local/upload:
+    post:
+      tags: [Theme]
+      summary: 上传图库图片
+      description: multipart，字段名 `files`（可多个）。逐文件尽力处理，失败项进 `errors`。
+      operationId: themeLocalUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "200":
+          description: 上传结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GalleryItem"
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        error:
+                          type: string
+
+  /api/theme/local/item:
+    delete:
+      tags: [Theme]
+      summary: 删除图库图片
+      operationId: themeLocalItemDelete
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 删除后的壁纸状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WallpaperState"
+
+  /api/theme/local/select:
+    post:
+      tags: [Theme]
+      summary: 选中图库图片为当前壁纸
+      operationId: themeLocalSelect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 壁纸状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WallpaperState"
+
+  /api/theme/wallpaper:
+    post:
+      tags: [Theme]
+      summary: 切换壁纸来源 / 总开关
+      description: 仅应用传入的字段。切到 `bing` 会同步打开抓取开关并立即触发一次抓取。
+      operationId: themeWallpaperMode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [local, bing]
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: 壁纸状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WallpaperState"
+
+  /api/theme/bing/sync:
+    post:
+      tags: [Theme]
+      summary: 立即抓取 Bing 每日壁纸
+      description: 后台执行，结果轮询 `/api/theme/bing/status`。
+      operationId: themeBingSync
+      responses:
+        "202":
+          description: 已受理，返回当前 Bing 状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BingStatus"
+
+  /api/theme/bing/status:
+    get:
+      tags: [Theme]
+      summary: Bing 壁纸状态
+      operationId: themeBingStatus
+      responses:
+        "200":
+          description: 状态与署名
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BingStatus"
+
+  /api/file/theme-wallpaper:
+    get:
+      tags: [Theme]
+      summary: 读取单张壁纸图片
+      description: 按裸文件名（图库或 Bing）流式返回图片，带缓存与安全头。
+      operationId: themeWallpaperGet
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 图片字节
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/Error"
+
+  # ── Projects ──────────────────────────────────────────────────────────────
+  /api/projects:
+    get:
+      tags: [Projects]
+      summary: 列出项目目录
+      operationId: projectsList
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 目录条目
+    post:
+      tags: [Projects]
+      summary: 创建项目目录
+      operationId: projectsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 创建结果
+
+  /api/project:
+    get:
+      tags: [Projects]
+      summary: 读取当前项目
+      operationId: projectGet
+      responses:
+        "200":
+          description: 当前项目
+    post:
+      tags: [Projects]
+      summary: 设置当前项目
+      operationId: projectSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 设置结果
+
+  /api/recent-projects:
+    get:
+      tags: [Projects]
+      summary: 最近项目
+      operationId: recentProjectsList
+      responses:
+        "200":
+          description: 最近项目列表
+    post:
+      tags: [Projects]
+      summary: 记录最近项目
+      operationId: recentProjectsAdd
+      responses:
+        "200":
+          description: 结果
+    delete:
+      tags: [Projects]
+      summary: 删除一条最近项目
+      description: 按请求体 `{path}` 删除单条记录。
+      operationId: recentProjectsClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  # ── Chat ──────────────────────────────────────────────────────────────────
+  /api/ai/chat:
+    get:
+      tags: [Chat]
+      summary: 聊天历史与运行状态
+      description: 分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
+      operationId: chatGet
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: before_id
+          in: query
+          description: 整数游标，取该 id 之前的消息。
+          schema:
+            type: integer
+        - name: before
+          in: query
+          description: 时间戳游标（legacy，兼容旧客户端；优先用 `before_id`）。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 消息列表与状态
+    post:
+      tags: [Chat]
+      summary: 发送聊天消息
+      description: |
+        发送一条用户消息并启动 AI 流式响应。流式事件经 `/api/ai/events/ws` 推送。
+        会话由 `session_id` 查询参数（或会话 Cookie）决定，**不在请求体里**。
+      operationId: chatSend
+      parameters:
+        - name: session_id
+          in: query
+          description: 目标会话；缺省时回退到会话 Cookie。
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                queueId:
+                  type: string
+                  description: 排队消息标识（忙碌时入队用）。
+                filePaths:
+                  type: array
+                  items:
+                    type: string
+                files:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FileEntry"
+                agentId:
+                  type: string
+                modelId:
+                  type: string
+                thinkingEffort:
+                  type: string
+                modeId:
+                  type: string
+                transport:
+                  type: string
+                clientId:
+                  type: string
+      responses:
+        "200":
+          description: 已受理
+
+  /api/ai/chat/cancel:
+    post:
+      tags: [Chat]
+      summary: 取消当前生成
+      operationId: chatCancel
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已取消
+
+  /api/ai/chat/read:
+    post:
+      tags: [Chat]
+      summary: 标记会话已读
+      operationId: chatRead
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已标记
+
+  /api/ai/chat/user-messages:
+    get:
+      tags: [Chat]
+      summary: 用户消息索引
+      description: 轻量返回该会话的用户消息列表（`{messages:[...]}`），供消息导航。
+      operationId: chatUserMessages
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 用户消息索引
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      description: 用户消息（含 id / content / files / createdAt / role 等）。
+
+  /api/ai/chat/tool-call:
+    get:
+      tags: [Chat]
+      summary: 工具调用详情
+      description: 按 tool_id + message_id 取完整输入输出；失败时可用 session_id 回退查找。
+      operationId: chatToolCall
+      parameters:
+        - name: tool_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: message_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: session_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 工具调用记录
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /api/ai/chat/thinking:
+    get:
+      tags: [Chat]
+      summary: 思考内容详情
+      operationId: chatThinking
+      parameters:
+        - name: think_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: message_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 思考内容
+
+  /api/ai/permission/respond:
+    post:
+      tags: [Chat]
+      summary: 回应权限审批
+      operationId: permissionRespond
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                toolCallId:
+                  type: string
+                  description: ACP 工具调用 ID。
+                optionId:
+                  type: string
+                  description: 选中的权限选项；空字符串表示取消。
+                cancelled:
+                  type: boolean
+      responses:
+        "200":
+          description: 已回应
+
+  /api/chat/quick-send:
+    get:
+      tags: [Chat]
+      summary: 列出聊天快捷发送
+      operationId: quickSendList
+      responses:
+        "200":
+          description: 快捷发送列表
+    post:
+      tags: [Chat]
+      summary: 新建聊天快捷发送
+      operationId: quickSendCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                command:
+                  type: string
+                project_only:
+                  type: boolean
+      responses:
+        "200":
+          description: 新建结果
+
+  /api/chat/quick-send/reorder:
+    put:
+      tags: [Chat]
+      summary: 批量重排聊天快捷发送
+      description: 注意重排路径是 `/api/chat/quick-send/reorder`，不是 `/api/chat/quick-send`。
+      operationId: quickSendReorder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        "200":
+          description: 结果
+
+  /api/chat/quick-send/{id}:
+    put:
+      tags: [Chat]
+      summary: 更新聊天快捷发送
+      operationId: quickSendUpdate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 更新结果
+    delete:
+      tags: [Chat]
+      summary: 删除聊天快捷发送
+      operationId: quickSendDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+
+  /api/chat/recommendation:
+    get:
+      tags: [Chat]
+      summary: 下一步推荐
+      description: 拉取当前会话的推荐问题（离线时也通过此端点补偿）。
+      operationId: chatRecommendation
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 推荐内容
+
+  /api/chat/message-clusters:
+    get:
+      tags: [Chat]
+      summary: 消息聚类结果
+      description: 返回全局聚类结果（不按会话过滤）。
+      operationId: messageClusters
+      responses:
+        "200":
+          description: 聚类
+
+  /api/chat/message-clusters/compute:
+    post:
+      tags: [Chat]
+      summary: 触发消息聚类计算
+      operationId: messageClustersCompute
+      responses:
+        "200":
+          description: 已触发
+        "409":
+          description: 已有计算在运行
+
+  /api/chat/message-clusters/compute/cancel:
+    post:
+      tags: [Chat]
+      summary: 取消消息聚类计算
+      operationId: messageClustersComputeCancel
+      responses:
+        "200":
+          description: 已取消
+
+  /api/chat/message-clusters/compute/status:
+    get:
+      tags: [Chat]
+      summary: 消息聚类计算状态
+      operationId: messageClustersComputeStatus
+      responses:
+        "200":
+          description: 状态
+
+  # ── Sessions ──────────────────────────────────────────────────────────────
+  /api/ai/sessions:
+    get:
+      tags: [Sessions]
+      summary: 会话列表
+      operationId: sessionsList
+      parameters:
+        - name: cursor
+          in: query
+          description: 游标；上一页最后一行的 `createdAt`，需与 `cursor_id` 同时提供才生效。
+          schema:
+            type: string
+        - name: cursor_id
+          in: query
+          schema:
+            type: string
+        - name: cursor_pinned
+          in: query
+          description: |
+            游标；上一页最后一行的 `pinned`（`1`/`0`）。
+            排序为 `pinned DESC, created_at DESC, id DESC`，游标必须携带 pinned，
+            否则置顶会话会在每一页重复返回。省略时退回旧的 created_at-only 行为。
+          schema:
+            type: integer
+            enum: [0, 1]
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 会话列表
+    post:
+      tags: [Sessions]
+      summary: 新建会话
+      operationId: sessionsCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                agentId:
+                  type: string
+                backend:
+                  type: string
+      responses:
+        "200":
+          description: 新会话
+
+  /api/ai/sessions/overview:
+    get:
+      tags: [Sessions]
+      summary: 会话总览
+      operationId: sessionsOverview
+      responses:
+        "200":
+          description: 各项目会话概览
+
+  /api/ai/session/update:
+    patch:
+      tags: [Sessions]
+      summary: 即时持久化会话设置
+      description: 模式 / 思考深度 / 模型 / 传输方式的变更即时写库，无需发消息。会话由 `session_id` 查询参数（或会话 Cookie）决定。
+      operationId: sessionUpdate
+      parameters:
+        - name: session_id
+          in: query
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                modeId:
+                  type: string
+                thinkingEffort:
+                  type: string
+                modelId:
+                  type: string
+                transport:
+                  type: string
+                autoApprove:
+                  type: boolean
+                title:
+                  type: string
+      responses:
+        "200":
+          description: 已更新
+
+  /api/ai/session/archive:
+    delete:
+      tags: [Sessions]
+      summary: 归档会话
+      operationId: sessionArchive
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: backend
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 归档结果
+
+  /api/ai/session/destroy:
+    delete:
+      tags: [Sessions]
+      summary: 销毁会话（不可逆）
+      operationId: sessionDestroy
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 销毁结果
+
+  /api/ai/session/resume:
+    post:
+      tags: [Sessions]
+      summary: 恢复会话
+      operationId: sessionResume
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                session_id:
+                  type: string
+      responses:
+        "200":
+          description: 恢复结果
+
+  /api/ai/session/acp-load:
+    post:
+      tags: [Sessions]
+      summary: ACP 显式 LoadSession
+      description: 强制触发一次 ACP LoadSession 回放（慢，仅显式调用）。
+      operationId: sessionACPLoad
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agentId:
+                  type: string
+                acpSessionId:
+                  type: string
+      responses:
+        "200":
+          description: 回放结果
+
+  /api/ai/session/acp-sync:
+    post:
+      tags: [Sessions]
+      summary: ACP 会话同步
+      description: 对比 ACP 回放消息与本地记录，仅补插缺失消息。
+      operationId: sessionACPSync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agentId:
+                  type: string
+                sessionId:
+                  type: string
+      responses:
+        "200":
+          description: 同步结果
+
+  /api/ai/session/fork:
+    post:
+      tags: [Sessions]
+      summary: 分叉会话
+      description: 请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
+      operationId: sessionFork
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                beforeMessageId:
+                  type: integer
+                agentId:
+                  type: string
+      responses:
+        "200":
+          description: 新会话
+
+  /api/ai/session/reset:
+    post:
+      tags: [Sessions]
+      summary: 重置卡死会话
+      description: 保留外部会话 ID 映射，仅回收 agent 进程，历史完整保留。
+      operationId: sessionReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+      responses:
+        "200":
+          description: 重置结果
+
+  /api/ai/session/rewind:
+    post:
+      tags: [Sessions]
+      summary: 回溯会话历史
+      description: 原址截断到锚点 assistant 消息，事务删除其后历史并清理 RAG 分块。
+      operationId: sessionRewind
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                beforeMessageId:
+                  type: integer
+      responses:
+        "200":
+          description: 回溯结果
+
+  # ── Queue ─────────────────────────────────────────────────────────────────
+  /api/ai/queue:
+    get:
+      tags: [Queue]
+      summary: 列出排队消息
+      operationId: queueList
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 排队消息
+    post:
+      tags: [Queue]
+      summary: 入队消息
+      description: 会话由 `session_id` 查询参数决定（不在请求体里）。
+      operationId: queueEnqueue
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                queueId:
+                  type: string
+                filePaths:
+                  type: array
+                  items:
+                    type: string
+                files:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FileEntry"
+                agentId:
+                  type: string
+                modelId:
+                  type: string
+                transport:
+                  type: string
+                clientId:
+                  type: string
+      responses:
+        "200":
+          description: 入队结果
+    delete:
+      tags: [Queue]
+      summary: 删除排队消息
+      description: |
+        按 `queueId` 删除单条；**省略 `queueId` 时清空该会话的全部排队消息**。
+        旧的按下标删除已不再支持（会返回 400）。
+      operationId: queueDelete
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: queueId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 删除结果
+
+  /api/ai/queue/inject:
+    post:
+      tags: [Queue]
+      summary: 插入当前回复
+      operationId: queueInject
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: queueId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已插入
+        "409":
+          description: 后端无法插入（无活跃连接），消息仍在队列
+
+  /api/ai/queue/interrupt:
+    post:
+      tags: [Queue]
+      summary: 中断并发送
+      operationId: queueInterrupt
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: queueId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已中断
+
+  # ── Events ────────────────────────────────────────────────────────────────
+  /api/ai/events/ws:
+    get:
+      tags: [Events]
+      summary: 事件 WebSocket（升级）
+      description: |
+        WebSocket 端点，承载聊天流式事件、通知与状态推送。OpenAPI 不建模升级握手：
+        客户端使用 `ws(s)://<host>/api/ai/events/ws` 建连，消息为 JSON 事件对象。
+        重连时服务端回放断线期间缓冲的事件（带 `replayed: true` 标记）。
+      operationId: eventsWS
+      responses:
+        "101":
+          description: Switching Protocols
+
+  /api/ai/events/pending:
+    get:
+      tags: [Events]
+      summary: 拉取离线期间漏发事件
+      description: 按游标补偿，供 Android PendingEventsWorker 等离线回退使用。
+      operationId: eventsPending
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 漏发事件
+
+  # ── Git ───────────────────────────────────────────────────────────────────
+  /api/git/branch:
+    get:
+      tags: [Git]
+      summary: 当前分支
+      operationId: gitBranch
+      responses:
+        "200":
+          description: 分支信息
+    delete:
+      tags: [Git]
+      summary: 删除本地分支
+      operationId: gitBranchDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/git/branches:
+    get:
+      tags: [Git]
+      summary: 分支列表
+      operationId: gitBranches
+      responses:
+        "200":
+          description: 分支列表
+
+  /api/git/project-history:
+    get:
+      tags: [Git]
+      summary: 项目提交历史
+      operationId: gitProjectHistory
+      parameters:
+        - name: skip
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 提交列表
+
+  /api/git/history:
+    get:
+      tags: [Git]
+      summary: 文件提交历史
+      operationId: gitHistory
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 提交列表
+
+  /api/git/file-diff:
+    get:
+      tags: [Git]
+      summary: 单文件差异
+      operationId: gitFileDiff
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sha
+          in: query
+          required: true
+          description: 提交哈希。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: diff 文本
+
+  /api/git/diff:
+    get:
+      tags: [Git]
+      summary: 差异
+      operationId: gitDiff
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: commit
+          in: query
+          description: 可选提交哈希；省略则对比工作区。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: diff 文本
+
+  /api/git/commit-files:
+    get:
+      tags: [Git]
+      summary: 提交涉及的文件
+      operationId: gitCommitFiles
+      parameters:
+        - name: sha
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 文件列表
+
+  /api/git/working-tree:
+    get:
+      tags: [Git]
+      summary: 工作区状态
+      description: 返回是否 git 仓库、是否有未提交改动及文件列表。取代已移除的 `/api/git/status`。
+      operationId: gitWorkingTree
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 工作区状态
+
+  /api/git/verify-commits:
+    post:
+      tags: [Git]
+      summary: 校验提交哈希
+      operationId: gitVerifyCommits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shas:
+                  type: array
+                  items:
+                    type: string
+                  description: 待校验的提交哈希列表。
+      responses:
+        "200":
+          description: 校验结果
+
+  /api/git/worktrees:
+    get:
+      tags: [Git]
+      summary: 列出 worktree
+      operationId: gitWorktrees
+      responses:
+        "200":
+          description: worktree 列表
+    delete:
+      tags: [Git]
+      summary: 删除 worktree
+      operationId: gitWorktreeDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: 目标 worktree 路径（必填）。
+                force:
+                  type: boolean
+      responses:
+        "200":
+          description: 结果
+
+  /api/git/checkout:
+    post:
+      tags: [Git]
+      summary: 切换分支 / 检出
+      operationId: gitCheckout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch:
+                  type: string
+                  description: 目标分支（必填）。
+                stash:
+                  type: boolean
+                force:
+                  type: boolean
+      responses:
+        "200":
+          description: 结果
+
+  /api/git/tags:
+    get:
+      tags: [Git]
+      summary: 标签列表
+      operationId: gitTags
+      responses:
+        "200":
+          description: 标签列表
+    delete:
+      tags: [Git]
+      summary: 删除标签
+      operationId: gitTagDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  # ── Files ─────────────────────────────────────────────────────────────────
+  /api/dir:
+    get:
+      tags: [Files]
+      summary: 列出目录
+      description: 取代已移除的递归 `/api/files`；相对路径按项目根解析。
+      operationId: dirList
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 目录条目
+
+  /api/dir/create:
+    post:
+      tags: [Files]
+      summary: 新建目录
+      operationId: dirCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/dir/search:
+    get:
+      tags: [Files]
+      summary: 目录搜索（SSE）
+      description: Server-Sent Events 流式返回匹配项。OpenAPI 不建模事件流。
+      operationId: dirSearch
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: path
+          in: query
+          schema:
+            type: string
+        - name: recursive
+          in: query
+          schema:
+            type: boolean
+        - name: exact
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/file/list-tree:
+    get:
+      tags: [Files]
+      summary: 目录树（下载用）
+      operationId: fileListTree
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 树形条目
+
+  /api/file/thumb:
+    get:
+      tags: [Files]
+      summary: 图片缩略图
+      description: 按绝对路径服务端缩放（png/jpg/gif），SVG 需回退到壁纸原图端点。
+      operationId: fileThumb
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: w
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: JPEG 缩略图
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+
+  /api/file/{path}:
+    get:
+      tags: [Files]
+      summary: 读取文件内容
+      description: 返回文本/结构化内容；二进制与不支持类型有专门处理。`{path}` 为项目相对路径。
+      operationId: fileGet
+      parameters:
+        - $ref: "#/components/parameters/FilePath"
+        - name: path
+          in: query
+          description: 绝对路径（外部文件）。
+          schema:
+            type: string
+        - name: forceText
+          in: query
+          description: 置 1 时强制按文本返回。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 文件内容
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /api/local-file/{path}:
+    get:
+      tags: [Files]
+      summary: 读取文件原始字节
+      description: 供图片/PDF/音视频等直接渲染。项目相对路径走 URL 路径，绝对路径走 `?path=`。
+      operationId: localFileGet
+      parameters:
+        - $ref: "#/components/parameters/FilePath"
+        - name: path
+          in: query
+          description: 绝对路径（外部文件）。
+          schema:
+            type: string
+        - name: download
+          in: query
+          description: 置 1 时强制下载（附 Content-Disposition）。
+          schema:
+            type: string
+            enum: ["1"]
+      responses:
+        "200":
+          description: 原始字节
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /api/file/write:
+    post:
+      tags: [Files]
+      summary: 写入文件
+      operationId: fileWrite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                content:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/create:
+    post:
+      tags: [Files]
+      summary: 新建文件
+      operationId: fileCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/delete:
+    post:
+      tags: [Files]
+      summary: 删除文件或目录
+      description: 删除成功后自动回收关联的公开分享链接。批量删除由前端逐条调用本端点。
+      operationId: fileDelete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/rename:
+    post:
+      tags: [Files]
+      summary: 重命名
+      operationId: fileRename
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                name:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/copy:
+    post:
+      tags: [Files]
+      summary: 复制
+      operationId: fileCopy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                dest:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/move:
+    post:
+      tags: [Files]
+      summary: 移动
+      operationId: fileMove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                dest:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/file/archive:
+    post:
+      tags: [Files]
+      summary: 打包为 zip
+      operationId: fileArchive
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paths:
+                  type: array
+      responses:
+        "200":
+          description: zip 字节
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+
+  /api/file/symbols:
+    get:
+      tags: [Files]
+      summary: 代码符号大纲
+      description: 基于 tree-sitter 提取符号，供代码大纲使用。
+      operationId: fileSymbols
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 符号列表
+
+  /api/file/batch-exists:
+    post:
+      tags: [Files]
+      summary: 批量判断路径是否存在
+      operationId: fileBatchExists
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: 存在性结果
+
+  /api/file/batch-base64:
+    post:
+      tags: [Files]
+      summary: 批量读取图片为 base64
+      description: 供 Markdown HTML 导出内联图片。
+      operationId: fileBatchBase64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paths:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: base64 结果与跳过原因
+
+  /api/file/watch:
+    get:
+      tags: [Files]
+      summary: 文件变更监听（SSE）
+      description: fsnotify 驱动的 Server-Sent Events 流，用于自动刷新。OpenAPI 不建模事件流。
+      operationId: fileWatch
+      parameters:
+        - name: dir
+          in: query
+          description: 监听目录。
+          schema:
+            type: string
+        - name: file
+          in: query
+          description: 监听单个文件。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE 流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/file/watch/update:
+    put:
+      tags: [Files]
+      summary: 更新监听目标
+      operationId: fileWatchUpdate
+      responses:
+        "200":
+          description: 结果
+
+  # ── Share ─────────────────────────────────────────────────────────────────
+  /api/share:
+    post:
+      tags: [Share]
+      summary: 创建分享链接
+      description: 需要目标路径（请求体 `{path}`）。
+      operationId: shareCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 分享 token
+    get:
+      tags: [Share]
+      summary: 列出分享
+      operationId: shareList
+      responses:
+        "200":
+          description: 分享列表
+    delete:
+      tags: [Share]
+      summary: 删除分享
+      description: 需要目标路径（请求体 `{path}` 或查询参数 `path`）。
+      operationId: shareDelete
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/share/list:
+    get:
+      tags: [Share]
+      summary: 已分享文件抽屉数据
+      operationId: shareListAll
+      responses:
+        "200":
+          description: 分享列表
+    delete:
+      tags: [Share]
+      summary: 清空分享
+      operationId: shareClear
+      responses:
+        "200":
+          description: 结果
+
+  /api/share/:
+    get:
+      tags: [Share]
+      summary: 公开分享数据（token 即凭证）
+      description: |
+        免鉴权。子路径分派：`{token}` 或 `{token}/file`（原文件）、`{token}/download`
+        （强制下载）、`{token}/local/...` 与 `{token}/local/?path=`（相对/绝对资源）。
+        token 不存在一律 404，零信息暴露。
+      operationId: sharePublic
+      security: []
+      responses:
+        "200":
+          description: 分享内容
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /share/{token}:
+    get:
+      tags: [Share]
+      summary: 公开分享页面（SPA）
+      description: 免鉴权，返回分享只读 SPA。
+      operationId: sharePage
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML 页面
+          content:
+            text/html:
+              schema:
+                type: string
+
+  # ── Forge ─────────────────────────────────────────────────────────────────
+  /api/forge/credentials:
+    post:
+      tags: [Forge]
+      summary: 保存凭据
+      operationId: forgeCredentialsSave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+    delete:
+      tags: [Forge]
+      summary: 删除凭据
+      operationId: forgeCredentialsDelete
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/forge/verify-token:
+    post:
+      tags: [Forge]
+      summary: 校验令牌
+      operationId: forgeVerifyToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host:
+                  type: string
+                token:
+                  type: string
+      responses:
+        "200":
+          description: 校验结果
+
+  /api/forge/items:
+    get:
+      tags: [Forge]
+      summary: 议题 / 合并请求列表
+      operationId: forgeItems
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: mine
+          in: query
+          schema:
+            type: boolean
+        - name: mineScope
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 条目列表
+
+  /api/forge/item:
+    get:
+      tags: [Forge]
+      summary: 议题 / 合并请求详情
+      operationId: forgeItem
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 条目详情
+
+  /api/forge/comments:
+    get:
+      tags: [Forge]
+      summary: 评论列表
+      operationId: forgeComments
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: number
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 评论列表
+
+  /api/forge/binding:
+    get:
+      tags: [Forge]
+      summary: 读取项目绑定
+      operationId: forgeBindingGet
+      description: |
+        返回当前项目的仓库绑定（`binding` 含 `platform`、`host`、`owner`、`repo`、`slug`）。
+        **未绑定时仍是 200**，此时 `binding` 为 `null`，可能附带 `suggested`（候选仓库）。
+        注意：GET 有副作用——若项目存在指向官方平台的 git remote，本端点会自动完成绑定。
+        事件触发的任务只在项目已绑定仓库时才会被触发，创建这类任务前应先用本端点确认
+        `binding` 非空。
+      responses:
+        "200":
+          description: 绑定信息
+    post:
+      tags: [Forge]
+      summary: 保存项目绑定
+      operationId: forgeBindingSave
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                platform:
+                  type: string
+                host:
+                  type: string
+                owner:
+                  type: string
+                repo:
+                  type: string
+                url:
+                  type: string
+                source:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+    delete:
+      tags: [Forge]
+      summary: 解除绑定
+      operationId: forgeBindingDelete
+      responses:
+        "204":
+          description: 已解除（无响应体）
+
+  /api/forge/remotes:
+    get:
+      tags: [Forge]
+      summary: git remote 列表
+      operationId: forgeRemotes
+      responses:
+        "200":
+          description: remote 列表
+
+  /api/forge/test:
+    post:
+      tags: [Forge]
+      summary: 连通性测试
+      operationId: forgeTest
+      responses:
+        "200":
+          description: 测试结果
+
+  /api/forge/unread:
+    get:
+      tags: [Forge]
+      summary: 未读条目
+      operationId: forgeUnread
+      responses:
+        "200":
+          description: 未读列表
+
+  /api/forge/read:
+    post:
+      tags: [Forge]
+      summary: 标记已读
+      operationId: forgeMarkRead
+      responses:
+        "200":
+          description: 结果
+
+  # ── Agents ────────────────────────────────────────────────────────────────
+  /api/agents:
+    get:
+      tags: [Agents]
+      summary: Agent 列表与 ACP 缓存状态
+      description: |
+        返回所有 agent，并附带 `acpStates`（模式、思考深度、斜杠命令 `commands`、
+        模型列表、计划状态）。斜杠命令由 `acpStates[].commands` 提供，取代已移除的
+        `/api/ai/commands`。
+      operationId: agentsList
+      responses:
+        "200":
+          description: agent 列表与 acpStates
+    post:
+      tags: [Agents]
+      summary: 复制 / 新建 agent
+      operationId: agentsCreate
+      responses:
+        "200":
+          description: 新 agent
+    patch:
+      tags: [Agents]
+      summary: 更新 agent
+      operationId: agentsUpdate
+      responses:
+        "200":
+          description: 更新结果
+    delete:
+      tags: [Agents]
+      summary: 删除 agent
+      operationId: agentsDelete
+      responses:
+        "200":
+          description: 结果
+
+  /api/agents/{id}:
+    get:
+      tags: [Agents]
+      summary: agent 子资源
+      description: |
+        GET 子路径：`/api/agents/{id}/common-prompt`、`/api/agents/{id}/acp-sessions`。
+        （`/api/agents/{id}/refresh-models` 与 `/api/agents/rescan` 只接受 POST。）
+      operationId: agentSubGet
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 子资源内容
+    post:
+      tags: [Agents]
+      summary: agent 子操作
+      operationId: agentSubPost
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 操作结果
+
+  /api/backends:
+    get:
+      tags: [Agents]
+      summary: 可用后端列表
+      operationId: backendsList
+      responses:
+        "200":
+          description: 后端列表
+
+  # ── TTS ───────────────────────────────────────────────────────────────────
+  /api/tts/generate:
+    post:
+      tags: [TTS]
+      summary: 合成语音
+      operationId: ttsGenerate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text:
+                  type: string
+                language:
+                  type: string
+                  description: 语言代码（如 zh / en），缺省 zh。
+                messageId:
+                  type: integer
+                  description: 关联的 chat_history.id，用于 TTS 摘要缓存。
+      responses:
+        "200":
+          description: 音频
+
+  /api/tts/stream/{jobId}:
+    get:
+      tags: [TTS]
+      summary: 流式合成音频（SSE / 分块）
+      operationId: ttsStream
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 音频流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/tts/audio/ws:
+    get:
+      tags: [TTS]
+      summary: TTS 音频 WebSocket（升级）
+      description: WebSocket 端点，流式推送合成音频块。OpenAPI 不建模升级握手。
+      operationId: ttsAudioWS
+      responses:
+        "101":
+          description: Switching Protocols
+
+  # ── STT ───────────────────────────────────────────────────────────────────
+  /api/stt/transcribe:
+    post:
+      tags: [STT]
+      summary: 语音识别（整段）
+      operationId: sttTranscribe
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 识别文本
+
+  /api/stt/transcribe/ws:
+    get:
+      tags: [STT]
+      summary: 语音识别 WebSocket（升级）
+      description: WebSocket 端点，流式增量识别。OpenAPI 不建模升级握手。
+      operationId: sttTranscribeWS
+      responses:
+        "101":
+          description: Switching Protocols
+
+  # ── Terminal ──────────────────────────────────────────────────────────────
+  /api/terminal/ws:
+    get:
+      tags: [Terminal]
+      summary: 终端 WebSocket（升级）
+      description: |
+        WebSocket 端点，承载 PTY 双向字节流与终端状态。OpenAPI 不建模升级握手。
+        查询参数 `cwd` 指定初始工作目录。
+      operationId: terminalWS
+      parameters:
+        - name: cwd
+          in: query
+          schema:
+            type: string
+      responses:
+        "101":
+          description: Switching Protocols
+
+  /api/terminal/status:
+    get:
+      tags: [Terminal]
+      summary: 终端可用状态
+      description: |
+        返回 `enabled`、`platform_supported`、`sessions`、`session_count`；
+        带 `session` 查询参数时另返回 `hasSession`/`sessionId`/`cwd`/`running`。
+        取代已移除的 `/api/terminal/config`。
+      operationId: terminalStatus
+      responses:
+        "200":
+          description: 状态
+
+  /api/terminal/close:
+    post:
+      tags: [Terminal]
+      summary: 关闭终端会话
+      operationId: terminalClose
+      parameters:
+        - name: session
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/terminal/quick-commands:
+    get:
+      tags: [Terminal]
+      summary: 列出终端快捷指令
+      operationId: terminalQuickCommandsList
+      responses:
+        "200":
+          description: 快捷指令列表
+    post:
+      tags: [Terminal]
+      summary: 新建终端快捷指令
+      operationId: terminalQuickCommandsCreate
+      responses:
+        "200":
+          description: 结果
+    put:
+      tags: [Terminal]
+      summary: 批量重排终端快捷指令
+      operationId: terminalQuickCommandsReorder
+      responses:
+        "200":
+          description: 结果
+
+  /api/terminal/quick-commands/{id}:
+    put:
+      tags: [Terminal]
+      summary: 更新终端快捷指令
+      operationId: terminalQuickCommandUpdate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+    delete:
+      tags: [Terminal]
+      summary: 删除终端快捷指令
+      operationId: terminalQuickCommandDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+
+  /api/terminal/key-config:
+    get:
+      tags: [Terminal]
+      summary: 读取终端按键配置
+      operationId: terminalKeyConfigGet
+      parameters:
+        - name: type
+          in: query
+          required: true
+          description: 配置类型，`key`（键位）或 `symbol`（符号）。
+          schema:
+            type: string
+            enum: [key, symbol]
+      responses:
+        "200":
+          description: 按键配置
+    put:
+      tags: [Terminal]
+      summary: 更新终端按键配置
+      operationId: terminalKeyConfigPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [key, symbol]
+                items:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        "200":
+          description: 结果
+
+  # ── Tasks ─────────────────────────────────────────────────────────────────
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      summary: 任务列表
+      operationId: tasksList
+      responses:
+        "200":
+          description: 任务列表
+    post:
+      tags: [Tasks]
+      summary: 新建任务
+      operationId: tasksCreate
+      description: |
+        创建任务。两种触发模式由 `trigger_mode` 决定：
+
+        - `cron`（默认）：由 `cron_expr` 驱动，必填。
+        - `event`：由 Forge（GitHub/GitLab）事件驱动，不需要 `cron_expr`，
+          但必须提供 `event_types`（逗号分隔，且至少一个）。
+
+        `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
+        `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
+        `pr.commented`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+
+        **cron 表达式**按服务器本地时区解释（5 字段，支持 `@daily` 等描述符）。
+        没有单独的 cron 校验端点：非法表达式在创建时返回 400，这是唯一的验证方式。
+
+        **`trigger_mode=event` 的额外语义**（与 `cron` 不同，配置时务必知晓）：
+
+        - `repeat_mode` 与 `max_runs` 被忽略：按事件触发时不参与 cron 完成语义，
+          每次匹配到事件都会执行，也不会因次数耗尽而停止。停止需 `pause` 或删除。
+        - 任务**始终监听其项目绑定的仓库**（见 `GET /api/forge/binding`），
+          没有按任务指定仓库的参数。项目未绑定仓库时事件不匹配，任务静默不执行
+          （创建时前端会给出警告，但仍允许保存）。
+        - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
+          以防 AI 的写入自我触发形成循环。因此按事件触发时不会被自己创建的内容触发。
+        - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
+          评论内容等）会**自动前置**到 `prompt` 之前，无需在 prompt 里写占位符。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, agent_id, prompt]
+              properties:
+                name:
+                  type: string
+                  description: 任务名（必填）。
+                cron_expr:
+                  type: string
+                  description: 5 字段 cron 表达式。`trigger_mode=cron` 时必填。
+                agent_id:
+                  type: string
+                  description: 执行任务的 agent ID（必填）。
+                prompt:
+                  type: string
+                  description: 每次执行传给 AI 的提示词（必填）。
+                repeat_mode:
+                  type: string
+                  enum: [once, limited, unlimited]
+                  description: 重复模式，默认 `unlimited`。`trigger_mode=event` 时忽略此字段。
+                max_runs:
+                  type: integer
+                  description: 最大执行次数，`repeat_mode=limited` 时必填且需 > 0。`trigger_mode=event` 时忽略此字段。
+                session_id:
+                  type: string
+                  description: 预留字段，当前不生效。
+                trigger_mode:
+                  type: string
+                  enum: [cron, event]
+                  description: 触发模式，默认 `cron`。
+                event_types:
+                  type: string
+                  description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
+      responses:
+        "200":
+          description: 新任务
+
+  /api/tasks/{id}:
+    get:
+      tags: [Tasks]
+      summary: 任务详情
+      operationId: taskGet
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 任务详情
+    put:
+      tags: [Tasks]
+      summary: 更新任务 / 删除执行记录
+      description: |
+        更新任务字段，并承载多种动作（`action`）：`update`、`pause`、`resume`、
+        `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
+        删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
+        或 `action: "deleteAllExecutions"` 清空该任务执行历史。
+        **注意**：`trigger`（手动立即执行一次）对 `trigger_mode=event` 的任务不适用，
+        返回 409 `TaskEventTriggerUnsupported`——事件任务的 prompt 依赖触发时注入的
+        事件上下文（标题、链接、作者等字段），手动执行没有事件可注入，只会跑出
+        字段未替换的无意义结果。事件任务需等待匹配的 Forge 事件触发。
+        **注意**：子路径不会被父资源兜底。对 `/api/tasks/{id}/executions` 发 PUT
+        返回 405，未知子路径（如 `/api/tasks/{id}/bogus`）返回 404，均不会更新任务。
+      operationId: taskUpdate
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [update, pause, resume, read, trigger, cancel, deleteExecution, deleteAllExecutions]
+                executionId:
+                  type: string
+                  description: 仅 `deleteExecution` 需要（字符串形式）。
+      responses:
+        "200":
+          description: 结果
+        "409":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Tasks]
+      summary: 删除任务
+      description: |
+        删除整个任务（含其执行历史）。仅作用于 `/api/tasks/{id}` 本身；
+        子路径不会被兜底——对 `/api/tasks/{id}/executions` 发 DELETE 返回 405，
+        对未知子路径返回 404，都不会删除任务。
+      operationId: taskDelete
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: 结果
+
+  /api/tasks/{id}/executions:
+    get:
+      tags: [Tasks]
+      summary: 任务执行历史
+      description: |
+        该路径仅支持 GET。其他方法一律 405，不会落到父任务操作上。
+        删除执行记录请用 `PUT /api/tasks/{id}` 的 `action: "deleteExecution"` 或
+        `action: "deleteAllExecutions"`。
+      operationId: taskExecutions
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: cursor
+          in: query
+          description: 游标；需与 `cursor_id` 同时提供才生效。
+          schema:
+            type: string
+        - name: cursor_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 执行记录
+
+  /api/tasks/{id}/executions/{execId}/continue:
+    get:
+      tags: [Tasks]
+      summary: 查询续接会话是否存在
+      description: 返回 `{exists, sessionId}`，供前端决定是「继续」还是「新建」。
+      operationId: taskExecutionContinueCheck
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: execId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 存在性
+    post:
+      tags: [Tasks]
+      summary: 以某次执行为起点继续对话
+      operationId: taskExecutionContinue
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: execId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 结果
+
+  # ── RAG ───────────────────────────────────────────────────────────────────
+  /api/rag/search:
+    post:
+      tags: [RAG]
+      summary: 语义 / 全文混合搜索
+      description: 搜索历史对话（排除 thinking 与 tool_use 块）。
+      operationId: ragSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                q:
+                  type: string
+                  description: 搜索词（必填）。
+                limit:
+                  type: integer
+                backend:
+                  type: string
+                role:
+                  type: string
+                session_id:
+                  type: string
+                exclude_session_id:
+                  type: string
+                from:
+                  type: string
+                to:
+                  type: string
+      responses:
+        "200":
+          description: 匹配分块
+
+  /api/rag/message:
+    get:
+      tags: [RAG]
+      summary: 按 ID 取完整消息
+      operationId: ragMessage
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 完整消息
+
+  /api/rag/session:
+    get:
+      tags: [RAG]
+      summary: 取会话全部消息
+      operationId: ragSession
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: 会话 ID。
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 会话消息
+
+  /api/rag/status:
+    get:
+      tags: [RAG]
+      summary: RAG 索引状态
+      operationId: ragStatus
+      responses:
+        "200":
+          description: 状态
+
+  /api/rag/message-index-status:
+    get:
+      tags: [RAG]
+      summary: 消息索引状态
+      operationId: ragMessageIndexStatus
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 索引状态
+
+  /api/rag/message/summarize:
+    post:
+      tags: [RAG]
+      summary: 摘要消息
+      operationId: ragMessageSummarize
+      description: 为指定消息按需生成阅读摘要并返回。
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: 消息数据库 ID。
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 摘要结果
+
+  /api/rag/reset-vector:
+    post:
+      tags: [RAG]
+      summary: 仅重建向量索引
+      description: 重建向量层；全文索引走 `/api/rag/rebuild-fts`。取代已移除的全量 `/api/rag/reset`。
+      operationId: ragResetVector
+      responses:
+        "200":
+          description: 结果
+
+  /api/rag/rebuild-fts:
+    post:
+      tags: [RAG]
+      summary: 仅重建全文索引
+      operationId: ragRebuildFTS
+      responses:
+        "200":
+          description: 结果
+
+  /api/rag/session-search:
+    post:
+      tags: [RAG]
+      summary: 会话聚合搜索
+      operationId: ragSessionSearch
+      description: |
+        跨会话聚合搜索并返回命中位置，供会话搜索抽屉高亮。
+        `q` 为空时进入「浏览全部」模式：列出该项目下的会话，此时
+        `archived`/`sort`/`cursor` 仍然生效。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                q:
+                  type: string
+                  description: 搜索词；为空时列出会话而非搜索。
+                backend:
+                  type: string
+                role:
+                  type: string
+                session_id:
+                  type: string
+                exclude_session_id:
+                  type: string
+                from:
+                  type: string
+                to:
+                  type: string
+                prefer_mode:
+                  type: string
+                  description: 强制检索模式，如 `fts`；缺省为混合检索。
+                archived:
+                  type: string
+                  enum: [all, active, archived]
+                  description: 归档筛选（字符串，非布尔）。默认 `all`。
+                sort:
+                  type: string
+                  enum: [newest, oldest, relevance]
+                  description: 排序方式，默认 `relevance`（未知值也回落到它）。
+                cursor:
+                  type: string
+                  description: 游标时间戳；需与 `cursor_id` 同时提供才生效。
+                cursor_id:
+                  type: string
+      responses:
+        "200":
+          description: 聚合结果
+
+  /api/rag/session-first-message:
+    get:
+      tags: [RAG]
+      summary: 会话首条消息
+      operationId: ragSessionFirstMessage
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 首条消息
+
+  # ── Upgrade ───────────────────────────────────────────────────────────────
+  /api/upgrade/check:
+    get:
+      tags: [Upgrade]
+      summary: 检查新版本
+      description: 返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+      operationId: upgradeCheck
+      responses:
+        "200":
+          description: 版本信息
+
+  /api/upgrade/start:
+    post:
+      tags: [Upgrade]
+      summary: 开始升级
+      operationId: upgradeStart
+      responses:
+        "200":
+          description: 已开始
+
+  /api/upgrade/status:
+    get:
+      tags: [Upgrade]
+      summary: 升级进度
+      operationId: upgradeStatus
+      responses:
+        "200":
+          description: 进度
+
+  # ── Proxy ─────────────────────────────────────────────────────────────────
+  /api/proxy/ports:
+    get:
+      tags: [Proxy]
+      summary: 端口转发列表
+      operationId: proxyPortsList
+      responses:
+        "200":
+          description: 端口列表
+    post:
+      tags: [Proxy]
+      summary: 新增端口转发
+      operationId: proxyPortsCreate
+      responses:
+        "200":
+          description: 结果
+    put:
+      tags: [Proxy]
+      summary: 更新端口转发
+      operationId: proxyPortsUpdate
+      responses:
+        "200":
+          description: 结果
+    delete:
+      tags: [Proxy]
+      summary: 删除端口转发
+      operationId: proxyPortsDelete
+      responses:
+        "200":
+          description: 结果
+
+  /api/proxy/ports/enabled:
+    put:
+      tags: [Proxy]
+      summary: 启停端口转发
+      operationId: proxyPortsSetEnabled
+      responses:
+        "200":
+          description: 结果
+
+  /api/proxy/detect:
+    get:
+      tags: [Proxy]
+      summary: 检测端口占用
+      operationId: proxyDetect
+      responses:
+        "200":
+          description: 检测结果
+
+  /api/openapi-proxy:
+    get:
+      tags: [Proxy]
+      summary: CORS 代理
+      description: |
+        为 Swagger UI 的 "Try it out" 转发 API 请求以绕过浏览器 CORS。**透传任意 HTTP 方法**
+        （含 OPTIONS 预检与 POST），仅转发 HTTP/HTTPS，过滤 hop-by-hop 头。
+        生产可设 `AllowLocalProxy=false` 阻止私有 IP（防 SSRF）。
+      operationId: openapiProxy
+      responses:
+        "200":
+          description: 上游响应
+
+  # ── SSH/FRP ───────────────────────────────────────────────────────────────
+  /api/ssh/info:
+    get:
+      tags: [SSH/FRP]
+      summary: SSH 隧道信息
+      description: |
+        免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
+        错误端口导致隧道静默失败。仅暴露端口、用户名与指纹。
+      operationId: sshInfo
+      security: []
+      responses:
+        "200":
+          description: SSH 信息
+
+  /api/frp/info:
+    get:
+      tags: [SSH/FRP]
+      summary: FRP 完整状态
+      description: 需鉴权（会暴露公网 IP）。
+      operationId: frpInfo
+      responses:
+        "200":
+          description: FRP 状态
+
+  /api/frp/status:
+    get:
+      tags: [SSH/FRP]
+      summary: FRP 最小状态
+      description: 免鉴权，仅返回 enabled + running。
+      operationId: frpStatus
+      security: []
+      responses:
+        "200":
+          description: 最小状态
+
+  # ── Fonts ─────────────────────────────────────────────────────────────────
+  /api/fonts/list:
+    get:
+      tags: [Fonts]
+      summary: 自定义字体列表
+      operationId: fontsList
+      responses:
+        "200":
+          description: 字体列表
+
+  /api/fonts/file:
+    get:
+      tags: [Fonts]
+      summary: 读取字体文件
+      operationId: fontFile
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 字体字节
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  # ── Upload ────────────────────────────────────────────────────────────────
+  /api/upload/file:
+    post:
+      tags: [Upload]
+      summary: 上传文件
+      description: multipart 上传；除 `file` 外还支持 `dir`（目标目录）与 `relpath`（相对路径）。
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 上传结果
+
+  /api/upload/recent:
+    get:
+      tags: [Upload]
+      summary: 最近上传
+      operationId: uploadRecentList
+      responses:
+        "200":
+          description: 最近上传记录
+    delete:
+      tags: [Upload]
+      summary: 删除一条最近上传记录
+      description: 按请求体 `{path}` 删除单条记录（不是清空全部；清空需逐条调用）。
+      operationId: uploadRecentClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  /api/share-in/recent:
+    get:
+      tags: [Upload]
+      summary: 最近接收的分享
+      operationId: shareInRecentList
+      responses:
+        "200":
+          description: 记录
+    delete:
+      tags: [Upload]
+      summary: 删除一条最近接收记录
+      description: 按请求体 `{path}` 删除单条记录（不是清空全部）。
+      operationId: shareInRecentClear
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: 结果
+
+  # ── ClientLogs ────────────────────────────────────────────────────────────
+  /api/client-log:
+    post:
+      tags: [ClientLogs]
+      summary: 回传客户端日志
+      description: |
+        免鉴权：Android 原生用 HttpURLConnection（无 WebView Cookie），JS 用 fetch。
+        仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带 `[js]`/`[android]`
+        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条。
+      operationId: clientLog
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entries:
+                  type: array
+                  maxItems: 200
+                  items:
+                    $ref: "#/components/schemas/ClientLogEntry"
+      responses:
+        "200":
+          description: 写入条数
+
+  # ── APK ───────────────────────────────────────────────────────────────────
+  /api/apk:
+    get:
+      tags: [APK]
+      summary: 下载 Android APK
+      description: 免鉴权（用户需先下载安装才能登录）。从 go:embed 读取。
+      operationId: apkDownload
+      security: []
+      responses:
+        "200":
+          description: APK 字节
+          content:
+            application/vnd.android.package-archive:
+              schema:
+                type: string
+                format: binary
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: clawbench_session
+      description: 登录后下发的会话 Cookie；CLI 使用 `<DataDir>/cookie-token`。
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    FilePath:
+      name: path
+      in: path
+      required: true
+      description: 项目相对路径（可含 `/`）。
+      schema:
+        type: string
+
+  responses:
+    Error:
+      description: 错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      description: 统一错误体。
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        msgKey:
+          type: string
+          description: i18n 消息键，前端据此本地化。
+        detail:
+          description: 可选的附加细节。
+      required: [error]
+
+    FileEntry:
+      type: object
+      description: 附件条目。
+      properties:
+        path:
+          type: string
+        name:
+          type: string
+        size:
+          type: integer
+        mime:
+          type: string
+
+    GalleryItem:
+      type: object
+      description: |
+        图库中的一张图片，由 `POST /api/theme/local/upload` 返回。
+        注意：绝对路径 `abs_path` 不在此响应中，只出现在 `GET /api/config` 的
+        `appearance.local.items[]` 里。
+      properties:
+        file:
+          type: string
+          description: 存储用的生成文件名。
+        name:
+          type: string
+          description: 上传时的原始文件名。
+        uploaded_at:
+          type: integer
+        size:
+          type: integer
+
+    WallpaperState:
+      type: object
+      description: 壁纸变更端点统一返回的状态。
+      properties:
+        mode:
+          type: string
+          enum: [local, bing]
+        enabled:
+          type: boolean
+        active_file:
+          type: string
+        selected:
+          type: string
+
+    BingStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        file:
+          type: string
+        last_success_date:
+          type: string
+        copyright:
+          type: string
+        title:
+          type: string
+        mkt:
+          type: string
+        last_error:
+          type: string
+        last_attempt_at:
+          type: integer
+
+    ClientLogEntry:
+      type: object
+      properties:
+        level:
+          type: string
+          enum: [D, I, W, E]
+        tag:
+          type: string
+        msg:
+          type: string
+        ts:
+          type: integer
+          description: epoch 毫秒
+        source:
+          type: string
+          description: "`android` 或 `js`；缺省视为 `android`。"

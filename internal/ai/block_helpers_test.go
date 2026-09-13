@@ -95,21 +95,16 @@ func TestConvertAskQuestionBlocks_XMLFormat(t *testing.T) {
 	}
 }
 
-func TestConvertAskQuestionBlocks_JSONFormat(t *testing.T) {
+func TestConvertAskQuestionBlocks_JSONContentNotConverted(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: `<ask-question>{"questions":[{"question":"Pick one","header":"Choice","multiSelect":false,"options":[{"label":"A","description":"First"}]}]}</ask-question>`},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
 
-	found := false
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-			found = true
-			break
+			t.Fatalf("expected no AskUserQuestion block for JSON content, got: %+v", result)
 		}
-	}
-	if !found {
-		t.Fatalf("expected AskUserQuestion tool_use block, got: %+v", result)
 	}
 }
 
@@ -189,64 +184,14 @@ func TestExtractXMLCandidate_XMLMissingOption(t *testing.T) {
 	}
 }
 
-func TestExtractXMLCandidate_ValidJSON(t *testing.T) {
+func TestExtractXMLCandidate_JSONIsRejected(t *testing.T) {
 	input := `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`
-	result := extractXMLCandidate(input)
-	if result == "" {
-		t.Fatal("expected non-empty result for valid JSON with questions array")
+	if extractXMLCandidate(input) != "" {
+		t.Fatal("expected empty result for JSON content (only XML is supported)")
 	}
 }
 
-func TestExtractXMLCandidate_InvalidJSON(t *testing.T) {
-	if extractXMLCandidate(`{not json}`) != "" {
-		t.Fatal("expected empty result for invalid JSON")
-	}
-}
-
-func TestExtractXMLCandidate_JSONMissingQuestions(t *testing.T) {
-	if extractXMLCandidate(`{"other":"value"}`) != "" {
-		t.Fatal("expected empty result for JSON without questions")
-	}
-}
-
-func TestExtractXMLCandidate_JSONEmptyQuestions(t *testing.T) {
-	if extractXMLCandidate(`{"questions":[]}`) != "" {
-		t.Fatal("expected empty result for empty questions array")
-	}
-}
-
-func TestExtractXMLCandidate_JSONQuestionsNotArray(t *testing.T) {
-	if extractXMLCandidate(`{"questions":"not array"}`) != "" {
-		t.Fatal("expected empty result when questions is not an array")
-	}
-}
-
-func TestExtractXMLCandidate_JSONQuestionItemNotMap(t *testing.T) {
-	if extractXMLCandidate(`{"questions":["not a map"]}`) != "" {
-		t.Fatal("expected empty result when question item is not a map")
-	}
-}
-
-func TestExtractXMLCandidate_JSONQuestionWithoutOptions(t *testing.T) {
-	if extractXMLCandidate(`{"questions":[{"question":"Q?"}]}`) != "" {
-		t.Fatal("expected empty result when question has no options")
-	}
-}
-
-func TestExtractXMLCandidate_JSONQuestionWithEmptyOptions(t *testing.T) {
-	if extractXMLCandidate(`{"questions":[{"question":"Q?","options":[]}]}`) != "" {
-		t.Fatal("expected empty result when question has empty options")
-	}
-}
-
-func TestExtractXMLCandidate_JSONQuestionWithOptions(t *testing.T) {
-	input := `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`
-	if extractXMLCandidate(input) == "" {
-		t.Fatal("expected non-empty result for JSON with question and options")
-	}
-}
-
-func TestExtractXMLCandidate_NonXMLNonJSON(t *testing.T) {
+func TestExtractXMLCandidate_PlainText(t *testing.T) {
 	if extractXMLCandidate("plain text content") != "" {
 		t.Fatal("expected empty result for plain text")
 	}
@@ -306,78 +251,6 @@ func TestParseAskQuestionXML_OptionWithDescription(t *testing.T) {
 	}
 }
 
-// --- parseAskQuestionJSON ---
-
-func TestParseAskQuestionJSON_InvalidJSON(t *testing.T) {
-	if parseAskQuestionJSON("{not json}") != nil {
-		t.Fatal("expected nil for invalid JSON")
-	}
-}
-
-func TestParseAskQuestionJSON_MissingQuestions(t *testing.T) {
-	if parseAskQuestionJSON(`{"other":"value"}`) != nil {
-		t.Fatal("expected nil for JSON without questions")
-	}
-}
-
-func TestParseAskQuestionJSON_EmptyQuestions(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[]}`) != nil {
-		t.Fatal("expected nil for empty questions array")
-	}
-}
-
-func TestParseAskQuestionJSON_QuestionNotMap(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":["string"]}`) != nil {
-		t.Fatal("expected nil when question item is not a map")
-	}
-}
-
-func TestParseAskQuestionJSON_QuestionMissingQuestion(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[{"header":"H"}]}`) != nil {
-		t.Fatal("expected nil when question field is empty")
-	}
-}
-
-func TestParseAskQuestionJSON_QuestionMissingOptions(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[{"question":"Q?"}]}`) != nil {
-		t.Fatal("expected nil when question has no options")
-	}
-}
-
-func TestParseAskQuestionJSON_OptionNotMap(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[{"question":"Q?","options":["string"]}]}`) != nil {
-		t.Fatal("expected nil when option is not a map")
-	}
-}
-
-func TestParseAskQuestionJSON_OptionMissingLabel(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[{"question":"Q?","options":[{"description":"D"}]}]}`) != nil {
-		t.Fatal("expected nil when option has no label")
-	}
-}
-
-func TestParseAskQuestionJSON_EmptyOptions(t *testing.T) {
-	if parseAskQuestionJSON(`{"questions":[{"question":"Q?","options":[]}]}`) != nil {
-		t.Fatal("expected nil when options array is empty")
-	}
-}
-
-func TestParseAskQuestionJSON_OptionWithDescription(t *testing.T) {
-	input := `{"questions":[{"question":"Q?","multiSelect":true,"options":[{"label":"A","description":"Desc"}]}]}`
-	result := parseAskQuestionJSON(input)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	questions := result["questions"].([]map[string]any)
-	if !questions[0]["multiSelect"].(bool) {
-		t.Fatal("expected multiSelect=true")
-	}
-	opts := questions[0]["options"].([]map[string]any)
-	if opts[0]["description"] != "Desc" {
-		t.Fatalf("expected description 'Desc', got %v", opts[0]["description"])
-	}
-}
-
 // --- ConvertAskQuestionBlocks additional cases ---
 
 func TestConvertAskQuestionBlocks_WrongCloseTag(t *testing.T) {
@@ -417,7 +290,7 @@ func TestConvertAskQuestionBlocks_UnclosedTag(t *testing.T) {
 }
 
 func TestConvertAskQuestionBlocks_UnparseableContent(t *testing.T) {
-	// <ask-question> tag present but content is neither valid XML nor JSON
+	// <ask-question> tag present but content is not valid XML
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: `<ask-question>garbage content</ask-question>`},
 	}

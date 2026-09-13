@@ -336,7 +336,7 @@ func TestScheduler_TaskRunning_ConcurrentNoDuplicate(t *testing.T) {
 	s.taskRunning.Delete(taskID)
 }
 
-// ── ACP scheduled task auto-approve ──
+// ── ACP task auto-approve ──
 
 // setupTestDBForAutoApprove creates an in-memory SQLite DB with chat_sessions table
 // for testing auto-approve persistence.
@@ -367,6 +367,7 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
 			title_renamed INTEGER NOT NULL DEFAULT 0,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -421,7 +422,7 @@ func TestGetSessionAutoApprove_MissingSession(t *testing.T) {
 // TestScheduler_ExternalSessionID_SessionCapture verifies that the service-level
 // UpdateExternalSessionID / GetExternalSessionID functions work correctly for
 // the session_capture path added to the scheduler event loop.
-// This is the core of the fix for "scheduled task session amnesia on continue":
+// This is the core of the fix for "task session amnesia on continue":
 // the scheduler must persist the CLI-assigned external_session_id so that
 // ContinueFromExecution can inherit it and --resume works correctly.
 func TestScheduler_ExternalSessionID_SessionCapture(t *testing.T) {
@@ -540,7 +541,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	execDone := make(chan struct{})
 	go func() {
 		defer close(execDone)
-		s.executeTask(task, "/tmp", "manual")
+		s.executeTask(task, "/tmp", "manual", nil)
 	}()
 
 	// executeTask creates its own session (via CreateSession) and blocks inside
@@ -601,7 +602,7 @@ func TestScheduler_ExternalSessionID_ContinueInheritance(t *testing.T) {
 	sourceID := "sched-source-session"
 	cliSessionID := "ses_real_cli_id"
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, '/proj', 'opencode', 'Scheduled Task', ?)`,
+		`INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, '/proj', 'opencode', 'Task', ?)`,
 		sourceID, cliSessionID,
 	)
 	assert.NoError(t, err)

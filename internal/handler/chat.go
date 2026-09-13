@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -18,47 +19,11 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/platform"
-	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/ws"
 )
 
 const maxChatBodySize = 10 << 20 // 10MB
-
-// ServeAISession handles DELETE for Claude CLI internal session files.
-func ServeAISession(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
-	if !requireMethod(w, r, http.MethodDelete) {
-		return
-	}
-
-	// Get Claude session directory using cross-platform path mangling
-	sessionDir := platform.ClaudeProjectDir(projectPath)
-
-	// Delete all .jsonl session files
-	entries, err := os.ReadDir(sessionDir)
-	if err != nil {
-		// Session dir doesn't exist — nothing to delete, treat as success
-		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted": 0})
-		return
-	}
-
-	deleted := 0
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
-			if err := os.Remove(filepath.Join(sessionDir, entry.Name())); err == nil {
-				deleted++
-			}
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted": deleted})
-}
 
 // AIChat handles GET (status/history) and POST (send message) for AI chat.
 func AIChat(w http.ResponseWriter, r *http.Request) {
@@ -366,9 +331,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate file entries are within project and determine isDir via os.Stat
+	// Validate file entries are within project and determine isDir via os.Stat.
+	// URL entries carry an external address, not a local path: they are passed
+	// through untouched and never resolved against the filesystem.
 	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
 	for _, fEntry := range req.Files {
+		if fEntry.IsURL() {
+			entry, ok := validatedURLEntry(w, r, fEntry)
+			if !ok {
+				return
+			}
+			validatedFileEntries = append(validatedFileEntries, entry)
+			continue
+		}
 		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return
@@ -396,6 +371,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	fileEntryFileLabels := make([]string, 0) // "path" or "path:startLine-endLine"
 	fileEntryDirPaths := make([]string, 0)
 	for _, f := range validatedFileEntries {
+		// URL entries are not filesystem paths and must not be prefixed onto
+		// the prompt as if they were local files.
+		if f.IsURL() {
+			continue
+		}
 		if _, exists := filePathsSet[f.Path]; exists {
 			continue // already covered by filePaths
 		}
@@ -410,7 +390,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Slash commands (e.g. /reload-plugins, /compact) must be sent as-is to ACP
 	// agents — they detect commands by the leading "/" prefix. Prepending file
 	// paths or system instructions would break command detection.
-	isSlashCmd := ai.IsACPSlashCommand(req.Message)
+	// ClawBench's own "/cb-*" commands share the "/" prefix but are NOT agent
+	// commands: they are injected locally below and must keep file prefixes.
+	isSlashCmd := ai.IsACPSlashCommand(req.Message) && !IsClawbenchCommand(req.Message)
 	if !isSlashCmd {
 		if len(validatedFilePaths) > 0 {
 			prompt = fmt.Sprintf("[Current file: %s]\n%s", strings.Join(validatedFilePaths, ", "), req.Message)
@@ -426,27 +408,28 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// @ command injection: detect on raw req.Message, prepend template to prompt.
-	// Must happen after file path prefixes are added so the AI sees both
-	// the injected context and file context, but detection is on raw req.Message
-	// (since file prefixes would break the @ prefix check).
-	if strings.HasPrefix(req.Message, "@chatsearch ") {
-		// RAG availability check — GlobalStore is nil when RAG index is not ready
-		if rag.GlobalStore == nil {
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "RAGNotReady")
+	// ClawBench built-in command injection: detect on raw req.Message, prepend
+	// template to prompt. Must happen after file path prefixes are added so the
+	// AI sees both the injected context and file context, but detection is on
+	// raw req.Message (since file prefixes would break the "/cb-" prefix check).
+	// matchClawbenchCommand also matches the bare command (no trailing space),
+	// which is what the frontend sends after trimming a menu selection.
+	//
+	// Every built-in command shares the same shape — optional precondition,
+	// then render-and-prepend — so new commands only need an entry in
+	// clawbenchCommandPrecheck and processClawbenchCommand, not another branch
+	// here.
+	if IsClawbenchCommand(req.Message) {
+		if !clawbenchCommandPrecheck(w, r, req.Message) {
 			return
 		}
-		// Empty query rejection
-		query := strings.TrimPrefix(req.Message, "@chatsearch ")
-		if strings.TrimSpace(query) == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
+		injected, err := processClawbenchCommand(req.Message, projectPath, sessionID)
+		if err != nil {
+			slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}
-		atInjected := processAtCommand(req.Message, projectPath, sessionID)
-		prompt = atInjected + "\n\n" + prompt
-	} else if strings.HasPrefix(req.Message, "@task ") {
-		atInjected := processAtCommand(req.Message, projectPath, sessionID)
-		prompt = atInjected + "\n\n" + prompt
+		prompt = injected + "\n\n" + prompt
 	}
 
 	// allFiles uses validated entries (with resolved absolute paths and isDir from os.Stat)
@@ -488,6 +471,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if !service.TrySetSessionRunning(sessionID) {
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
+		//
+		// Deliberately NOT auto-injecting into the running turn here: joining
+		// the current reply is an explicit choice the user makes on the queued
+		// bubble (POST /api/ai/queue/inject). Sending always queues, so the
+		// behavior is identical for every backend and the message is visible
+		// (and actionable) in the queue instead of silently disappearing into
+		// the reply being written.
 		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
@@ -646,7 +636,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					Files:     msg.Files,
 					CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 				}
-				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				nextChatReq, buildErr := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				if buildErr != nil {
+					return service.DrainResult{Err: buildErr.Error()}
+				}
 				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir, msg.QueueID)
 				return service.DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -684,6 +677,20 @@ func executeStreamRun(
 	queueID string,
 ) streamRunResult {
 	runStart := time.Now()
+
+	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
+	// drain loop's shared context stays alive for the next queued message. The
+	// outer ctx still governs everything (user cancel / shutdown cancel it, and
+	// that propagates here).
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	service.RegisterSessionTurnCancel(sessionID, turnCancel)
+	// Unregister as soon as the turn's outcome has been read (RunWithChannel
+	// returns after buildResult consumed the cancel reason), NOT when this
+	// function exits. Finalize below can take a while (DB writes), and leaving
+	// the turn registered through it would let a late interrupt claim success
+	// and leave its reason behind for the NEXT turn to misread.
+	defer turnCancel()
+
 	sessionTransport := service.GetSessionTransport(sessionID)
 	slog.Info("acp perf: executeStreamRun.start", "session_id", sessionID, "backend", backendName, "agent_id", agentID, "transport", sessionTransport, "resume", chatReq.Resume)
 
@@ -705,7 +712,7 @@ func executeStreamRun(
 	}
 
 	slog.Info("acp perf: executeStreamRun.ExecuteStream_start", "session_id", sessionID, "transport", sessionTransport, "after_backend_create", time.Since(runStart))
-	eventCh, err := backend.ExecuteStream(ctx, chatReq)
+	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
@@ -757,10 +764,13 @@ func executeStreamRun(
 			return T(r, key, args)
 		},
 	}
-	executor := service.NewSessionExecutor(ctx, cfg)
+	executor := service.NewSessionExecutor(turnCtx, cfg)
 	runResult := executor.RunWithChannel(eventCh)
+	// The turn is over: its cancel reason has been read, so stop advertising it
+	// as interruptible. Anything arriving now belongs to the next turn.
+	service.UnregisterSessionTurnCancel(sessionID)
 
-	// Finalize: persist to DB, drain channel, save metadata/raw
+	// Finalize: persist to DB, drain channel, save metadata
 	runResult = executor.Finalize(runResult, eventCh)
 
 	// Send updated metadata (with wallMs) to WS clients before the terminal event
@@ -768,13 +778,19 @@ func executeStreamRun(
 
 	// Convert RunResult to streamRunResult
 	result := streamRunResult{}
-	if runResult.CancelReason == "user" {
+	switch {
+	case runResult.CancelReason == "user":
 		result.cancelReason = runResult.CancelReason
-	} else if ctx.Err() == context.Canceled {
+	case runResult.CancelReason == "interrupt":
+		// "interrupt and send": the drain loop must KEEP the queue and move on
+		// to the next message. Passing the reason through (instead of folding it
+		// into the generic "cancel" below) is what tells it to do that.
+		result.cancelReason = runResult.CancelReason
+	case turnCtx.Err() == context.Canceled:
 		result.cancelReason = "cancel"
-	} else if ctx.Err() == context.DeadlineExceeded {
+	case turnCtx.Err() == context.DeadlineExceeded:
 		result.err = "AI response timed out (30 min)"
-	} else if runResult.Empty {
+	case runResult.Empty:
 		result.empty = true
 	}
 
@@ -1061,7 +1077,9 @@ func fileEntryLabel(f model.FileEntry) string {
 }
 
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.
-func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) ai.ChatRequest {
+// It returns an error only when a ClawBench built-in command's endpoint
+// reference cannot be rendered from the embedded spec.
+func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath, backendName, agentID, fileDir string) (ai.ChatRequest, error) {
 	prompt := qMsg.Text
 	if len(qMsg.FilePaths) > 0 {
 		basePath, _ := filepath.Abs(projectPath)
@@ -1115,9 +1133,16 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 		}
 	}
 
-	// @ command injection for queued messages (same logic as primary message path)
-	if atInjected := processAtCommand(qMsg.Text, projectPath, sessionID); atInjected != qMsg.Text {
-		prompt = atInjected + "\n\n" + prompt
+	// ClawBench built-in command injection for queued messages (same logic as
+	// the primary message path). A render failure means the embedded spec is
+	// unusable — surface it rather than sending the AI an incomplete contract.
+	injected, err := processClawbenchCommand(qMsg.Text, projectPath, sessionID)
+	if err != nil {
+		slog.Error("failed to render clawbench command injection", slog.String("err", err.Error()))
+		return ai.ChatRequest{}, err
+	}
+	if injected != qMsg.Text {
+		prompt = injected + "\n\n" + prompt
 	}
 
 	// Use session-persisted model (if user explicitly chose one) as modelOverride
@@ -1125,7 +1150,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	sessionModel := service.GetSessionModel(sessionID)
 	sessionTransport := service.GetSessionTransport(sessionID)
 	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments)
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments), nil
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.
@@ -1200,4 +1225,45 @@ func MarkChatRead(w http.ResponseWriter, r *http.Request) {
 	service.UpdateLastRead(sessionID)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// isSafeExternalURL reports whether an external URL attachment may be persisted
+// and later rendered as a clickable link.
+//
+// Only http(s) is allowed. The value is stored and re-rendered as an anchor
+// href on every subsequent load, so a javascript:/data: entry would become an
+// executable link long after the request that created it. Rejecting it at the
+// boundary keeps every renderer safe without each one having to remember a
+// guard.
+func isSafeExternalURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return (scheme == "http" || scheme == "https") && u.Host != ""
+}
+
+// validatedURLEntry normalizes one URL attachment, writing the error response
+// and returning ok=false when it is unusable.
+//
+// Shared by every endpoint that accepts file entries (chat and queue): both
+// persist the entry and both later render it as a link, so the scheme check and
+// the label handling must not drift apart between them.
+func validatedURLEntry(w http.ResponseWriter, r *http.Request, fEntry model.FileEntry) (model.FileEntry, bool) {
+	// Path carries the human-readable label (e.g. "owner/repo#123") and must be
+	// preserved: it is the chip text shown after a reload. Only the filesystem
+	// resolution is skipped for URL entries.
+	//
+	// The scheme is restricted to http(s) here, at the boundary, because this
+	// value is persisted and later re-rendered as an anchor href. A
+	// javascript:/data: entry stored once would otherwise become an executable
+	// link on every subsequent load, and client-side guards are not enough (a
+	// different renderer may forget to apply one).
+	u := strings.TrimSpace(fEntry.URL)
+	if !isSafeExternalURL(u) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidURLAttachment")
+		return model.FileEntry{}, false
+	}
+	return model.FileEntry{Path: fEntry.Path, Kind: "url", URL: u}, true
 }

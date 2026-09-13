@@ -31,11 +31,27 @@
           <div class="task-item-main">
             <div class="task-item-header">
               <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :size="16" />
+              <!-- Trigger-type badge. This is the only element that names *what*
+                   starts the task: the meta line below is cron-only, and the
+                   summary line only ever shows a schedule or a repository. -->
+              <span
+                class="task-trigger-badge"
+                :class="task.triggerMode === 'event' ? 'is-event' : 'is-cron'"
+              >{{ task.triggerMode === 'event' ? t('task.form.triggerEvent') : t('task.form.triggerCron') }}</span>
               <span class="task-item-name">{{ task.name }}</span>
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
               <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
             </div>
-            <div class="task-item-meta">
+            <!-- Schedule + repeat. Cron-only, for two reasons:
+                 - An event task has no schedule, and its repeat mode is inert —
+                   the backend never exhausts it (scheduler.go's event-task
+                   branch), so "不限次数" would be fabricated.
+                 - Its subscription list can run to dozens of characters, which
+                   the .cron span's max-width then truncated mid-word while
+                   shoving the neighbouring repeat label far to the right, so
+                   event rows never lined up with cron rows.
+                 The subscription detail lives in the task overview. -->
+            <div v-if="task.triggerMode !== 'event'" class="task-item-meta">
               <div class="meta-item cron" :title="task.cronExpr">
                 <Clock class="meta-icon" :size="12" />
                 <span>{{ humanizeCron(task.cronExpr) }}</span>
@@ -46,7 +62,24 @@
                 <span v-if="task.repeatMode !== 'unlimited'" class="task-progress">({{ task.runCount }}/{{ task.maxRuns || 1 }})</span>
               </div>
             </div>
-            <div class="task-item-next">
+            <!-- Trigger summary line. The icon sits inside each branch because
+                 the two modes mean different things: a cron task is defined by
+                 *when* it runs (a clock), an event task by *what* it watches.
+
+                 The event branch names the project's bound repository: every
+                 event task in a project watches that one binding, so the row
+                 states what will actually fire the task rather than repeating
+                 "event-triggered", which the badge above already says.
+
+                 The icon stays inside each branch because an unconditional
+                 Clock told an event task's user it has a schedule, which it
+                 never does — the backend leaves nextRunAt null for event tasks
+                 (scheduler.go's event-task branch). -->
+            <div v-if="task.triggerMode === 'event'" class="task-item-next">
+              <GitBranch class="meta-icon" :size="12" />
+              <span class="task-item-repo" :title="boundRepoLabel">{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
+            </div>
+            <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
               <span v-if="task.nextRunAt">{{ t('task.nextRun', { time: formatDateTimeWithYear(task.nextRunAt) }) }}</span>
               <span v-else>{{ t('task.nextRunNone') }}</span>
@@ -62,12 +95,13 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, GitBranch } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
+import { fetchForgeBinding } from '@/utils/forgeApi'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -90,6 +124,23 @@ interface TaskItem {
   runningCount: number
   unreadCount: number
   nextRunAt?: string
+  // Trigger mode: 'cron' (default/absent) or 'event'.
+  triggerMode?: string
+}
+
+// Every event task watches its project's bound repository, so one binding
+// lookup covers the whole list — the repository is a property of the project,
+// not of each row.
+const boundRepoLabel = ref('')
+
+async function loadBoundRepo() {
+  try {
+    const res = await fetchForgeBinding()
+    const b = res.binding
+    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
+  } catch {
+    boundRepoLabel.value = ''
+  }
 }
 
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
@@ -108,7 +159,7 @@ async function refresh() {
     // Minimum spin duration so the refresh animation is always visible,
     // even when the API responds almost instantly.
     await Promise.all([
-      Promise.all([loadTasks(), loadAgents()]),
+      Promise.all([loadTasks(), loadAgents(), loadBoundRepo()]),
       new Promise(resolve => setTimeout(resolve, 600)),
     ])
   } finally {
@@ -135,11 +186,11 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Create button in header toolbar */
@@ -147,7 +198,7 @@ onMounted(refresh)
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--accent-color, #0066cc);
   color: #fff;
   cursor: pointer;
@@ -155,7 +206,7 @@ onMounted(refresh)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 /* Header icon button (refresh, etc.) */
@@ -163,7 +214,7 @@ onMounted(refresh)
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -171,11 +222,11 @@ onMounted(refresh)
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -210,13 +261,13 @@ onMounted(refresh)
 .task-list-body {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-4);
 }
 
 .task-items-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .task-loading,
@@ -225,26 +276,26 @@ onMounted(refresh)
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 .task-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px;
+  padding: var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   position: relative;
   overflow: hidden;
 }
@@ -262,7 +313,7 @@ onMounted(refresh)
 }
 
 .task-item.completed {
-  opacity: 0.65;
+  opacity: var(--opacity-soft);
   background: var(--bg-tertiary, #f1f3f5);
 }
 
@@ -270,14 +321,14 @@ onMounted(refresh)
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .task-item-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -286,9 +337,42 @@ onMounted(refresh)
   vertical-align: middle;
 }
 
+/* Trigger-type badge. Kept visually distinct from the status pill on the right
+   (which reports lifecycle) and from the meta icons (which are grey) — this is
+   the one element that answers "what starts this task?" at a glance.
+
+   The label carries the meaning; colour is a secondary cue. Text uses
+   --text-primary rather than the hue token because several themes define
+   --color-info/--color-purple as soft pastels (everforest-light's #7fbbb3 on
+   #f2e9d0 measures 1.7:1), which would make this badge unreadable exactly
+   where it matters. Tinting the background and border instead keeps the two
+   modes distinguishable without depending on low-contrast text. */
+.task-trigger-badge {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  line-height: var(--line-height-normal);
+  white-space: nowrap;
+}
+
+.task-trigger-badge.is-cron {
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--color-info, #1f6feb) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-info, #1f6feb) 45%, transparent);
+}
+
+.task-trigger-badge.is-event {
+  color: var(--text-primary, #1a1a1a);
+  background: color-mix(in srgb, var(--color-purple, #7c3aed) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-purple, #7c3aed) 45%, transparent);
+}
+
 .task-item-name {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -298,16 +382,16 @@ onMounted(refresh)
 }
 
 .task-item-unread {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-semibold);
   background: var(--accent-color, #0066cc);
   color: #fff;
   flex-shrink: 0;
   min-width: 16px;
   text-align: center;
-  line-height: 1.2;
+  line-height: var(--line-height-tight);
 }
 
 .task-item.has-unread {
@@ -331,10 +415,10 @@ onMounted(refresh)
 }
 
 .task-item-status {
-  font-size: 10px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -366,7 +450,7 @@ onMounted(refresh)
 
 @keyframes task-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 10px 4px rgba(34, 197, 94, 0.3); }
 }
 
 .task-item.is-running {
@@ -382,8 +466,8 @@ onMounted(refresh)
 .task-item-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   min-width: 0;
   flex-wrap: wrap;
@@ -392,23 +476,21 @@ onMounted(refresh)
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .meta-icon {
   color: var(--text-muted, #999);
 }
 
-.cron span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 140px;
-}
+/* The cron label is either "Daily HH:MM" or a raw 5-field expression — at most
+   ~12 characters, so it never needs truncating. The max-width cap that used to
+   live here only ever clipped the event subscription line, which the row no
+   longer renders. */
 
 .task-progress {
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   margin-left: 2px;
 }
 
@@ -416,13 +498,23 @@ onMounted(refresh)
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-primary, #fff);
   padding: 4px 8px;
   border-radius: 4px;
   border: 1px solid var(--border-color, #e5e5e5);
   width: fit-content;
+  max-width: 100%;
+}
+
+/* An owner/repo can be long; truncate rather than widen the row. The full
+   value stays available via the title attribute. */
+.task-item-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .task-item-right {

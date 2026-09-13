@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	external_session_id TEXT DEFAULT '',
 	transport TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	context_state TEXT DEFAULT '',
 	last_read_at DATETIME,
@@ -55,6 +56,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	agent_id TEXT NOT NULL,
 	prompt TEXT NOT NULL,
 	session_id TEXT,
+	trigger_mode TEXT NOT NULL DEFAULT 'cron',
+	event_types TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,
@@ -78,14 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, creat
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-CREATE TABLE IF NOT EXISTS ai_raw_responses (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	session_id TEXT NOT NULL,
-	message_id INTEGER NOT NULL,
-	backend TEXT NOT NULL DEFAULT '',
-	raw_output TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 CREATE TABLE IF NOT EXISTS chat_metadata (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	message_id INTEGER NOT NULL,

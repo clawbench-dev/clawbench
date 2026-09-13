@@ -6,6 +6,7 @@
     <div
       ref="dividerRef"
       class="toc-dock-divider"
+      :class="{ 'toc-dock-divider--dragging': dragging }"
       role="separator"
       aria-orientation="vertical"
       @pointerdown="startDrag"
@@ -65,13 +66,18 @@ const dockStyle = computed(() => ({ width: `${tocDockWidth.value}px` }))
 
 // ── Drag-to-resize (mirrors SplitDivider: pointer capture + body class) ──
 const dividerRef = ref(null)
-let dragging = false
+/**
+ * Drives the expanded highlight for the whole drag. `:active` is not enough on
+ * touch — `setPointerCapture` makes the browser drop it, so a fast swipe showed
+ * no highlight (only a held press did). Mirrors the pointer lifecycle instead.
+ */
+const dragging = ref(false)
 let startClientX = 0
 let startWidth = 0
 
 function startDrag(e) {
   if (e.button !== 0) return
-  dragging = true
+  dragging.value = true
   startClientX = e.clientX
   startWidth = tocDockWidth.value
   dividerRef.value?.setPointerCapture?.(e.pointerId)
@@ -79,7 +85,7 @@ function startDrag(e) {
 }
 
 function onDragMove(e) {
-  if (!dragging) return
+  if (!dragging.value) return
   const delta = e.clientX - startClientX
   if (props.side === 'left') {
     // Left-side dock: the divider is its RIGHT edge, which follows the
@@ -94,8 +100,8 @@ function onDragMove(e) {
 }
 
 function endDrag(e) {
-  if (!dragging) return
-  dragging = false
+  if (!dragging.value) return
+  dragging.value = false
   dividerRef.value?.releasePointerCapture?.(e.pointerId)
   document.body.classList.remove('toc-dock-resizing')
 }
@@ -144,7 +150,7 @@ onBeforeUnmount(() => {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 5;
-  transition: width 0.15s ease, margin 0.15s ease, background 0.15s ease;
+  transition: width var(--duration-base) ease, margin var(--duration-base) ease, background var(--duration-base) ease;
 }
 .toc-dock--left .toc-dock-divider {
   left: auto;
@@ -159,7 +165,10 @@ onBeforeUnmount(() => {
   left: -4px;
   right: -4px;
 }
-.toc-dock-divider:active {
+/* Expanded highlight. `:active` covers mouse press; `--dragging` covers the
+   whole pointer session, which is what touch needs (see the `dragging` ref). */
+.toc-dock-divider:active,
+.toc-dock-divider--dragging {
   width: 12px;
   margin-left: -3px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -174,29 +183,47 @@ onBeforeUnmount(() => {
 /* Left-docked: the divider hangs off the RIGHT edge, so the hover/drag
    expansion must shift RIGHT (margin-left: 3px) to stay centered on it. */
 .toc-dock--left .toc-dock-divider:active,
+.toc-dock--left .toc-dock-divider--dragging,
 .toc-dock--left .toc-dock-divider:hover {
   margin-left: 3px;
 }
+/* The line fills the divider, so its thickness is the divider's own width.
+   Centring a 1px line inside this 6px box left an uneven gap either side
+   (2px left, 3px right), which read as stray padding — same fix as SplitDivider,
+   which is why both now use `inset: 0`. */
 .toc-dock-divider__line {
   position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  transform: translateX(-50%);
+  inset: 0;
   background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
+}
+/* While dragging, the divider widens into a tinted band and the line narrows to
+   a crisp centre stripe instead of filling that band. 2px rather than 1px
+   because a 12px band cannot centre a 1px line on a whole pixel. Mirrors
+   SplitDivider's drag rule. */
+.toc-dock-divider:active .toc-dock-divider__line,
+.toc-dock-divider--dragging .toc-dock-divider__line {
+  right: auto;
+  left: calc((100% - 2px) / 2);
+  width: 2px;
 }
 .toc-dock-divider:active .toc-dock-divider__line,
-.toc-dock-divider:hover .toc-dock-divider__line {
+.toc-dock-divider--dragging .toc-dock-divider__line {
   background: var(--accent-color, #0066cc);
+}
+/* Hover is gated on a real pointer, matching SplitDivider: on touch a tap leaves
+   a sticky :hover that would keep the line accent-coloured after the drag ends. */
+@media (hover: hover) {
+  .toc-dock-divider:hover .toc-dock-divider__line {
+    background: var(--accent-color, #0066cc);
+  }
 }
 
 .toc-dock-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   min-height: 28px;
@@ -209,8 +236,8 @@ onBeforeUnmount(() => {
 
 .toc-dock-header-title {
   flex: 1;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -218,9 +245,9 @@ onBeforeUnmount(() => {
 }
 
 .toc-dock-close {
-  padding: 2px;
+  padding: var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -230,9 +257,9 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 .toc-dock-side-toggle {
-  padding: 2px;
+  padding: var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -243,11 +270,11 @@ onBeforeUnmount(() => {
 }
 @media (hover: hover) {
   .toc-dock-close:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
   }
   .toc-dock-side-toggle:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     color: var(--accent-color);
   }
 }

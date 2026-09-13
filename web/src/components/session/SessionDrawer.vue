@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet ref="bottomSheetRef" :open="open" auto :title="t('session.title')" @close="$emit('close')">
+  <BottomSheet ref="bottomSheetRef" :open="open" auto panel-class="session-drawer-sheet" :title="t('session.title')" @close="$emit('close')">
     <template #header>
       <SessionListHeader
         :session-count="sessionCount"
@@ -17,6 +17,7 @@
 
     <SessionList
       ref="listRef"
+      v-model:active-tab="activeTab"
       :current-session-id="currentSessionId"
       :running-session-ids="runningSessionIds"
       :is-active="open"
@@ -24,6 +25,14 @@
       @archive="handleArchive"
       @destroy="$emit('destroy', $event)"
     />
+
+    <!-- Tab bar lives in the footer slot, NOT inside SessionList: BottomSheet's
+         auto mode sizes the panel to its content, so an in-flow tab bar at the
+         bottom of the list would be pushed off-screen by the growing scroll
+         area. .bs-footer is flex-shrink:0, so it stays pinned. -->
+    <template #footer>
+      <SessionListTabs v-model:active-tab="activeTab" />
+    </template>
   </BottomSheet>
 
   <!-- Agent selector drawer -->
@@ -46,6 +55,7 @@ import { PanelRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import SessionList from '@/components/session/SessionList.vue'
 import SessionListHeader from '@/components/session/SessionListHeader.vue'
+import SessionListTabs from '@/components/session/SessionListTabs.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -67,6 +77,9 @@ const { isWideScreen } = useWideScreenLayout()
 const bottomSheetRef = ref(null)
 const agentSelectorRef = ref(null)
 const listRef = ref(null)
+// Which pane the list shows. Owned here (not in SessionList) because the tab bar
+// is rendered in the BottomSheet footer, outside the list's scroll area.
+const activeTab = ref('project')
 const { loadAgents } = useAgents()
 const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 
@@ -96,8 +109,8 @@ function createSession(agentId) {
   bottomSheetRef.value?.close()
 }
 
-function handleSelect(sessionId, backend) {
-  emit('select', sessionId, backend)
+function handleSelect(sessionId, backend, projectPath) {
+  emit('select', sessionId, backend, projectPath)
   bottomSheetRef.value?.close()
 }
 
@@ -118,3 +131,28 @@ watch(() => store.state.sessionCount, async () => {
   if (props.open) listRef.value?.loadSessions()
 })
 </script>
+
+<style scoped>
+/* Footer padding is zeroed in the non-scoped block below. A scoped :deep rule
+   cannot reach it: BottomSheet renders inside <Teleport to="body">, so this
+   component's scope attribute never lands on .bs-footer's ancestors and the
+   selector fails to match. panelClass is bound on .bs-panel itself, so the
+   non-scoped selector can target it reliably. */
+</style>
+
+<style>
+/* Zero out BottomSheet's default footer padding/border so the tab bar spans the
+   full panel width edge-to-edge (the tabs component draws its own top border,
+   so the footer's would double up). Scoped to this drawer's panelClass so other
+   BottomSheet consumers (e.g. SessionSearchDrawer) keep their own footer.
+   .bs-panel is included in the selector to outrank the base
+   `.bs-panel > .bs-footer` rule regardless of stylesheet order. */
+.bs-panel.session-drawer-sheet > .bs-footer {
+  padding: 0;
+  border-top: none;
+  gap: 0;
+  /* The bar is a full-width row of tabs; the base rule's flex-end alignment
+     would pack it to the right. */
+  justify-content: flex-start;
+}
+</style>

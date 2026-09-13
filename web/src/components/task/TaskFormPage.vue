@@ -46,6 +46,66 @@
 
       <div class="form-section">
         <h3 class="section-title">{{ t('task.form.scheduleInfo') }}</h3>
+        <!-- Trigger mode: cron schedule or forge event -->
+        <div class="form-group">
+          <label class="form-label">{{ t('task.form.triggerMode') }}</label>
+          <div class="preset-buttons">
+            <button class="preset-btn" :class="{ active: form.triggerMode !== 'event' }" @click="form.triggerMode = 'cron'">
+              {{ t('task.form.triggerCron') }}
+            </button>
+            <button class="preset-btn" :class="{ active: form.triggerMode === 'event' }" @click="form.triggerMode = 'event'">
+              {{ t('task.form.triggerEvent') }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Event configuration (event mode) -->
+        <template v-if="form.triggerMode === 'event'">
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventTypes') }}</label>
+            <!-- Grouped by item kind: "a new issue" and "a new PR" are
+                 distinct triggers, so each kind lists its own applicable
+                 events. merged / pipeline only exist for PRs. -->
+            <div v-for="group in eventTypeGroups" :key="group.kind" class="event-type-group">
+              <div class="event-type-group-label">{{ group.label }}</div>
+              <div class="event-type-checks">
+                <label v-for="et in group.options" :key="et.value" class="checkbox-label">
+                  <input type="checkbox" :value="et.value" v-model="selectedEventTypes" />
+                  <span>{{ et.label }}</span>
+                </label>
+              </div>
+            </div>
+            <div v-if="errors.eventTypes" class="form-error">{{ errors.eventTypes }}</div>
+          </div>
+
+          <!-- The watched repository is not configurable: an event task always
+               watches the project's bound repository. Show the resolved binding
+               so the user can confirm what it will watch. -->
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventRepo') }}</label>
+            <div class="event-repo-readonly" :class="{ unbound: !boundRepoLabel }">
+              <GitBranch :size="14" />
+              <span>{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
+            </div>
+            <div v-if="boundRepoLabel" class="form-hint">{{ t('task.form.eventRepoHint') }}</div>
+            <!-- Unbound is a soft warning, not a validation error: the task can
+                 still be saved, but it can never fire. -->
+            <div v-else class="form-warning">
+              <AlertTriangle :size="13" />
+              <span>{{ t('task.form.eventRepoUnboundWarn') }}</span>
+            </div>
+          </div>
+
+          <!-- Read-only event context block: shows exactly what will be injected.
+               Not editable — the variables are filled from the triggering event. -->
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.eventContext') }}</label>
+            <pre class="event-context-block">{{ eventContextTemplate }}</pre>
+            <div class="form-hint">{{ t('task.form.eventContextHint') }}</div>
+          </div>
+        </template>
+
+        <template v-else>
         <!-- Frequency preset -->
         <div class="form-group">
           <label class="form-label">{{ t('task.form.frequency') }}</label>
@@ -64,26 +124,14 @@
           <!-- Hourly: minute only -->
           <div v-if="preset === 'hourly'" class="time-row">
             <span class="time-label">{{ t('task.form.minute') }}</span>
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="minute">
-                <option v-for="m in 60" :key="m - 1" :value="m - 1">{{ String(m - 1).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="minute" :options="minuteOptions" />
           </div>
 
           <!-- Daily: hour + minute -->
           <div v-if="preset === 'daily'" class="time-row">
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="hour">
-                <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="hour" :options="hourOptions" />
             <span class="time-sep">:</span>
-            <div class="select-wrapper inline">
-              <select class="form-select time-select" v-model.number="minute">
-                <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-              </select>
-            </div>
+            <MenuSelect v-model="minute" :options="minuteStepOptions" />
           </div>
 
           <!-- Weekly: weekday + hour + minute -->
@@ -94,17 +142,9 @@
               </button>
             </div>
             <div class="time-row mt-2">
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="hour">
-                  <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="hour" :options="hourOptions" />
               <span class="time-sep">:</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="minute">
-                  <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="minute" :options="minuteStepOptions" />
             </div>
           </div>
 
@@ -112,25 +152,13 @@
           <div v-if="preset === 'monthly'" class="time-column">
             <div class="time-row">
               <span class="time-label">{{ t('task.form.date') }}</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="monthDay">
-                  <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="monthDay" :options="monthDayOptions" />
             </div>
             <div v-if="monthDay >= 29" class="form-hint warning">{{ t('task.form.monthDaySkipHint') }}</div>
             <div class="time-row mt-2">
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="hour">
-                  <option v-for="h in 24" :key="h - 1" :value="h - 1">{{ String(h - 1).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="hour" :options="hourOptions" />
               <span class="time-sep">:</span>
-              <div class="select-wrapper inline">
-                <select class="form-select time-select" v-model.number="minute">
-                  <option v-for="m in 12" :key="(m - 1) * 5" :value="(m - 1) * 5">{{ String((m - 1) * 5).padStart(2, '0') }}</option>
-                </select>
-              </div>
+              <MenuSelect v-model="minute" :options="minuteStepOptions" />
             </div>
           </div>
         </div>
@@ -177,6 +205,7 @@
           <label class="form-label">{{ t('task.form.maxRuns') }}</label>
           <input type="number" class="form-input" v-model.number="form.maxRuns" min="1" />
         </div>
+        </template>
       </div>
 
       <div class="form-section flex-fill">
@@ -219,13 +248,16 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Save } from 'lucide-vue-next'
+import { AlertTriangle, ChevronDown, GitBranch, Save } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import MenuSelect from '@/components/common/MenuSelect.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
+import { fetchForgeBinding } from '@/utils/forgeApi'
+import { FORGE_EVENT_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -267,6 +299,84 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
   onSuccess: (taskId) => emit('saved', taskId),
 })
 
+// ── Event trigger configuration ──
+// The event-type list mirrors the backend's validForgeEventTypes set.
+// Event keys are kind-scoped ("issue.opened" / "pr.opened") so the two are
+// independent triggers. merged is PR-only: an issue has no merge, so offering
+// it under Issues would create a subscription that can never fire.
+//
+// pipeline_done is deliberately absent: nothing derives a pipeline event yet,
+// so subscribing would never fire. It stays valid on the backend so a task that
+// already stores one is not rejected, and the shared label map still renders it.
+const eventTypeGroups = computed(() => Object.entries(FORGE_EVENT_TRANSITIONS).map(([kind, transitions]) => ({
+  kind,
+  label: eventKindLabel(kind),
+  options: transitions.map(tr => ({
+    value: `${kind}.${tr}`,
+    label: eventTransitionLabel(tr),
+  })),
+})))
+
+// Every kind-scoped value the checkboxes can represent.
+const OFFERED_EVENT_VALUES = computed(() => offeredEventValues())
+
+// Keys with no checkbox (a retired or unknown subscription). They must survive
+// an edit untouched, or saving would drop something the user cannot even see.
+function unrepresentableEventKeys() {
+  return expandStoredEventTypes(form.value.eventTypes)
+    .filter(k => !OFFERED_EVENT_VALUES.value.has(k))
+}
+
+// selectedEventTypes is a view over form.eventTypes (comma-separated).
+const selectedEventTypes = computed({
+  get: () => expandStoredEventTypes(form.value.eventTypes)
+    .filter(k => OFFERED_EVENT_VALUES.value.has(k)),
+  set: (vals) => {
+    // Re-append anything the UI cannot represent so it is never lost.
+    form.value.eventTypes = [...vals, ...unrepresentableEventKeys()].join(',')
+  },
+})
+
+// The watched repository is the project's binding, so there is nothing to
+// choose — the form only displays it. An empty label means the project has no
+// binding, which is what drives the warning below.
+const boundRepoLabel = ref('')
+
+async function loadBoundRepo() {
+  try {
+    const res = await fetchForgeBinding()
+    const b = res.binding
+    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
+  } catch {
+    boundRepoLabel.value = ''
+  }
+}
+
+// The read-only context block mirrors the backend's EventPromptTemplate: only
+// variables relevant to the selected event types are listed.
+const eventContextTemplate = computed(() => {
+  const types = selectedEventTypes.value
+  const showAll = types.length === 0
+  // Keys are kind-scoped ("pr.commented"), so match on the transition suffix
+  // (and on the bare legacy form, which a pre-split task may still carry).
+  const show = (transition) => showAll || types.some(x => x === transition || x.endsWith('.' + transition))
+  const lines = [
+    `- ${t('task.form.varEventType')}：{{EVENT_TYPE}}`,
+    `- ${t('task.form.varRepo')}：{{REPO}}`,
+    `- ${t('task.form.varItem')}：{{ITEM_TYPE}} #{{ITEM_NUMBER}}`,
+    `- ${t('task.form.varTitle')}：{{TITLE}}`,
+    `- ${t('task.form.varUrl')}：{{URL}}`,
+    `- ${t('task.form.varAuthor')}：{{AUTHOR}}`,
+    `- ${t('task.form.varState')}：{{STATE}}`,
+  ]
+  if (show('commented')) lines.push(`- ${t('task.form.varCommentBody')}：{{COMMENT_BODY}}`)
+  if (show('pipeline_done')) {
+    lines.push(`- ${t('task.form.varPipelineStatus')}：{{PIPELINE_STATUS}}`)
+    lines.push(`- ${t('task.form.varPipelineUrl')}：{{PIPELINE_URL}}`)
+  }
+  return `## ${t('task.form.eventContextHeader')}\n${lines.join('\n')}`
+})
+
 // Frequency preset
 const presets = computed(() => [
   { value: 'hourly', label: t('task.form.presets.hourly') },
@@ -283,6 +393,21 @@ const hour = ref(9)
 const weekday = ref(1)     // 0=Sun, 1=Mon, ..., 6=Sat
 const monthDay = ref(1)
 const customCron = ref('')
+
+// ── Time option lists ──
+// MenuSelect holds a flat option array, so the generated ranges live here
+// rather than in the template's v-for. Values stay numbers to match the refs
+// (and the cron builder's arithmetic).
+const pad2 = (n) => String(n).padStart(2, '0')
+const hourOptions = Array.from({ length: 24 }, (_, h) => ({ value: h, label: pad2(h) }))
+// Hourly allows any minute; the other presets step by 5 (as the old <select>
+// did), so the two lists are deliberately different.
+const minuteOptions = Array.from({ length: 60 }, (_, m) => ({ value: m, label: pad2(m) }))
+const minuteStepOptions = Array.from({ length: 12 }, (_, i) => {
+  const m = i * 5
+  return { value: m, label: pad2(m) }
+})
+const monthDayOptions = Array.from({ length: 31 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))
 
 // Generate cron from preset
 const generatedCron = computed(() => {
@@ -355,7 +480,10 @@ function validateForm() {
   if (!form.value.name.trim()) e.name = t('task.form.nameRequired')
   if (!form.value.agentId) e.agentId = t('task.form.agentRequired')
   if (!form.value.prompt.trim()) e.prompt = t('task.form.promptRequired')
-  if (preset.value === 'custom' && !customCron.value.trim()) {
+  if (form.value.triggerMode === 'event') {
+    // An event task must subscribe to at least one event type.
+    if (selectedEventTypes.value.length === 0) e.eventTypes = t('task.form.eventTypesRequired')
+  } else if (preset.value === 'custom' && !customCron.value.trim()) {
     e.cronExpr = t('task.form.cronRequired')
   }
   errors.value = e
@@ -388,6 +516,9 @@ onMounted(() => {
   if (agents.value.length === 0) {
     loadAgents()
   }
+  // Only needed when the user switches to event mode, but loading it eagerly
+  // avoids a visible delay on that switch.
+  void loadBoundRepo()
 })
 </script>
 
@@ -405,9 +536,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
@@ -416,24 +547,24 @@ onMounted(() => {
 .form-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .saving-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   background: rgba(34, 197, 94, 0.1);
   color: #16a34a;
-  padding: 6px 12px;
+  padding: var(--space-3) var(--space-6);
   border-radius: 0;
-  font-size: 12px;
-  font-weight: 500;
-  margin-bottom: 4px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  margin-bottom: var(--space-2);
 }
 
 /* Accent (green) saving strip keeps its own tint; the primary button's
@@ -450,10 +581,10 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-section.flex-fill {
@@ -461,21 +592,21 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
-  padding: 10px;
-  gap: 10px;
+  padding: var(--space-5);
+  gap: var(--space-5);
 }
 
 .section-title {
-  margin: 0 0 2px 0;
-  font-size: 13px;
-  font-weight: 600;
+  margin:0 0 var(--space-1) 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .prompt-group {
@@ -483,8 +614,8 @@ onMounted(() => {
 }
 
 .form-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #4b5563);
 }
 
@@ -493,23 +624,22 @@ onMounted(() => {
 }
 
 .form-input,
-.form-select,
 .form-textarea {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #d1d5db);
   border-radius: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   box-sizing: border-box;
   outline: none;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   font-family: inherit;
 }
 
 .form-input.font-mono {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 .form-input:focus,
@@ -524,54 +654,23 @@ onMounted(() => {
   color: var(--text-muted, #9ca3af);
 }
 
-.select-wrapper {
-  position: relative;
-  display: block;
-}
-
-.select-wrapper.inline {
-  display: inline-block;
-}
-
-.select-wrapper .form-select {
-  appearance: none;
-  padding-right: 32px;
-  cursor: pointer;
-}
-
-.select-wrapper.inline .form-select {
-  padding-right: 24px;
-  padding-left: 8px;
-  padding-top: 6px;
-  padding-bottom: 6px;
-}
-
-.select-icon {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-muted, #9ca3af);
-  pointer-events: none;
-}
-
 /* Agent display button */
 .agent-display {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   box-sizing: border-box;
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .agent-display:focus {
@@ -590,26 +689,26 @@ onMounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .agent-display-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .agent-display-tags {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .agent-display-tag {
-  font-size: 9px;
-  padding: 1px 4px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
   border-radius: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 
@@ -631,7 +730,7 @@ onMounted(() => {
 .agent-display-placeholder {
   flex: 1;
   color: var(--text-muted, #9ca3af);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .agent-display-icon {
@@ -650,7 +749,7 @@ onMounted(() => {
 }
 
 .form-hint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #6b7280);
 }
 
@@ -658,38 +757,112 @@ onMounted(() => {
   color: #ca8a04;
 }
 
+/* Read-only display of the project's bound repository. */
+.event-repo-readonly {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 0;
+  background: var(--bg-secondary, #f8f9fa);
+  color: var(--text-primary, #1a1a1a);
+  font-size: var(--font-size-sm);
+}
+.event-repo-readonly.unbound {
+  color: var(--text-muted, #999);
+  font-style: italic;
+}
+
+/* Soft warning: saving is allowed, but the task can never fire. */
+.form-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
+  color: var(--color-yellow, #a16207);
+  font-size: var(--font-size-xs);
+}
+
 .form-error {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: #ef4444;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-error-general {
   background: rgba(239, 68, 68, 0.1);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border-radius: 0;
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 /* Preset buttons */
 .preset-buttons {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
+/* Event trigger configuration */
+.event-type-group + .event-type-group {
+  margin-top: var(--space-5);
+}
+
+.event-type-group-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted);
+  margin-bottom: var(--space-3);
+}
+
+.event-type-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) 14px;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-md);
+  color: var(--text-secondary, #4b5563);
+  cursor: pointer;
+}
+
+/* Read-only event context block: visually distinct from editable inputs so the
+   user can tell it will be injected verbatim and cannot be changed. */
+.event-context-block {
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-secondary, #f9fafb);
+  border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: 0;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  color: var(--text-secondary, #4b5563);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
 .preset-btn {
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-6);
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -709,18 +882,18 @@ onMounted(() => {
 .time-selectors {
   background: var(--bg-tertiary, #f3f4f6);
   border-radius: 0;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color, #e5e7eb);
 }
 
 .time-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .mt-2 {
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 .time-column {
@@ -729,22 +902,22 @@ onMounted(() => {
 }
 
 .time-label {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #4b5563);
   flex-shrink: 0;
 }
 
 .time-sep {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #4b5563);
 }
 
 /* Weekday buttons */
 .weekday-buttons {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -752,16 +925,16 @@ onMounted(() => {
   width: 32px;
   height: 32px;
   border: 1px solid var(--border-color, #d1d5db);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #4b5563);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -781,22 +954,22 @@ onMounted(() => {
 .cron-display {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-tertiary, #f3f4f6);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: 0;
 }
 
 .cron-display code {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color, #0066cc);
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
 }
 
 .cron-humanize {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #6b7280);
 }
 
@@ -804,15 +977,15 @@ onMounted(() => {
 .radio-group {
   display: flex;
   flex-direction: row;
-  gap: 16px;
+  gap: var(--space-7);
   flex-wrap: wrap;
 }
 
 .radio-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--space-3);
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   cursor: pointer;
 }
@@ -829,8 +1002,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;

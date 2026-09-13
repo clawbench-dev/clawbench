@@ -49,6 +49,7 @@ interface AgentRecord {
   customSystemPrompt?: string
   canRefreshModels?: boolean
   supportsCLI?: boolean
+  supportsMidTurn?: boolean
   autoApprove?: boolean
 }
 
@@ -486,6 +487,20 @@ function supportsCLI(agentId: string): boolean {
 }
 
 /**
+ * Check if an agent's backend can inject a message into a turn that is ALREADY
+ * RUNNING (rather than queueing it for the next one).
+ *
+ * Drives the queued bubble's action label: true → "insert into the current
+ * reply"; false → "interrupt and send" (stop this turn, run the message next).
+ * Falls back to false for legacy agents that do not report the flag, so the
+ * safer "interrupt" affordance is shown when in doubt.
+ */
+function supportsMidTurn(agentId: string): boolean {
+    const agent = agents.value.find(a => a.id === agentId)
+    return agent?.supportsMidTurn === true
+}
+
+/**
  * Check if an agent supports BOTH ACP and CLI transport modes
  * (has acpCommand AND a CLI backend implementation).
  */
@@ -603,6 +618,7 @@ export function useAgents() {
         agentCanResume,
         supportsACP,
         supportsCLI,
+        supportsMidTurn,
         supportsDualTransport,
         getAgentTransport,
         invalidateACPStateCache,

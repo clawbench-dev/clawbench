@@ -206,19 +206,19 @@ onBeforeUnmount(() => {
   position: fixed;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
   max-width: min(360px, calc(100vw - 16px));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  z-index: 9999;
+  z-index: var(--z-popover);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  font-size: 12px;
-  line-height: 1.4;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-snug);
   color: var(--text-primary);
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--duration-base) ease;
 }
 </style>

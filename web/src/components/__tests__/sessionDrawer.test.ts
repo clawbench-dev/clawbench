@@ -59,9 +59,12 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ models: [] }),
 }))
+// Records t() calls so tests can assert interpolation params, which the mocked
+// t() drops from its return value.
+const mockT = vi.fn((key: string) => key)
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({ t: (key: string) => key }),
-  createI18n: () => ({ global: { t: (key: string) => key } }),
+  useI18n: () => ({ t: mockT }),
+  createI18n: () => ({ global: { t: mockT } }),
 }))
 vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentPref: vi.fn().mockResolvedValue(undefined),
@@ -323,6 +326,46 @@ describe('SessionDrawer', () => {
     await nextTick()
 
     expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshFailed', expect.any(Object))
+  })
+
+  it('shows discoveryFailedWithDetail toast when backend supplies a reason', async () => {
+    const reason = 'no CodeBuddy model list found; tried: /x/product.cloudhosted.json'
+    vi.mocked(apiPost).mockRejectedValue({
+      msgKey: 'ModelDiscoveryFailed',
+      detail: { detail: reason },
+    })
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith(
+      'chat.sessionSetting.discoveryFailedWithDetail',
+      expect.any(Object),
+    )
+    // Assert the interpolation param — a missing/renamed {detail} key would
+    // otherwise be invisible because the mocked t() returns just the key.
+    expect(mockT).toHaveBeenCalledWith(
+      'chat.sessionSetting.discoveryFailedWithDetail',
+      { detail: reason },
+    )
+  })
+
+  it('shows plain discoveryFailed toast when no reason is supplied', async () => {
+    vi.mocked(apiPost).mockRejectedValue({ msgKey: 'ModelDiscoveryFailed' })
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith(
+      'chat.sessionSetting.discoveryFailed',
+      expect.any(Object),
+    )
   })
 
   it('disables refresh button while refreshing', async () => {

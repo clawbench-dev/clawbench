@@ -52,7 +52,9 @@ export function isVideo(entry: { type: string; name: string }): boolean {
 export const THUMBABLE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif'])
 
 export function isThumbable(entry: { type: string; name: string }): boolean {
-  if (entry.type !== 'image' && entry.type !== 'file') return false
+  // Blacklist rather than whitelist: any non-directory entry is eligible, so a
+  // new backend entry type is not silently stripped of its thumbnail.
+  if (entry.type === 'dir') return false
   const name = entry.name.toLowerCase()
   for (const ext of THUMBABLE_EXTS) {
     if (name.endsWith(ext)) return true

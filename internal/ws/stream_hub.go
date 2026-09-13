@@ -202,8 +202,12 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return userMessagePayload(event)
 	case "stream_start":
 		return streamStartPayload(event)
+	case "stream_split":
+		return streamSplitPayload(event)
 	case "queue_drain":
 		return queueDrainPayload(event)
+	case "queue_inject":
+		return queueInjectPayload(event)
 	case "queue_cancel":
 		return queueCancelPayload(event)
 	default:
@@ -236,6 +240,19 @@ func streamStartPayload(event ai.StreamEvent) any {
 	payload := map[string]any{"message_id": event.StreamStart.MessageID}
 	if event.StreamStart.QueueID != "" {
 		payload["queue_id"] = event.StreamStart.QueueID
+	}
+	return payload
+}
+
+// streamSplitPayload carries the new "after" assistant row opened when a
+// mid-turn injection split the assistant reply in two.
+func streamSplitPayload(event ai.StreamEvent) any {
+	if event.StreamSplit == nil {
+		return nil
+	}
+	payload := map[string]any{"message_id": event.StreamSplit.MessageID}
+	if event.StreamSplit.QueueID != "" {
+		payload["queue_id"] = event.StreamSplit.QueueID
 	}
 	return payload
 }
@@ -403,6 +420,20 @@ func queueDrainPayload(event ai.StreamEvent) any {
 		"filePaths": event.QueueEvent.FilePaths,
 		"files":     event.QueueEvent.Files,
 		"queue":     event.QueueEvent.Queue,
+	}
+}
+
+// queueInjectPayload carries a message that joined the RUNNING turn (the queued
+// bubble's "insert" action). Clients clear that bubble's pending state but must
+// NOT open a new assistant placeholder — the reply already in flight continues.
+func queueInjectPayload(event ai.StreamEvent) any {
+	if event.QueueEvent == nil {
+		return nil
+	}
+	return map[string]any{
+		"sessionId": event.QueueEvent.SessionID,
+		"queueId":   event.QueueEvent.QueueID,
+		"messageId": event.QueueEvent.MessageID,
 	}
 }
 

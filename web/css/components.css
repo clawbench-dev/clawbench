@@ -9,13 +9,13 @@
 
 .context-menu {
     position: fixed;
-    z-index: 2500;
+    z-index: var(--z-context-menu);
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-md);
     min-width: 140px;
-    padding: 4px 0;
+    padding: var(--space-2) 0;
     display: none;
 }
 
@@ -26,12 +26,12 @@
 .context-menu-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    font-size: 13px;
+    gap: var(--space-4);
+    padding: var(--space-4) 14px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     color: var(--text-primary);
-    transition: background 0.1s;
+    transition: background var(--duration-fast);
     user-select: none;
     -webkit-user-select: none;
 }
@@ -55,11 +55,11 @@
 .context-menu-divider {
     height: 1px;
     background: var(--border-color);
-    margin: 4px 0;
+    margin: var(--space-2) 0;
 }
 
 .context-menu-item.disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
     pointer-events: none;
 }
@@ -67,5 +67,5 @@
 .ctx-overlay {
     position: fixed;
     inset: 0;
-    z-index: 2499;
+    z-index: var(--z-context-menu-backdrop);
 }

@@ -130,15 +130,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 3000;
-  padding: 0 20px;
+  z-index: var(--z-modal);
+  padding:0 var(--space-8);
   outline: none;
 }
 
 .dlg-box {
   background: var(--bg-secondary, #fff);
-  border-radius: 14px;
-  padding: 18px 16px 14px;
+  border-radius: var(--radius-lg);
+  padding:18px var(--space-7) 14px;
   max-width: 320px;
   width: 100%;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16), 0 14px 44px rgba(0, 0, 0, 0.3);
@@ -148,18 +148,18 @@ onBeforeUnmount(() => {
 .dlg-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  font-size: 14px;
+  gap: var(--space-4);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .dlg-title-icon {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   display: inline-flex;
@@ -168,38 +168,36 @@ onBeforeUnmount(() => {
 }
 
 .dlg-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #555);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   margin-bottom: 14px;
   white-space: pre-line;
   word-break: break-word;
-  overflow-wrap: break-word;
   max-height: 40vh;
   overflow-y: auto;
 }
 
 .dlg-input {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
   font-family: inherit;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
   outline: none;
   margin-bottom: 14px;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .dlg-textarea {
   resize: none;
   min-height: 84px;
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: break-word;
 }
 
 .dlg-input:focus {
@@ -208,22 +206,22 @@ onBeforeUnmount(() => {
 
 .dlg-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   justify-content: flex-end;
 }
 
 .dlg-btn {
-  padding: 6px 16px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
+  padding: var(--space-3) var(--space-7);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   border: none;
   cursor: pointer;
-  transition: opacity 0.12s;
+  transition: opacity var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
-.dlg-btn:active { opacity: 0.7; }
+.dlg-btn:active { opacity: var(--opacity-soft); }
 
 .dlg-cancel {
   background: var(--bg-tertiary, #f0f0f0);
@@ -244,9 +242,9 @@ onBeforeUnmount(() => {
   background: transparent;
   color: #d32f2f;
   border: 1px solid #d32f2f;
-  font-size: 12px;
-  padding: 5px 10px;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-size: var(--font-size-sm);
+  padding:5px var(--space-5);
+  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
 }
 
 .dlg-extra-primed {
@@ -276,7 +274,7 @@ onBeforeUnmount(() => {
 }
 
 .dlg-enter-active, .dlg-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 
 .dlg-enter-from, .dlg-leave-to {

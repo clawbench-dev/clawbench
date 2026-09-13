@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compareVersions, normalizeVersion, isReleaseVersion, isVersionedBuild, extractBaseVersion, shouldShowMismatch } from '../version'
+import { compareVersions, normalizeVersion, isReleaseVersion, isVersionedBuild, extractBaseVersion } from '../version'
 
 describe('normalizeVersion', () => {
   it('strips build time suffix (mmddHHMM format)', () => {
@@ -108,46 +108,6 @@ describe('extractBaseVersion', () => {
 
   it('rejects garbage after patch number', () => {
     expect(extractBaseVersion('v1.0.0garbage')).toBe('v1.0.0garbage')
-  })
-})
-
-describe('shouldShowMismatch', () => {
-  it('returns true when APK is older than server', () => {
-    expect(shouldShowMismatch('v1.0.0', 'v2.0.0')).toBe(true)
-  })
-
-  it('returns false when versions match', () => {
-    expect(shouldShowMismatch('v1.0.0', 'v1.0.0')).toBe(false)
-  })
-
-  it('returns false when APK is newer than server', () => {
-    expect(shouldShowMismatch('v2.0.0', 'v1.0.0')).toBe(false)
-  })
-
-  it('returns true for dev build APK older than server', () => {
-    expect(shouldShowMismatch('v0.65.0-10-gabc', 'v0.66.0-5-g7702c473')).toBe(true)
-  })
-
-  it('returns false when same base dev builds', () => {
-    expect(shouldShowMismatch('v0.66.0-3-gabc', 'v0.66.0-5-g7702c473')).toBe(false)
-  })
-
-  it('returns false when app version is empty', () => {
-    expect(shouldShowMismatch('', 'v1.0.0')).toBe(false)
-  })
-
-  it('returns false when server version is empty', () => {
-    expect(shouldShowMismatch('v1.0.0', '')).toBe(false)
-  })
-
-  it('skips check for short hash versions', () => {
-    expect(shouldShowMismatch('a0f87a96', 'v1.0.0')).toBe(false)
-    expect(shouldShowMismatch('v1.0.0', 'a0f87a96')).toBe(false)
-  })
-
-  it('handles versions with mmddHHMM build time suffix', () => {
-    expect(shouldShowMismatch('v1.0.0', 'v1.0.0-07291030')).toBe(false)
-    expect(shouldShowMismatch('v1.0.0', 'v2.0.0-07291030')).toBe(true)
   })
 })
 

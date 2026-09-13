@@ -8,13 +8,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 // default 5s testTimeout, causing flaky `Test timed out in 5000ms` failures
 // that drag down src/components coverage. Bump this file's timeout only.
 vi.setConfig({ testTimeout: 30_000 })
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import { apiGet } from '@/utils/api'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
+import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 
 vi.mock('@/utils/api', () => ({
   apiGet: vi.fn().mockResolvedValue(undefined),
@@ -39,6 +40,7 @@ const i18n = createI18n({
         input: {
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
+          placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
           placeholderQueue: 'Queue',
@@ -64,8 +66,19 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        atCommand: { title: 'At', chatsearchDesc: 'Search', taskDesc: 'Task' },
+        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage' },
         slashCommand: { title: 'Slash' },
+        completion: {
+          source: {
+            recentOpen: 'Recent',
+            currentDir: 'Current dir',
+            recentRef: 'Referenced',
+            recentUpload: 'Uploaded',
+            recentShare: 'Shared',
+            clawbench: 'Built-in',
+            agent: 'Agent',
+          },
+        },
         acpSession: { title: 'ACP Sessions' },
         sessionInfo: {
           contextUsage: 'Context',
@@ -124,9 +137,12 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
 }))
 
 const mockUploadAndAttach = vi.fn()
+// Shared mutable pendingFiles so tests can drive the tags-row gate (a completed
+// upload is mirrored here while its visible card lives in attachedFiles).
+const mockPendingFilesValue = ref<any[]>([])
 vi.mock('@/composables/useFileUpload.ts', () => ({
   useFileUpload: () => ({
-    pendingFiles: { value: [] },
+    pendingFiles: mockPendingFilesValue,
     attachedFiles: { value: [] },
     uploadingFiles: { value: [] },
     isDragOver: { value: false },
@@ -187,24 +203,58 @@ vi.mock('@/composables/useTabDrawer', () => ({
   resetTabDrawerState: vi.fn(),
 }))
 
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: {
-      currentFile: null,
-      currentDir: '',
-      chatUnreadCount: 0,
+vi.mock('@/stores/app.ts', async () => {
+  const { reactive } = await import('vue')
+  return {
+    store: {
+      state: reactive({
+        currentFile: null,
+        currentDir: '',
+        dirEntries: [],
+        projectRoot: '/project',
+        chatUnreadCount: 0,
+      }),
     },
-  },
-}))
+  }
+})
 
 vi.mock('@/utils/path.ts', () => ({
   baseName: (p: string) => p.split('/').pop() || '',
+  dirName: (p: string) => p.split('/').slice(0, -1).join('/'),
+  joinPath: (dir: string, name: string) => (dir ? dir.replace(/\/+$/, '') + '/' + name : name),
+  normalizeSlashes: (p: string) => p.replace(/\\/g, '/'),
+  toProjectRelative: (p: string, root: string) => {
+    if (!root) return p
+    const norm = p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const normRoot = root.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (norm === normRoot) return ''
+    return norm.startsWith(normRoot + '/') ? norm.slice(normRoot.length + 1) : norm
+  },
+}))
+
+// @ file reference sources — empty by default; individual tests override.
+const mockRecentFileEntries = ref([])
+const mockRecentShares = ref([])
+const mockRecentUploads = ref([])
+const mockFetchRecentShares = vi.fn().mockResolvedValue(undefined)
+const mockFetchRecentUploads = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/composables/useRecentFiles.ts', () => ({
+  useRecentFiles: () => ({ entries: mockRecentFileEntries }),
+}))
+vi.mock('@/composables/useShareIn.ts', () => ({
+  useShareIn: () => ({ recentShares: mockRecentShares, fetchRecentShares: mockFetchRecentShares }),
+}))
+vi.mock('@/composables/useUploadRecent.ts', () => ({
+  useUploadRecent: () => ({ recentUploads: mockRecentUploads, fetchRecentUploads: mockFetchRecentUploads }),
 }))
 
 vi.mock('@/utils/fileAttachmentUtils.ts', () => ({
   isImageFile: () => false,
   isUploadPath: () => false,
-  normalizeFileEntry: (f: any) => (typeof f === 'string' ? { path: f, isDir: false } : { path: f?.path || '', isDir: f?.isDir ?? false, startLine: f?.startLine, endLine: f?.endLine }),
+  // URL attachments are part of the attachment model; the mock must expose the
+  // predicate AttachmentTags.vue imports.
+  isUrlEntry: (f: any) => f?.kind === 'url' && !!f?.url,
+  normalizeFileEntry: (f: any) => (typeof f === 'string' ? { path: f, isDir: false } : { path: f?.path || '', isDir: f?.isDir ?? false, startLine: f?.startLine, endLine: f?.endLine, ...(f?.kind ? { kind: f.kind } : {}), ...(f?.url ? { url: f.url } : {}) }),
 }))
 
 vi.mock('@/utils/fileManager.ts', () => ({
@@ -368,6 +418,10 @@ afterEach(() => {
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
+  mockPendingFilesValue.value = []
+  // The text draft store is module-level (survives component remounts on
+  // purpose), so drafts must be cleared between tests or they leak across cases.
+  _resetChatDraftsForTesting()
 })
 
 const stubs = {
@@ -559,25 +613,201 @@ describe('ChatInputBar', () => {
   })
 
   it('draft is preserved across session switches via watcher', async () => {
-    // Test the saveDraft + watcher integration:
-    // The watcher saves draft for old session and restores for new session.
-    // Since setProps doesn't trigger watchers in the test environment,
-    // verify the draft mechanism through the exposed API.
+    // The real watcher on props.currentSessionId saves the old session's text
+    // and restores the new session's. `setProps` DOES trigger watchers here
+    // (the recommendation tests below rely on it), so drive the switch through
+    // the prop instead of simulating the watcher body by hand.
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
     wrapper.vm.inputText = 'hello from session 1'
     await wrapper.vm.$nextTick()
-    // Explicitly save draft
-    wrapper.vm.saveDraft()
-    // Verify draft is cached for sess-1
-    expect(wrapper.vm.getDraft('sess-1')).toBe('hello from session 1')
-    // Simulate what the watcher does: save current input for old session, then restore for new
-    // Step 1: Save draft (already done above)
-    // Step 2: Clear input (simulating session switch)
-    wrapper.vm.clearInputPreserveDraft()
+
+    // Switch away: the old session's draft is cached, the visible text clears.
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('')
-    // Step 3: Restore draft when switching back (what the watcher would do)
-    wrapper.vm.inputText = wrapper.vm.getDraft('sess-1') ?? ''
+    expect(wrapper.vm.getDraft('sess-1')).toBe('hello from session 1')
+
+    // Switch back: the draft is restored into the input box.
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('hello from session 1')
+  })
+
+  it('keeps an independent draft per session across repeated switches', async () => {
+    // Two sessions must not overwrite each other's draft: typing in B and
+    // switching back to A restores A's text, and B's draft survives too.
+    const wrapper = mountBar({ currentSessionId: 'sess-A' })
+    wrapper.vm.inputText = 'typed in A'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    wrapper.vm.inputText = 'typed in B'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ currentSessionId: 'sess-A' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in A')
+    expect(wrapper.vm.getDraft('sess-B')).toBe('typed in B')
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in B')
+  })
+
+  it('switching to a session with no draft clears the input', async () => {
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'draft for one'
+    await wrapper.vm.$nextTick()
+
+    // sess-2 has never been typed into — the input must be empty, not carry
+    // sess-1's text over.
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+  })
+
+  it('restores the draft through the full manager switch sequence', async () => {
+    // Production flow (useSessionManager.switchSession): clearInputState calls
+    // saveDraft() then clearInputPreserveDraft(), the session id changes, and
+    // restoreInputState runs. The draft must survive this exact ordering.
+    const wrapper = mountBar({ currentSessionId: 'sess-A' })
+    wrapper.vm.inputText = 'typed in A'
+    await wrapper.vm.$nextTick()
+
+    wrapper.vm.saveDraft()
+    wrapper.vm.clearInputPreserveDraft()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+    expect(wrapper.vm.getDraft('sess-A')).toBe('typed in A')
+
+    await wrapper.setProps({ currentSessionId: 'sess-B' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+
+    await wrapper.setProps({ currentSessionId: 'sess-A' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('typed in A')
+  })
+
+  it('does not resurrect a sent message as a draft after switching away and back', async () => {
+    // clearInput() (called after a successful send) deletes the draft, so the
+    // delivered text must not come back when the user switches sessions.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    wrapper.vm.inputText = 'already sent'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.saveDraft()
+    wrapper.vm.clearInput()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.hasDraft('sess-1')).toBe(false)
+
+    await wrapper.setProps({ currentSessionId: 'sess-2' })
+    await wrapper.vm.$nextTick()
+    await wrapper.setProps({ currentSessionId: 'sess-1' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('')
+  })
+
+  it('survives an SPA project switch that resets the session and changes the key in one tick', async () => {
+    // Faithful reproduction of App.vue hotSwitchProject(): resetIdentity() sets
+    // currentSessionId to '' and projectKey changes in the SAME synchronous tick,
+    // so Vue replaces the keyed subtree in one render. The old component is torn
+    // down without its currentSessionId watcher ever observing the change — the
+    // draft must be persisted at unmount time, not by the watcher.
+    const sid = ref('sess-1')
+    const projectKey = ref('project-A')
+    const Parent = defineComponent({
+      setup() {
+        return () => h('div', { key: projectKey.value }, [
+          h(ChatInputBar, {
+            inputDisabled: false,
+            currentSessionId: sid.value,
+            currentAgentId: '',
+            attachedFiles: [],
+            pendingFiles: [],
+          }),
+        ])
+      },
+    })
+    const wrapper = mount(Parent, {
+      global: { plugins: [i18n], stubs, directives: { 'long-press': { mounted: () => {}, unmounted: () => {} } } },
+    })
+    const first = wrapper.findComponent(ChatInputBar)
+    first.vm.inputText = 'unsent text in project A'
+    await nextTick()
+
+    // Both mutations with NO await in between — exactly as hotSwitchProject does.
+    sid.value = ''
+    projectKey.value = 'project-B'
+    await nextTick()
+    await nextTick()
+
+    // The remounted component restores the session (initSessionFromAPI sets the
+    // id) and must pull the draft back into the input box.
+    sid.value = 'sess-1'
+    await nextTick()
+    await nextTick()
+    const second = wrapper.findComponent(ChatInputBar)
+    expect(second.vm).not.toBe(first.vm)
+    expect(second.vm.inputText).toBe('unsent text in project A')
+  })
+
+  it('does not resurrect a sent message after a project switch', async () => {
+    // Sending calls clearInput(), which drops the draft. A later project switch
+    // must not bring the delivered text back.
+    const sid = ref('sess-1')
+    const projectKey = ref('project-A')
+    const Parent = defineComponent({
+      setup() {
+        return () => h('div', { key: projectKey.value }, [
+          h(ChatInputBar, {
+            inputDisabled: false,
+            currentSessionId: sid.value,
+            currentAgentId: '',
+            attachedFiles: [],
+            pendingFiles: [],
+          }),
+        ])
+      },
+    })
+    const wrapper = mount(Parent, {
+      global: { plugins: [i18n], stubs, directives: { 'long-press': { mounted: () => {}, unmounted: () => {} } } },
+    })
+    const first = wrapper.findComponent(ChatInputBar)
+    first.vm.inputText = 'already sent'
+    await nextTick()
+    first.vm.saveDraft()
+    first.vm.clearInput()
+    await nextTick()
+    expect(first.vm.hasDraft('sess-1')).toBe(false)
+
+    sid.value = ''
+    projectKey.value = 'project-B'
+    await nextTick()
+    await nextTick()
+
+    sid.value = 'sess-1'
+    await nextTick()
+    await nextTick()
+    const second = wrapper.findComponent(ChatInputBar)
+    expect(second.vm.inputText).toBe('')
+  })
+
+  it('drafts from the previous project do not leak into a different session after remount', async () => {
+    const first = mountBar({ currentSessionId: 'sess-A' })
+    first.vm.inputText = 'draft for A'
+    await first.vm.$nextTick()
+    first.vm.saveDraft()
+    first.unmount()
+
+    const second = mountBar({ currentSessionId: '' })
+    await second.vm.$nextTick()
+    // The new project opens a different session — it must not inherit A's text.
+    await second.setProps({ currentSessionId: 'sess-B' })
+    await second.vm.$nextTick()
+    expect(second.vm.inputText).toBe('')
+    expect(second.vm.getDraft('sess-B')).toBe(null)
   })
 
   it('injectToInput appends text on newline when existing content', async () => {
@@ -953,33 +1183,84 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
-  it('@ command menu shows when input starts with @', async () => {
+  it('command menu shows ClawBench commands when input starts with /', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/cb-chat'
+    await wrapper.vm.$nextTick()
+    // The unified menu fuzzy-filters ClawBench built-ins by input
+    const items = wrapper.findAll('.completion-item')
+    expect(items.length).toBeGreaterThan(0)
+    expect(items[0].find('.completion-label').text()).toContain('/cb-chatsearch')
+  })
+
+  it('command menu does NOT show for @ input (merged into / only)', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '@chat'
     await wrapper.vm.$nextTick()
-    // The @ menu should be visible (atMenuItems computed filters by input)
-    // This covers the atMenuItems computed and the inputText watcher
-    expect(true).toBe(true)
+    // @ opens the FILE menu, never the slash-command menu
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('slash command menu shows when input starts with /', async () => {
+  it('command menu shows agent commands when input starts with /', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/hel'
     await wrapper.vm.$nextTick()
-    // The slash menu items should filter by input
-    // This covers the slashMenuItems computed and the inputText watcher
-    expect(true).toBe(true)
+    // The agent command should be filtered into the unified menu
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/help'))).toBe(true)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
   })
 
-  it('handleAtSelect sets input text and closes menu', async () => {
+  it('handleCommandSelect sets input text and closes menu', async () => {
     const wrapper = mountBar()
-    const cmd = { key: '@chatsearch', label: '@chatsearch', description: 'Search' }
-    // handleAtSelect is called from the menu item mousedown
-    // But it's not exposed, so we test via inputText watcher
-    wrapper.vm.inputText = '@chatsearch '
+    wrapper.vm.inputText = '/cb-chatsearch'
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
+    // The menu item mousedown routes through the composable's select path
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
+  it('marks ClawBench vs agent commands with distinct source classes', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const clawbench = wrapper.find('.completion-item--clawbench')
+    const agent = wrapper.find('.completion-item--agent')
+    expect(clawbench.exists()).toBe(true)
+    expect(agent.exists()).toBe(true)
+    // Each row carries a source icon.
+    expect(clawbench.find('.completion-source-icon').exists()).toBe(true)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('shows both entries when a ClawBench and agent command share a name', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    // An agent command literally named /cb-task collides with the built-in.
+    // Both must remain visible, distinguished by source.
+    mockAvailableCommands.value = [{ name: 'cb-task', description: 'Agent task', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/cb-task'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(2)
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(1)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
   })
 
   it('usage info shows when context size > 0', async () => {
@@ -1195,94 +1476,494 @@ describe('ChatInputBar', () => {
     expect(wrapper.find('.attachment-ref').exists()).toBe(true)
   })
 
-  it('slash command input watcher triggers showSlashMenu', async () => {
-    mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
+  it('does not render the tags row for a completed pending mirror with no visible card', async () => {
+    // Regression: pendingFiles retains completed (non-uploading) uploads as a
+    // mirror. AttachmentTags only draws in-flight ones, so a lone mirror with
+    // no attached card must NOT mount the container — otherwise its padding
+    // shows as dead vertical space below the input.
+    mockPendingFilesValue.value = [
+      { path: '/tmp/done.png', previewUrl: null, isImage: true, uploading: false, progress: 100, size: 10 },
+    ]
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(false)
+    mockPendingFilesValue.value = []
+  })
+
+  it('renders the tags row while an upload is in flight', async () => {
+    mockPendingFilesValue.value = [
+      { path: '', previewUrl: null, isImage: true, uploading: true, progress: 40, size: 10 },
+    ]
+    const wrapper = mountBar({ attachedFiles: [] })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
+    expect(wrapper.find('.attachment-pending').exists()).toBe(true)
+    mockPendingFilesValue.value = []
+  })
+
+  it('command menu input watcher opens on / and closes after a space', async () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    // The inputText watcher should set showSlashMenu=true
-    // Then type a space to close it
-    wrapper.vm.inputText = '/help '
+    // The inputText watcher should open the unified command menu
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    // Type a space → the input is no longer a bare command token, menu closes
+    wrapper.vm.inputText = '/cb-chatsearch '
     await wrapper.vm.$nextTick()
-    // After space, showSlashMenu should be false
-    expect(true).toBe(true)
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Enter confirms the pre-selected first @ item when menu opens', async () => {
+  it('opens the command menu when a slash is typed at the head of existing text', async () => {
+    // Mirrors the @ interaction: with text already present, moving the caret to
+    // the start and typing "/" must still offer commands, and the query runs
+    // from the slash to the caret.
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.inputText = '/hello world'
+    await wrapper.vm.$nextTick()
+
+    // Caret right after the slash (the user inserted it at position 0).
+    await wrapper.find('.chat-textarea').trigger('focus')
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    ta.setSelectionRange(1, 1)
+    document.dispatchEvent(new Event('selectionchange'))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    // Only "/hello" is the query — the trailing text stays out of the filter,
+    // so the built-in commands are still listed.
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/cb-chatsearch'))).toBe(true)
+  })
+
+  it('selecting a command mid-text replaces only the typed token', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.inputText = '/hello world'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.chat-textarea').trigger('focus')
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    ta.setSelectionRange(1, 1)
+    document.dispatchEvent(new Event('selectionchange'))
+    await wrapper.vm.$nextTick()
+
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    // "/" → "/cb-chatsearch ", the trailing "hello world" preserved.
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch hello world')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
+  // ── @ file reference menu ──
+  it('@ opens the file menu listing current-dir entries', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [
+      { name: 'main.ts', type: 'file' },
+      { name: 'sub', type: 'dir' },
+    ] as any
     const wrapper = mountBar()
     wrapper.vm.inputText = '@'
     await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; Enter should confirm it
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    // Directories are listed too (every entry type is offered).
+    expect(items).toHaveLength(2)
+    expect(items.map(i => i.find('.completion-label').text())).toEqual(['main.ts', 'sub'])
+    expect(items[0].find('.completion-source').text()).toBe('Current dir')
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu lists directories from the current dir and attaches them as dirs', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [{ name: 'only-dir', type: 'dir' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('only-dir')
+
+    await items[0].trigger('mousedown')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    // A directory must travel with isDir=true so the backend takes its dir path.
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['only-dir', true])
+    store.state.dirEntries = [] as any
+  })
+
+  it('@ menu lists image-typed entries from the current dir', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'assets'
+    store.state.dirEntries = [
+      { name: 'logo.png', type: 'image' },
+      { name: 'manual.pdf', type: 'image' },
+    ] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels).toEqual(['logo.png', 'manual.pdf'])
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu closes when the textarea loses focus, like the slash menu', async () => {
+    // Regression: onTextareaBlur used to close only the command menu, so the @
+    // menu stayed hovering after a blank click or a tab switch.
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('a stray document selectionchange after blur must not reopen the @ menu', async () => {
+    // selectionchange is document-level: clicking chat message text to select a
+    // word fires it. Refreshing then reopened the menu the blur had just closed,
+    // which read as "clicking blank space does not close the menu".
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // Blur closes it (as an outside click would).
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    // A document-level selectionchange (text selected elsewhere) must not reopen.
+    document.dispatchEvent(new Event('selectionchange'))
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('a stray document selectionchange after blur must not reopen the slash menu', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+
+    document.dispatchEvent(new Event('selectionchange'))
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
+  it('blur closes both completion menus together', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+
+    // Slash menu open
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+
+    // @ menu open
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu fuzzy-filters by basename', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [
+      { name: 'main.ts', type: 'file' },
+      { name: 'other.ts', type: 'file' },
+    ] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toBe('main.ts')
+    store.state.dirEntries = [] as any
+  })
+
+  it('@ menu does not trigger for an email-like @', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'a@b'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('selecting an @ candidate emits add-attached and removes the query', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'look @main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('add-attached')).toBeTruthy()
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src/main.ts', false])
+    // the "@main" trigger is removed; surrounding text is preserved
+    expect(wrapper.vm.inputText).toBe('look ')
+    // the menu stays open for multi-select (browse mode)
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('Esc dismisses the @ menu and it stays closed while the query continues', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Escape' })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    // typing more within the same query must not reopen it
+    wrapper.vm.inputText = '@mainx'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+  })
+
+  it('an unmatched @ query closes the menu but keeps the text', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@zzz'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('@zzz')
+    store.state.dirEntries = [] as any
+  })
+
+  it('an already-attached file is filtered out of the @ menu', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar({ attachedFiles: [{ path: 'src/main.ts' }] })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('@ menu merges recent-open and recent-share sources with source labels', async () => {
+    mockRecentFileEntries.value = [{ path: 'lib/opened.go', accessedAt: 1 }]
+    mockRecentShares.value = [{ name: 'shared.txt', path: '.clawbench/share-in/shared.txt' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    const labels = items.map(i => i.find('.completion-label').text())
+    expect(labels).toContain('opened.go')
+    expect(labels).toContain('shared.txt')
+    // source labels distinguish the two origins
+    const sources = items.map(i => i.find('.completion-source').text())
+    expect(sources).toContain('Recent')
+    expect(sources).toContain('Shared')
+    mockRecentFileEntries.value = []
+    mockRecentShares.value = []
+  })
+
+  it('@ menu fetches share/upload sources on first open', async () => {
+    mockFetchRecentShares.mockClear()
+    mockFetchRecentUploads.mockClear()
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(mockFetchRecentShares).toHaveBeenCalled()
+    expect(mockFetchRecentUploads).toHaveBeenCalled()
+  })
+
+  it('@ menu appears once async share/upload sources resolve with no local files', async () => {
+    // Nothing in the current dir and no local history: the only candidates come
+    // from the remote share source, which resolves after the first refresh.
+    mockRecentShares.value = [{ name: 'late.txt', path: '.clawbench/share-in/late.txt' }]
+    mockFetchRecentShares.mockImplementation(async () => { /* resolves immediately */ })
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels).toContain('late.txt')
+    mockRecentShares.value = []
+  })
+
+  it('a late share/upload resolve must not resurrect the @ menu after blur', async () => {
+    // The first @ of the component's life starts the share/upload fetch. If the
+    // user blurs before it resolves, the late fileMenu.refresh() used to reopen
+    // the popup they had already dismissed.
+    let resolveFetch: () => void = () => {}
+    const gate = new Promise<void>(r => { resolveFetch = r })
+    mockRecentShares.value = [{ name: 'late.txt', path: '.clawbench/share-in/late.txt' }]
+    mockFetchRecentShares.mockImplementation(() => gate)
+    mockFetchRecentUploads.mockImplementation(() => gate)
+
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // User clicks away -> blur closes the menu while the fetch is still pending.
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    // The fetch now resolves; the dismissed menu must stay closed.
+    resolveFetch()
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    mockRecentShares.value = []
+    mockFetchRecentShares.mockImplementation(async () => {})
+    mockFetchRecentUploads.mockImplementation(async () => {})
+  })
+
+  it('@ menu browse mode ends when the user types plain text', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    // Typing a real message must dismiss the browse-mode menu.
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('opening the slash menu closes the @ menu (no overlapping popups)', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    // Enter @ browse mode via a select, then type a slash command.
+    wrapper.vm.inputText = '@main'
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    expect(wrapper.vm.showFileMenu).toBe(false)
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('Enter confirms the pre-selected first command item when menu opens', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    // First item is pre-selected at index 0 (ClawBench built-ins come first);
+    // Enter should confirm it
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
-    expect(wrapper.vm.showAtMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Tab confirms the pre-selected first @ item when menu opens', async () => {
+  it('Tab confirms the pre-selected first command item when menu opens', async () => {
     const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
+    wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
     // First item is pre-selected at index 0; Tab should confirm it
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Tab' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(wrapper.vm.inputText).toBe('@chatsearch ')
-    expect(wrapper.vm.showAtMenu).toBe(false)
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch ')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
-  it('Enter confirms the pre-selected first slash item when menu opens', async () => {
+  it('Enter confirms an agent command when it is selected', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     mockAvailableCommands.value = [{ name: 'help', description: 'Show help', inputHint: '' }]
     const wrapper = mountBar()
-    wrapper.vm.inputText = '/'
+    wrapper.vm.inputText = '/help'
     await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; Enter should confirm it
+    // Only the agent /help matches the query
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
     await flushPromises()
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.inputText).toBe('/help ')
-    expect(wrapper.vm.showSlashMenu).toBe(false)
+    expect(wrapper.vm.showCommandMenu).toBe(false)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
     mockSupportsACP.mockReturnValue(false)
   })
 
-  it('ArrowUp from pre-selected first @ item wraps to last item', async () => {
+  it('ArrowUp from pre-selected first command item wraps to last item', async () => {
     const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
+    wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
     // First item pre-selected at index 0; ArrowUp wraps to last
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // atCommands has 2 items: @chatsearch (0), @task (1); ArrowUp wraps to index 1
-    expect(wrapper.vm.atMenuIndex).toBe(1)
+    // ClawBench has 3 items: /cb-chatsearch (0), /cb-task (1), /cb-usage (2);
+    // ArrowUp wraps to the last, index 2.
+    expect(wrapper.vm.commandMenuIndex).toBe(2)
   })
 
-  it('keyboard nav scrolls highlighted @ item into view even when menu is teleported', async () => {
+  it('keyboard nav scrolls highlighted command item into view even when menu is teleported', async () => {
     // Production PopupMenu Teleports the slot to <body>, so menu items are NOT
     // descendants of the component root — the scroll watcher must query from
     // document instead of rootRef (regression: scrollbar didn't follow highlight).
-    const qs = vi.spyOn(document, 'querySelector')
-    const wrapper = mountBar()
-    wrapper.vm.inputText = '@'
-    await wrapper.vm.$nextTick()
-    // First item is pre-selected at index 0; ArrowDown moves to index 1
-    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
-    await flushPromises()
-    await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-at-idx="1"]')
-    qs.mockRestore()
-    wrapper.unmount()
-  })
-
-  it('keyboard nav scrolls highlighted slash item into view even when menu is teleported', async () => {
-    mockSupportsACP.mockReturnValue(true)
-    mockSessionTransport.value = 'acp-stdio'
-    mockAvailableCommands.value = Array.from({ length: 30 }, (_, i) => ({ name: `cmd${i}`, description: 'desc', inputHint: '' }))
     const qs = vi.spyOn(document, 'querySelector')
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
@@ -1291,15 +1972,12 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowDown' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    expect(qs).toHaveBeenCalledWith('[data-slash-idx="1"]')
+    expect(qs).toHaveBeenCalledWith('[data-completion-idx="1"]')
     qs.mockRestore()
     wrapper.unmount()
-    mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
-    mockSupportsACP.mockReturnValue(false)
   })
 
-  it('slash menu dedupes commands that differ only by slash prefix', async () => {
+  it('command menu dedupes agent commands that differ only by slash prefix', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     // Same skill reported slashless by CodeBuddy ACP and slash-prefixed by the
@@ -1313,15 +1991,22 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.inputText = '/'
     await wrapper.vm.$nextTick()
-    const items = wrapper.findAll('.at-menu-item')
-    expect(items).toHaveLength(2)
-    const labels = items.map(i => i.text())
-    expect(labels.some(l => l.startsWith('//'))).toBe(false)
-    expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
-    expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
-    mockAvailableCommands.value = []
-    mockSessionTransport.value = ''
-    mockSupportsACP.mockReturnValue(false)
+    // Unmount even if an assertion below fails: a leaked component keeps its
+    // watchers and mocks alive and corrupts the tests that follow.
+    try {
+      const items = wrapper.findAll('.completion-item')
+      // 3 ClawBench built-ins + 2 deduped agent commands
+      expect(items).toHaveLength(5)
+      const labels = items.map(i => i.find('.completion-label').text())
+      expect(labels.some(l => l.startsWith('//'))).toBe(false)
+      expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)
+      expect(labels.some(l => l.startsWith('/buddy-sings'))).toBe(true)
+    } finally {
+      wrapper.unmount()
+      mockAvailableCommands.value = []
+      mockSessionTransport.value = ''
+      mockSupportsACP.mockReturnValue(false)
+    }
   })
 
   it('quick menu opening triggers menu exclusion watcher', async () => {
@@ -1581,25 +2266,25 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('does not navigate history while an @ or slash menu is open', async () => {
+    it('does not navigate history while the command menu is open', async () => {
       const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
-      // Open the @ menu by typing @ — menu keydown handles ArrowUp
-      wrapper.vm.inputText = '@'
+      // Open the command menu by typing / — menu keydown handles ArrowUp
+      wrapper.vm.inputText = '/'
       await wrapper.vm.$nextTick()
       await pressArrow(wrapper, 'ArrowUp')
-      // Input stays '@' (menu consumed the key, history did not run)
-      expect(wrapper.vm.inputText).toBe('@')
+      // Input stays '/' (menu consumed the key, history did not run)
+      expect(wrapper.vm.inputText).toBe('/')
       wrapper.unmount()
     })
 
-    it('loading a history entry starting with @ does not pop the @ menu', async () => {
+    it('loading a history entry starting with a command does not pop the menu', async () => {
       const wrapper = mountBar({
         currentSessionId: 's1',
-        messages: [{ id: 1, role: 'user', content: '@chatsearch query' }],
+        messages: [{ id: 1, role: 'user', content: '/cb-chatsearch query' }],
       })
       await pressArrow(wrapper, 'ArrowUp')
-      expect(wrapper.vm.inputText).toBe('@chatsearch query')
-      expect(wrapper.vm.showAtMenu).toBe(false)
+      expect(wrapper.vm.inputText).toBe('/cb-chatsearch query')
+      expect(wrapper.vm.showCommandMenu).toBe(false)
       wrapper.unmount()
     })
 
@@ -1726,6 +2411,13 @@ describe('ChatInputBar', () => {
       _setIsPCForTest(false)
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('always includes the @ file-reference hint in the rotating placeholder hints', async () => {
+      _setIsPCForTest(true)
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('File ref')
       wrapper.unmount()
     })
 

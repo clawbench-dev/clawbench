@@ -72,20 +72,43 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   statusLabelSimple: (task: any, t: any) => task.status,
   formatTime: (iso: any) => iso,
   askQuestionSummary: (input: any) => input?.question || '',
+  extractAskQuestions: (input: any) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+    const questions = input.questions
+    if (!Array.isArray(questions)) return []
+    return questions.filter((q: any) =>
+      (q && typeof q.question === 'string' && q.question.trim() !== '') || (Array.isArray(q?.options) && q.options.length > 0),
+    )
+  },
   blockKey: (msgId: any, bi: number) => `${msgId}:${bi}`,
   blockTaskKey: (msgId: any, bi: number) => `${msgId}-${bi}`,
-  buildTaskKeyIndex: () => ({}),
-  hasScheduledTasks: () => false,
-  scheduledTaskKeys: () => [],
-  extractAtCommand: (text: string) => {
-    if (text.startsWith('@chatsearch')) return { command: '@chatsearch', rest: text.slice(11) }
-    if (text.startsWith('@task')) return { command: '@task', rest: text.slice(5) }
-    return null
+  // Faithful enough to exercise the scheduled-task branch ordering: keys are
+  // `${msgId}-${bi}-${tagIdx}` (see the real buildTaskKeyIndex).
+  buildTaskKeyIndex: (msgId: any, blockTasks: Record<string, unknown>) => {
+    if (!msgId) return {}
+    const index: Record<string, string[]> = {}
+    const prefix = `${msgId}-`
+    for (const k of Object.keys(blockTasks || {})) {
+      if (!k.startsWith(prefix)) continue
+      const rest = k.slice(prefix.length)
+      const dashIdx = rest.indexOf('-')
+      if (dashIdx === -1) continue
+      const bi = rest.slice(0, dashIdx)
+      ;(index[bi] || (index[bi] = [])).push(k)
+    }
+    for (const bi of Object.keys(index)) index[bi].sort()
+    return index
   },
+  hasScheduledTasks: (taskKeyIndex: Record<string, string[]>, bi: string | number) => !!(taskKeyIndex[bi]?.length),
+  scheduledTaskKeys: (taskKeyIndex: Record<string, string[]>, bi: string | number) => taskKeyIndex[bi] || [],
   extractSlashCommand: (text: string) => {
     if (text.startsWith('/')) {
       const parts = text.split(' ')
-      return { command: parts[0], rest: parts.slice(1).join(' ') }
+      return {
+        command: parts[0],
+        rest: parts.slice(1).join(' '),
+        clawbench: /^\/cb-(chatsearch|task)$/.test(parts[0]),
+      }
     }
     return null
   },
@@ -178,27 +201,33 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('Hello world')
     })
 
-    it('renders @chatsearch badge for text starting with @chatsearch', () => {
+    it('renders ClawBench badge for text starting with /cb-chatsearch', () => {
       const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '@chatsearch how to do X' }],
+        blocks: [{ type: 'text', text: '/cb-chatsearch how to do X' }],
       })
-      expect(wrapper.find('.at-command-badge').exists()).toBe(true)
-      expect(wrapper.find('.at-command-badge').text()).toBe('@chatsearch')
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('/cb-chatsearch')
+      expect(badge.classes()).toContain('clawbench-command-badge')
     })
 
-    it('renders @task badge for text starting with @task', () => {
+    it('renders ClawBench badge for text starting with /cb-task', () => {
       const wrapper = mountBlocks({
-        blocks: [{ type: 'text', text: '@task run tests' }],
+        blocks: [{ type: 'text', text: '/cb-task run tests' }],
       })
-      expect(wrapper.find('.at-command-badge').exists()).toBe(true)
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.classes()).toContain('clawbench-command-badge')
     })
 
-    it('renders slash command badge for text starting with /', () => {
+    it('renders agent slash command badge for text starting with /', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'text', text: '/commit fix bug' }],
       })
-      expect(wrapper.find('.slash-command-badge').exists()).toBe(true)
-      expect(wrapper.find('.slash-command-badge').text()).toBe('/commit')
+      const badge = wrapper.find('.slash-command-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('/commit')
+      expect(badge.classes()).not.toContain('clawbench-command-badge')
     })
   })
 
@@ -1376,6 +1405,276 @@ describe('AskUserQuestion card interactive dispatch', () => {
 
     expect(handleToolAction).toHaveBeenCalled()
     expect(handleToolAction.mock.calls[0][0]).toBe('AskUserQuestion')
+  })
+})
+
+describe('ContentBlocks — multiple ask cards merged into one', () => {
+  // Mimic the real renderAskUserQuestion shape closely enough to catch the bugs
+  // that matter: valid input renders one .ask-question-item per question, a
+  // malformed input renders the invalid-format notice, and empty renders the
+  // neutral placeholder. Echoing only `questions` would hide a destroyed notice.
+  const echoFormat = vi.fn((input: any) => {
+    const questions = input?.questions
+    if (!Array.isArray(questions) || questions.length === 0) {
+      if (input && typeof input === 'object' && Object.keys(input).length > 0) {
+        return '<div class="ask-question-view ask-invalid"><div class="ask-question-empty">invalid format</div></div>'
+      }
+      return '<div class="ask-question-view"><div class="ask-question-empty">no questions</div></div>'
+    }
+    const items = questions.map((q: any) => `<div class="ask-question-item"><span class="ask-question-text">${q.question}</span></div>`).join('')
+    return `<div class="ask-question-view">${items}<button class="ask-question-submit" disabled>Submit</button></div>`
+  })
+
+  it('renders ONE merged card (not one per call) when a message has multiple AskUserQuestion calls', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: { questions: [{ question: 'Q1', options: [{ label: 'A' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-2', done: true, input: { questions: [{ question: 'Q2', options: [{ label: 'B' }] }] } },
+      ],
+      formatToolInput: echoFormat,
+    })
+    // Only the first card survives (anchor); the second is absorbed.
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    // The single card body carries BOTH questions so one submit answers all.
+    const items = wrapper.findAll('.ask-question-item')
+    expect(items).toHaveLength(2)
+    expect(wrapper.html()).toContain('Q1')
+    expect(wrapper.html()).toContain('Q2')
+  })
+
+  it('does NOT merge when the message has a single AskUserQuestion card', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: { questions: [{ question: 'OnlyQ', options: [{ label: 'A' }] }] } },
+      ],
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(1)
+  })
+
+  it('merges a tool_use ask card with a text-mode <ask-question> card', () => {
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: { questions: [{ question: 'ToolQ', options: [{ label: 'A' }] }] } },
+        { type: 'text', text: 'lead-in <ask-question><item><question>TextQ</question><option><label>B</label></option></item></ask-question>' },
+      ],
+      blockAskQuestions: {
+        'msg-1-1': { questions: [{ question: 'TextQ', options: [{ label: 'B' }] }] },
+      },
+      formatToolInput: echoFormat,
+    })
+    // One merged card only.
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(2)
+    expect(wrapper.html()).toContain('ToolQ')
+    expect(wrapper.html()).toContain('TextQ')
+  })
+
+  it('renders one card per answerable ask block plus the malformed card notice, and never duplicates the merged body', () => {
+    // Two valid asks + one malformed ask. The malformed block must NOT be handed
+    // the merged questions — it keeps its own invalid-format notice. The merged
+    // card is the only card carrying the two questions, and it is the only
+    // submit-capable card.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: { questions: [{ question: 'ValidQ1', options: [{ label: 'A' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-2', done: true, input: { questions: [{ question: 'ValidQ2', options: [{ label: 'B' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-bad', done: true, input: { ask: '<item>broken</tool>' } },
+      ],
+      formatToolInput: echoFormat,
+    })
+    // The malformed card still renders (its own invalid notice), so 2 cards total.
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(2)
+    // Exactly ONE card holds the merged questions (2 items); the malformed one has none.
+    const mergedViews = wrapper.findAll('.ask-question-view').filter(v => v.findAll('.ask-question-item').length > 0)
+    expect(mergedViews).toHaveLength(1)
+    expect(mergedViews[0].findAll('.ask-question-item')).toHaveLength(2)
+    // The malformed card's notice survives.
+    expect(wrapper.html()).toContain('invalid format')
+    // Only the merged card has a submit button (no duplicate send surface).
+    expect(wrapper.findAll('.ask-question-submit')).toHaveLength(1)
+  })
+
+  it('does not merge when the only other ask call is malformed (single valid card stays standalone)', () => {
+    // A malformed (unanswerable) call must not count as a second card.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-good', done: true, input: { questions: [{ question: 'ValidQ', options: [{ label: 'A' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-bad', done: true, input: { ask: '<item>broken</tool>' } },
+      ],
+      formatToolInput: echoFormat,
+    })
+    // Valid card is NOT merged (single question), malformed card keeps its notice.
+    const mergedViews = wrapper.findAll('.ask-question-view').filter(v => v.findAll('.ask-question-item').length > 0)
+    expect(mergedViews).toHaveLength(1)
+    expect(mergedViews[0].findAll('.ask-question-item')).toHaveLength(1)
+    expect(wrapper.html()).toContain('ValidQ')
+    expect(wrapper.html()).toContain('invalid format')
+  })
+
+  it('keeps a still-loading ask block pending instead of duplicating the merged body', () => {
+    // A third ask still streaming (done=false, empty input) must not be handed
+    // the merged questions; it keeps its own pending spinner.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-1', done: true, input: { questions: [{ question: 'ValidQ1', options: [{ label: 'A' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-2', done: true, input: { questions: [{ question: 'ValidQ2', options: [{ label: 'B' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-pending', done: false, input: {} },
+      ],
+      formatToolInput: echoFormat,
+    })
+    const mergedViews = wrapper.findAll('.ask-question-view').filter(v => v.findAll('.ask-question-item').length > 0)
+    expect(mergedViews).toHaveLength(1)
+    expect(mergedViews[0].findAll('.ask-question-item')).toHaveLength(2)
+    // The still-loading card shows a spinner and no green check of its own.
+    const cards = wrapper.findAll('.tool-detail.chat-inline-card')
+    const pendingCard = cards.find(c => c.find('.tool-spinner').exists())
+    expect(pendingCard).toBeTruthy()
+    expect(pendingCard!.find('.tool-check').exists()).toBe(false)
+  })
+
+  it('does not drop every question when the anchor text block also carries a scheduled-task tag', () => {
+    // A text block with BOTH <scheduled-task> and <ask-question> renders as a
+    // scheduled-task card (that branch precedes the ask branch), so it cannot host
+    // the merged card. The anchor must fall through to the AskUserQuestion tool
+    // block instead of suppressing it — otherwise every question disappears.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'text', text: 'see <scheduled-task id="7"/> and <ask-question><item><question>TextQ</question><option><label>T</label></option></item></ask-question>' },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-tool', done: true, input: { questions: [{ question: 'ToolQ', options: [{ label: 'M' }] }] } },
+      ],
+      blockAskQuestions: {
+        'msg-1-0': { questions: [{ question: 'TextQ', options: [{ label: 'T' }] }] },
+      },
+      blockTasks: { 'msg-1-0-0': { taskId: '7' } },
+      formatToolInput: echoFormat,
+    })
+    // The text block is claimed by the scheduled-task branch (proving the
+    // scenario is real), so the merged card must render on the tool block.
+    expect(wrapper.find('.scheduled-task-card').exists()).toBe(true)
+    const mergedViews = wrapper.findAll('.ask-question-view').filter(v => v.findAll('.ask-question-item').length > 0)
+    expect(mergedViews).toHaveLength(1)
+    expect(mergedViews[0].findAll('.ask-question-item')).toHaveLength(2)
+    expect(wrapper.html()).toContain('TextQ')
+    expect(wrapper.html()).toContain('ToolQ')
+  })
+
+  it('merges multiple AskUserQuestion cards in summary view', () => {
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [
+          { name: 'AskUserQuestion', id: 'ask-a', input: { questions: [{ question: 'SQ1', options: [{ label: 'A' }] }] } },
+          { name: 'AskUserQuestion', id: 'ask-b', input: { questions: [{ question: 'SQ2', options: [{ label: 'B' }] }] } },
+        ],
+        taskIDs: [],
+        askQuestions: [],
+      },
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(2)
+    expect(wrapper.html()).toContain('SQ1')
+    expect(wrapper.html()).toContain('SQ2')
+  })
+
+  it('merges summaryCards.askQuestions with summaryCards.tools ask cards in summary view', () => {
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [
+          { name: 'AskUserQuestion', id: 'ask-t', input: { questions: [{ question: 'ToolQ', options: [{ label: 'A' }] }] } },
+        ],
+        taskIDs: [],
+        askQuestions: [{ question: 'XmlQ', options: [{ label: 'B' }] }],
+      },
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(2)
+    expect(wrapper.html()).toContain('ToolQ')
+    expect(wrapper.html()).toContain('XmlQ')
+  })
+
+  it('renders a single summary ask card unchanged when there is only one source', () => {
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [],
+        taskIDs: [],
+        askQuestions: [{ question: 'SoloQ', options: [{ label: 'B' }] }],
+      },
+      formatToolInput: echoFormat,
+    })
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(1)
+    expect(wrapper.findAll('.ask-question-item')).toHaveLength(1)
+    expect(wrapper.html()).toContain('SoloQ')
+  })
+
+  it('keeps a malformed ask tool card visible in summary view (only valid ask tools merge)', () => {
+    const wrapper = mountBlocks({
+      blocks: [],
+      summary: 'sum text',
+      showingSummary: true,
+      summaryCards: {
+        tools: [
+          { name: 'AskUserQuestion', id: 'ask-good', input: { questions: [{ question: 'GoodQ', options: [{ label: 'A' }] }] } },
+          { name: 'AskUserQuestion', id: 'ask-bad', input: { ask: '<item>broken</tool>' } },
+        ],
+        taskIDs: [],
+        askQuestions: [],
+      },
+      formatToolInput: echoFormat,
+    })
+    // Merged card (from the valid tool) + the malformed tool's own card.
+    expect(wrapper.findAll('.tool-detail.chat-inline-card')).toHaveLength(2)
+    expect(wrapper.html()).toContain('GoodQ')
+  })
+
+  it('does not merge a top-level ask card with a sub-agent ask card (group boundary)', () => {
+    // A sub-agent's question renders nested under its Agent group; the main
+    // agent's card must stay a standalone single card.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-sub', done: true, parent_tool_call_id: 'call_p', input: { questions: [{ question: 'SubQ', options: [{ label: 'S' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'ask-main', done: true, input: { questions: [{ question: 'MainQ', options: [{ label: 'M' }] }] } },
+      ],
+      formatToolInput: echoFormat,
+    })
+    // The sub-agent's card is skipped from the flat stream (child block), so the
+    // main agent renders exactly one standalone card with its own single question.
+    const mainCard = wrapper.findAll('.tool-detail.chat-inline-card')
+    expect(mainCard).toHaveLength(1)
+    expect(mainCard[0].html()).toContain('MainQ')
+    expect(mainCard[0].html()).not.toContain('SubQ')
+  })
+
+  it('merges a sub-agent’s own multiple ask cards within its nested instance', () => {
+    // Complementary to the boundary test: inside a sub-agent group, its own two
+    // ask cards merge into one — the nested instance performs its own merge.
+    const wrapper = mountBlocks({
+      blocks: [
+        { type: 'tool_use', name: 'Agent', id: 'call_p', done: true, input: {} },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'sub-1', done: true, parent_tool_call_id: 'call_p', input: { questions: [{ question: 'SubQ1', options: [{ label: 'A' }] }] } },
+        { type: 'tool_use', name: 'AskUserQuestion', id: 'sub-2', done: true, parent_tool_call_id: 'call_p', input: { questions: [{ question: 'SubQ2', options: [{ label: 'B' }] }] } },
+      ],
+      expandedTools: { 'subagent-call_p': true },
+      formatToolInput: echoFormat,
+    })
+    const group = wrapper.find('.subagent-group')
+    expect(group.exists()).toBe(true)
+    // One merged card inside the group, carrying both sub-agent questions.
+    const mergedViews = group.findAll('.ask-question-view').filter(v => v.findAll('.ask-question-item').length > 0)
+    expect(mergedViews).toHaveLength(1)
+    expect(mergedViews[0].findAll('.ask-question-item')).toHaveLength(2)
   })
 })
 

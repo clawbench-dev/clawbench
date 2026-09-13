@@ -220,6 +220,36 @@ describe('computeMenuStyle', () => {
     })
   })
 
+  describe('effective width: shrinks to fit narrow viewports', () => {
+    it('shrinks maxWidth so a left-aligned menu cannot overflow the right edge', () => {
+      // 390px-wide phone, menu asks for 380px — with 6px margins only 378 fits.
+      const rect = mockRect({ top: 400, bottom: 440, left: 4, right: 380 })
+      const style = computeMenuStyle(rect, { anchor: 'left', viewportWidth: 390, viewportHeight: 844, maxWidth: 380, edgeMargin: 6 })
+      expect(style.maxWidth).toBe('378px')
+      expect(style.left).toBe('6px')
+    })
+
+    it('shrinks maxWidth for a right-aligned menu on a narrow viewport', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 300, right: 386 })
+      const style = computeMenuStyle(rect, { anchor: 'right', viewportWidth: 390, viewportHeight: 844, maxWidth: 380, edgeMargin: 6 })
+      expect(style.maxWidth).toBe('378px')
+      // right = min(390-386, 390-378-6) clamped to >= edgeMargin
+      expect(style.right).toBe('6px')
+    })
+
+    it('keeps the requested maxWidth when it fits comfortably', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 100, right: 140 })
+      const style = computeMenuStyle(rect, { viewportWidth: 1024, viewportHeight: 768, maxWidth: 380, edgeMargin: 6 })
+      expect(style.maxWidth).toBe('380px')
+    })
+
+    it('never yields a negative width on an absurdly small viewport', () => {
+      const rect = mockRect({ top: 5, bottom: 15, left: 5, right: 15 })
+      const style = computeMenuStyle(rect, { viewportWidth: 8, viewportHeight: 50, maxWidth: 200, edgeMargin: 6 })
+      expect(style.maxWidth).toBe('0px')
+    })
+  })
+
   describe('style invariants', () => {
     it('always includes position, maxWidth, maxHeight, overflowY (scrollable default)', () => {
       const rects = [

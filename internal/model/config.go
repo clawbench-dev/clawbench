@@ -31,15 +31,14 @@ func ParseSHA256Hash(password string) string {
 
 // Config holds the application configuration.
 type Config struct {
-	Port                int    `yaml:"port"`
-	Host                string `yaml:"host"`      // Bind address (empty = 0.0.0.0, "localhost" = 127.0.0.1 only)
-	LogLevel            string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
-	Password            string `yaml:"password"`
-	DefaultAgent        string `yaml:"default_agent"`
-	LogDir              string // always <DataDir>/logs; not configurable via yaml
-	LocalhostAuthExempt bool   `yaml:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
-	LogMaxDays          int    `yaml:"log_max_days"`
-	TLS                 struct {
+	Port         int    `yaml:"port"`
+	Host         string `yaml:"host"`      // Bind address (empty = 0.0.0.0, "localhost" = 127.0.0.1 only)
+	LogLevel     string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
+	Password     string `yaml:"password"`
+	DefaultAgent string `yaml:"default_agent"`
+	LogDir       string // always <DataDir>/logs; not configurable via yaml
+	LogMaxDays   int    `yaml:"log_max_days"`
+	TLS          struct {
 		CertDir string `yaml:"cert_dir"` // Directory containing HTTPS cert/key files; presence of valid files enables HTTPS
 		// Deprecated legacy fields — read for migration only, not used at runtime.
 		Enabled  bool   `yaml:"enabled"`
@@ -49,12 +48,9 @@ type Config struct {
 	Fonts struct {
 		Dir string `yaml:"dir"` // Directory containing user-supplied font files (default: <DataDir>/fonts)
 	} `yaml:"fonts"`
-	Appearance struct {
-		WallpaperFile string  `yaml:"wallpaper_file"` // Active custom wallpaper file name (bare name in <DataDir>/theme); empty = not set
-		PanelOpacity  float64 `yaml:"panel_opacity"`  // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
-	} `yaml:"appearance"`
-	DevPort int `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
-	Upload  struct {
+	Appearance AppearanceConfig `yaml:"appearance"`
+	DevPort    int              `yaml:"dev_port"` // Localhost-only HTTP port for dev proxy (0 = auto=Port+2 when TLS enabled, -1 = disabled)
+	Upload     struct {
 		MaxSizeMB int `yaml:"max_size_mb"` // Maximum file upload size in MB (default: 100)
 		MaxFiles  int `yaml:"max_files"`   // Maximum number of files per upload (default: 20)
 	} `yaml:"upload"`
@@ -98,6 +94,87 @@ type Config struct {
 	Feishu      FeishuConfig      `yaml:"feishu"`       // Feishu (飞书) enterprise bot push notifications
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
+	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
+}
+
+// ForgeConfig holds the GitHub/GitLab integration settings.
+//
+// Credentials are scoped per (platform, host): a single global GitLab token
+// would be sent to every self-hosted instance a user binds, so each host gets
+// its own token. Notification toggles are global and default to enabled (set in
+// ApplyDefaults — Go's bool zero value would otherwise disable everything).
+type ForgeConfig struct {
+	// Credentials maps a host (e.g. "github.com", "git.acme.internal:8443") to
+	// its token. Hosts are stored lowercased.
+	Credentials map[string]string `yaml:"credentials"`
+	// InsecureTLS allows skipping TLS verification for self-hosted instances
+	// with self-signed certificates. Off by default; enabling it logs a warning.
+	InsecureTLS bool `yaml:"insecure_tls"`
+	// Notify controls which event kinds push a notification. All default true.
+	Notify ForgeNotifyConfig `yaml:"notify"`
+	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
+	// When true, forge events still notify and count as unread, but no task is
+	// fired. Off by default.
+	PauseEventTasks bool `yaml:"pause_event_tasks"`
+}
+
+// ForgeNotifyConfig selects which forge events push a notification. Each flag
+// is independent; the unread badge is NOT gated by these (it tracks changes,
+// not notifications).
+type ForgeNotifyConfig struct {
+	Opened    bool `yaml:"opened"`
+	Closed    bool `yaml:"closed"`
+	Merged    bool `yaml:"merged"`
+	Reopened  bool `yaml:"reopened"`
+	Commented bool `yaml:"commented"`
+	Pipeline  bool `yaml:"pipeline"`
+}
+
+// AppearanceConfig holds the custom-wallpaper settings. Two wallpaper sources
+// are supported and are independent of each other — a locally uploaded gallery
+// and the Bing daily image — but only one is displayed at a time, selected by
+// WallpaperMode. WallpaperEnabled is a global switch: turning it off hides the
+// wallpaper while retaining the gallery and its selection.
+type AppearanceConfig struct {
+	PanelOpacity float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
+
+	// WallpaperMode selects the active source: "local" or "bing".
+	WallpaperMode string `yaml:"wallpaper_mode"`
+	// WallpaperEnabled is the global on/off switch for the wallpaper layer.
+	WallpaperEnabled bool `yaml:"wallpaper_enabled"`
+
+	Local LocalWallpaperConfig `yaml:"local"`
+	Bing  BingWallpaperConfig  `yaml:"bing"`
+}
+
+// LocalWallpaperConfig holds the user-uploaded wallpaper gallery.
+type LocalWallpaperConfig struct {
+	Selected string               `yaml:"selected"` // Bare file name of the gallery image currently displayed
+	Items    []LocalWallpaperItem `yaml:"items"`    // Gallery contents, in upload order
+}
+
+// LocalWallpaperItem describes one uploaded gallery image. File is a bare name
+// resolved inside <DataDir>/theme/local; Name preserves the original upload
+// file name for display only.
+type LocalWallpaperItem struct {
+	File       string `yaml:"file"`
+	Name       string `yaml:"name"`
+	UploadedAt int64  `yaml:"uploaded_at"` // Unix seconds
+	Size       int64  `yaml:"size"`        // Bytes on disk
+}
+
+// BingWallpaperConfig holds the Bing daily wallpaper state. The fields other
+// than Enabled and Mkt are server-owned (written by the fetch worker), because
+// File is joined onto <DataDir>/theme/bing when served.
+type BingWallpaperConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	LastSuccessDate string `yaml:"last_success_date"` // yyyymmdd of the last successful fetch; prevents refetching the same day
+	File            string `yaml:"file"`              // Bare cached file name, e.g. "bing-20260910.jpg"
+	Copyright       string `yaml:"copyright"`         // Photographer credit, shown in the settings panel only
+	Title           string `yaml:"title"`
+	Mkt             string `yaml:"mkt"`             // Bing market parameter, e.g. "zh-CN" / "en-US"
+	LastError       string `yaml:"last_error"`      // "" when healthy; a failed fetch keeps File so the last good image still serves
+	LastAttemptAt   int64  `yaml:"last_attempt_at"` // Unix seconds of the last fetch attempt
 }
 
 // STTConfig holds configuration for speech-to-text (voice input).
@@ -211,17 +288,16 @@ var ConfigInstance Config
 
 // Global application state
 var (
-	BinDir              string   // Directory of the running binary
-	DataDir             string   // Runtime data directory (default: ~/.clawbench; override with --data-dir)
-	RootPaths           []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
-	SessionToken        string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
-	CookieToken         string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
-	PasswordHash        []byte   // bcrypt hash for password verification (ISS-003a)
-	PasswordIsSHA256    bool     // true when config.yaml stores password as sha256:<hex>
-	ServerPort          int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
-	SessionCookie       = "clawbench_session"
-	DefaultAgentID      string // Default agent for new sessions, set from config or first agent
-	LocalhostAuthExempt bool   // When true, localhost requests bypass auth (default)
+	BinDir           string   // Directory of the running binary
+	DataDir          string   // Runtime data directory (default: ~/.clawbench; override with --data-dir)
+	RootPaths        []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
+	SessionToken     string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
+	CookieToken      string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
+	PasswordHash     []byte   // bcrypt hash for password verification (ISS-003a)
+	PasswordIsSHA256 bool     // true when config.yaml stores password as sha256:<hex>
+	ServerPort       int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
+	SessionCookie    = "clawbench_session"
+	DefaultAgentID   string // Default agent for new sessions, set from config or first agent
 
 	// Upload limits (set from config, with defaults)
 	UploadMaxSizeMB int // Default: 100
@@ -294,4 +370,36 @@ func LoadCookieToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// ForgeToken returns the token configured for a host, or "" when none is set.
+// The host is matched case-insensitively.
+func (c *Config) ForgeToken(host string) string {
+	if c.Forge.Credentials == nil {
+		return ""
+	}
+	return c.Forge.Credentials[strings.ToLower(strings.TrimSpace(host))]
+}
+
+// SetForgeToken stores (or clears, when token is empty) the token for a host.
+// The host is normalized to lowercase; an empty host is rejected as a no-op.
+func (c *Config) SetForgeToken(host, token string) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return
+	}
+	if c.Forge.Credentials == nil {
+		c.Forge.Credentials = make(map[string]string)
+	}
+	if token == "" {
+		delete(c.Forge.Credentials, host)
+		return
+	}
+	c.Forge.Credentials[host] = token
+}
+
+// ForgeHasToken reports whether a token is configured for a host, without
+// revealing the token itself. This is what GET /api/config exposes.
+func (c *Config) ForgeHasToken(host string) bool {
+	return c.ForgeToken(host) != ""
 }

@@ -1,5 +1,14 @@
 import { escapeHtml } from '@/utils/html.ts'
 import { splitPath, dirName, normalizeSlashes, isAbsolutePath, toProjectRelative } from '@/utils/path.ts'
+import {
+    parseLineRanges,
+    serializeLineRanges,
+    firstLineTarget,
+    LINE_SUFFIX_RE,
+    LINE_FRAGMENT_RE,
+    LINE_TOKEN_SRC,
+    type LineRange,
+} from '@/utils/lineRanges.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
@@ -47,29 +56,32 @@ function tryDecodeUri(uri: string): string {
 export interface ParsedFileUri {
     /** Clean filesystem path (percent-decoded, no file:// / hash / :line suffix). */
     path: string
+    /** Earliest line (backward-compat single-target view of lineRanges). */
     lineStart?: number
+    /** Earliest range end (omitted for a single-line target). */
     lineEnd?: number
+    /** Full parsed range list; empty when no line suffix was present. */
+    lineRanges: LineRange[]
 }
 
-// Matches #L10-L20, #L10, #10-20, #10 (single or ranged line fragment).
-const LINE_FRAGMENT_RE = /^L?(\d+)(?:-L?(\d+))?$/i
-
 /**
- * Parse a raw URI/path string into a clean filesystem path and optional line range.
+ * Parse a raw URI/path string into a clean filesystem path and optional line ranges.
  *
  * Supported forms:
  *   - file:///abs/path, file://localhost/abs/path
  *   - /abs/path, rel/path, ../rel/path
- *   - Optional line target: #L10-L20, #L10, #10-20, #10, or a trailing :10-20 / :10
+ *   - Optional line target: #L10-L20, #L10, #10-20, #10, or a trailing
+ *     :10-20 / :10 — plus comma-separated lists (e.g. :90-91,309,938-943)
+ *     with optional spaces after commas and an optional `L` prefix per token.
  *
  * Percent-encoded path components are decoded (e.g. %E4%B8%AD → 中).
  * Non-numeric hashes (e.g. "#section") are dropped from the path.
- * A trailing ":N[-M]" is only treated as a line range when it is the last
- * thing in the string, so Windows drive letters (C:/…) are unaffected.
+ * A trailing ":N[-M][,N…]" is only treated as a line range when it is the
+ * last thing in the string, so Windows drive letters (C:/…) are unaffected.
  */
 export function parseFileUri(rawInput: string): ParsedFileUri {
     const input = (rawInput ?? '').trim()
-    if (!input) return { path: '' }
+    if (!input) return { path: '', lineRanges: [] }
 
     let raw = input
 
@@ -84,40 +96,27 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
         // file:///… leaves raw already starting with "/".
     }
 
-    let lineStart: number | undefined
-    let lineEnd: number | undefined
+    let lineRanges: LineRange[] = []
 
     // 2. Extract the line fragment from a hash (#L10-L20 / #10 / #section).
     const hashIdx = raw.indexOf('#')
     if (hashIdx !== -1) {
         const hash = raw.slice(hashIdx + 1)
         raw = raw.slice(0, hashIdx)
-        const m = hash.match(LINE_FRAGMENT_RE)
-        if (m) {
-            lineStart = parseInt(m[1], 10)
-            if (m[2]) lineEnd = parseInt(m[2], 10)
-            if (lineStart <= 0) {
-                lineStart = undefined
-                lineEnd = undefined
-            } else if (lineEnd !== undefined && lineEnd < lineStart) {
-                lineEnd = undefined
-            }
+        if (LINE_FRAGMENT_RE.test(hash)) {
+            lineRanges = parseLineRanges(hash)
         }
     }
 
-    // 3. Fall back to a trailing ":N[-M]" or ":LN[-LM]" line suffix when no hash was present.
-    if (lineStart === undefined) {
-        const cm = raw.match(/:L?(\d+)(?:-L?(\d+))?$/i)
+    // 3. Fall back to a trailing ":N[-M][,N…]" suffix when no hash was present.
+    // The suffix is stripped whenever it matches, even if every token is
+    // invalid (e.g. ":0") — the path itself stays clean, matching the
+    // historical single-range behavior.
+    if (lineRanges.length === 0) {
+        const cm = raw.match(LINE_SUFFIX_RE)
         if (cm) {
             raw = raw.slice(0, raw.length - cm[0].length)
-            lineStart = parseInt(cm[1], 10)
-            if (cm[2]) lineEnd = parseInt(cm[2], 10)
-            if (lineStart <= 0) {
-                lineStart = undefined
-                lineEnd = undefined
-            } else if (lineEnd !== undefined && lineEnd < lineStart) {
-                lineEnd = undefined
-            }
+            lineRanges = parseLineRanges(cm[1])
         }
     }
 
@@ -130,7 +129,8 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
         }
     }
 
-    return { path: raw, lineStart, lineEnd }
+    const { lineStart, lineEnd } = firstLineTarget(lineRanges)
+    return { path: raw, lineStart, lineEnd, lineRanges }
 }
 
 // ── Path resolution helpers ────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     // Reject glob patterns, URLs, env vars
     if (shouldRejectPath(path)) return null
     // Reject bare identifiers without / or file extension
-    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(/:L?(\d+)(?:-L?(\d+))?$/i, ''))) return null
+    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(LINE_SUFFIX_RE, ''))) return null
 
     // ── Tilde expansion ──
     if (path.startsWith('~/') || path === '~') {
@@ -348,62 +348,91 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
 export const FILE_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
 
 /**
+ * Build the line-target attribute pairs shared by annotated paths and open
+ * buttons. `data-line-start`/`data-line-end` carry the earliest range (legacy
+ * consumers keep working); `data-line-ranges` carries the full comma list.
+ * `data-line-ranges` is omitted for a single-line target (redundant).
+ */
+export function lineTargetAttrPairs(lineRanges: LineRange[] | undefined): Array<[string, string]> {
+    if (!lineRanges || lineRanges.length === 0) return []
+    const { lineStart, lineEnd } = firstLineTarget(lineRanges)
+    if (!lineStart) return []
+    const pairs: Array<[string, string]> = [['data-line-start', String(lineStart)]]
+    if (lineEnd) pairs.push(['data-line-end', String(lineEnd)])
+    const serialized = serializeLineRanges(lineRanges)
+    if (lineRanges.length > 1) pairs.push(['data-line-ranges', serialized])
+    return pairs
+}
+
+/** Apply line-target attributes directly onto a DOM element. */
+export function applyLineTargetAttrs(el: Element, lineRanges: LineRange[] | undefined): void {
+    for (const [name, value] of lineTargetAttrPairs(lineRanges)) el.setAttribute(name, value)
+}
+
+/**
  * Generate HTML for the small open-file button.
  * Optionally includes line range attributes and a fallback path for dual-candidate verification.
  */
-export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number, fallbackPath?: string): string {
+export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number, fallbackPath?: string, lineRanges?: LineRange[]): string {
     const isExternal = isAbsolutePath(resolvedPath)
-    const lineAttrs = lineStart ? ` data-line-start="${lineStart}"${lineEnd ? ` data-line-end="${lineEnd}"` : ''}` : ''
+    const pairs = lineRanges && lineRanges.length > 0
+        ? lineTargetAttrPairs(lineRanges)
+        : (lineStart ? [['data-line-start', String(lineStart)] as [string, string], ...(lineEnd ? [['data-line-end', String(lineEnd)] as [string, string]] : [])] : [])
+    const lineAttrs = pairs.map(([name, value]) => ` ${name}="${escapeHtml(value)}"`).join('')
     const externalClass = isExternal ? ' external' : ''
     const fallbackAttr = fallbackPath && fallbackPath !== resolvedPath ? ` data-fallback-path="${escapeHtml(fallbackPath)}"` : ''
     return `<button class="chat-file-open-btn${externalClass}" data-file-path="${escapeHtml(resolvedPath)}"${fallbackAttr}${lineAttrs} title="${escapeHtml(gt('chat.attach.openFile'))}">${FILE_OPEN_ICON_SVG}</button>`
 }
 
+/**
+ * Read the file target (path + full line ranges) from an annotated DOM element.
+ * Centralizes the attribute reads repeated across chat/task/file click handlers.
+ * `lineRanges` is the canonical serialized string; `data-line-ranges` is
+ * authoritative, `data-line-start`/`data-line-end` remain the fallback for
+ * elements produced before multi-range support.
+ */
+export function readLineTargetFromEl(el: Element): { filePath: string | null; lineRanges?: string; lineStart?: number; lineEnd?: number } {
+    const filePath = el.getAttribute('data-file-path')
+    const rangesAttr = el.getAttribute('data-line-ranges')
+    if (rangesAttr) {
+        const ranges = parseLineRanges(rangesAttr)
+        if (ranges.length > 0) {
+            return { filePath, lineRanges: serializeLineRanges(ranges), ...firstLineTarget(ranges) }
+        }
+    }
+    const startAttr = el.getAttribute('data-line-start')
+    const endAttr = el.getAttribute('data-line-end')
+    const lineStart = startAttr ? parseInt(startAttr, 10) : undefined
+    const lineEnd = endAttr ? parseInt(endAttr, 10) : undefined
+    return { filePath, lineStart, lineEnd }
+}
+
 // ── Line info extraction ────────────────────────────────────────────────────────
 
 /**
- * Extract the bare file path and optional line range from a regex match.
- * E.g. "src/main.go:70-81" → { path: "src/main.go", lineStart: 70, lineEnd: 81 }
+ * Extract the bare file path and optional line ranges from a regex match whose
+ * single capture group (match[1]) holds the whole comma list.
+ * E.g. "src/main.go:70-81" → { path: "src/main.go", lineRanges: [{start:70,end:81}] }
  */
-function extractLineInfo(matchStr: string, match: RegExpExecArray): { path: string; lineStart?: number; lineEnd?: number } {
-    const lineStartStr = match[1]
-    const lineEndStr = match[2]
-    if (!lineStartStr) return { path: matchStr }
-    const lineSuffix = matchStr.match(/:L?(\d+)(?:-L?(\d+))?$/i)
-    const path = lineSuffix ? matchStr.slice(0, matchStr.length - lineSuffix[0].length) : matchStr
-    const lineStart = parseInt(lineStartStr, 10)
-    let lineEnd = lineEndStr ? parseInt(lineEndStr, 10) : undefined
-    if (lineStart <= 0) return { path: matchStr }
-    if (lineEnd !== undefined && lineEnd < lineStart) {
-        lineEnd = undefined
-    }
-    return {
-        path,
-        lineStart,
-        lineEnd,
-    }
+function extractLineInfo(matchStr: string, match: RegExpExecArray): { path: string; lineRanges: LineRange[] } {
+    const suffix = match[1]
+    if (!suffix) return { path: matchStr, lineRanges: [] }
+    const lineRanges = parseLineRanges(suffix)
+    if (lineRanges.length === 0) return { path: matchStr, lineRanges: [] }
+    const path = matchStr.slice(0, matchStr.length - suffix.length - 1)
+    return { path, lineRanges }
 }
 
 /**
- * Extract bare path and optional line info from a plain text string.
+ * Extract bare path and optional line ranges from a plain text string.
  * Used by Step 2 for <code> tag content.
  */
-function extractLineInfoFromText(text: string): { path: string; lineStart?: number; lineEnd?: number } {
-    const m = text.match(/:L?(\d+)(?:-L?(\d+))?$/i)
-    if (!m) return { path: text }
-    const colonIdx = text.lastIndexOf(':')
-    const path = text.slice(0, colonIdx)
-    const lineStart = parseInt(m[1], 10)
-    let lineEnd = m[2] ? parseInt(m[2], 10) : undefined
-    if (lineStart <= 0) return { path: text }
-    if (lineEnd !== undefined && lineEnd < lineStart) {
-        lineEnd = undefined
-    }
-    return {
-        path,
-        lineStart,
-        lineEnd,
-    }
+function extractLineInfoFromText(text: string): { path: string; lineRanges: LineRange[] } {
+    const m = text.match(LINE_SUFFIX_RE)
+    if (!m) return { path: text, lineRanges: [] }
+    const lineRanges = parseLineRanges(m[1])
+    if (lineRanges.length === 0) return { path: text, lineRanges: [] }
+    return { path: text.slice(0, text.length - m[0].length), lineRanges }
 }
 
 // ── Path detection regex & helper ───────────────────────────────────────────────
@@ -413,7 +442,11 @@ function extractLineInfoFromText(text: string): { path: string; lineStart?: numb
 // many slashes but no file extension (e.g. a 2KB+ Base64 blob) triggers catastrophic
 // backtracking (2^slashCount) and freezes the UI thread. A dedicated dotfile branch
 // preserves matching of hidden last segments (e.g. /project/.worktrees).
-const FILE_PATH_RE = /(?:~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0-9]*|~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\/\.[^/\s<>"')\]]+|\.\.?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)*\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_.-]+)+\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\/](?![\\/])[^\\/\s<>"')\]]+(?:[\\/][^\\/\s<>"')\]]+)*(?:\.[a-zA-Z][a-zA-Z0-9]*)?)(?::[Ll]?(\d+)(?:-[Ll]?(\d+))?)?/g
+// The trailing suffix is a single capture group holding the whole comma list
+// (see LINE_TOKEN_SRC). Each list iteration consumes a literal comma, so the
+// suffix adds no backtracking risk.
+const FILE_PATH_SRC = '(?:~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\.[a-zA-Z][a-zA-Z0-9]*|~?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)+\\/\\.[^/\\s<>"\')\\]]+|\\.\\.?\\/[^/\\s<>"\')\\]]+(?:\\/[^/\\s<>"\')\\]]+)*\\.[a-zA-Z][a-zA-Z0-9]*|[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_.-]+)+\\.[a-zA-Z][a-zA-Z0-9]*|[A-Za-z]:[\\\\/](?![\\\\/])[^\\\\/\\s<>"\')\\]]+(?:[\\\\/][^\\\\/\\s<>"\')\\]]+)*(?:\\.[a-zA-Z][a-zA-Z0-9]*)?)'
+const FILE_PATH_RE = new RegExp(FILE_PATH_SRC + '(?::(' + LINE_TOKEN_SRC + '))?', 'g')
 
 /**
  * Check if a string looks like a file path that should be annotated.
@@ -421,7 +454,7 @@ const FILE_PATH_RE = /(?:~?\/[^/\s<>"')\]]+(?:\/[^/\s<>"')\]]+)+\.[a-zA-Z][a-zA-
  */
 export function looksLikeFilePath(text: string): boolean {
     if (shouldRejectPath(text)) return false
-    const bare = text.replace(/:L?(\d+)(?:-L?(\d+))?$/i, '')
+    const bare = text.replace(LINE_SUFFIX_RE, '')
     return /\/|\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(bare)
 }
 
@@ -484,10 +517,9 @@ export function annotateFilePaths(
         // Mark the <a> so click handlers can open the resolved path with its
         // line range; the button is an additional affordance.
         a.setAttribute('data-file-path', resolved)
-        if (parsed.lineStart) a.setAttribute('data-line-start', String(parsed.lineStart))
-        if (parsed.lineEnd) a.setAttribute('data-line-end', String(parsed.lineEnd))
+        applyLineTargetAttrs(a, parsed.lineRanges)
         a.classList.add('chat-file-path')
-        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved, parsed.lineStart, parsed.lineEnd))
+        a.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved, parsed.lineStart, parsed.lineEnd, undefined, parsed.lineRanges))
     }
 
     // ── Step 2: <code> tags whose content is purely a file path ──
@@ -496,7 +528,7 @@ export function annotateFilePaths(
         if (code.classList.contains('chat-worktree-path')) continue
         const stripped = (code.textContent || '').trim()
         if (!looksLikeFilePath(stripped)) continue
-        const { path: barePath, lineStart, lineEnd } = extractLineInfoFromText(stripped)
+        const { path: barePath, lineRanges } = extractLineInfoFromText(stripped)
         const result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
         if (!result || result.primary.includes(' ') || result.primary.includes('"')) continue
         pushDetectedPaths(detectedPaths, result)
@@ -504,9 +536,8 @@ export function annotateFilePaths(
         code.setAttribute('data-file-path', result.primary)
         if (result.fallback !== result.primary) code.setAttribute('data-fallback-path', result.fallback)
         if (isAbsolutePath(result.primary)) code.setAttribute('data-external', 'true')
-        if (lineStart) code.setAttribute('data-line-start', String(lineStart))
-        if (lineEnd) code.setAttribute('data-line-end', String(lineEnd))
-        code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, lineStart, lineEnd, result.fallback !== result.primary ? result.fallback : undefined))
+        applyLineTargetAttrs(code, lineRanges)
+        code.insertAdjacentHTML('afterend', fileOpenButtonHtml(result.primary, undefined, undefined, result.fallback !== result.primary ? result.fallback : undefined, lineRanges))
     }
 
     // ── Step 3: Text nodes → regex match paths ──
@@ -530,12 +561,12 @@ export function annotateFilePaths(
         if (!FILE_PATH_RE.test(text)) continue
 
         FILE_PATH_RE.lastIndex = 0
-        const parts: Array<{ text: string; result: ResolveResult | null; lineStart?: number; lineEnd?: number }> = []
+        const parts: Array<{ text: string; result: ResolveResult | null; lineRanges?: LineRange[] }> = []
         let lastIndex = 0
         let match: RegExpExecArray | null
         while ((match = FILE_PATH_RE.exec(text)) !== null) {
             const pathStr = match[0]
-            const { path: barePath, lineStart, lineEnd } = extractLineInfo(pathStr, match)
+            const { path: barePath, lineRanges } = extractLineInfo(pathStr, match)
             let result = resolveFilePathDual(barePath, projectRoot, homeDir, baseDir)
             // Directory-prefix suppression: if match is followed by /segment, skip it
             if (result) {
@@ -550,7 +581,7 @@ export function annotateFilePaths(
             if (match.index > lastIndex) {
                 parts.push({ text: text.slice(lastIndex, match.index), result: null })
             }
-            parts.push({ text: pathStr, result, lineStart: result ? lineStart : undefined, lineEnd: result ? lineEnd : undefined })
+            parts.push({ text: pathStr, result, lineRanges: result ? lineRanges : undefined })
             lastIndex = match.index + pathStr.length
         }
         if (lastIndex < text.length) {
@@ -570,12 +601,11 @@ export function annotateFilePaths(
                 span.setAttribute('data-file-path', part.result.primary)
                 if (part.result.fallback !== part.result.primary) span.setAttribute('data-fallback-path', part.result.fallback)
                 if (isAbsolutePath(part.result.primary)) span.setAttribute('data-external', 'true')
-                if (part.lineStart) span.setAttribute('data-line-start', String(part.lineStart))
-                if (part.lineEnd) span.setAttribute('data-line-end', String(part.lineEnd))
+                applyLineTargetAttrs(span, part.lineRanges)
                 span.textContent = part.text
                 frag.appendChild(span)
                 const btnContainer = doc.createElement('span')
-                btnContainer.innerHTML = fileOpenButtonHtml(part.result.primary, part.lineStart, part.lineEnd, part.result.fallback !== part.result.primary ? part.result.fallback : undefined)
+                btnContainer.innerHTML = fileOpenButtonHtml(part.result.primary, undefined, undefined, part.result.fallback !== part.result.primary ? part.result.fallback : undefined, part.lineRanges)
                 while (btnContainer.firstChild) frag.appendChild(btnContainer.firstChild)
             } else {
                 frag.appendChild(doc.createTextNode(part.text))
@@ -702,6 +732,7 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                     el.removeAttribute('data-external')
                     el.removeAttribute('data-line-start')
                     el.removeAttribute('data-line-end')
+                    el.removeAttribute('data-line-ranges')
                 } else {
                     el.replaceWith(...el.childNodes)
                 }
@@ -752,6 +783,7 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
                 el.removeAttribute('data-external')
                 el.removeAttribute('data-line-start')
                 el.removeAttribute('data-line-end')
+                el.removeAttribute('data-line-ranges')
             } else {
                 el.replaceWith(...el.childNodes)
             }
@@ -775,6 +807,7 @@ export function useFilePathAnnotation() {
         resolveFilePath,
         resolveFilePathDual,
         fileOpenButtonHtml,
+        readLineTargetFromEl,
         annotateFilePaths,
         verifyFilePaths,
         resolveRelativePath,
@@ -836,7 +869,7 @@ export function tryResolveCodeString(
  * If it's a file, selects it in the store.
  * If the file doesn't exist, shows a toast and does not navigate.
  */
-export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface): Promise<boolean> {
+export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface, lineRanges?: string): Promise<boolean> {
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
     if (!targetPath) return false
@@ -845,8 +878,19 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
     // external-path check below work for drive-letter paths (C:\…/C:/…).
     targetPath = normalizeSlashes(targetPath)
 
-    const finalLineStart = lineStart ?? parsed.lineStart
-    const finalLineEnd = lineEnd ?? parsed.lineEnd
+    // Explicit ranges win; otherwise fall back to the path's own suffix. A
+    // legacy (lineStart,lineEnd) pair becomes a single range when no full list
+    // was supplied, so older callers keep working unchanged.
+    const explicitRanges = lineRanges ? parseLineRanges(lineRanges) : []
+    const effectiveRanges = explicitRanges.length > 0
+        ? explicitRanges
+        : (parsed.lineRanges.length > 0
+            ? parsed.lineRanges
+            : (lineStart ? [{ start: lineStart, end: lineEnd && lineEnd >= lineStart ? lineEnd : lineStart }] : []))
+    const first = firstLineTarget(effectiveRanges)
+    const finalLineStart = first.lineStart
+    const finalLineEnd = first.lineEnd
+    const finalLineRanges = effectiveRanges.length > 1 ? serializeLineRanges(effectiveRanges) : undefined
 
     // Normalize an absolute project path (e.g. file:///root/… or /root/…) to
     // a project-relative path so it is opened inside the current project.
@@ -903,7 +947,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
 
     const ok = await store.selectFile(targetPath)
     if (ok) {
-        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd, source } }))
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: targetPath, lineStart: finalLineStart, lineEnd: finalLineEnd, lineRanges: finalLineRanges, source } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
             useToast().show(gt('file.toast.externalFile'), { icon: 'ℹ️', type: 'info', duration: 2000 })

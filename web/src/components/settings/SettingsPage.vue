@@ -173,11 +173,11 @@ watch(() => props.active, (val) => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .settings-page__back {
@@ -187,7 +187,7 @@ watch(() => props.active, (val) => {
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -206,8 +206,8 @@ watch(() => props.active, (val) => {
 }
 
 .settings-page__title {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -221,12 +221,12 @@ watch(() => props.active, (val) => {
 
 .settings-page__version {
   margin-left: auto;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
@@ -241,10 +241,10 @@ watch(() => props.active, (val) => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
   padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -254,7 +254,7 @@ watch(() => props.active, (val) => {
 }
 
 .settings-restart-btn:disabled {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 

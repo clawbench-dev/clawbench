@@ -198,7 +198,7 @@ async function onDragEnd() {
 .qs-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 
 .qs-item-wrapper {
@@ -212,11 +212,11 @@ async function onDragEnd() {
 .qs-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  font-size: 13px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
-  transition: background 0.12s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -228,10 +228,10 @@ async function onDragEnd() {
 .qs-drag-handle {
   cursor: grab;
   color: var(--text-muted, #999);
-  font-size: 16px;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   user-select: none;
-  padding: 0 2px;
+  padding:0 var(--space-1);
 }
 
 .qs-drag-handle:active {
@@ -240,7 +240,7 @@ async function onDragEnd() {
 
 .qs-label {
   flex-shrink: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -251,8 +251,8 @@ async function onDragEnd() {
   flex: 1;
   min-width: 0;
   color: var(--text-muted, #999);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -263,11 +263,11 @@ async function onDragEnd() {
   border: none;
   color: var(--text-muted, #999);
   cursor: pointer;
-  padding: 4px;
+  padding: var(--space-2);
   display: flex;
   align-items: center;
-  border-radius: 4px;
-  transition: background 0.12s, color 0.12s;
+  border-radius: var(--radius-xs);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -284,18 +284,18 @@ async function onDragEnd() {
 .qs-delete-confirm {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px 6px 28px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-3) 28px;
   background: color-mix(in srgb, #e53e3e 8%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
 
 .qs-confirm-btn {
-  padding: 3px 10px;
+  padding:3px var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-sm);
   cursor: pointer;
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
@@ -315,7 +315,7 @@ async function onDragEnd() {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .create-btn {
@@ -328,8 +328,8 @@ async function onDragEnd() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: background 0.15s;
+  border-radius: var(--radius-xs);
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -344,26 +344,26 @@ async function onDragEnd() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 20px;
+  gap: var(--space-4);
+  padding: var(--space-8);
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .qs-empty-icon {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
 }
 
 /* PopupMenu teleports to body — these styles must be unscoped */
 .menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
   background: none;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;

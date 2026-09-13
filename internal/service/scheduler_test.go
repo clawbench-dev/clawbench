@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // schedulerSchema is the same schema used in chat_test.go but scoped locally
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
 	title_renamed INTEGER NOT NULL DEFAULT 0,
+	title_source TEXT NOT NULL DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -56,6 +58,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	agent_id TEXT NOT NULL,
 	prompt TEXT NOT NULL,
 	session_id TEXT,
+	trigger_mode TEXT NOT NULL DEFAULT 'cron',
+	event_types TEXT NOT NULL DEFAULT '',
 	status TEXT NOT NULL DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,
@@ -79,14 +83,6 @@ CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, creat
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-CREATE TABLE IF NOT EXISTS ai_raw_responses (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	session_id TEXT NOT NULL,
-	message_id INTEGER NOT NULL,
-	backend TEXT NOT NULL DEFAULT '',
-	raw_output TEXT NOT NULL,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
 `
 
 func setupSchedulerDB(t *testing.T) *sql.DB { //nolint:unparam // test helper: DB used implicitly via global state
@@ -1834,4 +1830,138 @@ func TestAddRemoveRunningExecution(t *testing.T) {
 	// Remove
 	s.RemoveRunningExecution("test-exec")
 	assert.False(t, s.HasRunningExecutions(42))
+}
+
+// ── Event-triggered tasks: cron decoupling (review R1) ──
+
+func eventTask(name string) *model.ScheduledTask {
+	return &model.ScheduledTask{
+		ProjectPath: "/proj", Name: name, CronExpr: "", AgentID: "agent1",
+		Prompt: "analyze", TriggerMode: "event", EventTypes: "closed,merged",
+		RepeatMode: "unlimited",
+	}
+}
+
+// TestAddTask_EventTaskNeedsNoCron is the core R1 guard: an event task has no
+// cron expression and must still be creatable.
+func TestAddTask_EventTaskNeedsNoCron(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("event-task")
+	err := s.AddTask(task)
+	require.NoError(t, err, "an event task must not require a cron expression")
+	assert.NotZero(t, task.ID)
+
+	// Persisted with the event configuration intact.
+	got, err := service.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "event", got.TriggerMode)
+	assert.Equal(t, "closed,merged", got.EventTypes)
+	assert.True(t, got.IsEventTriggered())
+}
+
+func TestAddTask_EventTaskRejectsNoEventTypes(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("bad")
+	task.EventTypes = ""
+	assert.Error(t, s.AddTask(task), "an event task with no event types must be rejected")
+}
+
+func TestAddTask_EventTaskRejectsUnknownEventType(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("bad")
+	task.EventTypes = "closed,bogus"
+	assert.Error(t, s.AddTask(task), "an unknown event type must be rejected")
+}
+
+// TestLoadTasksFromDB_SkipsEventTasks verifies event tasks are never registered
+// with cron on startup.
+func TestLoadTasksFromDB_SkipsEventTasks(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("event-task")
+	require.NoError(t, s.AddTask(task))
+
+	// Reloading must not error (a cron registration attempt would fail on the
+	// empty cron expression).
+	require.NoError(t, s.LoadTasksFromDB("/proj"))
+}
+
+func TestResumeTask_EventTaskNeedsNoCron(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("event-task")
+	require.NoError(t, s.AddTask(task))
+	s.PauseTask(task.ID)
+
+	require.NoError(t, s.ResumeTask(task.ID), "resuming an event task must not parse cron")
+
+	got, err := service.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "active", got.Status)
+}
+
+func TestUpdateTask_EventTaskNeedsNoCron(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := eventTask("event-task")
+	require.NoError(t, s.AddTask(task))
+
+	task.EventTypes = "opened"
+	task.Prompt = "updated"
+	require.NoError(t, s.UpdateTask(task), "updating an event task must not parse cron")
+
+	got, err := service.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "opened", got.EventTypes)
+	assert.Equal(t, "updated", got.Prompt)
+}
+
+// TestUpdateTask_SwitchingCronToEventDropsCronEntry verifies a task can be
+// converted from cron to event and its stale cron entry is removed.
+func TestUpdateTask_SwitchingCronToEventDropsCronEntry(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := &model.ScheduledTask{
+		ProjectPath: "/proj", Name: "t", CronExpr: "0 * * * *", AgentID: "agent1",
+		Prompt: "p", RepeatMode: "unlimited",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	task.TriggerMode = "event"
+	task.CronExpr = ""
+	task.EventTypes = "closed"
+	require.NoError(t, s.UpdateTask(task))
+
+	got, err := service.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "event", got.TriggerMode)
+	assert.Nil(t, got.NextRunAt, "an event task has no next cron run")
+}
+
+// TestAddTask_CronTaskStillRequiresCron ensures the cron path is unchanged.
+func TestAddTask_CronTaskStillRequiresCron(t *testing.T) {
+	setupSchedulerDB(t)
+	s := service.NewScheduler()
+
+	task := &model.ScheduledTask{
+		ProjectPath: "/proj", Name: "cron-task", CronExpr: "not a cron",
+		AgentID: "agent1", Prompt: "p", RepeatMode: "unlimited",
+	}
+	assert.Error(t, s.AddTask(task), "a cron task with an invalid expression must be rejected")
+}
+
+func TestScheduledTask_EventTypeList(t *testing.T) {
+	task := &model.ScheduledTask{EventTypes: " closed , merged ,"}
+	assert.Equal(t, []string{"closed", "merged"}, task.EventTypeList())
+	assert.Nil(t, (&model.ScheduledTask{}).EventTypeList())
 }

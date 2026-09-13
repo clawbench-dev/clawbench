@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
+import { flushPromises } from '@vue/test-utils'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
 import { previewCache } from '@/utils/codeLinkPreview'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
@@ -75,6 +76,146 @@ describe('useCodeLinkPreview', () => {
     reactiveLocalConfig.markdownCodeLinkPreview = false
     await nextTick()
     expect(preview.enabled.value).toBe(false)
+  })
+
+  it('honors a caller-supplied enabled gate over the global config', async () => {
+    // The file manager's preview mode must work independently of the global
+    // markdown-link-preview switch.
+    reactiveLocalConfig.markdownCodeLinkPreview = false
+    const gate = ref(false)
+    const preview = useCodeLinkPreview({ enabled: gate })
+    expect(preview.enabled.value).toBe(false)
+
+    gate.value = true
+    await nextTick()
+    expect(preview.enabled.value).toBe(true)
+
+    gate.value = false
+    await nextTick()
+    expect(preview.enabled.value).toBe(false)
+  })
+
+  it('exposes outsideClickIgnoreSelector from options', () => {
+    const withSelector = useCodeLinkPreview({ outsideClickIgnoreSelector: '.file-item' })
+    expect(withSelector.outsideClickIgnoreSelector).toBe('.file-item')
+
+    const without = useCodeLinkPreview()
+    expect(without.outsideClickIgnoreSelector).toBe('')
+  })
+
+  it('closes an open preview when the caller gate turns off', async () => {
+    const gate = ref(true)
+    mockApiGet.mockResolvedValueOnce({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const preview = useCodeLinkPreview({ enabled: gate })
+    preview.showPreview({ filePath: 'a.ts' })
+    await vi.runAllTicks()
+    expect(preview.visible.value).toBe(true)
+
+    gate.value = false
+    await nextTick()
+    expect(preview.visible.value).toBe(false)
+  })
+
+  it('detects media targets and short-circuits the JSON fetch', async () => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'assets/logo.png' })
+    await vi.runAllTicks()
+
+    expect(preview.isImageTarget.value).toBe(true)
+    expect(preview.isMediaTarget.value).toBe(true)
+    // No /api/file call — media is served as raw bytes by /api/local-file/.
+    expect(mockApiGet).not.toHaveBeenCalled()
+    expect(preview.status.value).toBe('ready')
+    expect(preview.errorCode.value).toBeNull()
+  })
+
+  it.each([
+    ['diagram.svg', 'isImageTarget'],
+    ['clip.mp4', 'isVideoTarget'],
+    ['voice.mp3', 'isAudioTarget'],
+    ['report.pdf', 'isPdfTarget'],
+  ])('classifies %s as a media target (%s)', async (filePath, flag) => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath })
+    await vi.runAllTicks()
+
+    expect(preview.isMediaTarget.value).toBe(true)
+    expect((preview as unknown as Record<string, { value: boolean }>)[flag].value).toBe(true)
+    expect(mockApiGet).not.toHaveBeenCalled()
+  })
+
+  it('does not treat a plain text file as a media target', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.ts' })
+    await vi.runAllTicks()
+
+    expect(preview.isMediaTarget.value).toBe(false)
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('refresh bumps the media nonce instead of re-fetching for a media target', async () => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'assets/logo.png' })
+    await vi.runAllTicks()
+
+    const before = preview.mediaRefreshNonce.value
+    preview.refresh()
+    expect(preview.mediaRefreshNonce.value).toBe(before + 1)
+    // Media has no JSON body to re-fetch.
+    expect(mockApiGet).not.toHaveBeenCalled()
+  })
+
+  it('refresh still re-fetches for a text target', async () => {
+    mockApiGet.mockResolvedValue({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.ts' })
+    await vi.runAllTicks()
+    mockApiGet.mockClear()
+
+    preview.refresh()
+    await vi.runAllTicks()
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('resets the media nonce when a new target opens', async () => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.png' })
+    await vi.runAllTicks()
+    preview.refresh()
+    expect(preview.mediaRefreshNonce.value).toBe(1)
+
+    preview.showPreview({ filePath: 'b.png' })
+    await vi.runAllTicks()
+    expect(preview.mediaRefreshNonce.value).toBe(0)
+  })
+
+  it('clears the media nonce to 0 on close', async () => {
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.png' })
+    await vi.runAllTicks()
+    preview.refresh()
+
+    preview.close()
+    expect(preview.mediaRefreshNonce.value).toBe(0)
   })
 
   it('defaults a line-less Markdown file to the rendered document view', async () => {
@@ -502,17 +643,19 @@ describe('useCodeLinkPreview', () => {
   })
 
   it('maps binary and too-large error states properly', async () => {
+    // A non-media binary file (images/video/audio/PDF now render a media body
+    // and never reach the JSON fetch), so the binary rejection path stays covered.
     mockApiGet.mockResolvedValueOnce({
       content: '',
-      name: 'image.png',
-      path: 'image.png',
+      name: 'archive.bin',
+      path: 'archive.bin',
       supported: false,
       isBinary: true,
       size: 500,
     })
 
     const preview = useCodeLinkPreview()
-    preview.showPreview({ filePath: 'image.png' })
+    preview.showPreview({ filePath: 'archive.bin' })
     await vi.runAllTicks()
 
     expect(preview.status.value).toBe('error')
@@ -826,5 +969,63 @@ describe('handleVerifiedFilePathClick (shared container interceptor)', () => {
       expect(handled).toBe(false)
       expect(handleClick).not.toHaveBeenCalled()
     }
+  })
+})
+
+describe('useCodeLinkPreview — docked mode', () => {
+  it('exposes isDocked only while a docked preview is open', async () => {
+    mockApiGet.mockResolvedValue({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const preview = useCodeLinkPreview()
+    expect(preview.isDocked.value).toBe(false)
+
+    preview.showPreview({ filePath: 'a.ts' }, 'docked')
+    await flushPromises()
+    expect(preview.mode.value).toBe('docked')
+    expect(preview.isDocked.value).toBe(true)
+
+    preview.close()
+    expect(preview.isDocked.value).toBe(false)
+  })
+
+  it('does not compute a float placement for a docked preview', async () => {
+    mockApiGet.mockResolvedValue({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const anchor = document.createElement('div')
+    anchor.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 10, bottom: 30, right: 110, x: 10, y: 20, toJSON() {} })
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.ts', anchorEl: anchor }, 'docked')
+    await flushPromises()
+
+    // Docked panes are laid out by the caller's split — no float placement.
+    expect(preview.placement.value).toBeNull()
+  })
+
+  it('pin/unpin are no-ops in docked mode', async () => {
+    mockApiGet.mockResolvedValue({
+      content: 'const a = 1',
+      name: 'a.ts',
+      path: 'a.ts',
+      supported: true,
+      size: 12,
+    })
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'a.ts' }, 'docked')
+    await flushPromises()
+
+    preview.pin()
+    expect(preview.mode.value).toBe('docked')
+    preview.togglePin()
+    expect(preview.mode.value).toBe('docked')
   })
 })

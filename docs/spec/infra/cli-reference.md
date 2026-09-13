@@ -1,52 +1,44 @@
 # CLI 子命令
 
-ClawBench 二进制兼具双重角色：无子命令时启动 Web 服务器；带子命令时作为 HTTP 客户端与运行中的服务器通信。所有 CLI 操作都通过 localhost HTTP API 路由，而非直接访问数据库——避免 SQLite 并发冲突，业务逻辑和校验统一在服务端。AI Agent 通过 `clawbench task` 和 `clawbench rag` 子命令自助管理定时任务和搜索历史对话。
+ClawBench 二进制兼具双重角色：无子命令时启动 Web 服务器；带子命令时作为独立工具运行。
+
+目前**只剩一个子命令 `upgrade-replace`**，它是应用自升级的内部机制，由升级服务作为子进程启动，用户不应直接调用。
+
+> **历史**：曾提供 `clawbench task` 与 `clawbench rag` 两个业务子命令，供 AI 智能体自助管理任务、检索历史对话。它们本质是 REST 端点的 HTTP 薄封装（业务逻辑全在服务端 handler）。现已移除——内置斜杠命令改为让 AI 直接调用本地 HTTP API，接口说明由嵌入的 OpenAPI 规格渲染（见 [API 文档](../api/README.md)）。这样消除了「提示词描述接口」与「CLI 定义接口」两处手写描述必然脱节的根因。
 
 ## 流程图
 
-### CLI 请求链路
+### upgrade-replace 执行链路
 
 ```mermaid
 sequenceDiagram
-    participant 用户/AI
-    participant CLI
-    participant 服务器
+    participant 升级服务
+    participant 旧进程
+    participant 新二进制
 
-    用户/AI->>CLI: clawbench task create --name ... --project /path
-    CLI->>CLI: loadConfig + loadSessionCookie
-    CLI->>服务器: POST /api/tasks (cookie认证)
-    服务器-->>CLI: JSON 响应
-    CLI-->>用户/AI: 格式化输出
-```
-
-### 防递归守卫
-
-```mermaid
-flowchart TD
-    A[定时任务执行] --> B[注入 CLAWBENCH_SCHEDULED=1]
-    B --> C[AI Agent 尝试 task create/update]
-    C --> D{CLAWBENCH_SCHEDULED=1?}
-    D -->|是| E[拒绝：防止递归]
-    D -->|否| F[正常执行]
+    升级服务->>新二进制: 启动 clawbench upgrade-replace --new-bin ... --target ...
+    新二进制->>旧进程: killProcessForce(父进程 PID)
+    新二进制->>新二进制: 等待父进程退出（最长 30s）
+    新二进制->>新二进制: 替换目标二进制 + chmod 0755
+    新二进制->>新二进制: 清理临时目录
+    新二进制->>新二进制: 等待端口释放（2s）
+    新二进制->>新二进制: 以原参数启动自身
 ```
 
 ## 功能与设计要点
 
 ### 功能清单
 
-- **定时任务管理（task）**：11 个子命令覆盖完整生命周期——create、list、get、update、delete、pause、resume、trigger、list-exec、delete-exec、list-agents。所有操作需要 `--project` 限定项目范围
-- **RAG 搜索（rag）**：3 个子命令——search（语义/全文混合搜索历史对话）、message（按 ID 获取完整消息）、session（获取会话全部消息）。搜索排除 thinking 和 tool_use 块，message 和 session 返回完整内容
-- **二进制替换（upgrade-replace）**：内部子命令，由升级服务作为子进程启动。杀旧进程→替换二进制→清理临时文件→启动新二进制。用户不应直接调用
-- **@path 文件读取**：`--prompt` 参数支持 `@path` 语法，读取文件内容作为 prompt 值。避免 shell 转义和参数长度限制
-- **防递归守卫**：定时任务执行时注入 `CLAWBENCH_SCHEDULED=1` 环境变量，CLI 检测到后拒绝 task create/update——防止 AI Agent 无限创建任务（ISS-031）
-- **JSON 输出**：所有 CLI 输出为 JSON 格式，成功返回 `{"ok": true, ...}`，失败返回 `{"ok": false, "error": "..."}`，便于脚本解析
-- **结构化帮助**：自定义帮助系统提供一致的格式化输出，含用法、参数说明（必填/默认值标注）、示例
+- **二进制替换（upgrade-replace）**：杀旧进程 → 替换二进制 → 清理临时文件 → 启动新二进制。参数：`--new-bin`、`--target`、`--tmp-dir`，以及透传的服务器参数（`--data-dir`/`--port`/`--host`）
 
 ### 设计要点
 
-- **HTTP 路由而非直接 DB 访问**：CLI 是纯 HTTP 客户端，不直接操作 SQLite。业务逻辑集中在服务端，CLI 只负责参数解析和结果展示——避免多进程并发写入数据库
-- **Cookie Token 认证**：CLI 从 `<DataDir>/cookie-token` 读取服务端生成的随机令牌，设置为作用域 Cookie（含端口号以支持多实例）。令牌与密码哈希解耦，修改密码不影响 CLI 认证
-- **localhost 旁路 + 自签名 TLS**：CLI 连接 localhost，自动信任自签名证书。默认利用 localhost 认证旁路，但实际使用 Cookie Token 确保即使旁路关闭也能工作
-- **参数重排绕过 Go flag 限制**：Go 标准库 `flag` 在首个位置参数后停止解析。CLI 自动将标志参数重排到位置参数前，使 `clawbench task update 1 --prompt "hello"` 正常工作
-- **@path 项目范围约束**：指定 `--project` 时，`@path` 只能读取项目目录内的文件，经过 symlink 解析后校验——防止 AI Agent 读取系统任意文件
 - **upgrade-replace 平台差异**：Unix 使用 SIGKILL 和进程组；Windows 使用 taskkill 和 OpenProcess。升级服务的跨平台复杂性隔离在子命令内部
+- **进程内 FRP 与 SSH**：不需要独立子命令，均以 Go 库形式运行在主进程内
+
+## 配置路径查找
+
+`FindConfigPath` 位于 `internal/platform/config_path.go`（此前在 `internal/cli`）。它并非 CLI 专用——`cmd/server/main.go` 在启动时用它定位 `config.yaml`，只是历史上恰好被业务 CLI 复用。按优先级查找：
+
+1. `<DataDir>/config/config.yaml`（数据目录）
+2. `config/config.yaml`（相对 CWD 的标准布局）

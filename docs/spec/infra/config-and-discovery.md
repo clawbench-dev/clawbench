@@ -21,15 +21,12 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[BackendRegistry] --> B{ListModelsCmd 存在?}
-    B -->|是| C[执行 CLI 命令列出模型]
-    B -->|否| D{DiscoverModelsFunc 存在?}
-    D -->|是| E[执行自定义发现函数]
-    D -->|否| F[使用供应商 KnownModels 或用户定义]
+    A[BackendRegistry] --> B{DiscoverModelsFunc 注册?}
+    B -->|是| C[执行后端自定义发现函数]
+    B -->|否| D[保持用户手动定义的模型列表]
 
-    C --> G[ParseModels 解析输出]
-    E --> G
-    G --> H[写入运行时缓存]
+    C --> E[写入运行时缓存]
+    D --> E
 ```
 
 ## 功能与设计要点
@@ -40,11 +37,11 @@ flowchart TD
 - **首次访问欢迎面板**：用户首次访问时显示 `WelcomeOverlay`（不是分步向导）。[WelcomeOverlay 详情](../features/setup-wizard.md)。Agent 创建通过自动发现或 `AgentInstallDialog` 完成，不存在 `/api/setup/*` 端点
 - **Agent 自动发现**：启动时检测 PATH 中是否存在 AI CLI 工具，为新发现的工具自动在数据库中创建 Agent（含 ACP 命令检测，即检查后端规格中的 `AcpCommand` 字段）。用户安装新 CLI 后重启即自动识别
 - **双传输支持**：Agent 的 `Transport` 字段（"cli" / "acp-stdio"）决定使用哪种传输模式。ACP 支持的 Agent 自动设置 `acp_command`，用户可以在会话中切换传输方式
-- **Model 自动发现**：通过 CLI 命令（如 `deepseek models`）或 `BackendSpec.RegisterDiscoverModelsFunc` 注册的自定义发现函数发现可用模型。Kimi 后端通过 `RegisterDiscoverModelsFunc("kimi", DiscoverKimiModels)` 注册模型发现函数，支持 kimi-k3、kimi-for-coding 等模型。当 `ListModelsCmd` 为空时使用 `KnownModels` 或用户手动定义；ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果），ACP stdout filter 还拦截 `NewSessionResponse.models` 字段作为模型发现的后备数据源（绕过 ACP SDK v0.13.5 不包含该字段的限制）。结果缓存到 SQLite 与内存
+- **Model 自动发现**：各后端在 `init()` 中通过 `RegisterDiscoverModelsFunc(backendID, fn)` 注册发现函数，`model.DiscoverModels` 只查这张注册表——注册了就调用，没有就返回空、保留用户手动定义的模型（不存在独立的 CLI 列表命令配置项）。发现函数内部各自决定策略，例如 Pi 执行 `pi --list-models` 解析表格输出，Kimi 通过 `RegisterDiscoverModelsFunc("kimi", DiscoverKimiModels)`、Codex 通过 `RegisterDiscoverModelsFunc("codex", DiscoverCodexModels)` 返回内置/缓存清单。ACP 后端优先用 ACP 返回的模型列表（覆盖 CLI 发现结果），ACP stdout filter 还拦截 `NewSessionResponse.models` 字段作为模型发现的后备数据源（绕过 ACP SDK v0.13.5 不包含该字段的限制）。结果缓存到 SQLite 与内存
 - **后台模型刷新**：启动后后台定期刷新模型缓存，更新自动发现的 Agent 的模型列表。新增模型无需重启
 - **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 轮询 `GET /api/system/resources` 获取 CPU、内存、磁盘、网络和负载指标，用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖，标志区分用户定义和自动发现。用户对配置有最终控制权
-- **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。已知模型由 `BackendSpec.KnownModels` 静态声明，或由后端通过 `RegisterDiscoverModelsFunc()` 动态注册。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
+- **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。供应商规格 `ProviderSpec` 只描述 Chat/Models 端点与 API 格式，不含模型清单；Agent 的模型列表由后端通过 `RegisterDiscoverModelsFunc()` 动态发现，或由用户手动定义。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH；当前实现不依赖外部模型目录生成服务
 - **API 密钥加密存储**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密后存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，API Key 加密功能保留用于自定义 Agent 的密钥管理
 - **绿色便携部署**：所有运行时数据在 `.clawbench/` 目录下，删除即干净卸载，拷贝二进制目录即可多实例部署。不需要系统级安装
 - **TLS 证书自动发现**：HTTPS 启用方式从手动配置 `enabled`/`cert_file`/`key_file` 改为自动发现证书目录（`tls.cert_dir`，默认 `<DataDir>/config/tls`）。`ResolveTLSCerts` 扫描目录中的证书文件，按优先级匹配：Let's Encrypt 风格（`fullchain.pem` + `privkey.pem`）→ 通用（`cert.pem` + `key.pem`）→ 合并文件（`combined.pem`）。找到有效证书对即启用 HTTPS，否则回退 HTTP。旧配置 `tls.enabled`/`tls.cert_file`/`tls.key_file` 仍可读取并自动迁移到 `cert_dir`
@@ -61,8 +58,9 @@ flowchart TD
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖
 - **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
 - **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
-- **供应商模型注册**：已知模型列表通过各后端的 `RegisterDiscoverModelsFunc()` 在 `init()` 注册，或通过 `BackendSpec.KnownModels` 静态声明。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本
+- **供应商模型注册**：模型列表通过各后端的 `RegisterDiscoverModelsFunc()` 在 `init()` 注册，`model.DiscoverModels` 只走这张注册表（没有静态声明的已知模型字段）。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本
 - **API 密钥与密码联动**：加密密钥由登录密码派生。`agent_api_keys` 表和 `crypto.go` 已移除，密码修改不再触发 API Key 加密轮换
 - **模型缓存避免重复发现**：首次发现结果写入本地缓存，后续启动直接读取缓存。同步发现只在首次运行，之后由后台异步刷新
 - **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含 CLI 发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因 CLI 模型列表中不存在而报 `InvalidModelForAgent`
-- **部分后端无 CLI 模型列表**：Codex、VeCLI、Qoder 等后端不支持 `--list-models` 类命令，模型由供应商注册表的 `KnownModels` 或用户手动提供。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
+- **无 CLI 列表后端的自定义发现**：Codex 通过多级策略发现模型——优先读现代 Codex CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用的完整授权模型清单，stripped 二进制也能拿到），失败再回退到对 Rust 二进制做字符串提取，最后落到按版本内置的已知模型默认值。state SQLite 库（`~/.codex/state_*.sqlite`）只用于定位目录、当前不解析模型（Codex 没有列模型的命令，函数体直接返回空）。缓存策略成功后把该后端从"无 CLI 列表"阵营中移出，让 Codex 会话能直接选择账号真实可用的模型

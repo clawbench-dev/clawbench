@@ -82,7 +82,7 @@
               :disabled="loading"
             />
           </div>
-          <div class="input-group" style="margin-top: 10px;">
+          <div class="input-group" style="margin-top: var(--space-5);">
             <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -353,7 +353,7 @@ onMounted(() => {
     background-size: 48px 48px;
     mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
     -webkit-mask-image: radial-gradient(ellipse 70% 70% at center, black, transparent);
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     pointer-events: none;
 }
 
@@ -382,7 +382,7 @@ onMounted(() => {
     position: relative;
     width: 96px;
     height: 96px;
-    margin-bottom: 20px;
+    margin-bottom: var(--space-8);
 }
 
 .login-logo {
@@ -404,28 +404,28 @@ onMounted(() => {
 }
 
 @keyframes ring-pulse {
-    0%, 100% { opacity: 0.4; transform: scale(1); }
-    50% { opacity: 0.8; transform: scale(1.04); }
+    0%, 100% { opacity: var(--opacity-disabled); transform: scale(1); }
+    50% { opacity: var(--opacity-hover); transform: scale(1.04); }
 }
 
 .login-title {
     font-size: 26px;
-    font-weight: 700;
+    font-weight: var(--font-weight-bold);
     color: var(--text-primary);
     letter-spacing: -0.02em;
-    margin: 0 0 8px;
+    margin:0 0 var(--space-4);
 }
 
 .login-slogan {
-    font-size: 18px;
-    font-weight: 500;
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-medium);
     color: var(--accent-color);
-    margin: 0 0 4px;
+    margin:0 0 var(--space-2);
     letter-spacing: 0.08em;
 }
 
 .login-subtitle {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
     margin: 0;
 }
@@ -435,7 +435,7 @@ onMounted(() => {
     width: 100%;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     padding: 28px 24px;
     box-shadow: var(--shadow-sm);
 }
@@ -448,7 +448,7 @@ onMounted(() => {
 .server-selector {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-2);
     margin-bottom: 0;
     max-height: 160px;
     overflow-y: auto;
@@ -456,29 +456,29 @@ onMounted(() => {
 }
 
 .server-list-header {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-secondary);
-    margin-bottom: 6px;
+    margin-bottom: var(--space-3);
     letter-spacing: 0.02em;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .server-list-divider {
     border: none;
     border-top: 1px solid var(--border-color);
-    margin: 0 0 16px 0;
+    margin:0 0 var(--space-7) 0;
 }
 
 .server-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 10px;
-    border-radius: 8px;
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-sm);
     border: 1.5px solid var(--border-color);
     cursor: pointer;
-    transition: background 0.1s, border-color 0.1s;
-    font-size: 13px;
+    transition: background var(--duration-fast), border-color var(--duration-fast);
+    font-size: var(--font-size-md);
     background: transparent;
 }
 
@@ -513,7 +513,7 @@ onMounted(() => {
 .server-info {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     min-width: 0;
     flex: 1;
 }
@@ -525,7 +525,7 @@ onMounted(() => {
     border-radius: 50%;
     border: 1.5px solid var(--border-color);
     background: transparent;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 .server-item.active .server-indicator {
@@ -536,14 +536,14 @@ onMounted(() => {
 .server-icon {
     flex-shrink: 0;
     color: var(--text-secondary);
-    transition: color 0.15s;
+    transition: color var(--duration-base);
 }
 
 .server-url {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .server-delete {
@@ -552,12 +552,12 @@ onMounted(() => {
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 2px;
-    border-radius: 4px;
+    padding: var(--space-1);
+    border-radius: var(--radius-xs);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.1s, color 0.1s;
+    transition: background var(--duration-fast), color var(--duration-fast);
 }
 
 @media (hover: hover) {
@@ -588,12 +588,12 @@ input[type="url"] {
     width: 100%;
     padding: 13px 14px 13px 42px;
     border: 1.5px solid var(--border-color);
-    border-radius: 10px;
-    font-size: 15px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-xl);
     outline: none;
     background: var(--bg-primary);
     color: var(--text-primary);
-    transition: border-color 0.2s, box-shadow 0.2s;
+    transition: border-color var(--duration-slow), box-shadow var(--duration-slow);
     box-sizing: border-box;
 }
 
@@ -605,19 +605,19 @@ input:focus {
 .login-btn {
     width: 100%;
     padding: 13px;
-    margin-top: 16px;
+    margin-top: var(--space-7);
     border: none;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     background: var(--accent-color);
     color: #fff;
-    font-size: 15px;
-    font-weight: 600;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
     cursor: pointer;
-    transition: background 0.2s, transform 0.1s, box-shadow 0.2s;
+    transition: background var(--duration-slow), transform var(--duration-fast), box-shadow var(--duration-slow);
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: var(--space-4);
 }
 
 @media (hover: hover) {
@@ -632,7 +632,7 @@ input:focus {
 }
 
 .login-btn:disabled {
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
     cursor: default;
 }
 
@@ -643,15 +643,15 @@ input:focus {
 
 .cancel-btn {
     width: 100%;
-    padding: 10px;
-    margin-top: 8px;
+    padding: var(--space-5);
+    margin-top: var(--space-4);
     border: 1px solid var(--border-color);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -672,15 +672,15 @@ input:focus {
 
 .error {
     margin-top: 14px;
-    padding: 10px 14px;
-    border-radius: 8px;
+    padding: var(--space-5) 14px;
+    border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-red, #dc2626) 8%, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--color-red, #dc2626) 20%, var(--border-color));
     color: var(--color-red, #dc2626);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
 }
 
 .error svg {
@@ -689,17 +689,17 @@ input:focus {
 
 .reconfigure-link {
     margin-left: auto;
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
     border: 1px solid color-mix(in srgb, var(--color-red, #dc2626) 40%, transparent);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--color-red, #dc2626) 10%, transparent);
     color: var(--color-red, #dc2626);
-    font-size: 11px;
-    font-weight: 500;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: background 0.15s;
+    transition: background var(--duration-base);
 }
 
 /* Add server button */
@@ -707,17 +707,17 @@ input:focus {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--space-3);
     width: 100%;
-    padding: 10px;
-    margin-top: 12px;
+    padding: var(--space-5);
+    margin-top: var(--space-6);
     border: 1px dashed var(--border-color);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     background: transparent;
     color: color-mix(in srgb, var(--accent-color) 70%, var(--text-secondary));
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
 }
 
 /* Install banner */
@@ -725,19 +725,19 @@ input:focus {
     width: 100%;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-4);
 }
 
 .install-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
+    gap: var(--space-5);
+    padding: var(--space-5) var(--space-6);
+    border-radius: var(--radius-md);
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -761,13 +761,13 @@ input:focus {
 }
 
 .install-label {
-    font-size: 13px;
-    font-weight: 600;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-primary);
 }
 
 .install-desc {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted);
 }
 

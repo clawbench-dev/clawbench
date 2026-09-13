@@ -218,14 +218,14 @@ defineExpose({ open })
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  padding: 12px;
+  padding: var(--space-6);
 }
 
 .mc-computing {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px 0;
+  gap: var(--space-4);
+  padding: var(--space-7) 0;
 }
 
 .mc-computing-info {
@@ -237,19 +237,19 @@ defineExpose({ open })
 .mc-progress-bar {
   height: 6px;
   background: var(--bg-tertiary, #e5e5e5);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
 .mc-progress-fill {
   height: 100%;
   background: var(--accent-color, #0066cc);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease;
 }
 
 .mc-phase-text {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
   flex: 1;
   min-width: 0;
@@ -259,7 +259,7 @@ defineExpose({ open })
 }
 
 .mc-progress-detail {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   flex-shrink: 0;
 }
@@ -267,26 +267,26 @@ defineExpose({ open })
 .mc-error {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 0;
+  gap: var(--space-6);
+  padding: var(--space-7) 0;
   color: #e53e3e;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .mc-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 24px 0;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .mc-results {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   height: 100%;
   overflow: hidden;
 }
@@ -295,7 +295,7 @@ defineExpose({ open })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
 }
 
@@ -315,10 +315,10 @@ defineExpose({ open })
 .mc-cluster-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 0;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -344,24 +344,24 @@ defineExpose({ open })
 .mc-cluster-count {
   flex-shrink: 0;
   background: var(--bg-tertiary, #e5e5e5);
-  border-radius: 8px;
-  padding: 2px 6px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
 }
 
 .mc-btn {
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-sm);
   cursor: pointer;
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 @media (hover: hover) {
@@ -378,7 +378,7 @@ defineExpose({ open })
 
 @media (hover: hover) {
   .mc-btn.primary:hover {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 }
 
@@ -388,9 +388,9 @@ defineExpose({ open })
   background: none;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px 6px;
-  font-size: 11px;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {
@@ -407,10 +407,10 @@ defineExpose({ open })
 .mc-variant-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
 }
 
@@ -427,7 +427,7 @@ defineExpose({ open })
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .mc-header-btn {
@@ -440,8 +440,8 @@ defineExpose({ open })
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: background 0.15s;
+  border-radius: var(--radius-xs);
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {

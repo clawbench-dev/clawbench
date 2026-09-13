@@ -34,6 +34,13 @@
               </template>
             </div>
             <template v-if="!isRunning(exec)">
+              <!-- Event-triggered runs trace back to the issue/PR that fired
+                   them; without this the row only shows a summary and the user
+                   cannot tell what caused the run. -->
+              <div v-if="eventSource(exec)" class="exec-event-row">
+                <Zap :size="11" class="exec-event-icon" />
+                <span class="exec-event-source" :title="exec.eventUrl">{{ eventSource(exec) }}</span>
+              </div>
               <div class="exec-summary-row">
                 <div v-if="exec.preview" class="exec-summary">{{ exec.preview }}</div>
                 <div v-else class="exec-summary empty">{{ t('task.exec.noTextOutput') }}</div>
@@ -69,8 +76,9 @@
 <script setup>
 import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Square, History, Trash2 } from 'lucide-vue-next'
+import { Square, History, Trash2, Zap } from 'lucide-vue-next'
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
+import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import { formatDuration, formatDateTime } from '@/utils/format.ts'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
@@ -111,6 +119,12 @@ function formatTokens(meta) {
   if (meta.inputTokens) parts.push(`${meta.inputTokens.toLocaleString()}↑`)
   if (meta.outputTokens) parts.push(`${meta.outputTokens.toLocaleString()}↓`)
   return parts.join(' ')
+}
+
+/** Compact "owner/repo PR #123" for an event-triggered run, or '' when the run
+ *  was not triggered by a forge event. Derived from the stored source URL. */
+function eventSource(exec) {
+  return eventSourceLabel(exec?.eventUrl)
 }
 
 /** Set up IntersectionObserver for infinite scroll.
@@ -252,21 +266,21 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 24px 0;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* ── Execution items ── */
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .execution-item {
@@ -274,7 +288,7 @@ defineExpose({
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   overflow: hidden;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -291,21 +305,21 @@ defineExpose({
 }
 
 .execution-item.running {
-  background: color-mix(in srgb, var(--success-color, #16a34a) 5%, var(--bg-secondary, #f8f9fa));
-  border-color: color-mix(in srgb, var(--success-color, #16a34a) 30%, transparent);
+  background: color-mix(in srgb, var(--color-green) 5%, var(--bg-secondary, #f8f9fa));
+  border-color: color-mix(in srgb, var(--color-green) 30%, transparent);
   animation: exec-card-running 2s ease-in-out infinite;
 }
 
 @keyframes exec-card-running {
-  0%, 100% { border-color: color-mix(in srgb, var(--success-color, #16a34a) 30%, transparent); }
-  50% { border-color: color-mix(in srgb, var(--success-color, #16a34a) 55%, transparent); }
+  0%, 100% { border-color: color-mix(in srgb, var(--color-green) 30%, transparent); }
+  50% { border-color: color-mix(in srgb, var(--color-green) 55%, transparent); }
 }
 
 .execution-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
   cursor: pointer;
 }
 
@@ -318,13 +332,13 @@ defineExpose({
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .execution-time-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* ── Unread dot (static) ── */
@@ -342,10 +356,10 @@ defineExpose({
 
 /* ── Trigger type badges ── */
 .exec-trigger-type {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   white-space: nowrap;
   text-transform: uppercase;
@@ -364,16 +378,16 @@ defineExpose({
 
 /* ── Status badges ── */
 .exec-status-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.02em;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 .exec-status-badge.running {
@@ -391,7 +405,7 @@ defineExpose({
 
 /* ── Start time (top row, before the right-aligned duration) ── */
 .exec-start-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #9ca3af);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -400,12 +414,12 @@ defineExpose({
 
 /* ── Duration (top row, right-aligned next to trigger type) ── */
 .exec-duration {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #111827);
   background: rgba(0, 102, 204, 0.05);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -418,10 +432,37 @@ defineExpose({
   align-items: center;
 }
 
-.exec-summary {
-  font-size: 13px;
+/* ── Event source (event-triggered runs) ── */
+.exec-event-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.exec-event-icon {
+  color: var(--text-muted, #9ca3af);
+  flex-shrink: 0;
+}
+
+.exec-event-source {
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #4b5563);
-  line-height: 1.4;
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-family: var(--font-mono);
+}
+
+.exec-summary {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary, #4b5563);
+  line-height: var(--line-height-snug);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -438,15 +479,15 @@ defineExpose({
 .exec-meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .exec-meta-tag {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e5e7eb);
   color: var(--text-secondary, #6b7280);
@@ -468,7 +509,7 @@ defineExpose({
 
 @keyframes exec-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 6px 3px rgba(22, 163, 74, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 6px 3px rgba(22, 163, 74, 0.3); }
 }
 
 /* ── Just-completed execution flash ── */
@@ -477,7 +518,7 @@ defineExpose({
 }
 
 @keyframes exec-just-completed {
-  0% { background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--bg-secondary, #f8f9fa)); transform: translateX(8px); opacity: 0.7; }
+  0% { background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--bg-secondary, #f8f9fa)); transform: translateX(8px); opacity: var(--opacity-soft); }
   100% { background: var(--bg-secondary, #f8f9fa); transform: translateX(0); opacity: 1; }
 }
 
@@ -488,13 +529,13 @@ defineExpose({
   border: none;
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -515,13 +556,13 @@ defineExpose({
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
   opacity: 0;
 }
 
@@ -538,7 +579,7 @@ defineExpose({
 /* Touch devices: always visible but subtle */
 @media (hover: none) {
   .delete-exec-btn {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
   }
 }
 
@@ -555,9 +596,9 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   color: var(--text-muted, #9ca3af);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 </style>

@@ -12,6 +12,11 @@ func init() {
 	ai.LookupACPRemapsFn = LookupACPRemaps
 	ai.LookupACPToolCallIDPrefixesFn = LookupACPToolCallIDPrefixes
 
+	// Wire up the mid-turn injection policy lookup so core flow can ask a
+	// backend whether a mid-turn message can join the running turn (e.g.
+	// CodeBuddy's session/steer) without importing the backends package.
+	ai.LookupMidTurnInjectorFn = LookupMidTurnInjector
+
 	// Wire up the BackendSpec loader so model/discovery.go can build
 	// BackendRegistry dynamically from backend plugins.
 	model.LoadBackendSpecs = AllSpecsSorted
@@ -19,4 +24,12 @@ func init() {
 	// Wire up the CLI capability reporter so model can tell whether a backend
 	// has a CLI implementation (grok and other ACP-only backends return false).
 	model.BackendSupportsCLIFn = ai.BackendSupportsCLI
+
+	// Wire up the mid-turn capability reporter so model can tell whether a
+	// backend can inject a message into the running turn (CodeBuddy's
+	// session/steer). Drives the queued-bubble action label: "insert into the
+	// current reply" when true, "interrupt and send" when false.
+	model.BackendSupportsMidTurnFn = func(backendID string) bool {
+		return LookupMidTurnInjector(backendID) != nil
+	}
 }

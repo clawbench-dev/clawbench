@@ -425,6 +425,16 @@ async function handleRefresh() {
       toast.show(t('chat.sessionSetting.cliNotFound'), { icon: '⚠️', type: 'error', duration: 4000 })
     } else if (msgKey === 'ModelDiscoveryNotSupported') {
       toast.show(t('chat.sessionSetting.discoveryNotSupported'), { icon: '⚠️', type: 'error', duration: 4000 })
+    } else if (msgKey === 'ModelDiscoveryFailed') {
+      // Show the backend's reason (e.g. which paths were probed) when available,
+      // so users can tell an unsupported install layout from a transient failure.
+      const detail = err?.detail?.detail
+      toast.show(
+        detail
+          ? t('chat.sessionSetting.discoveryFailedWithDetail', { detail })
+          : t('chat.sessionSetting.discoveryFailed'),
+        { icon: '⚠️', type: 'error', duration: 6000 },
+      )
     } else {
       toast.show(t('chat.sessionSetting.refreshFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
     }
@@ -638,16 +648,16 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 10px 12px;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
   border: none;
   background: none;
   color: var(--text-muted, #999);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -666,22 +676,22 @@ defineExpose({
 .model-search-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
 }
 
 .model-search-input {
   flex: 1;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .model-search-input:focus {
@@ -699,12 +709,12 @@ defineExpose({
   width: 30px;
   height: 30px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary, #f0f0f0);
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -715,7 +725,7 @@ defineExpose({
 }
 
 .refresh-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -738,16 +748,16 @@ defineExpose({
 .thinking-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 10px 14px;
+  padding: var(--space-5) 14px;
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s;
+  transition: background var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -775,7 +785,7 @@ defineExpose({
   border-radius: 50%;
   flex-shrink: 0;
   background: transparent;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .model-item-indicator.active {
@@ -792,20 +802,20 @@ defineExpose({
 
 .model-item.current .model-item-name,
 .thinking-item.current .model-item-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
 }
 
 .default-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
   color: var(--accent-color, #0066cc);
 }
 
 .default-text {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -827,19 +837,19 @@ defineExpose({
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
-  opacity: 0.7;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  opacity: var(--opacity-soft);
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
   .model-item:hover .set-default-btn,
   .thinking-item:hover .set-default-btn {
-    opacity: 0.9;
+    opacity: var(--opacity-hover);
   }
 
   .set-default-btn:hover {
@@ -853,14 +863,14 @@ defineExpose({
   padding: 24px 14px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .tab-empty-hint {
   padding: 32px 14px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .auto-approve-section {
@@ -871,25 +881,25 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--space-6);
+  padding: var(--space-5) 14px;
 }
 
 .auto-approve-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .auto-approve-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
 .auto-approve-desc {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   line-height: 1.3;
 }
@@ -916,7 +926,7 @@ defineExpose({
   right: 0;
   bottom: 0;
   background-color: var(--bg-tertiary, #ccc);
-  transition: 0.2s;
+  transition: var(--duration-slow);
   border-radius: 20px;
 }
 
@@ -928,7 +938,7 @@ defineExpose({
   left: 2px;
   bottom: 2px;
   background-color: white;
-  transition: 0.2s;
+  transition: var(--duration-slow);
   border-radius: 50%;
 }
 
@@ -946,13 +956,13 @@ defineExpose({
 .popup-set-default {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: var(--space-3);
+  padding: var(--space-4) 14px;
   width: 100%;
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
   white-space: nowrap;

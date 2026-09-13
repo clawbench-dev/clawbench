@@ -322,9 +322,9 @@ defineExpose({
 .search-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
+  gap: var(--space-3);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
 }
 
@@ -338,8 +338,8 @@ defineExpose({
 .search-input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: var(--space-4);
+  padding: var(--space-5) 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -360,7 +360,7 @@ defineExpose({
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
@@ -370,8 +370,8 @@ defineExpose({
 }
 
 .search-results-count {
-  padding: 6px 14px;
-  font-size: 11px;
+  padding: var(--space-3) 14px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -381,14 +381,14 @@ defineExpose({
 .search-result-item {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 5px 14px;
   cursor: pointer;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace);
-  font-size: 12px;
-  line-height: 1.6;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   border-bottom: 1px solid var(--border-color, #f0f0f0);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 @media (hover: hover) {
@@ -448,7 +448,7 @@ defineExpose({
 .search-result-text :deep(mark) {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0 1px;
 }
 </style>

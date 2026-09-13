@@ -344,7 +344,7 @@ defineExpose({
   width: 100%;
   max-width: none;
   min-height: 0;
-  padding: 10px 16px 16px;
+  padding: var(--space-5) var(--space-7) var(--space-7);
 }
 
 .md-preview-scroll .markdown-content {

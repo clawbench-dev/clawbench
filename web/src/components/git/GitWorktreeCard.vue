@@ -50,12 +50,12 @@ defineEmits(['switch', 'delete'])
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-4);
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -65,13 +65,13 @@ defineEmits(['switch', 'delete'])
 }
 
 .git-worktree-row.current {
-  background: var(--bg-accent-subtle, rgba(74, 144, 217, 0.08));
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
   cursor: default;
 }
 
 .git-worktree-row.current .wt-row-name {
   color: var(--accent-color, #4a90d9);
-  font-weight: bold;
+  font-weight: var(--font-weight-bold);
 }
 
 [data-app-mode] .git-worktree-row.current .wt-row-name {
@@ -79,17 +79,17 @@ defineEmits(['switch', 'delete'])
 }
 
 .git-worktree-row.missing {
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-worktree-row.locked {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
 }
 
 .wt-row-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
 }
@@ -98,8 +98,8 @@ defineEmits(['switch', 'delete'])
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
 }
 
@@ -109,24 +109,24 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-row-path {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   word-break: break-all;
-  line-height: 1.4;
+  line-height: var(--line-height-snug);
   padding-left: 19px; /* align with name text after icon */
 }
 
 .wt-row-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .wt-row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -141,8 +141,8 @@ defineEmits(['switch', 'delete'])
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -151,8 +151,8 @@ defineEmits(['switch', 'delete'])
     background: var(--bg-secondary, #e9ecef);
   }
   .wt-action-btn:hover.wt-action-delete {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
@@ -161,26 +161,26 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-badge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 
 .wt-badge-dirty {
-  background: var(--warning-bg, rgba(255, 159, 64, 0.15));
-  color: var(--warning-color, #e67e22);
+  background: color-mix(in srgb, var(--color-orange) 15%, transparent);
+  color: var(--color-orange);
 }
 
 .wt-badge-main {
-  background: var(--accent-bg, rgba(74, 144, 217, 0.12));
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color, #4a90d9);
 }
 
 .wt-badge-clean {
-  background: var(--success-bg, rgba(40, 167, 69, 0.12));
-  color: var(--success-color, #28a745);
+  background: color-mix(in srgb, var(--color-green) 12%, transparent);
+  color: var(--color-green);
 }
 
 .wt-badge-locked {
@@ -189,7 +189,7 @@ defineEmits(['switch', 'delete'])
 }
 
 .wt-badge-missing {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.12));
-  color: var(--danger-color, #dc3545);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  color: var(--color-red);
 }
 </style>

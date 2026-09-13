@@ -78,25 +78,18 @@ test.describe('Chat', () => {
   })
 
   // ───────────────────────────────────────────────────────
-  // @task command
+  // /cb-task command
   // ───────────────────────────────────────────────────────
 
-  test('should show @task badge in user message after sending @task', async ({ page }) => {
-    await chat.sendMessage('@task list tasks')
+  test('should show ClawBench badge in user message after sending /cb-task', async ({ page }) => {
+    await chat.sendMessage('/cb-task list tasks')
 
     const userMsg = chat.getLastUserMessage()
     await expect(userMsg).toBeVisible({ timeout: 5000 })
 
-    // Badge should be rendered with .at-command-badge class
-    const atBadge = userMsg.locator('.at-command-badge')
-    const isBadgeVisible = await atBadge.isVisible({ timeout: 3000 }).catch(() => false)
-
-    if (isBadgeVisible) {
-      await expect(atBadge).toContainText('@task')
-    } else {
-      // Fallback: the message text should at least contain @task
-      await expect(userMsg).toContainText('@task')
-    }
+    // Badge should be rendered with .clawbench-command-badge class
+    const badge = userMsg.locator('.clawbench-command-badge')
+    await expect(badge).toContainText('/cb-task')
   })
 
   // ───────────────────────────────────────────────────────

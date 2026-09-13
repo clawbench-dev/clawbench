@@ -651,7 +651,7 @@ func TestServeClientLog_MixedSourcesWriteToSeparateFiles(t *testing.T) {
 	}
 }
 
-func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
+func TestServeClientLog_AndroidSource(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
@@ -659,11 +659,10 @@ func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
 	model.ConfigInstance.LogDir = tmpDir
 
 	entries := []ClientLogEntry{
-		{Level: "I", Tag: "OldApk", Msg: "legacy route", Ts: 1700000000000, Source: "android"},
+		{Level: "I", Tag: "AppLog", Msg: "android source", Ts: 1700000000000, Source: "android"},
 	}
 
-	// Use the old /api/android-log URL — should still work
-	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
 		"entries": entries,
 	})
 
@@ -672,8 +671,8 @@ func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, "client.log"))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "[android] I/OldApk")
-	assert.Contains(t, string(data), "legacy route")
+	assert.Contains(t, string(data), "[android] I/AppLog")
+	assert.Contains(t, string(data), "android source")
 }
 
 // ============================================================================
@@ -1114,7 +1113,8 @@ func TestBuildChatRequestFromQueue_BasicFields(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	require.NoError(t, err)
 	assert.NotNil(t, req)
 	assert.Equal(t, "queued message", req.Prompt)
 	assert.Equal(t, sessionID, req.SessionID)
@@ -1134,7 +1134,8 @@ func TestBuildChatRequestFromQueue_WithFiles(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	require.NoError(t, err)
 	assert.NotNil(t, req)
 	// The prompt should contain the original text (may be prefixed with file annotations)
 	assert.Contains(t, req.Prompt, "check this")
@@ -1716,7 +1717,8 @@ func TestBuildChatRequestFromQueue_FilePathsAndFiles(t *testing.T) {
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
-	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	req, err := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", env.ProjectDir)
+	require.NoError(t, err)
 	require.NotNil(t, req)
 	assert.Contains(t, req.Prompt, "review these files")
 	assert.Equal(t, sessionID, req.SessionID)

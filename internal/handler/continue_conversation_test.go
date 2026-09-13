@@ -19,7 +19,7 @@ import (
 // and returns the task and execution ID for handler testing.
 func helperCreateScheduledTaskForHandler(t *testing.T, env *testEnv, s *service.Scheduler) (int64, int64) {
 	t.Helper()
-	// Create a scheduled task
+	// Create a task
 	task := &model.ScheduledTask{
 		ProjectPath: env.ProjectDir,
 		Name:        "Test Task",

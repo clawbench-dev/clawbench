@@ -170,13 +170,13 @@ describe('QuoteQuestionBar component', () => {
     await wrapper.find('.quote-bar-row').trigger('click')
     const container = wrapper.find('.qq-input-container')
     expect(container.exists()).toBe(true)
-    // textarea 与聊天输入框对齐：16px 字号、行高 20px、上下 padding 4px
+    // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
+    // jsdom 不解析 var()：字号断言 token 名；padding 简写含两个 var()，computed 值
+    // 一律解成 0，改在下方按 CSS 规则文本断言
     const ta = wrapper.find('.qq-textarea')
     const taStyles = window.getComputedStyle(ta.element)
-    expect(taStyles.fontSize).toBe('16px')
+    expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
     expect(taStyles.lineHeight).toBe('20px')
-    expect(taStyles.paddingTop).toBe('4px')
-    expect(taStyles.paddingBottom).toBe('4px')
     expect(taStyles.minHeight).toBe('28px')
     // 发送/添加按钮与聊天输入框对齐：28px 圆形
     const sendBtn = wrapper.find('.qq-send-btn')
@@ -196,6 +196,9 @@ describe('QuoteQuestionBar component', () => {
     expect(containerRule).toContain('background: var(--bg-primary')
     // 不再使用胶囊圆角 999px
     expect(containerRule).not.toContain('999px')
+    // textarea 上下 4px / 左右 8px 走间距 token（与聊天输入框对齐）
+    const taRule = cssText.split('\n').filter((line) => line.includes('.qq-textarea')).join('\n')
+    expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
   })
 
   it('does not render when visible is false', () => {

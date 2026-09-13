@@ -48,9 +48,9 @@ flowchart TD
 - **向量嵌入可独立开关**：`rag.vector_enabled` 配置控制向量嵌入（默认 true），FTS 全文检索始终启用。关闭向量嵌入后退化为纯 FTS 模式，适合无嵌入服务的场景
 - **混合检索**：向量检索捕获语义相似性，BM25 全文检索捕获关键词匹配，两者通过 RRF（Reciprocal Rank Fusion）融合排序。搜索模式通过 `rag.search_mode` 配置控制（hybrid/vector/fts），FTS 模式始终可用，不依赖嵌入服务是否在线——比单一检索模式更全面
 - **过滤条件**：支持按项目、后端、角色、会话、时间范围过滤。缩小搜索范围，提高结果精度
-- **增量索引**：新消息自动标记为待索引，Indexer 轮询处理（5s 间隔，50 条/批）。不影响聊天主流程的响应速度
-- **两级索引重建**：支持向量重建（仅重建向量索引，保留 FTS 分块）和全量重建（重建 FTS + 向量）两种模式。向量重建适用于切换嵌入模型或维度变化，全量重建适用于修改分块策略。通过 `rag.chunk_overlap` 和 `rag.search_mode` 配置控制分块重叠量和搜索模式（hybrid/vector/fts），配置变更后按需触发重建
-- **索引进度跟踪**：`GET /api/rag/status` 返回索引进度（总消息数、已索引数、已嵌入数、嵌入模式）；`GET /api/rag/message-index-status?id=<id>` 查询单条消息的 FTS 和向量嵌入状态。前端 `useRagStatus` composable 轮询 status 端点并计算实时索引/嵌入速度（基于相邻两次轮询的差值），在设置页显示索引健康度
+- **增量索引**：新消息自动标记为待索引，Indexer 轮询处理（5s 间隔，批次大小由 `rag.batch_size` 配置，默认 50，热生效）。不影响聊天主流程的响应速度
+- **两级索引重建 + 独立 FTS 重建**：支持三种重建路径——向量重建（仅重建向量索引，保留 FTS 分块）、全量重建（重建 FTS + 向量）、以及**独立 FTS 重建**（`POST /api/rag/rebuild-fts`，基于现有 chunk 重建全文索引，不动向量、不重新分块、不重置消息标记）。向量重建适用于切换嵌入模型或维度变化，FTS 重建适用于全文索引损坏或分词器变更，全量重建适用于修改分块策略。通过 `rag.chunk_overlap` 和 `rag.search_mode` 配置控制分块重叠量和搜索模式（hybrid/vector/fts），配置变更后按需触发重建
+- **索引进度与磁盘占用**：`GET /api/rag/status` 返回索引进度（总消息数、已索引数、已嵌入数、嵌入模式）以及**索引磁盘占用**（`fts_size_bytes` / `vec_size_bytes`，分别汇总 FTS 与向量索引的逻辑页占用），设置面板格式化展示。前端 `useRagStatus` composable 轮询 status 端点并计算实时索引/嵌入速度（基于相邻两次轮询的差值），在设置页显示索引健康度与占用
 - **自动清理**：超过 `RetentionDays`（默认 90 天）的软删除数据定期清理，防止索引无限增长
 - **会话聚合搜索**：`RAGSessionSearch()` 在向量/FTS 搜索基础上按 `session_id` 聚合结果——返回 `SessionSearchResult`（含 `session_id`、`title`、`score`、`match_count`、分块列表），每会话最多 5 个分块。分块携带字符级偏移用于高亮。前端 `SessionSearchDrawer` 提供搜索结果列表 + 钻取详情两种视图，详情页将偏移转换为 DOM 高亮标记。`useSessionSearch` composable 封装搜索 API 调用，带防抖和 RAG 可用性缓存。搜索顶部提供检索模式（混合/全文）、归档筛选（全部/未归档/已归档，`archived` 参数）与排序（相关性/最新优先/最早优先，`sort` 参数）三个下拉；相关性保留检索评分排序，时间排序在检索结果集之上按会话 `created_at` 重排；归档筛选在会话元数据回填后生效，浏览态与搜索态一致。搜索输入下方另有一行可横滑的时间段 chips（全部时间/今天/近 7 天/近 30 天/自定义，`from`/`to` 参数），选「自定义」时展开两个日期输入框；日期为 date-only 格式，后端 `normalizeTimeBound` 将其按**本地日历日**展开为对应的 UTC 区间文本（`00:00:00` ~ `23:59:59.999999`）再与存储值比较——`chat_sessions.created_at` 由 `DEFAULT CURRENT_TIMESTAMP` 填充、`rag_chunks.created_at` 由 `time.Time` 绑定，两者都是 UTC 文本；若直接按 UTC 解析纯日期，UTC+8 下"今天"会偏移成当地 08:00 至次日 07:59，漏掉凌晨创建的会话。搜索态按命中消息时间过滤、浏览态按会话创建时间过滤。浏览态（未输入关键词）不显示检索模式标签（无检索发生），列表不携带任何消息内容，避免对每个会话做首条消息子查询拖慢加载；进入某会话详情时再通过 `GET /api/rag/session-first-message?session_id=<id>` 懒加载其首条消息作为预览（支持已归档会话）。浏览态取消数量上限，改为游标分页（`cursor` + `cursor_id`，响应 `has_more`）配合前端 IntersectionObserver 滚动懒加载，可无限加载全部会话
 - **消息聚类分析**：将跨所有会话的相似用户消息自动分组为"消息集群"，帮助用户识别自己的常见提问模式。用户触发按需计算（`POST /api/chat/message-clusters/compute`），后端执行三阶段管线：提取（top 5000 条用户消息统计）→ 聚类（Union-Find 算法，三级相似度优先：向量嵌入余弦相似 > FTS Sorensen-Dice 词汇重叠 > 精确去重）→ 缓存（结果存入 DB）。计算进度通过 `cluster_progress` WS 事件实时推送，完成后通过 `GET /api/chat/message-clusters` 获取缓存结果。已被设为快捷发送的消息变体自动过滤，只展示未设置的集群——引导用户将常见提问转为快捷发送
@@ -62,3 +62,4 @@ flowchart TD
 - **自适应嵌入维度**：从 API 响应自动检测向量维度，维度变化时重建表。支持切换嵌入模型而无需手动迁移
 - **分块使用结论提取**：助手消息分块前先经 `ExtractLastAnswerFromBlocks` 提取最终结论（与摘要管线共享算法），而非拼接所有文本块——工具调用前的中间推理对搜索无价值，只增加噪音和索引体积
 - **中文分词用 gse**：BM25 全文检索使用 gse 分词器处理中文文本，gse 不可用时退化为字符级分词——中文搜索不依赖外部分词服务
+- **占用查询必须走索引**：`IndexDiskUsage` 曾用 `SUM(CASE WHEN name LIKE 'prefix%')` 过滤 `dbstat`，该写法无法命中 dbstat 的名称索引，退化为对库内每个 page 的全扫描——实测 13.9GB 库单次查询约 57s，导致设置面板打开时 `/api/rag/status` 挂起近一分钟。改为 `WHERE name IN (SELECT name FROM sqlite_master WHERE name LIKE ...)` 后由名称索引驱动，57s → 0.28s。小库上看不出差异，因此用 EXPLAIN QUERY PLAN 断言查询计划防止回归

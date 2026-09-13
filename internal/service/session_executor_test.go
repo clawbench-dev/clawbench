@@ -246,8 +246,8 @@ func TestSessionExecutor_Finalize_WithBlocks_DeadlineExceeded(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
-	// Cover lines 416-433: drain raw_output from event channel.
+func TestSessionExecutor_Finalize_DrainsLateEvents(t *testing.T) {
+	// Finalize must drain late events from the event channel.
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
@@ -267,28 +267,29 @@ func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// Create drain channel with raw_output events
+	// Create drain channel with late tool events
 	drainCh := make(chan ai.StreamEvent, 3)
-	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained-line-1"}
-	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained-line-2"}
+	drainCh <- ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "late-tool-1", Input: `{"file_path":"/a.go"}`},
+	}
 	close(drainCh)
 
 	result := RunResult{
 		ReceivedTerminal: true,
 		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
 		Metadata:         &ai.Metadata{},
-		RawOutput:        "existing-raw",
 	}
 	finalized := executor.Finalize(result, drainCh)
 
-	if !contains(finalized.RawOutput, "existing-raw") {
-		t.Fatal("expected existing raw output preserved")
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "tool_use" && b.ID == "late-tool-1" {
+			found = true
+		}
 	}
-	if !contains(finalized.RawOutput, "drained-line-1") {
-		t.Fatal("expected drained raw output line 1")
-	}
-	if !contains(finalized.RawOutput, "drained-line-2") {
-		t.Fatal("expected drained raw output line 2")
+	if !found {
+		t.Fatal("expected late tool event to be drained and accumulated")
 	}
 }
 
@@ -535,7 +536,6 @@ func TestRunResult_Fields(t *testing.T) {
 		ReceivedTerminal: true,
 		Blocks:           []model.ContentBlock{{Type: "text", Text: "hello"}},
 		Metadata:         &ai.Metadata{WallMs: 1500},
-		RawOutput:        "raw data here",
 		WallMs:           1500,
 	}
 	if result.CancelReason != "user" {
@@ -552,9 +552,6 @@ func TestRunResult_Fields(t *testing.T) {
 	}
 	if result.Metadata == nil || result.Metadata.WallMs != 1500 {
 		t.Fatal("Metadata not set correctly")
-	}
-	if result.RawOutput != "raw data here" {
-		t.Fatal("RawOutput not set")
 	}
 	if result.WallMs != 1500 {
 		t.Fatal("WallMs not set")
@@ -724,23 +721,6 @@ func TestSessionExecutor_TrackToolDuration_NilOrEmptyTool(t *testing.T) {
 
 	if !result.ReceivedTerminal {
 		t.Fatal("expected ReceivedTerminal=true")
-	}
-}
-
-func TestSessionExecutor_Run_RawOutputAccumulation(t *testing.T) {
-	events := []ai.StreamEvent{
-		{Type: "raw_output", RawOutput: "line1\n"},
-		{Type: "raw_output", RawOutput: "line2\n"},
-		{Type: "content", Content: "hi"},
-		{Type: "done"},
-	}
-	result := runExecutorWithEvents(t, events, ModeScheduled)
-
-	if result.RawOutput == "" {
-		t.Fatal("expected RawOutput to be accumulated")
-	}
-	if !contains(result.RawOutput, "line1") || !contains(result.RawOutput, "line2") {
-		t.Fatalf("expected RawOutput to contain both lines, got: %q", result.RawOutput)
 	}
 }
 
@@ -1516,7 +1496,7 @@ func TestSessionExecutor_Finalize_WithBlocks_Timeout(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
+func TestSessionExecutor_Finalize_DrainsLateToolEvents(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
@@ -1543,18 +1523,26 @@ func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
 	for _, e := range events {
 		ch <- e
 	}
-	// Add raw_output events after done — these will be drained by Finalize
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 1"}
-	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 2"}
+	// Add a tool event after done — Finalize must drain and accumulate it.
+	ch <- ai.StreamEvent{
+		Type: "tool_use",
+		Tool: &ai.ToolCall{Name: "Read", ID: "finalize-late-tool", Input: `{"file_path":"/b.go"}`},
+	}
 	close(ch)
 
 	runResult := executor.RunWithChannel(ch)
-	// The done event already consumed from ch, but there are still
-	// raw_output events in the channel for Finalize to drain
+	// The done event already consumed from ch, but there is still a
+	// tool event in the channel for Finalize to drain.
 	runResult = executor.Finalize(runResult, ch)
 
-	if !contains(runResult.RawOutput, "drained line 1") || !contains(runResult.RawOutput, "drained line 2") {
-		t.Fatalf("expected raw output to contain drained lines, got: %q", runResult.RawOutput)
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "tool_use" && b.ID == "finalize-late-tool" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected drained tool event to be accumulated into finalized blocks")
 	}
 }
 
@@ -1913,56 +1901,6 @@ func TestSessionExecutor_Finalize_TransportFromACP(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	events := []ai.StreamEvent{
-		{Type: "raw_output", RawOutput: "raw line 1"},
-		{Type: "content", Content: "hello"},
-		{Type: "done"},
-	}
-	ch := make(chan ai.StreamEvent, len(events))
-	for _, e := range events {
-		ch <- e
-	}
-	close(ch)
-
-	runResult := executor.RunWithChannel(ch)
-	runResult = executor.Finalize(runResult, nil)
-
-	// Verify raw output was saved
-	if runResult.MsgID <= 0 {
-		t.Fatal("expected MsgID > 0 after Finalize")
-	}
-	var rawCount int
-	err := dbRead.QueryRow(
-		"SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?",
-		sid,
-	).Scan(&rawCount)
-	if err != nil {
-		t.Fatalf("failed to query raw responses: %v", err)
-	}
-	if rawCount == 0 {
-		t.Fatal("expected raw response to be saved")
-	}
-}
-
 // --- Additional diff coverage for session_executor.go ---
 
 func TestSessionExecutor_RunWithChannel_TickerFlush(t *testing.T) {
@@ -2109,43 +2047,6 @@ func TestSessionExecutor_Finalize_SaveMetadataError(t *testing.T) {
 	}
 }
 
-func TestSessionExecutor_Finalize_SaveRawResponseError(t *testing.T) {
-	// Cover lines 555-559: Finalize when SaveRawResponse fails.
-	setupExecutorDB(t)
-	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
-	}
-	defer func() { model.Agents = nil }()
-
-	sid := setupExecutorSession(t, "test-agent")
-	ctx := context.Background()
-	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-	}
-	executor := NewSessionExecutor(ctx, cfg)
-
-	result := RunResult{
-		ReceivedTerminal: true,
-		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
-		Metadata:         &ai.Metadata{},
-		RawOutput:        "some raw output",
-	}
-
-	// Drop ai_raw_responses table to make SaveRawResponse fail
-	_, _ = WriteExec("DROP TABLE IF EXISTS ai_raw_responses")
-
-	// Should not panic
-	finalized := executor.Finalize(result, nil)
-	if finalized.MsgID <= 0 {
-		t.Fatal("expected MsgID > 0 even when SaveRawResponse fails")
-	}
-}
-
 func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	// Regression test: Finalize must apply ConvertAskQuestionBlocks on e.blocks
 	// before writing to DB. Previously, buildResult applied the conversion on a
@@ -2232,8 +2133,8 @@ func setupStreamingMessage(t *testing.T, sessionID string) int64 {
 }
 
 func TestSessionExecutor_ContentReset(t *testing.T) {
-	// Verify that a content_reset event clears accumulated blocks, rawOutput,
-	// and responseMetadata — this is the mechanism that prevents content
+	// Verify that a content_reset event clears accumulated blocks and
+	// responseMetadata — this is the mechanism that prevents content
 	// duplication when ACPBackend retries a Prompt after a peer disconnect.
 	// Without content_reset, the first Prompt's partial events would remain
 	// in the executor's blocks, and the retry Prompt's full output would be
@@ -2249,11 +2150,9 @@ func TestSessionExecutor_ContentReset(t *testing.T) {
 	events := []ai.StreamEvent{
 		{Type: "content", Content: "stale partial from first prompt"},
 		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 999}},
-		{Type: "raw_output", RawOutput: "stale raw"},
 		{Type: "content_reset"}, // simulates the retry boundary
 		{Type: "content", Content: "fresh content from retry"},
 		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 100, OutputTokens: 50}},
-		{Type: "raw_output", RawOutput: "fresh raw"},
 		{Type: "done"},
 	}
 
@@ -2293,11 +2192,6 @@ func TestSessionExecutor_ContentReset(t *testing.T) {
 	}
 	if result.Metadata.InputTokens != 100 {
 		t.Fatalf("expected InputTokens=100 from retry metadata, got %d", result.Metadata.InputTokens)
-	}
-
-	// Only the retry's raw output should survive
-	if result.RawOutput != "fresh raw" {
-		t.Fatalf("expected RawOutput='fresh raw', got %q", result.RawOutput)
 	}
 }
 
@@ -2727,5 +2621,249 @@ func assertStreamingContentNotContains(t *testing.T, sid, notWant string) {
 	}
 	if strings.Contains(content, notWant) {
 		t.Errorf("streaming content should not contain %q, got %q", notWant, content)
+	}
+}
+
+// TestSessionExecutor_SteerBoundary_SplitsReply verifies the mid-turn split:
+// a steer_boundary event finalizes the accumulated "before" half and opens a
+// new streaming row for the "after" half, so the injected question's DB id
+// lands BETWEEN the two assistant rows. That id order is what makes the UI
+// render [Q1][reply·before][Q2][reply·after] with no special-case ordering.
+func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamMsgID := GetStreamingMessageID(sid)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder to exist")
+	}
+
+	// The injected question is persisted mid-turn, AFTER the "before" row but
+	// BEFORE the "after" row is created by the split.
+	_, err := AddChatMessage("/test", "test", sid, "user", "injected question", nil, false, "", "pending-inject-1")
+	if err != nil {
+		t.Fatalf("failed to persist injected question: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "before half"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "pending-inject-1"}},
+		{Type: "content", Content: "after half"},
+		{Type: "done"},
+	}
+
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:               ModeScheduled,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// Production calls Finalize after the loop returns (it persists the terminal
+	// content of whichever row is streaming at the end — here, the "after" half).
+	emptyCh := make(chan ai.StreamEvent)
+	close(emptyCh)
+	result = executor.Finalize(result, emptyCh)
+
+	// The DB must now hold THREE rows in conversational order:
+	//   assistant(before, finalized) → user(injected) → assistant(after, finalized)
+	msgs, err := GetChatHistory("/test", "test", sid)
+	if err != nil {
+		t.Fatalf("GetChatHistory failed: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 rows (before, injected question, after), got %d: %+v", len(msgs), msgs)
+	}
+
+	// Row 1: the finalized "before" half keeps the ORIGINAL streaming id.
+	if msgs[0].Role != "assistant" || msgs[0].ID != streamMsgID {
+		t.Fatalf("row 1 should be the finalized before-half with id %d, got role=%s id=%d",
+			streamMsgID, msgs[0].Role, msgs[0].ID)
+	}
+	if msgs[0].Streaming {
+		t.Error("the before-half must be finalized (streaming=0)")
+	}
+	if !strings.Contains(msgs[0].Content, "before half") {
+		t.Errorf("before-half content missing, got %q", msgs[0].Content)
+	}
+
+	// Row 2: the injected question sorts BETWEEN the two halves — this is the
+	// whole point of the split.
+	if msgs[1].Role != "user" {
+		t.Fatalf("row 2 should be the injected question, got role=%s", msgs[1].Role)
+	}
+	if msgs[1].Content != "injected question" {
+		t.Errorf("row 2 content = %q, want %q", msgs[1].Content, "injected question")
+	}
+
+	// Row 3: the "after" half is a NEW row, anchored to the injected question.
+	if msgs[2].Role != "assistant" {
+		t.Fatalf("row 3 should be the after-half, got role=%s", msgs[2].Role)
+	}
+	if msgs[2].ID == streamMsgID {
+		t.Error("the after-half must be a NEW row, not the original streaming row")
+	}
+	if msgs[2].QueueID != "pending-inject-1" {
+		t.Errorf("after-half queueId = %q, want %q (anchors it to the injected question)",
+			msgs[2].QueueID, "pending-inject-1")
+	}
+	if !strings.Contains(msgs[2].Content, "after half") {
+		t.Errorf("after-half content missing, got %q", msgs[2].Content)
+	}
+	if msgs[2].Streaming {
+		t.Error("the after-half must be finalized by the terminal done event")
+	}
+
+	// Content must NOT be duplicated across the halves.
+	if strings.Contains(msgs[0].Content, "after half") {
+		t.Error("before-half must not contain the after-half's content")
+	}
+	if strings.Contains(msgs[2].Content, "before half") {
+		t.Error("after-half must not contain the before-half's content")
+	}
+
+	// No streaming row may be left behind (GetStreamingMessageID falls back to
+	// the latest finalized row, so query the flag directly).
+	var stillStreaming int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sid,
+	).Scan(&stillStreaming); err != nil {
+		t.Fatalf("failed to count streaming rows: %v", err)
+	}
+	if stillStreaming != 0 {
+		t.Errorf("expected no leftover streaming row, got %d", stillStreaming)
+	}
+}
+
+// TestSessionExecutor_SteerBoundary_NoDBIsNoop verifies a boundary event with no
+// DB (bare executor) is swallowed instead of being accumulated as a content
+// block or panicking.
+func TestSessionExecutor_SteerBoundary_NoDBIsNoop(t *testing.T) {
+	// Deliberately NOT calling setupExecutorDB — db is nil.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "steer_boundary", SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: "q-1"}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   "no-db-session",
+		AgentID:     "test-agent",
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// The boundary event must not have produced a block of its own.
+	for _, b := range result.Blocks {
+		if strings.Contains(b.Text, "boundary") {
+			t.Errorf("boundary event leaked into content blocks: %+v", b)
+		}
+	}
+}
+
+// TestBuildContentJSON_Interrupt_NoCancelledBadge pins the interrupt contract:
+// the reply was cut short on purpose (the user redirected the turn), so it must
+// NOT carry the cancelled badge — that would say the user abandoned the reply.
+func TestBuildContentJSON_Interrupt_NoCancelledBadge(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	// The turn ctx IS cancelled on an interrupt, so this also proves the
+	// interrupt branch wins over the generic ctx.Err()==Canceled check.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	})
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "partial answer"}}
+	contentJSON, outBlocks := executor.buildContentJSON(blocks, RunResult{CancelReason: cancelReasonInterrupt}, &ai.Metadata{})
+
+	if strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Fatalf("interrupt must not be stamped cancelled, got: %s", contentJSON)
+	}
+	if len(outBlocks) != 1 {
+		t.Fatalf("the partial content must be preserved, got %d blocks", len(outBlocks))
+	}
+	if !strings.Contains(contentJSON, "partial answer") {
+		t.Fatalf("the partial content must be persisted, got: %s", contentJSON)
+	}
+}
+
+// TestBuildContentJSON_Interrupt_EmptyGetsExplanation verifies an interrupt that
+// produced nothing still persists an explanatory block. Without this the reply
+// row is a blank bubble the user cannot interpret.
+func TestBuildContentJSON_Interrupt_EmptyGetsExplanation(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	})
+
+	contentJSON, outBlocks := executor.buildContentJSON(nil, RunResult{CancelReason: cancelReasonInterrupt}, &ai.Metadata{})
+
+	if len(outBlocks) == 0 {
+		t.Fatal("an empty interrupt must still persist an explanatory block")
+	}
+	if outBlocks[0].Type != blockTypeWarning {
+		t.Errorf("expected a warning block, got type %q", outBlocks[0].Type)
+	}
+	if outBlocks[0].Reason != ai.ReasonEmpty {
+		t.Errorf("expected reason %q, got %q", ai.ReasonEmpty, outBlocks[0].Reason)
+	}
+	if strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Error("an interrupt is not a cancellation")
 	}
 }

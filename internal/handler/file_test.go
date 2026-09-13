@@ -340,63 +340,6 @@ func TestGetFile_DoubleSlashPath(t *testing.T) {
 	})
 }
 
-func TestListFiles(t *testing.T) {
-	t.Run("ListsAllFilesRecursively", func(t *testing.T) {
-		env, teardown := setupTestEnv(t)
-		defer teardown()
-
-		createTestFile(t, env.ProjectDir, "root.txt", "root")
-		createTestFile(t, env.ProjectDir, "sub/deep.txt", "deep")
-		createTestFile(t, env.ProjectDir, "sub/nested.txt", "nested")
-
-		req := newRequest(t, http.MethodGet, "/api/files", nil)
-		withProjectCookie(req, env.ProjectDir)
-
-		w := callHandler(ListFiles, req)
-		assertOK(t, w)
-
-		var files []FileInfo
-		err := json.Unmarshal(w.Body.Bytes(), &files)
-		assert.NoError(t, err)
-		assert.Len(t, files, 3)
-
-		// Verify paths are relative
-		paths := make([]string, len(files))
-		for i, f := range files {
-			paths[i] = f.Path
-		}
-		assert.Contains(t, paths, "root.txt")
-		assert.Contains(t, paths, "sub/deep.txt")
-		assert.Contains(t, paths, "sub/nested.txt")
-	})
-
-	t.Run("EmptyProject", func(t *testing.T) {
-		env, teardown := setupTestEnv(t)
-		defer teardown()
-
-		req := newRequest(t, http.MethodGet, "/api/files", nil)
-		withProjectCookie(req, env.ProjectDir)
-
-		w := callHandler(ListFiles, req)
-		assertOK(t, w)
-
-		var files []FileInfo
-		err := json.Unmarshal(w.Body.Bytes(), &files)
-		assert.NoError(t, err)
-		assert.Len(t, files, 0)
-	})
-
-	t.Run("NoProjectCookie_Returns403", func(t *testing.T) {
-		_, teardown := setupTestEnv(t)
-		defer teardown()
-
-		req := newRequest(t, http.MethodGet, "/api/files", nil)
-
-		w := callHandler(ListFiles, req)
-		assertStatus(t, w, http.StatusForbidden)
-	})
-}
-
 func TestGetFile(t *testing.T) {
 	t.Run("ReadTextFile", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)

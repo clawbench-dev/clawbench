@@ -15,12 +15,24 @@ const ResponsePreviewMaxRunes = 512
 const PushPreviewMaxRunes = 200
 
 // FileEntry represents a file or directory attachment with metadata.
+//
+// Kind distinguishes a local file/directory ("file", the default and the only
+// kind that existed before) from an external URL ("url"). A URL entry carries
+// its address in URL and is never resolved against the filesystem, so the
+// backend must skip path validation for it.
 type FileEntry struct {
 	Path      string `json:"path"`
 	IsDir     bool   `json:"isDir"`
 	StartLine int    `json:"startLine,omitempty"`
 	EndLine   int    `json:"endLine,omitempty"`
+	// Kind is "file" (default, empty means file) or "url".
+	Kind string `json:"kind,omitempty"`
+	// URL is the external address for Kind == "url".
+	URL string `json:"url,omitempty"`
 }
+
+// IsURL reports whether the entry is an external URL rather than a local path.
+func (f FileEntry) IsURL() bool { return f.Kind == "url" && f.URL != "" }
 
 // FileEntriesFromPaths creates []FileEntry from plain paths with isDir=false.
 // Used for backward-compatible construction when isDir is unknown.
@@ -210,11 +222,12 @@ type ChatSession struct {
 	AgentSource     string     `json:"agentSource,omitempty"`
 	Model           string     `json:"model,omitempty"`
 	SessionType     string     `json:"sessionType,omitempty"`     // "chat" | "scheduled"
-	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from scheduled task
+	SourceSessionID string     `json:"sourceSessionId,omitempty"` // non-empty = continued from task
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`
 	UnreadCount     int        `json:"unreadCount,omitempty"`
+	Pinned          bool       `json:"pinned,omitempty"`          // pinned to top of session list
 	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 	ProjectPath     string     `json:"projectPath,omitempty"` // project this session belongs to (overview grouping)

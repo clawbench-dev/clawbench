@@ -81,12 +81,12 @@ function onDiffClick(event: MouseEvent) {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .git-diff-scroll {
   padding: 0;
-  margin-top: 8px;
+  margin-top: var(--space-4);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -94,7 +94,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-unified-view) {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .git-diff-scroll :deep(.diff-hunk) {
@@ -108,10 +108,10 @@ function onDiffClick(event: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
+  gap: var(--space-4);
+  font-family: var(--font-mono);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 3px 8px;
+  padding:3px var(--space-4);
   user-select: none;
   min-height: 24px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -119,8 +119,8 @@ function onDiffClick(event: MouseEvent) {
 
 /* ─── Function name (left side) ─── */
 .git-diff-scroll :deep(.diff-hunk-func) {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #555);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -131,7 +131,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-hunk-actions-row) {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -142,13 +142,13 @@ function onDiffClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  opacity: var(--opacity-muted);
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
 }
@@ -160,16 +160,16 @@ function onDiffClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  opacity: 0.5;
-  font-size: 13px;
-  font-weight: 700;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  opacity: var(--opacity-muted);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  font-family: var(--font-mono);
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
 }
@@ -189,7 +189,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped) {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: var(--accent-color, #4a90d9);
 }
 
@@ -200,7 +200,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-hunk-linum-btn.is-on) {
-  opacity: 0.8;
+  opacity: var(--opacity-hover);
   color: var(--accent-color, #4a90d9);
 }
 
@@ -219,9 +219,9 @@ function onDiffClick(event: MouseEvent) {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
 }
 
 /* ─── Word-wrap toggle: wrap mode ─── */
@@ -242,10 +242,10 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-linum) {
   width: 1%;
   min-width: 30px;
-  padding: 0 4px;
+  padding:0 var(--space-2);
   text-align: right;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   user-select: none;
   white-space: nowrap;
   background: var(--bg-tertiary, #f8f8f8);
@@ -265,7 +265,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-content) {
-  padding: 0 6px;
+  padding:0 var(--space-3);
   white-space: pre;
   min-width: 0;
 }
@@ -281,7 +281,7 @@ function onDiffClick(event: MouseEvent) {
 }
 .git-diff-scroll :deep(.diff-line-del .diff-linum) {
   color: #dc2626;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-diff-scroll :deep(.diff-line-add) {
@@ -289,7 +289,7 @@ function onDiffClick(event: MouseEvent) {
 }
 .git-diff-scroll :deep(.diff-line-add .diff-linum) {
   color: #16a34a;
-  opacity: 0.6;
+  opacity: var(--opacity-muted);
 }
 
 .git-diff-scroll :deep(.diff-line-ctx .diff-content) {
@@ -298,9 +298,9 @@ function onDiffClick(event: MouseEvent) {
 
 /* Fallback raw diff */
 .git-diff-scroll :deep(.diff-raw) {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
-  line-height: 1.6;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary, #212529);

@@ -7,6 +7,18 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
+// The event-label helper resolves through the app i18n instance (not useI18n),
+// so it needs its own mock — a bare vue-i18n mock leaves createI18n undefined
+// and importing @/i18n throws.
+vi.mock('@/i18n', () => ({
+  default: {
+    global: {
+      t: (key: string) => key,
+      locale: { value: 'en' },
+    },
+  },
+}))
+
 vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({
     name,
@@ -16,7 +28,11 @@ vi.mock('lucide-vue-next', () => {
   return {
     ChevronDown: stub('ChevronDown'),
     Clock: stub('Clock'),
+    CalendarClock: stub('CalendarClock'),
     MessageSquare: stub('MessageSquare'),
+    Zap: stub('Zap'),
+    Braces: stub('Braces'),
+    AlertTriangle: stub('AlertTriangle'),
   }
 })
 
@@ -35,7 +51,20 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 const { mockOpenFilePath } = vi.hoisted(() => ({ mockOpenFilePath: vi.fn() }))
 
 vi.mock('@/composables/useFilePathAnnotation', () => ({
-  useFilePathAnnotation: () => ({ verifyFilePaths: vi.fn(), openFilePath: mockOpenFilePath }),
+  useFilePathAnnotation: () => ({
+    verifyFilePaths: vi.fn(),
+    openFilePath: mockOpenFilePath,
+    readLineTargetFromEl: (el: Element) => {
+      const startAttr = el.getAttribute('data-line-start')
+      const endAttr = el.getAttribute('data-line-end')
+      return {
+        filePath: el.getAttribute('data-file-path'),
+        lineStart: startAttr ? parseInt(startAttr, 10) : undefined,
+        lineEnd: endAttr ? parseInt(endAttr, 10) : undefined,
+        lineRanges: el.getAttribute('data-line-ranges') || undefined,
+      }
+    },
+  }),
 }))
 
 vi.mock('@/composables/useCommitHashAnnotation', () => ({

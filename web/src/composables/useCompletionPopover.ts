@@ -4,7 +4,7 @@ import { ref } from 'vue'
  * 单个完成弹窗条目。
  *
  * - kind === 'session': 普通聊天会话完成，点击跳转到该会话
- * - kind === 'task':    定时任务单次执行完成，点击跳转到任务执行详情
+ * - kind === 'task':    任务单次执行完成，点击跳转到任务执行详情
  */
 export interface CompletionPopoverItem {
     sessionId: string

@@ -80,81 +80,81 @@ watch(visible, (v) => {
 .up-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1001;
+  z-index: var(--z-overlay-raised);
   display: flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  padding: 16px;
+  padding: var(--space-7);
 }
 
 .up-panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 380px;
-  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
 .up-header {
-  padding: 14px 16px 8px;
+  padding:14px var(--space-7) var(--space-4);
 }
 
 .up-header h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
 .up-body {
-  margin: 0 16px 8px;
-  font-size: 13px;
+  margin:0 var(--space-7) var(--space-4);
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 .up-version-badge {
   display: inline-block;
-  margin: 0 16px 12px;
-  padding: 4px 12px;
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-2) var(--space-6);
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   color: var(--accent-color);
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
 }
 
 .up-release-link {
   display: block;
-  margin: 0 16px 12px;
-  font-size: 13px;
-  font-weight: 500;
+  margin:0 var(--space-7) var(--space-6);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--accent-color);
   text-decoration: none;
   cursor: pointer;
 }
 
 .up-docker-hint {
-  margin: 0 16px 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  margin:0 var(--space-7) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: var(--line-height-normal);
 }
 
 .up-docker-restart {
   display: block;
-  margin-top: 4px;
-  color: var(--text-warning, #d69e2e);
+  margin-top: var(--space-2);
+  color: var(--color-orange);
 }
 
 .up-release-link:hover {
@@ -162,38 +162,38 @@ watch(visible, (v) => {
 }
 
 .up-footer {
-  padding: 8px 16px 14px;
+  padding: var(--space-4) var(--space-7) 14px;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .up-upgrade {
   flex: 1;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow);
 }
 
 @media (hover: hover) {
-  .up-upgrade:hover { opacity: 0.9; }
+  .up-upgrade:hover { opacity: var(--opacity-hover); }
 }
 
 .up-skip {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -204,16 +204,16 @@ watch(visible, (v) => {
 }
 
 .up-later {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
-.up-fade-enter-active { transition: opacity 0.2s ease; }
-.up-fade-leave-active { transition: opacity 0.15s ease; }
+.up-fade-enter-active { transition: opacity var(--duration-slow) ease; }
+.up-fade-leave-active { transition: opacity var(--duration-base) ease; }
 .up-fade-enter-from, .up-fade-leave-to { opacity: 0; }
 </style>

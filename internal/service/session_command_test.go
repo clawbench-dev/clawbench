@@ -41,6 +41,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			context_state TEXT DEFAULT '',
 			title_renamed INTEGER NOT NULL DEFAULT 0,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1532,72 +1533,6 @@ func TestUpdateAndClearExternalSessionID(t *testing.T) {
 }
 
 // ============================================================================
-// PruneRawResponses tests
-// ============================================================================
-
-func TestPruneRawResponses_ZeroOrNegative(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	// Create ai_raw_responses table
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ai_raw_responses (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_id TEXT NOT NULL,
-		backend TEXT NOT NULL,
-		message_id INTEGER,
-		raw_output TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
-	require.NoError(t, err)
-
-	// Insert some rows
-	_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES ('s1', 'claude', 'output1')")
-	require.NoError(t, err)
-	_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES ('s2', 'claude', 'output2')")
-	require.NoError(t, err)
-
-	// Zero limit should not prune
-	PruneRawResponses(0)
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
-	assert.Equal(t, 2, count)
-
-	// Negative limit should not prune
-	PruneRawResponses(-1)
-	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
-	assert.Equal(t, 2, count)
-}
-
-func TestPruneRawResponses_Prune(t *testing.T) {
-	db := setupTestDBForSessionCommand(t)
-	defer func() { _ = db.Close() }()
-
-	// Create ai_raw_responses table
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ai_raw_responses (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		session_id TEXT NOT NULL,
-		backend TEXT NOT NULL,
-		message_id INTEGER,
-		raw_output TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
-	require.NoError(t, err)
-
-	// Insert 3 rows
-	for i := range 3 {
-		_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES (?, 'claude', ?)",
-			fmt.Sprintf("s%d", i), fmt.Sprintf("output%d", i))
-		require.NoError(t, err)
-	}
-
-	// Keep only 1
-	PruneRawResponses(1)
-	var count int
-	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
-	assert.Equal(t, 1, count)
-}
-
-// ============================================================================
 // GetExpiredArchivedSessions and PurgeArchivedData tests
 // ============================================================================
 
@@ -2603,7 +2538,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.NoError(t, err)
 
 	// Message 1 executes directly.
-	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",
@@ -2618,7 +2553,7 @@ func TestDrainWritesReplyQueueID(t *testing.T) {
 	require.Eventually(t, func() bool { return !IsSessionRunning(sid) }, 10*time.Second, 50*time.Millisecond)
 
 	// Message 2 enqueued now (session idle) — starts a new run.
-	started2, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+	started2, _, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/test",
 		BackendName: "mock-queue",

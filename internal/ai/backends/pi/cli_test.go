@@ -94,7 +94,7 @@ func TestBuildPiStreamArgs_ResumeContinue(t *testing.T) {
 
 func TestBuildPiStreamArgs_ScheduledExecution(t *testing.T) {
 	req := ai.ChatRequest{
-		Prompt:             "scheduled task",
+		Prompt:             "task",
 		ScheduledExecution: true,
 		Resume:             false,
 	}
@@ -242,7 +242,7 @@ func TestBuildPiStreamArgs_NewSessionNoNoSessionFlag(t *testing.T) {
 // scheduled executions still use --no-session (they don't need persistence).
 func TestBuildPiStreamArgs_ScheduledStillUsesNoSession(t *testing.T) {
 	req := ai.ChatRequest{
-		Prompt:             "scheduled task",
+		Prompt:             "task",
 		ScheduledExecution: true,
 		Resume:             false,
 	}

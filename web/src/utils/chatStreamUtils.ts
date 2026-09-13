@@ -341,7 +341,7 @@ export function forceCleanupStreamingState(
         }
       }
     }
-    // Extract scheduled tasks from the just-finished message
+    // Extract tasks from the just-finished message
     // (this path doesn't go through loadHistory, so we must call it explicitly)
     callbacks.onExtractScheduledTasks?.(messages)
 
@@ -798,15 +798,17 @@ export type ChatMessageAction =
   | { type: 'optimistic_push'; msg: ChatMessage }
   | { type: 'optimistic_remove'; id: string | number }
   | { type: 'optimistic_remove_content'; content: string }
-  | { type: 'optimistic_adopt_id'; id: string | number; dbId: number }
+  | { type: 'optimistic_adopt_id'; id: string | number; dbId: number; clearPending?: boolean }
   | { type: 'stream_placeholder'; msg: ChatMessage }
   | { type: 'clear_pending' }
   | { type: 'remove_pending'; queueId: string }
+  | { type: 'clear_queued_pending'; queueId: string }
   | { type: 'clear' }
   | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
   // ── WS structural events ──
   | { type: 'ws_stream_start'; messageId: number; answeredQueueId?: string }
-  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
+  | { type: 'ws_stream_split'; messageId: number; queueId?: string }
+  | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; queued?: boolean; backend?: string } }
   | { type: 'ws_queue_drain'; queueId: string; text: string; files: FileEntry[]; dbMessageId?: number; backend?: string }
   | { type: 'ws_queue_cancel'; queueIds: string[] }
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string }
@@ -1212,13 +1214,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // sort by id alongside history — NOT in seq space (where it would
       // interleave with queued/remote messages by client receive order).
       // loadHistory (idle) later reconciles the authoritative DB order.
-      // A PENDING bubble is a queued message still waiting for the drain loop —
-      // it must NOT be adopted here (the drain carries the authoritative id and
-      // clears pending). Adopting early would flip it to a normal message.
+      // A PENDING bubble is normally a queued message still waiting for the
+      // drain loop — it must NOT be adopted here (the drain carries the
+      // authoritative id and clears pending). Adopting early would flip it to a
+      // normal message.
+      //
+      // clearPending is the exception: the backend may report that the message
+      // joined the RUNNING turn instead of being queued (mid-turn injection).
+      // In that case no drain will ever arrive, so this bubble must shed its
+      // pending state now or it would spin forever. The backend says so
+      // explicitly, so the caller opts in.
       const idx = state.findIndex((m) => String(m.id) === String(action.id))
       if (idx === -1) return state
       const target = state[idx]
-      if (target.pending) return state
+      if (target.pending && !action.clearPending) return state
       const oldId = String(target.id)
       target.id = action.dbId
       target.queueId = oldId
@@ -1280,6 +1289,28 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       }
       return state
     }
+    case 'clear_queued_pending': {
+      // The message did not end up queued after all — it joined the running
+      // turn (mid-turn injection). Drop the pending/queued markers so the bubble
+      // renders as a normal delivered message instead of waiting for a drain
+      // event that will never arrive. The DB row already exists, so the next
+      // loadHistory reconciles its authoritative position.
+      for (const m of state) {
+        if (m.role !== 'user') continue
+        // Three identity channels, same as remove_pending: an optimistic bubble
+        // (id === queueId), one that already adopted its DB id (queueId field),
+        // and a cross-device bubble (only _remoteQueueId — it has a numeric id
+        // and no queueId, so without this channel it would spin forever).
+        const matches =
+          String(m.id) === action.queueId ||
+          m.queueId === action.queueId ||
+          (m as Record<string, unknown>)['_remoteQueueId'] === action.queueId
+        if (!matches) continue
+        delete m.pending
+        delete m.queued
+      }
+      return state
+    }
     case 'clear':
       return []
     case 'prepend_older': {
@@ -1300,7 +1331,15 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
     case 'ws_stream_start': {
       const sm = state.find((m) => m.role === 'assistant' && m.streaming)
       if (sm) {
-        sm.id = action.messageId
+        // Adopt the DB id ONLY when this placeholder does not already carry one.
+        // A mid-turn split opens a second streaming row in the same turn; if a
+        // stale/duplicate stream_start for the FIRST row arrived after the split
+        // it would otherwise rename the new "after" bubble to the "before" row's
+        // id, collapsing the two messages back into one. A placeholder that
+        // already holds a numeric DB id is authoritative for its own row.
+        if (typeof sm.id !== 'number') {
+          sm.id = action.messageId
+        }
         // Re-anchor the streaming reply to its TRUE question. The backend
         // streams the answered queue id (the queueId of the user message this
         // run answers) on every stream_start. A recovery placeholder created
@@ -1324,6 +1363,53 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           sortMessages(state)
         }
       }
+      return state
+    }
+    case 'ws_stream_split': {
+      // The assistant reply was split in two at a mid-turn injection point. The
+      // backend finalized the "before" half and opened a new streaming row
+      // anchored to the injected question, so:
+      //   1. the current streaming bubble becomes the "before" half — drop its
+      //      streaming flag (it is complete) but keep its blocks and id;
+      //   2. push a fresh empty streaming bubble for the "after" half, carrying
+      //      the new row's DB id and anchored to the injected question's queueId.
+      // The injected question sorts between them by DB id, which is exactly the
+      // conversational order — no special-case ordering needed.
+      const before = state.find((m) => m.role === 'assistant' && m.streaming)
+      if (before) {
+        delete before.streaming
+        // Unfinished tool blocks belong to the completed half: mark them done so
+        // their spinners stop (PermissionApproval excluded — see
+        // forceCleanupStreamingState for why).
+        if (before.blocks) {
+          for (const block of before.blocks) {
+            if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
+              block.done = true
+              if (isGarbageOutput(block.output)) block.output = ''
+            }
+          }
+        }
+      }
+
+      // A placeholder for the new row may already exist (e.g. a replayed
+      // stream_split, or a db_load raced ahead). Only push when absent.
+      const exists = state.some(
+        (m) => m.role === 'assistant' && (String(m.id) === String(action.messageId) || m._dbMessageId === action.messageId),
+      )
+      if (!exists) {
+        state.push({
+          role: 'assistant',
+          id: action.messageId,
+          content: '',
+          blocks: [],
+          streaming: true,
+          createdAt: new Date().toISOString(),
+          seq: nextClientSeq(),
+          parentQueueId: action.queueId || undefined,
+          _dbMessageId: action.messageId,
+        } as ChatMessage)
+      }
+      sortMessages(state)
       return state
     }
     case 'ws_user_message': {

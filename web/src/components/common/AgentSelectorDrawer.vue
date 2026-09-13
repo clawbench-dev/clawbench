@@ -162,20 +162,20 @@ watch(() => props.open, async (val) => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .agent-option {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: none;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   background: none;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background var(--duration-base);
   text-align: left;
 }
 
@@ -211,7 +211,7 @@ watch(() => props.open, async (val) => {
 }
 
 .agent-option.selected {
-  background: var(--accent-bg, rgba(0, 102, 204, 0.1));
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .agent-option-icon {
@@ -222,14 +222,14 @@ watch(() => props.open, async (val) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .agent-option-name {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .agent-set-default-btn {
@@ -240,22 +240,22 @@ watch(() => props.open, async (val) => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
+  opacity: var(--opacity-disabled);
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 .agent-default-badge-pill {
   flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   color: #fff;
   background: var(--accent-color, #0066cc);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 
@@ -267,34 +267,34 @@ watch(() => props.open, async (val) => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
+  opacity: var(--opacity-disabled);
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
   .agent-config-btn:hover {
     opacity: 1;
-    background: var(--hover-bg, rgba(0, 0, 0, 0.06));
+    background: var(--bg-hover);
   }
 }
 
 @media (hover: hover) {
   .agent-set-default-btn:hover {
     opacity: 1;
-    background: var(--hover-bg, rgba(0,0,0,0.06));
+    background: var(--bg-hover);
   }
 
   .agent-option:hover .agent-set-default-btn {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
   }
 }
 
 .agent-option-specialty {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #666);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -303,15 +303,15 @@ watch(() => props.open, async (val) => {
 
 .agent-option-tags {
   display: flex;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .agent-tag {
-  font-size: 9px;
-  padding: 1px 4px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
   border-radius: 0;
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
 

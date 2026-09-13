@@ -4,19 +4,19 @@
   flex-shrink: 0;
   min-width: 22px;
   height: 22px;
-  padding: 0 6px;
+  padding:0 var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   opacity: 1;
-  transition: background 0.2s;
-  font-size: 11px;
+  transition: background var(--duration-slow);
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {
@@ -30,7 +30,7 @@
    but muted and non-interactive. */
 .chat-action-btn:disabled,
 .chat-action-btn.is-disabled {
-  opacity: 0.4;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -54,5 +54,5 @@
 /* Wide variant for buttons with text labels (speak, summary toggle, file changes) */
 .chat-action-btn--wide {
   min-width: auto;
-  padding: 0 8px;
+  padding:0 var(--space-4);
 }

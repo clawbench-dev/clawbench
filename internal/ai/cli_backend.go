@@ -139,12 +139,6 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	// any processes left behind by a crashed server instance.
 	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
 
-	// Inject CLAWBENCH_SCHEDULED=1 for anti-recursion: prevents AI from
-	// creating new scheduled tasks during a scheduled execution.
-	if req.ScheduledExecution {
-		cmd.Env = append(cmd.Env, "CLAWBENCH_SCHEDULED=1")
-	}
-
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
@@ -261,7 +255,6 @@ func (b *CLIBackend) runStream(
 	buf := make([]byte, scannerInitial)
 	scanner.Buffer(buf, scannerMax)
 
-	var rawLines strings.Builder
 	var lastCapturedSessionID string
 	parser := b.NewParserFn()
 
@@ -285,18 +278,6 @@ func (b *CLIBackend) runStream(
 		default:
 		}
 
-		// Collect raw line for debugging
-		if rawLines.Len() > 0 {
-			rawLines.WriteByte('\n')
-		}
-		rawLines.WriteString(line)
-
-		// Check if this is the final "result" line — send raw_output
-		// before parsing so the handler receives it before the "done" event.
-		if strings.HasPrefix(line, `{"type":"result"`) {
-			emitStreamEvent(ch, "cli", StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
-		}
-
 		slog.Debug(b.BackendName+" stream: raw line", "session_id", req.SessionID, "line", line)
 		parser.ParseLine(line, ch)
 
@@ -315,9 +296,6 @@ func (b *CLIBackend) runStream(
 				b.BackendName+" stream: context cancelled",
 				slog.String("session_id", req.SessionID),
 			)
-			if rawLines.Len() > 0 {
-				emitStreamEvent(ch, "cli", StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
-			}
 			return
 		default:
 		}
@@ -374,11 +352,6 @@ func (b *CLIBackend) runStream(
 			)
 			emitStreamEvent(ch, "cli", StreamEvent{Type: "warning", Content: stderr})
 		}
-	}
-
-	// Send raw output event after all other events
-	if rawLines.Len() > 0 {
-		emitStreamEvent(ch, "cli", StreamEvent{Type: "raw_output", RawOutput: rawLines.String()})
 	}
 }
 

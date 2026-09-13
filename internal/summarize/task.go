@@ -29,7 +29,7 @@ func TaskSummarizePrompt() string {
 	return taskSummarizePrompt
 }
 
-// TaskSummarizer generates Markdown-preserving summaries for scheduled task executions.
+// TaskSummarizer generates Markdown-preserving summaries for task executions.
 // Unlike the TTS summarization pipeline (summarizePipeline), it does NOT strip markdown
 // from input or output — the summary retains formatting for readability.
 type TaskSummarizer struct {

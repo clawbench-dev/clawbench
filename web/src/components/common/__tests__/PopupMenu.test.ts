@@ -100,4 +100,35 @@ describe('PopupMenu', () => {
     vi.useRealTimers()
     wrapper.unmount()
   })
+
+  it('positions on mount when it mounts already open', async () => {
+    // A parent may gate the component with the same condition that opens it
+    // (e.g. `v-if="items.length > 0"` alongside `v-model:show`), so it mounts
+    // with show=true and the show *watcher* never fires. Without mount-time
+    // positioning the menu renders as an unpositioned block in <body> — the
+    // menu appears missing and the page grows/jitters.
+    vi.useFakeTimers()
+    mount(PopupMenu, {
+      props: { show: true, targetElement: { getBoundingClientRect: () => ({ top: 100, bottom: 120, left: 10, right: 200 }) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('does not position on mount when it mounts closed', async () => {
+    vi.useFakeTimers()
+    mount(PopupMenu, {
+      props: { show: false, targetElement: { getBoundingClientRect: () => ({}) } },
+      slots: { default: '<div>Item</div>' },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(computeMenuStyle).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
 })

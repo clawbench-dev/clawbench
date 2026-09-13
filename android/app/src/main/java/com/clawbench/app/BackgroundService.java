@@ -396,10 +396,6 @@ public class BackgroundService extends Service {
             // its project path (capsule taps always expand the panel).
             floatingController.setOnSessionClick((sid, projectPath) ->
                     MainActivity.launchFromFloatingWindow(sid, projectPath));
-            // An idle capsule tap (no active / unread content) brings the app
-            // back to the foreground; a bare launch without a session deep link.
-            floatingController.setOnIdleCapsuleTap(() ->
-                    MainActivity.launchFromFloatingWindow(null));
             // Every panel expand / event-while-expanded pulls a fresh overview.
             floatingController.setOverviewRequestListener(() -> {
                 String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -2610,10 +2606,10 @@ public class BackgroundService extends Service {
      *     cancelled:          title=会话已取消, alert=plainPreview || 会话已取消
      *     permission_pending: title=操作需批准, alert=toolName || 操作需批准
      *   task_update:
-     *     running:            title=定时任务已启动, alert=sessionTitle || 定时任务已启动
-     *     completed:          title=定时任务已完成, alert=plainPreview || 定时任务已完成
-     *     failed:             title=定时任务失败, alert=plainPreview || 定时任务失败
-     *     cancelled:          title=定时任务已取消, alert=plainPreview || 定时任务已取消
+     *     running:            title=任务已启动, alert=sessionTitle || 任务已启动
+     *     completed:          title=任务已完成, alert=plainPreview || 任务已完成
+     *     failed:             title=任务失败, alert=plainPreview || 任务失败
+     *     cancelled:          title=任务已取消, alert=plainPreview || 任务已取消
      */
     private void postEventNotification(String eventType, JSONObject data) {
         // Suppress notifications when app is in the foreground
@@ -2878,6 +2874,13 @@ public class BackgroundService extends Service {
         if (floatingController == null && liveUpdateManager == null) {
             return;
         }
+        // Capture the tracked-state version BEFORE the network round trip so the
+        // controller can tell whether this response is still current (see
+        // FloatingStatusController.onOverviewLoaded). Captured at this single
+        // choke point so every fetch path — WS connect, panel expand, event
+        // refresh, Live Updates — is gated identically.
+        long requestVersion = floatingController != null
+                ? floatingController.beginOverviewRequest() : -1L;
         try {
             // Send the full cookie set for this host. /api/ai/sessions/overview
             // requires only Auth (session cookie); the project cookie is sent
@@ -2917,7 +2920,7 @@ public class BackgroundService extends Service {
                 }
                 JSONObject data = new JSONObject(body);
                 if (floatingController != null) {
-                    floatingController.onOverviewLoaded(data);
+                    floatingController.onOverviewLoaded(data, requestVersion);
                 }
                 if (liveUpdateManager != null) {
                     liveUpdateManager.onOverviewLoaded(data);

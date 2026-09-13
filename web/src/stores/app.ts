@@ -81,7 +81,9 @@ export function loadBrowseDir(): string {
 
 interface DirEntry {
     name: string
-    type: 'dir' | 'file'
+    /** 'image' is emitted by the backend for picture/PDF extensions
+     *  (model.IsImageFile), so it is not a subset of 'file'. */
+    type: 'dir' | 'file' | 'image'
     size?: number
     modTime?: string
     modified?: string
@@ -144,7 +146,7 @@ interface AppState {
     // Task unread count (for dock badge)
     taskUnreadCount: number
 
-    // Task running indicator (scheduled task is executing)
+    // Task running indicator (task is executing)
     taskRunning: boolean
 
     // Task just completed (brief flash for dock button animation)

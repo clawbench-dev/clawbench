@@ -23,6 +23,11 @@ vi.mock('@/components/session/SessionListHeader.vue', () => ({
     emits: ['refresh'],
   },
 }))
+// Stubbed so the test does not pull in the real tabs component (and with it the
+// app store / i18n / api import chain this suite deliberately avoids).
+vi.mock('@/components/session/SessionListTabs.vue', () => ({
+  default: { name: 'SessionListTabs', template: '<div class="tabs-stub" />', props: ['activeTab'] },
+}))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
   default: { name: 'LoadingIndicator', template: '<div />' },
 }))
@@ -86,7 +91,15 @@ describe('SessionSidebar', () => {
     ;(list.vm as any).$emit('select', 's1', 'cli')
     await list.vm.$nextTick()
     expect(wrapper.emitted('select')).toBeTruthy()
-    expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli'])
+    expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli', undefined])
+  })
+
+  it('forwards the owning project path for cross-project selections', async () => {
+    const wrapper = mountSidebar()
+    const list = wrapper.findComponent({ name: 'SessionList' })
+    ;(list.vm as any).$emit('select', 's1', 'cli', '/proj/other')
+    await list.vm.$nextTick()
+    expect(wrapper.emitted('select')![0]).toEqual(['s1', 'cli', '/proj/other'])
   })
 
   it('emits resize with width clamped to MIN when dragging too far left', () => {

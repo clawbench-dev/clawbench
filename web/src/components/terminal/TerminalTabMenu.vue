@@ -63,23 +63,23 @@ function onShowChange(val: boolean) {
 .tab-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 14px;
+  padding: var(--space-4) 14px;
   border: none;
   background: none;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
   position: relative;
   overflow: hidden;
 }
 
 .tab-menu-icon {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 @media (hover: hover) {

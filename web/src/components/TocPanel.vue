@@ -509,7 +509,7 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 8px 6px 0;
+    padding: var(--space-4) var(--space-3) 0;
 }
 
 .toc-list {
@@ -517,25 +517,25 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     min-height: 0;
     -webkit-overflow-scrolling: touch;
-    margin-top: 8px;
-    padding-bottom: 8px;
+    margin-top: var(--space-4);
+    padding-bottom: var(--space-4);
 }
 
 .toc-empty {
     text-align: center;
-    padding: 32px 16px;
+    padding:32px var(--space-7);
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--font-size-md);
 }
 
 .toc-item {
     display: block;
-    padding: 6px 8px;
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-secondary);
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base);
     border-left: 2px solid transparent;
     white-space: nowrap;
     text-decoration: none;
@@ -547,7 +547,7 @@ onBeforeUnmount(() => {
 }
 .toc-item.active { color: var(--accent-color); border-left-color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
 .toc-item-active { color: var(--accent-color); background: var(--bg-tertiary); border-radius: 0; }
-.toc-item[data-level="2"] { padding-left: 20px; }
+.toc-item[data-level="2"] { padding-left: var(--space-8); }
 .toc-item[data-level="3"] { padding-left: 32px; }
 .toc-item[data-level="4"] { padding-left: 44px; }
 .toc-item[data-level="5"] { padding-left: 56px; }
@@ -555,13 +555,13 @@ onBeforeUnmount(() => {
 
 .toc-page-badge {
     display: inline-block;
-    font-size: 10px;
-    font-weight: 600;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
     background: var(--bg-tertiary);
     color: var(--text-muted);
     padding: 1px 5px;
-    border-radius: 3px;
-    margin-right: 4px;
+    border-radius: var(--radius-xs);
+    margin-right: var(--space-2);
     flex-shrink: 0;
     vertical-align: middle;
 }
@@ -575,7 +575,7 @@ onBeforeUnmount(() => {
     flex-shrink: 0;
     margin-right: 5px;
     vertical-align: middle;
-    opacity: 0.75;
+    opacity: var(--opacity-soft);
 }
 .toc-item.active .toc-kind-icon { opacity: 1; }
 

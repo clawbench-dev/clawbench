@@ -56,13 +56,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	origAgents := model.Agents
 	origAgentList := model.AgentList
 	origDefaultAgentID := model.DefaultAgentID
-	origLocalhostAuthExempt := model.LocalhostAuthExempt
 
 	// Set test globals
 	model.SessionToken = ""
 	model.CookieToken = ""
 	model.RootPaths = []string{watchDir}
-	model.LocalhostAuthExempt = true // default: localhost bypasses auth
 
 	// Init in-memory SQLite
 	db, err := sql.Open("sqlite", ":memory:")
@@ -104,7 +102,9 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			transport TEXT DEFAULT '',
 			auto_approve INTEGER NOT NULL DEFAULT 0,
 			title_renamed INTEGER NOT NULL DEFAULT 0,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
+			pinned INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
@@ -119,6 +119,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		CREATE TABLE IF NOT EXISTS project_meta (
 			project_path TEXT PRIMARY KEY,
 			next_session_number INTEGER NOT NULL DEFAULT 0,
+			forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -131,6 +132,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			agent_id TEXT NOT NULL,
 			prompt TEXT NOT NULL,
 			session_id TEXT,
+			trigger_mode TEXT NOT NULL DEFAULT 'cron',
+			event_types TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active',
 			repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 			max_runs INTEGER DEFAULT 0,
@@ -149,6 +152,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			status TEXT NOT NULL DEFAULT 'completed',
 			read_at DATETIME,
 			summary TEXT,
+			event_url TEXT NOT NULL DEFAULT '',
+			event_summary TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
@@ -172,14 +177,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			summary_cards TEXT NOT NULL DEFAULT '',
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
-		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL,
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS tts_summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +320,13 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		t.Fatalf("failed to create file share tables: %v", err)
 	}
 
+	// Create forge binding + sync tables
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+		if _, err := db.Exec(ddl); err != nil {
+			t.Fatalf("failed to create forge tables: %v", err)
+		}
+	}
+
 	service.SetDBForTest(db, db)
 
 	// Register mock agents so GetDefaultAgentID() works
@@ -349,7 +353,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
-		model.LocalhostAuthExempt = origLocalhostAuthExempt
 		service.SetDBForTest(env.OrigDB, env.OrigDB)
 		_ = db.Close()
 	}

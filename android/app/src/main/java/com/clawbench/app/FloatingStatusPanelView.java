@@ -113,7 +113,7 @@ public class FloatingStatusPanelView extends FrameLayout {
     public enum StatusDotKind {
         /** Pending approval (yellow) — wins over running and unread. */
         PENDING,
-        /** Running without pending approval (green, breathing). */
+        /** Running without pending approval (green, spinning ring-arc). */
         RUNNING,
         /** Idle with unread messages (blue). */
         UNREAD,
@@ -262,7 +262,7 @@ public class FloatingStatusPanelView extends FrameLayout {
         // Header: shared stats content row (same logo + count items as the
         // collapsed capsule, left-aligned) + collapse button. The content row
         // is built once here and kept across renders, so the capsule visuals
-        // and their breathing animation are stable while the session list
+        // and their spin animation are stable while the session list
         // below is rebuilt. Its intrinsic height (24dp logo) plus the panel's
         // 10dp vertical padding yields a ~44dp header bar; constrainListHeight
         // accounts for the measured header height.
@@ -329,7 +329,7 @@ public class FloatingStatusPanelView extends FrameLayout {
     /**
      * Rebuild the panel content from an overview JSON object. Safe to call on
      * the UI thread; replaces the entire list so refreshes never accumulate
-     * stale rows. Running-dot breathing is restarted for the new rows (and
+     * stale rows. Running-dot spin is restarted for the new rows (and
      * stopped for any rows discarded by this rebuild).
      *
      * @param onSessionClick receives (sessionId, projectPath) for the tapped

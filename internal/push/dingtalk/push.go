@@ -111,25 +111,25 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 
 	switch status {
 	case "running":
-		title = "定时任务已启动"
-		markdown = fmt.Sprintf("### 定时任务已启动\n**任务**: %s\n\n**项目**: %s",
+		title = "任务已启动"
+		markdown = fmt.Sprintf("### 任务已启动\n**任务**: %s\n\n**项目**: %s",
 			taskName,
 			projectPath)
 	case "completed":
-		title = "定时任务已完成"
-		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n\n**项目**: %s\n\n%s",
+		title = "任务已完成"
+		markdown = fmt.Sprintf("### 任务已完成\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForDingTalk(responsePreview))
 	case "failed":
-		title = "定时任务失败"
-		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n\n**项目**: %s\n\n%s",
+		title = "任务失败"
+		markdown = fmt.Sprintf("### 任务失败\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForDingTalk(responsePreview))
 	case "cancelled":
-		title = "定时任务已取消"
-		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n\n**项目**: %s\n\n%s",
+		title = "任务已取消"
+		markdown = fmt.Sprintf("### 任务已取消\n**任务**: %s\n\n**项目**: %s\n\n%s",
 			taskName,
 			projectPath,
 			truncateForDingTalk(responsePreview))
@@ -195,4 +195,17 @@ func sendToAllSubscribers(title, markdown string) bool {
 
 	slog.Debug("dingtalk: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
 	return sent > 0
+}
+
+// PushForgeEvent sends a DingTalk notification for a GitHub/GitLab event.
+// title/body are provided by the service layer, which owns the event wording;
+// this function only owns the transport and the push-mode gate.
+func PushForgeEvent(title, markdown string) bool {
+	if !IsStarted() || db == nil {
+		return false
+	}
+	if title == "" || markdown == "" {
+		return false
+	}
+	return sendToAllSubscribers(title, markdown)
 }

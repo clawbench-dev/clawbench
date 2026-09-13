@@ -201,7 +201,7 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
    *
    * When deferEnhancements=true (history load fast path):
    *   Same as streaming=false but markdown rendering uses skipEnhancements=true
-   *   for instant display. Scheduled tasks and ask-question detection still run.
+   *   for instant display. Tasks and ask-question detection still run.
    *   The cache upgrade mechanism will later re-render with full enhancements.
    */
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {

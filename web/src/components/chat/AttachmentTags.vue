@@ -17,8 +17,23 @@
       </span>
     </template>
 
+    <!-- External URL attachment (e.g. a GitHub issue / PR reference). Rendered
+         as a link chip; clicking opens the address instead of a file preview. -->
+    <a v-for="fileEntry in urlEntries"
+      :key="'url-' + fileEntry.url"
+      class="chat-file-attachment attachment-ref attachment-url"
+      :class="{ 'attachment-url-inert': !isSafeExternalUrl(fileEntry.url) }"
+      :href="isSafeExternalUrl(fileEntry.url) ? fileEntry.url : undefined"
+      target="_blank"
+      rel="noopener noreferrer"
+      :title="fileEntry.url">
+      <LinkIcon :size="16" class="attachment-file-icon" />
+      <span class="attachment-filename">{{ fileEntry.path || fileEntry.url }}</span>
+      <button class="attachment-close-btn" @click.stop.prevent="$emit('remove', fileEntry)" :title="t('common.remove')">×</button>
+    </a>
+
     <!-- Attached file reference cards -->
-    <span v-for="fileEntry in files" :key="'att-' + entryKey(fileEntry)"
+    <span v-for="fileEntry in fileEntries" :key="'att-' + entryKey(fileEntry)"
       class="chat-file-attachment attachment-ref"
       :class="{ 'attachment-image-only': showsThumb(fileEntry) }"
       @click="$emit('file-click', fileEntry)"
@@ -39,13 +54,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { isImageFile, isUrlEntry, isSafeExternalUrl, type FileEntry } from '@/utils/fileAttachmentUtils'
+import { Link as LinkIcon } from 'lucide-vue-next'
 import { baseName } from '@/utils/path'
 import type { PendingFile } from '@/composables/useFileUpload'
 
@@ -65,6 +81,11 @@ defineEmits<{
 
 const { t } = useI18n()
 const thumbUrl = buildPathThumbUrl
+
+// URL attachments render as links; local entries render as file cards. Keeping
+// them in separate lists avoids branching inside the file-card markup.
+const urlEntries = computed(() => (props.files ?? []).filter(f => isUrlEntry(f)))
+const fileEntries = computed(() => (props.files ?? []).filter(f => !isUrlEntry(f)))
 
 /** Composite key so distinct line-range references of one file stay separate. */
 function entryKey(entry: FileEntry): string {
@@ -112,8 +133,8 @@ watch(() => props.files, (files) => {
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -125,18 +146,18 @@ watch(() => props.files, (files) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
   height: 40px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   padding-right: 24px;
   flex-shrink: 0;
   max-width: 150px;
   position: relative;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -145,8 +166,8 @@ watch(() => props.files, (files) => {
 }
 
 .attachment-filename {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -158,7 +179,7 @@ watch(() => props.files, (files) => {
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .attachment-thumb-img {
@@ -178,19 +199,19 @@ watch(() => props.files, (files) => {
   border: none;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   z-index: 1;
 }
 
 @media (hover: hover) {
   .attachment-close-btn:hover {
-    background: var(--danger-color, #dc3545);
+    background: var(--color-red);
   }
 }
 
@@ -224,7 +245,7 @@ watch(() => props.files, (files) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--space-1);
   border-radius: inherit;
   z-index: 1;
 }
@@ -235,9 +256,16 @@ watch(() => props.files, (files) => {
 }
 
 .attachment-progress-text {
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   color: #ffffff;
   line-height: 1;
+}
+
+/* A URL whose scheme is not http(s) renders inert: the backend rejects these
+   now, but a pre-existing row could still carry one. */
+.attachment-url-inert {
+  color: var(--text-muted, #8b8b8b);
+  cursor: default;
 }
 </style>

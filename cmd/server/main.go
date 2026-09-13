@@ -37,6 +37,7 @@ import (
 	_ "clawbench/internal/ai/backends/vecli"
 	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/cli"
+	"clawbench/internal/forge"
 	"clawbench/internal/frontend"
 	"clawbench/internal/frp"
 	"clawbench/internal/handler"
@@ -54,6 +55,7 @@ import (
 	"clawbench/internal/summarize"
 	"clawbench/internal/terminal"
 	"clawbench/internal/version"
+	"clawbench/internal/wallpaper"
 	"clawbench/internal/ws"
 )
 
@@ -61,6 +63,24 @@ const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
 )
+
+// forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
+// the IM push backends, avoiding an import cycle (service → push → service).
+// It mirrors how emitTaskEvent dispatches to dingtalk/feishu.
+type forgeNotifierAdapter struct{}
+
+// PushForgeEvent renders the event and sends it to the active IM backend.
+func (forgeNotifierAdapter) PushForgeEvent(event service.ForgeEvent, item forge.Item) bool {
+	title, body := service.FormatForgeEventMessage(event, item)
+	switch {
+	case dingtalk.IsStarted():
+		return dingtalk.PushForgeEvent(title, body)
+	case feishu.IsStarted():
+		return feishu.PushForgeEvent(title, body)
+	default:
+		return false
+	}
+}
 
 // dingtalkDBAdapter bridges the dingtalk package's DB interface to service package
 // functions, avoiding import cycles between service → dingtalk → service.
@@ -307,19 +327,37 @@ func generateBcryptHash(password string) []byte {
 // Under a supervisor (systemd/Docker), it just triggers graceful shutdown and
 // lets the supervisor restart the process. Otherwise, it launches a sentinel
 // process that waits for this process to exit, then starts a new one.
-func makeRestartFunc(shutdown func()) func() {
-	return func() {
+//
+// The returned function reports whether a restart was actually set in motion.
+// A nil error means the process is going down (or the supervisor will bring it
+// back); a non-nil error means nothing was triggered and the caller must not
+// assume the service will come back. The upgrade short-circuit depends on this
+// distinction: it has no other action to take, so silently returning on failure
+// would leave the upgrade stuck at "restarting" forever.
+func makeRestartFunc(shutdown func()) func() error {
+	return func() error {
 		if handler.IsRunningUnderSupervisor() {
 			slog.Info("running under supervisor, triggering graceful shutdown for restart")
 		} else {
 			cmd, err := handler.LaunchSentinelProcess()
 			if err != nil {
 				slog.Error("failed to launch sentinel process for restart", "err", err)
-				return
+				return fmt.Errorf("failed to launch sentinel process: %w", err)
 			}
 			slog.Info("sentinel process launched for restart", "sentinel_pid", cmd.Process.Pid)
 		}
 		shutdown()
+		return nil
+	}
+}
+
+// restartFuncAdapter adapts an error-returning restart function to the
+// fire-and-forget signature the settings handler expects, logging failures.
+func restartFuncAdapter(f func() error) func() {
+	return func() {
+		if err := f(); err != nil {
+			slog.Error("restart failed", "error", err)
+		}
 	}
 }
 
@@ -336,13 +374,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("ClawBench - AI Workbench, United Across Devices")
 		fmt.Println()
-		fmt.Println("Usage: clawbench <command> [options]")
+		fmt.Println("Usage: clawbench [options]")
 		fmt.Println()
-		fmt.Println("Commands:")
-		fmt.Println("  task    Manage scheduled tasks (cron-based AI execution)")
-		fmt.Println("  rag     Search and retrieve conversation history")
-		fmt.Println()
-		fmt.Println("Run \"clawbench <command> --help\" for more information.")
+		fmt.Println("Runs the ClawBench server. There are no user-facing subcommands;")
+		fmt.Println("tasks and conversation search are driven by the built-in")
+		fmt.Println("slash commands in the web UI.")
 		fmt.Println()
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
@@ -351,8 +387,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(0)
 	}
 
-	// Parse --data-dir early (before subcommand dispatch) so CLI subcommands
-	// can find cookie-token in the correct data directory.
+	// Parse --data-dir early (before subcommand dispatch) so upgrade-replace
+	// can locate the data directory it is operating on.
 	for i, arg := range os.Args[1:] {
 		if arg == "--data-dir" && i+1 < len(os.Args[1:]) {
 			absDataDir, err := filepath.Abs(os.Args[i+2])
@@ -362,16 +398,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			}
 			model.DataDir = absDataDir
 		}
-	}
-
-	// Task subcommand dispatch (e.g., "clawbench task create --name ...")
-	if len(os.Args) > 1 && os.Args[1] == "task" {
-		os.Exit(cli.RunTaskCommand(os.Args[2:]))
-	}
-
-	// RAG subcommand dispatch (e.g., "clawbench rag search -q ...")
-	if len(os.Args) > 1 && os.Args[1] == "rag" {
-		os.Exit(cli.RunRAGCommand(os.Args[2:]))
 	}
 
 	// Upgrade-replace subcommand dispatch (launched by upgrade service)
@@ -419,6 +445,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		startup.CheckLegacyLayout(model.BinDir, model.DataDir)
 	}
 
+	// Record the running binary's path under the data directory.
+	//
+	// Self-upgrade and restart need a path to this binary that survives a
+	// package manager replacing the package while the service runs (npm
+	// retires the old package directory and deletes it, after which
+	// os.Executable() points at a deleted inode). The data directory is never
+	// touched by npm, so this record stays valid. Best-effort: a failure only
+	// degrades the upgrade path, which is why startup continues.
+	if exe, exeErr := os.Executable(); exeErr == nil {
+		if writeErr := service.WriteSelfPath(exe); writeErr != nil {
+			slog.Warn("failed to record self-path", "error", writeErr)
+		}
+	} else {
+		slog.Warn("failed to resolve executable path for self-path record", "error", exeErr)
+	}
+
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool
@@ -429,7 +471,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Search for config in priority order:
 	// 1. <DataDir>/config/config.yaml (data directory)
 	// 2. config/config.yaml (CWD-relative, standard layout)
-	configPath := cli.FindConfigPath(model.DataDir)
+	configPath := platform.FindConfigPath(model.DataDir)
 
 	data, err := os.ReadFile(configPath)
 	if err == nil {
@@ -490,6 +532,31 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	autoPassword := model.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
 
+	// A fresh install derives factory appearance defaults (the Bing daily
+	// wallpaper) that exist only in memory at this point. Persist them now:
+	// the fresh-install marker is the absence of the database file, which
+	// InitDB creates moments from now, so a restart before the first config
+	// write would otherwise classify this install as pre-existing and silently
+	// drop the factory wallpaper.
+	// Persist the appearance values derived (fresh install) or normalized (a
+	// Bing mode with the fetch switch off) during ApplyDefaults. Both exist only
+	// in memory at this point and must survive a restart; ordinary existing
+	// installs write nothing here.
+	if err := handler.PersistStartupAppearance(); err != nil {
+		// Not fatal: the in-memory values still apply for this process.
+		slog.Warn("failed to persist startup appearance", slog.String("err", err.Error()))
+	}
+
+	// Reclaim gallery images left on disk but no longer referenced by config
+	// (e.g. an upload that failed between writing the file and recording it).
+	knownGalleryFiles := make([]string, 0, len(model.ConfigInstance.Appearance.Local.Items))
+	for _, it := range model.ConfigInstance.Appearance.Local.Items {
+		knownGalleryFiles = append(knownGalleryFiles, it.File)
+	}
+	if removed := wallpaper.ReconcileLocalGallery(knownGalleryFiles); len(removed) > 0 {
+		slog.Info("reclaimed orphaned gallery images", slog.Int("count", len(removed)))
+	}
+
 	// Set global variables from config
 	model.RootPaths = platform.ListRootPaths()
 	model.UploadMaxSizeMB = cfg.Upload.MaxSizeMB
@@ -501,7 +568,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
-	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 
 	// Apply TTS text processing config (defaults applied in ApplyDefaults)
 	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
@@ -766,6 +832,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer rag.Shutdown()
 	defer service.StopSessionCleanupWorker()
+	defer service.StopForgePoller()
+	defer service.StopBingWallpaperWorker()
 
 	// Determine port before loading skills/agents (skills and agents need {{PORT}})
 	port := cfg.Port
@@ -789,9 +857,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Set global port for cookie name scoping (multi-instance on same hostname)
 	model.ServerPort = port
-
-	// Load agent configurations (set ClawbenchBin first for placeholder replacement)
-	model.ClawbenchBin = absBinPath
 
 	// 1. Detect installed CLIs and write new agents to DB
 	model.SyncDiscoverAgentsDB(service.WriteDB())
@@ -844,7 +909,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Load all tasks from all projects
 	if err := scheduler.LoadTasksFromDB(""); err != nil {
-		slog.Warn("failed to load scheduled tasks", slog.String("err", err.Error()))
+		slog.Warn("failed to load tasks", slog.String("err", err.Error()))
 	}
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -907,6 +972,41 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Start session archive cleanup worker
 	service.StartSessionCleanupWorker(cfg)
+
+	// Start the GitHub/GitLab change poller. It is read-only and only runs when
+	// at least one project is bound to a repository; the provider factory is
+	// supplied by the handler package (which owns credential + TLS policy).
+	{
+		limiter := forge.NewLimiter(2, 5, 4)
+		// Broadcast forge events over the existing WS channel, and push to the
+		// active IM robot (dingtalk/feishu) when one is running.
+		dispatcher := service.NewForgeEventDispatcher(
+			func() model.Config { return model.ConfigInstance },
+			func(msg any) {
+				if m := ws.GetManager(); m != nil {
+					m.BroadcastEvent(ws.ServerMessage{
+						Type:  ws.MessageTypeEvent,
+						ID:    ws.GenerateEventID(),
+						Event: "forge_event",
+						Data:  msg,
+					})
+				}
+			},
+			forgeNotifierAdapter{},
+		)
+		// Event-triggered AI tasks run off the same derived events. The trigger
+		// owns queueing/debounce/kill-switch and the anti-recursion check; it is
+		// wired as a second sink so notification and automation stay independent.
+		trigger := service.NewForgeTaskTrigger(
+			service.GlobalScheduler,
+			func() model.Config { return model.ConfigInstance },
+			func(repo service.ForgeRepoRef) string {
+				return handler.ForgeCredentialLogin(repo.Platform, repo.Host)
+			},
+		)
+		syncer := service.NewForgeSyncer(handler.NewForgeProvider, service.NewForgeCompositeSink(dispatcher, trigger))
+		service.StartForgePoller(syncer, limiter, func() model.Config { return model.ConfigInstance })
+	}
 
 	// Initialize proxy service (port forwarding) and SSH tunnel server.
 	// ProxyRegistry is only created when SSH tunnel is enabled — it has no
@@ -1081,7 +1181,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Wire up the restart function for POST /api/config/restart
 	// The sentinel process approach: launch a watcher that starts a new process
 	// after this one exits, then trigger graceful shutdown.
-	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
+	handler.SetRestartFunc(restartFuncAdapter(makeRestartFunc(selfSignalInterrupt)))
 
 	// Wire up the upgrade service functions
 	// upgradeShutdownFunc: just graceful shutdown, no sentinel.
@@ -1089,12 +1189,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	service.SetUpgradeShutdownFunc(selfSignalInterrupt)
 	service.SetUpgradeIsSupervised(handler.IsRunningUnderSupervisor)
 
+	// upgradeRestartFunc: restart without replacing the binary. Used by the
+	// version short-circuit when the wanted binary is already on disk.
+	// Reuses the config-restart path (supervisor-aware sentinel).
+	service.SetUpgradeRestartFunc(makeRestartFunc(selfSignalInterrupt))
+
 	// Clean up stale temp directories from previous upgrade attempts
 	service.CleanStaleUpgradeTempDirs()
 
 	// Wire up the hot-reload reconfigure function for config PATCH.
 	// Called by applyHotReloadGlobals() after each successful patch.
 	handler.SetReconfigureFunc(func() { hotReloadReconfigure(port) })
+
+	// Wire up the Bing wallpaper worker: the handler persists fetch outcomes
+	// (it owns the config mutex + YAML writer) and can request an immediate
+	// fetch when the user hits "sync now".
+	service.SetPersistBingStateFn(handler.PersistBingWallpaperState)
+	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
+	service.StartBingWallpaperWorker()
 
 	srv := &http.Server{Handler: mux}
 
@@ -1168,7 +1280,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		})
 	}
 
-	// Count scheduled tasks
+	// Count tasks
 	taskCount := scheduler.TaskCount()
 
 	// Determine SSH port
@@ -1236,7 +1348,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		<-ctx.Done()
 		slog.Info("received shutdown signal, draining connections...")
 
-		// 1. Cancel running scheduled tasks and all interactive session contexts
+		// 1. Cancel running tasks and all interactive session contexts
 		//    so their executors can finalize. Must happen before the stream waits,
 		//    or an executor kept alive by a long-running prompt would never reach
 		//    Finalize before the DB closes. CancelAllSessions unblocks CLI streams
@@ -1349,6 +1461,14 @@ func hotReloadReconfigure(port int) {
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
+
+	// --- Bing wallpaper: fetch immediately when enabled ---
+	// The worker runs continuously and re-reads the enabled flag, so enabling
+	// the feature only needs a nudge — otherwise the user would wait up to 24h
+	// for the first image.
+	if cfg.Appearance.Bing.Enabled {
+		service.TriggerBingSync()
+	}
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.

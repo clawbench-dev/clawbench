@@ -50,7 +50,6 @@ const serverConfig = ref<Record<string, any>>({
   rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
   summarize: { backend: 'simple', model: '' },
-  localhost_auth_exempt: false,
   tls: { cert_dir: '' },
 })
 
@@ -264,9 +263,6 @@ const i18n = createI18n({
           localeEn: 'English',
           changePassword: '修改密码',
           changePasswordDesc: '更改登录密码',
-          localhostAuthExempt: '本地免认证',
-          localhostAuthExemptDesc: '本地免认证',
-          localhostAuthExemptConfirm: '确定禁用？',
           addToHomeScreen: '添加到主屏幕',
           downloadAndroidApp: '下载APK',
           showWelcome: '打开欢迎界面',
@@ -536,14 +532,24 @@ describe('SettingsCategory', () => {
     })
 
     it('enables the panel-opacity slider when a wallpaper is set', async () => {
-      serverConfig.value = { ...serverConfig.value, appearance: { wallpaper_file: 'background.png', panel_opacity: 0.85 } }
+      serverConfig.value = {
+        ...serverConfig.value,
+        appearance: {
+          active_file: 'local-1-a.png',
+          panel_opacity: 0.85,
+          wallpaper_mode: 'local',
+          wallpaper_enabled: true,
+          local: { selected: 'local-1-a.png', items: [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 10 }] },
+          bing: {},
+        },
+      }
       const wrapper = mountCategory('appearance')
       await wrapper.vm.$nextTick()
       const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
       const slider = wallpaper.find('input[type="range"]')
       expect(slider.attributes('disabled')).toBeUndefined()
-      // Wallpaper thumbnail shows for a set wallpaper.
-      expect(wallpaper.find('img.wallpaper-thumb').exists()).toBe(true)
+      // The gallery tile for the selected wallpaper renders a thumbnail.
+      expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
     })
   })
 
@@ -865,28 +871,6 @@ describe('SettingsCategory', () => {
       }
       createElementSpy.mockRestore()
       vi.unmock('@/utils/download')
-    })
-  })
-
-  // ─── handleUpdate — localhost_auth_exempt ──────────
-  describe('handleUpdate — localhost_auth_exempt', () => {
-    it('shows confirm dialog when disabling localhost_auth_exempt and cancels', async () => {
-      mockDialogConfirm.mockResolvedValue(false)
-      const wrapper = mountCategory('security')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'localhost_auth_exempt', source: 'local' }, false)
-      expect(mockDialogConfirm).toHaveBeenCalled()
-      // Should NOT save since user cancelled
-      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('localhost_auth_exempt', false)
-    })
-
-    it('saves localhost_auth_exempt when confirmed', async () => {
-      mockDialogConfirm.mockResolvedValue(true)
-      const wrapper = mountCategory('security')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'localhost_auth_exempt', source: 'local' }, false)
-      expect(mockDialogConfirm).toHaveBeenCalled()
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('localhost_auth_exempt', false)
     })
   })
 

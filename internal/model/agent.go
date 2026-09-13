@@ -50,6 +50,13 @@ type Agent struct {
 	// return false. Computed at load time from the ai backend factory registry.
 	SupportsCLI bool `json:"supportsCLI"`
 
+	// SupportsMidTurn indicates whether this agent's backend can inject a
+	// message into a turn that is ALREADY RUNNING instead of queueing it for the
+	// next one. Computed at load time from the backend's mid-turn policy
+	// (model.BackendSupportsMidTurn). Drives the queued-message action label:
+	// true → "insert into the current reply", false → "interrupt and send".
+	SupportsMidTurn bool `json:"supportsMidTurn"`
+
 	// SortOrder determines display order in agent list; lower values first.
 	SortOrder int `json:"sortOrder"`
 
@@ -72,7 +79,7 @@ func (a *Agent) DefaultModelID() string {
 }
 
 // BaseModelID returns the base default model ID without considering user preference.
-// Used by scheduled tasks which should always use the agent's original default model.
+// Used by tasks which should always use the agent's original default model.
 // Priority: first model with Default:true > first model in list > empty string.
 func (a *Agent) BaseModelID() string {
 	for _, m := range a.Models {
@@ -108,9 +115,8 @@ func (a *Agent) SupportsACP() bool {
 }
 
 var (
-	Agents       map[string]*Agent // indexed by ID
-	AgentList    []*Agent          // ordered list for API responses
-	ClawbenchBin string            // absolute path to clawbench binary for {{CLAWBENCH_BIN}} replacement
+	Agents    map[string]*Agent // indexed by ID
+	AgentList []*Agent          // ordered list for API responses
 )
 
 // GetDefaultAgentID returns the default agent ID for new sessions.

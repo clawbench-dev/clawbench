@@ -73,7 +73,7 @@ function onLoaded() {
     justify-content: center;
     padding: 24px;
     background: var(--bg-primary);
-    gap: 16px;
+    gap: var(--space-7);
 }
 
 .audio-icon {
@@ -97,17 +97,17 @@ function onLoaded() {
 }
 
 .audio-name {
-    font-size: 15px;
-    font-weight: 500;
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     word-break: break-all;
     max-width: 300px;
 }
 
 .audio-size {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: var(--space-2);
 }
 
 .audio-player {

@@ -8,8 +8,11 @@ import { mount } from '@vue/test-utils'
 // file's timeout only.
 vi.setConfig({ testTimeout: 60_000 })
 import { nextTick, reactive, ref, computed, readonly, defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+import SplitView from '@/components/common/SplitView.vue'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
 if (typeof cssGlobal.CSS === 'undefined') {
@@ -79,7 +82,7 @@ vi.mock('@/utils/clipboard', () => ({
 vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
-const mockIsPC = { value: false }
+const mockIsPC = ref(false)
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({ isPC: mockIsPC }),
 }))
@@ -122,7 +125,7 @@ const mockToolbarCollapsedIds = vi.hoisted(() => ([]))
 
 vi.mock('@/composables/useToolbarOverflow', () => ({
   useToolbarOverflow: () => ({
-    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden', 'jump']),
+    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump']),
     collapsedIds: computed(() => mockToolbarCollapsedIds),
     contentWidth: ref(800),
     startObserving: vi.fn(),
@@ -130,13 +133,79 @@ vi.mock('@/composables/useToolbarOverflow', () => ({
   }),
 }))
 
-vi.mock('@/composables/useSettingsConfig', () => ({
-  localConfig: { fileView: 'list' },
-  setLocalConfig: vi.fn(),
-  useSettingsConfig: () => ({}),
-  getZoomedViewport: () => ({ width: 1024, height: 768 }),
-  toFixedCSS: (v: number) => Math.round(v * 100) / 100,
+// ── Quick-preview composable mock ──
+// The file manager owns an instance of useCodeLinkPreview gated on preview mode.
+// Mock it so tests can assert open/close decisions without the real fetch/cache.
+const mockShowPreview = vi.hoisted(() => vi.fn())
+const mockClosePreview = vi.hoisted(() => vi.fn())
+// One shared ref set across every useCodeLinkPreview() call, so a test can flip
+// visibility and have the mounted component react (a per-call ref would not be
+// reachable from the test).
+const mockPreviewRefs = vi.hoisted(() => ({
+  visible: null as { value: boolean } | null,
+  mode: null as { value: string } | null,
 }))
+vi.mock('@/composables/useCodeLinkPreview', () => {
+  const visible = ref(false)
+  const mode = ref('transient')
+  mockPreviewRefs.visible = visible
+  mockPreviewRefs.mode = mode
+  return {
+    useCodeLinkPreview: (opts: { enabled?: { value: boolean } } = {}) => ({
+      enabled: opts.enabled ?? { value: true },
+      outsideClickIgnoreSelector: '.file-item, .grid-item',
+      visible,
+      mode,
+      showPreview: mockShowPreview,
+      close: mockClosePreview,
+    }),
+  }
+})
+
+// The directory-listing pane owns its own fetch (useDirPreview). Mock it so
+// tests never hit /api/dir; the returned refs are shared so a test can drive
+// the pane's loading/entries state.
+const mockDirPreviewState = vi.hoisted(() => ({
+  entries: [] as Array<{ name: string; type: string }>,
+  loading: false,
+  error: false,
+}))
+vi.mock('@/composables/useDirPreview', async () => {
+  const { ref } = await import('vue')
+  const entries = ref(mockDirPreviewState.entries)
+  const loading = ref(mockDirPreviewState.loading)
+  const error = ref(mockDirPreviewState.error)
+  return {
+    useDirPreview: () => ({
+      entries,
+      loading,
+      error,
+      loadedPath: ref(''),
+      visible: (e: { name: string }) => !e.name.startsWith('.'),
+      refresh: vi.fn(),
+    }),
+  }
+})
+
+const { mockLocalConfig } = vi.hoisted(() => ({
+  mockLocalConfig: { fileView: 'list', filePreviewMode: false } as Record<string, unknown>,
+}))
+// The component reads/watches the *reactive proxy*, so tests that need to
+// trigger its watchers must mutate the proxy — not the raw target object.
+const { mockLocalConfigProxy } = vi.hoisted(() => ({
+  mockLocalConfigProxy: { current: null as Record<string, unknown> | null },
+}))
+vi.mock('@/composables/useSettingsConfig', () => {
+  const proxy = reactive(mockLocalConfig)
+  mockLocalConfigProxy.current = proxy as unknown as Record<string, unknown>
+  return {
+    localConfig: proxy,
+    setLocalConfig: (key: string, value: unknown) => { mockLocalConfig[key] = value },
+    useSettingsConfig: () => ({}),
+    getZoomedViewport: () => ({ width: 1024, height: 768 }),
+    toFixedCSS: (v: number) => Math.round(v * 100) / 100,
+  }
+})
 
 const mockNavigateToDir = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/app', () => ({
@@ -277,6 +346,8 @@ const i18n = createI18n({
         hideHiddenFiles: '隐藏隐藏文件',
         viewList: '列表',
         viewGrid: '网格',
+        previewModeOn: '开启预览模式',
+        previewModeOff: '关闭预览模式',
         emptyDir: '空目录',
         noFiles: '无文件',
         truncateHint: '截断提示',
@@ -306,6 +377,24 @@ const i18n = createI18n({
 
 const TeleportStub = { template: '<div><slot /></div>' }
 
+// Stub the preview card: the file-manager tests assert that the preview was
+// asked to open (via the exposed composable state), not the card internals.
+const CodeLinkPreviewStub = defineComponent({
+  name: 'CodeLinkPreview',
+  props: ['preview', 'docked'],
+  emits: ['closed'],
+  template: '<div class="code-link-preview-stub" :data-docked="String(!!docked)" />',
+})
+
+// Stub the directory-listing body: the tests assert which pane body was chosen
+// and how its events are handled, not the listing's own rendering.
+const DirPreviewBodyStub = defineComponent({
+  name: 'DirPreviewBody',
+  props: ['entries', 'loading', 'error', 'visible'],
+  emits: ['open-file', 'open-dir', 'closed'],
+  template: '<div class="dir-preview-stub" :data-count="entries.length" />',
+})
+
 const sampleEntries = [
   { name: 'src', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 },
   { name: 'test.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
@@ -325,7 +414,7 @@ function mountContent(props = {}) {
       ...props,
     },
     global: {
-      stubs: { Teleport: TeleportStub },
+      stubs: { Teleport: TeleportStub, CodeLinkPreview: CodeLinkPreviewStub, DirPreviewBody: DirPreviewBodyStub },
       plugins: [i18n, LongPressPlugin],
       provide: {
         activeTab: { value: 'browse' },
@@ -376,9 +465,36 @@ beforeEach(() => {
   mockCopyText.mockReset()
   mockCopyText.mockImplementation((_text: string, onSuccess?: () => void) => onSuccess?.())
   mockNavigateToDir.mockReset()
+  mockShowPreview.mockReset()
+  mockClosePreview.mockReset()
+  // Shared preview refs: reset so a previous test's open pane doesn't leak in.
+  mockPreviewRefs.visible!.value = false
+  mockPreviewRefs.mode!.value = 'transient'
+  mockDirPreviewState.entries = []
+  mockDirPreviewState.loading = false
+  mockDirPreviewState.error = false
+  // The settings mock is a single shared reactive object: a test that switches
+  // the view mode would otherwise leak 'grid' into every later mount.
+  mockLocalConfig.fileView = 'list'
+  mockLocalConfig.filePreviewMode = false
 })
 
 // ── Rendering ──
+
+
+/** Read the SFC source. jsdom does not load `<style>`, so style assertions must
+ *  inspect the file — and cwd differs between a bare `vitest` run (web/) and
+ *  scripts/vitest-run.sh (repo root), so probe both. */
+function readSource(): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/file/FileManagerContent.vue'), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error('FileManagerContent.vue not found from cwd: ' + process.cwd())
+}
 
 describe('FileManagerContent — rendering', () => {
   it('renders file list container', () => {
@@ -463,29 +579,64 @@ describe('FileManagerContent — rendering', () => {
 // ── Navigation events ──
 
 describe('FileManagerContent — handleItemClick', () => {
-  it('mobile: emits navigateDir when clicking a directory', async () => {
+  it('mobile + preview mode: tap selects a directory, tapping it again enters', async () => {
+    mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const dirItem = wrapper.find('.dir-item')
-    await dirItem.trigger('click')
 
+    // First tap: selection only — entering needs a second tap.
+    await dirItem.trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+
+    // Tapping the already-selected entry enters it (no timing window).
+    await dirItem.trigger('click')
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
     expect(wrapper.emitted('navigateDir')![0][0]).toContain('src')
   })
 
-  it('mobile: emits selectFile when clicking a file', async () => {
+  it('mobile without preview mode: a single tap enters the directory (original behavior)', async () => {
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountContent()
+    const dirItem = wrapper.find('.dir-item')
+
+    await dirItem.trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+  })
+
+  it('mobile: tapping a different entry selects it instead of entering', async () => {
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    // Selecting another entry must not be read as "tap the selected one again".
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('mobile + preview mode: tap previews a file, tapping it again enters', async () => {
+    mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const fileItems = wrapper.findAll('.file-item:not(.dir-item)')
-    await fileItems[0].trigger('click')
 
+    await fileItems[0].trigger('click')
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+
+    await fileItems[0].trigger('click')
     expect(wrapper.emitted('selectFile')).toBeTruthy()
   })
 
-  it('mobile: emits navigateDir when clicking a symlinked directory', async () => {
+  it('mobile + preview mode: tap-then-tap on a symlinked directory navigates', async () => {
+    mockLocalConfig.filePreviewMode = true
     const entries = [
       { name: 'linked', type: 'dir', symlink: true, modified: '2025-01-01T00:00:00Z', size: 0 },
     ]
     const wrapper = mountContent({ entries })
     const dirItem = wrapper.find('.dir-item')
+
+    await dirItem.trigger('click')
     await dirItem.trigger('click')
 
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
@@ -744,6 +895,216 @@ describe('FileManagerContent — handleItemClick', () => {
     await dirItem.trigger('click')
 
     expect(wrapper.emitted('navigateDir')).toBeFalsy()
+  })
+})
+
+// ── Preview mode (single-click quick preview) ──
+
+describe('FileManagerContent — preview mode', () => {
+  it('shows the preview-mode toggle on both desktop and mobile', () => {
+    mockIsPC.value = true
+    const desktop = mountContent()
+    expect(desktop.find('.toolbar-btn[title="开启预览模式"]').exists()).toBe(true)
+
+    // Mobile supports the docked preview pane too, so the toggle is available.
+    mockIsPC.value = false
+    const mobile = mountContent()
+    expect(mobile.find('.toolbar-btn[title="开启预览模式"]').exists()).toBe(true)
+  })
+
+  it('toggles preview mode and persists the setting', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const btn = wrapper.find('.toolbar-btn[title="开启预览模式"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.classes()).not.toContain('active')
+
+    await btn.trigger('click')
+    await nextTick()
+
+    expect(mockLocalConfig.filePreviewMode).toBe(true)
+    expect(wrapper.find('.toolbar-btn[title="关闭预览模式"]').classes()).toContain('active')
+  })
+
+  it('restores preview mode from the persisted setting on mount', () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    expect(wrapper.find('.toolbar-btn[title="关闭预览模式"]').classes()).toContain('active')
+  })
+
+  it('follows a preview-mode change made from the Settings drawer', async () => {
+    // FileManagerContent stays mounted across tab switches, so a settings change
+    // must sync in without a remount. Mutate the reactive proxy (what the
+    // component watches), not the raw mock target.
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountContent()
+    const cfg = mockLocalConfigProxy.current!
+    expect(wrapper.find('.toolbar-btn[title="开启预览模式"]').classes()).not.toContain('active')
+
+    cfg.filePreviewMode = true
+    await nextTick()
+
+    expect(wrapper.find('.toolbar-btn[title="关闭预览模式"]').classes()).toContain('active')
+
+    // Turning it back off flips the toolbar state back.
+    mockClosePreview.mockClear()
+    cfg.filePreviewMode = false
+    await nextTick()
+    expect(wrapper.find('.toolbar-btn[title="开启预览模式"]').classes()).not.toContain('active')
+  })
+
+  it('renders the toggle in the More dropdown when the toolbar is collapsed', async () => {
+    mockIsPC.value = true
+    mockToolbarCollapsedIds.push('previewMode')
+    const wrapper = mountContent()
+
+    // Open the "More" dropdown (always the last toolbar button).
+    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
+    expect(moreBtn).toBeTruthy()
+    await moreBtn!.trigger('click')
+    await nextTick()
+
+    const previewItem = wrapper
+      .findAll('.toolbar-dropdown-item')
+      .find(b => b.text().includes('开启预览模式'))
+    expect(previewItem).toBeTruthy()
+
+    await previewItem!.trigger('click')
+    expect(mockLocalConfig.filePreviewMode).toBe(true)
+  })
+
+  it('shows the More button on mobile when previewMode is collapsed', () => {
+    mockIsPC.value = false
+    mockToolbarCollapsedIds.push('previewMode')
+    const wrapper = mountContent()
+
+    // previewMode renders on mobile too, so a collapsed one is a real item in
+    // the More dropdown (the dropdown is not empty).
+    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
+    expect(moreBtn).toBeTruthy()
+  })
+
+  it('shows the More button on desktop when previewMode is collapsed', () => {
+    mockIsPC.value = true
+    mockToolbarCollapsedIds.push('previewMode')
+    const wrapper = mountContent()
+
+    const moreBtn = wrapper.findAll('.toolbar-btn').find(b => b.attributes('title') === '更多')
+    expect(moreBtn).toBeTruthy()
+  })
+
+  it('desktop single-click previews a file in the docked pane when enabled', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    const [target, mode] = mockShowPreview.mock.calls[0]
+    expect(target.filePath).toBe('test.ts')
+    expect(target.anchorEl).toBeTruthy()
+    // Docked: rendered inline in the bottom pane, not as a floating card.
+    expect(mode).toBe('docked')
+    // Preview replaces the plain-select behaviour: no full-viewer emit.
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it.each([
+    ['logo.png', 'image'],
+    ['diagram.svg', 'image'],
+    ['clip.mp4', 'video'],
+    ['voice.mp3', 'audio'],
+    ['report.pdf', 'pdf'],
+  ])('single-click previews the media file %s too', async (name) => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent({
+      entries: [{ name, type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 }],
+    })
+
+    await wrapper.find(`.file-item[data-path="${name}"]`).trigger('click')
+    await nextTick()
+
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    expect(mockShowPreview.mock.calls[0][0].filePath).toBe(name)
+  })
+
+  it('desktop single-click on a directory still navigates, never previews', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    expect(mockShowPreview).not.toHaveBeenCalled()
+  })
+
+  it('does not preview on single-click when preview mode is off', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+
+    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('mobile single-click previews in the docked pane when preview mode is on', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    await nextTick()
+
+    // Mobile supports the docked pane, so a tap previews instead of opening
+    // the full-screen viewer.
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+    expect(mockShowPreview.mock.calls[0][1]).toBe('docked')
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('mobile single tap opens the full viewer when preview mode is off', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+
+    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('double-click still opens the full viewer and closes the preview card', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('dblclick')
+    await nextTick()
+
+    expect(mockClosePreview).toHaveBeenCalled()
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+  })
+
+  it('closes the preview when the directory changes', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    mockClosePreview.mockClear()
+
+    await wrapper.setProps({ currentDir: 'src' })
+    await nextTick()
+
+    expect(mockClosePreview).toHaveBeenCalled()
   })
 })
 
@@ -1024,6 +1385,7 @@ describe('FileManagerContent — resident search', () => {
   })
 
   it('double-clicking a file result emits selectFile and keeps the query', async () => {
+    mockIsPC.value = true
     searchState.query = 'main'
     searchState.results = [
       { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
@@ -1038,6 +1400,7 @@ describe('FileManagerContent — resident search', () => {
   })
 
   it('double-clicking a dir result emits navigateDir and clears the query', async () => {
+    mockIsPC.value = true
     searchState.query = 'cmd'
     searchState.results = [
       { name: 'cmd', path: 'cmd', type: 'dir', matchedIndices: [] },
@@ -1726,19 +2089,22 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Enter opens the selected entry (file → selectFile)', async () => {
+    mockIsPC.value = true
     const wrapper = mountContent()
     await nextTick()
 
-    // Select test.ts by clicking it (also emits selectFile once)
+    // Select test.ts by clicking it. On desktop a single click only selects,
+    // so the open must come from Enter alone.
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     await nextTick()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await nextTick()
 
     const selects = wrapper.emitted('selectFile')
     expect(selects).toBeTruthy()
-    expect(selects!.length).toBeGreaterThanOrEqual(2)
+    expect(selects!.length).toBe(1)
   })
 
   it('Enter on a focused button is not hijacked', async () => {
@@ -2696,7 +3062,7 @@ describe('FileManagerContent — context menu actions', () => {
     await nextTick()
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
     expect(mockToastShow).toHaveBeenCalled()
   })
 
@@ -2716,7 +3082,7 @@ describe('FileManagerContent — context menu actions', () => {
     const wrapper = mountContent()
     await wrapper.vm.toggleAttach('test.ts')
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
   })
 
   it('toggleAttach removes the file from chat when already attached', async () => {
@@ -3047,11 +3413,15 @@ describe('FileManagerContent — grid view', () => {
     expect(wrapper.findAll('.grid-item').length).toBe(3)
   })
 
-  it('grid: single click on a directory navigates in mobile mode', async () => {
+  it('grid: tap-then-tap on a directory navigates in mobile preview mode', async () => {
+    mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     wrapper.vm._setViewMode('grid')
     await nextTick()
     const dirItem = wrapper.find('.grid-item[data-path="src"]')
+
+    await dirItem.trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
     await dirItem.trigger('click')
 
     expect(wrapper.emitted('navigateDir')).toBeTruthy()
@@ -3503,5 +3873,509 @@ describe('FileManagerContent — jump to dir', () => {
     await jumpItem!.trigger('click')
     await nextTick()
     expect(wrapper.find('.jump-dialog-stub').exists()).toBe(true)
+  })
+})
+
+// ── Docked preview pane (top/bottom split) ──
+
+describe('FileManagerContent — docked preview pane', () => {
+  it('renders no split divider until a preview is open', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    mockPreviewRefs.visible!.value = false
+    const wrapper = mountContent()
+
+    // Preview mode on but nothing opened yet → list fills the panel.
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+    expect(wrapper.find('.code-link-preview-stub').exists()).toBe(false)
+  })
+
+  it('opens a vertical split with the docked pane when a file is previewed', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    mockPreviewRefs.visible!.value = false
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    // The real composable flips visible; simulate it, then flush.
+    mockPreviewRefs.visible!.value = true
+    mockPreviewRefs.mode!.value = 'docked'
+    await nextTick()
+
+    expect(wrapper.find('.split-view--vertical').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+    const stub = wrapper.find('.code-link-preview-stub')
+    expect(stub.exists()).toBe(true)
+    expect(stub.attributes('data-docked')).toBe('true')
+  })
+
+  it('collapses the split when the pane reports closed', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+
+    await wrapper.findComponent(CodeLinkPreviewStub).vm.$emit('closed')
+    await nextTick()
+
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+    expect(wrapper.find('.code-link-preview-stub').exists()).toBe(false)
+  })
+
+  it('re-opens the collapsed pane on the next single-click preview', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+    await wrapper.findComponent(CodeLinkPreviewStub).vm.$emit('closed')
+    await nextTick()
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+  })
+
+  it('drops the split when preview mode is turned off', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+
+    mockLocalConfigProxy.current!.filePreviewMode = false
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+  })
+
+  it('never splits on touch even with preview mode on', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    mockPreviewRefs.visible!.value = true
+    const wrapper = mountContent()
+
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+  })
+
+  it('persists the dragged ratio to localStorage', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    localStorage.removeItem('clawbench-fm-preview-split-ratio')
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    await wrapper.findComponent(SplitView).vm.$emit('update:ratio', 0.42)
+    await nextTick()
+
+    expect(localStorage.getItem('clawbench-fm-preview-split-ratio')).toBe('0.42')
+  })
+
+  it('restores the persisted ratio on mount', async () => {
+    localStorage.setItem('clawbench-fm-preview-split-ratio', '0.35')
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('ratio')).toBeCloseTo(0.35, 5)
+    localStorage.removeItem('clawbench-fm-preview-split-ratio')
+  })
+
+  it('scrolls the clicked file back into view after the pane opens', async () => {
+    // jsdom lacks scrollIntoView; install a spy so the re-assert path can run.
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      mockIsPC.value = true
+      mockLocalConfig.filePreviewMode = true
+      const wrapper = mountContent()
+      scrollSpy.mockClear()
+
+      const row = wrapper.find('.file-item[data-path="test.ts"]')
+      await row.trigger('click')
+      await nextTick()
+
+      // The docked pane shrinks the list, so the clicked entry is re-asserted
+      // into view with a `nearest` scroll that leaves visible rows alone.
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+      expect(scrollSpy.mock.instances).toContain(row.element)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('scrolls the clicked directory back into view after the pane opens', async () => {
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      mockIsPC.value = true
+      mockLocalConfig.filePreviewMode = true
+      const wrapper = mountContent()
+      scrollSpy.mockClear()
+
+      const row = wrapper.find('.dir-item[data-path="src"]')
+      await row.trigger('click')
+      await nextTick()
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
+      expect(scrollSpy.mock.instances).toContain(row.element)
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+})
+
+describe('FileManagerContent — panel layout (search bar is its own region)', () => {
+  it('keeps the split a bounded flex column when preview mode is off', () => {
+    // Regression: with the split disabled, SplitView's pane wrappers become
+    // `display: contents`, so the slot content's layout parent is the split
+    // root. Without `display:flex` on that root the list's `flex:1;
+    // min-height:0` is inert, its height grows to the content height, and it
+    // overflows the panel — painting over the resident search bar below.
+    // jsdom does not load SFC <style>, so assert against the source.
+    const src = readSource()
+    const m = src.match(/\.fm-split\s*\{([^}]*)\}/)
+    expect(m).toBeTruthy()
+    const body = m![1]
+    expect(body).toMatch(/display:\s*flex/)
+    expect(body).toMatch(/flex-direction:\s*column/)
+    expect(body).toMatch(/min-height:\s*0/)
+  })
+
+  it('renders the search dock as a sibling after the split, not inside it', () => {
+    const wrapper = mountContent()
+    const split = wrapper.find('.fm-split')
+    const searchDock = wrapper.find('.fs-nav-bottom')
+
+    expect(split.exists()).toBe(true)
+    expect(searchDock.exists()).toBe(true)
+    // The search bar must NOT live inside the split: it owns a dedicated band
+    // of the panel, so the split can never cover it.
+    expect(split.element.contains(searchDock.element)).toBe(false)
+    // And the split must come before the dock in document order.
+    const order = split.element.compareDocumentPosition(searchDock.element)
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('mounts the search dock outside the top/bottom panes', () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    const top = wrapper.find('.fm-split > .split-view__left')
+    const dock = wrapper.find('.fs-nav-bottom')
+    // Even with the docked pane open, the dock stays out of the panes.
+    if (top.exists()) expect(top.element.contains(dock.element)).toBe(false)
+  })
+})
+
+describe('FileManagerContent — mobile docked preview', () => {
+  it('opens the docked split on mobile (no isPC gate)', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    expect(wrapper.find('.split-view--vertical').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
+    expect(wrapper.find('.code-link-preview-stub').attributes('data-docked')).toBe('true')
+  })
+
+  it('uses smaller pane minimums on mobile so a short viewport can still be dragged', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('minLeft')).toBe(120)
+    expect(split.props('minRight')).toBe(140)
+  })
+
+  it('keeps the roomier pane minimums on desktop', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('minLeft')).toBe(160)
+    expect(split.props('minRight')).toBe(200)
+  })
+
+  it('previews a directory tap on mobile via the listing pane', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    // Directories preview their listing, not a file — so the file-preview
+    // composable stays untouched while the pane opens.
+    expect(mockShowPreview).not.toHaveBeenCalled()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+  })
+})
+
+describe('FileManagerContent — mobile select-then-tap to enter', () => {
+  it('selects on the first tap and enters on the second, with no timing window', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    const dir = wrapper.find('.dir-item')
+
+    await dir.trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+
+    // No fake timers / Date mocking: entering depends on selection state, not
+    // on how fast the second tap follows.
+    await dir.trigger('click')
+    expect(wrapper.emitted('navigateDir')!.length).toBe(1)
+  })
+
+  it('after entering, a cleared selection makes the next tap select again', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    const dir = wrapper.find('.dir-item')
+
+    await dir.trigger('click')
+    await dir.trigger('click')
+    expect(wrapper.emitted('navigateDir')!.length).toBe(1)
+
+    // Entering a directory clears the selection (the real app does this in its
+    // currentDir watcher), so the next tap must select rather than enter again.
+    wrapper.vm._setSelectedPath('')
+    await dir.trigger('click')
+    expect(wrapper.emitted('navigateDir')!.length).toBe(1)
+  })
+
+  it('tapping a different entry re-selects instead of entering', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+    expect(wrapper.emitted('selectFile')).toBeFalsy()
+  })
+
+  it('desktop is unaffected: two clicks do not enter, native dblclick does', async () => {
+    mockIsPC.value = true
+    const wrapper = mountContent()
+    const dir = wrapper.find('.dir-item')
+
+    await dir.trigger('click')
+    await dir.trigger('click')
+    expect(wrapper.emitted('navigateDir')).toBeFalsy()
+
+    await dir.trigger('dblclick')
+    expect(wrapper.emitted('navigateDir')).toBeTruthy()
+  })
+
+  it('second tap on a file enters the viewer and drops the docked pane', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    const row = wrapper.find('.file-item[data-path="test.ts"]')
+
+    await row.trigger('click')   // tap 1 → docked preview
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+
+    await row.trigger('click')   // tap 2 → enter full viewer
+    expect(wrapper.emitted('selectFile')).toBeTruthy()
+    // The pane is dismissed so it doesn't linger behind the viewer.
+    expect(mockClosePreview).toHaveBeenCalled()
+  })
+
+  it('re-tapping an already-selected entry does not re-open the preview', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    const row = wrapper.find('.file-item[data-path="test.ts"]')
+
+    await row.trigger('click')
+    await row.trigger('click')
+    // The second tap enters instead of previewing again.
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('FileManagerContent — directory quick preview', () => {
+  it('clicking a directory in preview mode opens the listing pane, not a file preview', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(true)
+    // A directory has no file to preview, so the file-preview composable is
+    // never asked to show anything.
+    expect(mockShowPreview).not.toHaveBeenCalled()
+  })
+
+  it('clicking a file replaces the directory listing with the file preview', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(true)
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    // The pane must switch bodies — never show both at once.
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(false)
+    expect(mockShowPreview).toHaveBeenCalledTimes(1)
+  })
+
+  it('clicking a directory replaces a file preview with the listing', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(false)
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.dir-preview-stub').exists()).toBe(true)
+    // Opening a directory must dismiss the file preview so the pane has one body.
+    expect(mockClosePreview).toHaveBeenCalled()
+  })
+
+  it('pane open-dir navigates the main list and collapses the pane', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    await wrapper.findComponent(DirPreviewBodyStub).vm.$emit('open-dir', 'nested')
+    await nextTick()
+
+    // The listing became the main list, so the pane collapses instead of
+    // duplicating it.
+    expect(wrapper.emitted('navigateDir')![0]).toEqual(['src/nested'])
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('pane open-file opens the full-screen viewer for the joined path', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    await wrapper.findComponent(DirPreviewBodyStub).vm.$emit('open-file', 'inner.ts')
+    await nextTick()
+
+    expect(wrapper.emitted('selectFile')![0]).toEqual(['src/inner.ts'])
+  })
+
+  it('pane close collapses the pane', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+
+    await wrapper.findComponent(DirPreviewBodyStub).vm.$emit('closed')
+    await nextTick()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('changing the directory drops the listing so a stale dir cannot linger', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+
+    await wrapper.setProps({ currentDir: 'docs' })
+    await nextTick()
+
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('turning preview mode off collapses a directory listing', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+
+    mockLocalConfigProxy.current!.filePreviewMode = false
+    await nextTick()
+
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('double-clicking a directory on desktop navigates without leaving the listing pane open', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('dblclick')
+    await nextTick()
+
+    expect(wrapper.emitted('navigateDir')![0]).toEqual(['src'])
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+  })
+
+  it('does not open the pane for a directory when preview mode is off', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = false
+    const wrapper = mountContent()
+
+    await wrapper.find('.dir-item[data-path="src"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+    expect(mockShowPreview).not.toHaveBeenCalled()
   })
 })

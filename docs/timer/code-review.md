@@ -102,7 +102,7 @@ fi
 - 有序的 review block 列表，每个 block 包含：
   - Block 编号
   - 文件范围（每个 block ≤ 500 行）
-  - 流程名称（如 "Chat Data Flow"、"SSH Tunnel"、"Scheduled Task"）
+  - 流程名称（如 "Chat Data Flow"、"SSH Tunnel"、"Task"）
   - 该 block 的维度焦点
   - 优先级级别
 - Block 按优先级排序（P0 优先），同优先级内按流程分组

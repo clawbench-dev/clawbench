@@ -3,6 +3,8 @@ SessionStreamNotFound: 未找到会话流
 SessionStreamBusy: 会话流正在其他设备上查看
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
+QueueIdRequired: queueId 为必填项
+QueueInjectStranded: 插入失败且消息无法回到队列，请重新发送该消息
 NewSession: 新会话
 NewSessionN: 新会话 {{.N}}
 FileMessage: 文件消息
@@ -44,6 +46,7 @@ FileNotFoundShort: 文件未找到
 BrokenSymlink: "符号链接损坏：目标未找到 ({{.Target}})"
 DirectoryNotFound: 目录未找到
 InvalidFilePath: 无效的文件路径
+InvalidURLAttachment: URL 附件必须是 http(s) 地址
 FileTooLargeOrInvalid: 文件过大或格式无效
 NoFileProvided: 未提供文件
 FileTooLargeShort: 文件过大
@@ -67,7 +70,10 @@ InvalidPortInQuery: 查询中的端口号无效
 TaskIdRequired: 任务ID为必填项
 TaskNotFound: 任务未找到
 TaskFieldsRequired: 名称、cron表达式、智能体ID和提示词为必填项
+TaskEventTypesInvalid: 按事件触发时至少需订阅一个有效事件类型
+TaskCronRequired: 任务需提供 cron 表达式
 TaskAlreadyRunning: 任务正在执行中，请等待完成后再触发
+TaskEventTriggerUnsupported: 事件触发的任务无法手动执行，需等待匹配的事件触发
 TaskExecutionIdRequired: 执行实例ID为必填项
 TaskExecutionNotFound: 执行实例未找到或已结束
 DirectoryNameRequired: 目录名称为必填项
@@ -95,10 +101,10 @@ CustomURLInvalid: URL 格式无效
 CustomURLInvalidScheme: URL 必须以 http:// 或 https:// 开头
 CustomURLInvalidHost: URL 缺少有效的主机名
 CustomURLUnrecognizedFormat: URL 路径须以 /chat/completions（OpenAI）或 /v1/messages（Anthropic）结尾
-PushTaskCompleted: 定时任务已完成
-PushTaskFailed: 定时任务失败
-PushTaskCancelled: 定时任务已取消
-PushTaskStarted: 定时任务已启动
+PushTaskCompleted: 任务已完成
+PushTaskFailed: 任务失败
+PushTaskCancelled: 任务已取消
+PushTaskStarted: 任务已启动
 PushSessionCompleted: 会话已完成
 PushSessionCancelled: 会话已取消
 PushActionRequired: 操作需批准

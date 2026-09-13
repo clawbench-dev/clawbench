@@ -27,6 +27,7 @@ import (
 	"clawbench/internal/platform"
 	"clawbench/internal/speech"
 	"clawbench/internal/version"
+	"clawbench/internal/wallpaper"
 
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
@@ -54,7 +55,6 @@ var hotReloadFields = map[string]bool{
 	"tts.voice":                         true,
 	"tts.speed":                         true,
 	"default_agent":                     true,
-	"localhost_auth_exempt":             true,
 	// Terminal — reconfigure Manager or toggle enabled
 	"terminal.enabled":      true,
 	"terminal.idle_timeout": true,
@@ -120,13 +120,27 @@ var hotReloadFields = map[string]bool{
 	"feishu.app_secret":         true,
 	"feishu.users":              true,
 	"push_mode":                 true,
+	"forge.insecure_tls":        true,
+	"forge.notify.opened":       true,
+	"forge.notify.closed":       true,
+	"forge.notify.merged":       true,
+	"forge.notify.reopened":     true,
+	"forge.notify.commented":    true,
+	"forge.notify.pipeline":     true,
+	"forge.pause_event_tasks":   true,
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
-	// Appearance — wallpaper file name (managed by the theme-background handler;
-	// only PATCHable as "" to clear) and panel opacity multiplier
-	"appearance.wallpaper_file": true,
-	"appearance.panel_opacity":  true,
+	// Appearance — panel opacity multiplier
+	"appearance.panel_opacity": true,
+	// Wallpaper source selection — plain scalars, no path component. File names
+	// (local.selected / local.items / bing.file) are deliberately absent: they
+	// are written only by the dedicated theme endpoints, which validate and
+	// persist the file alongside the name.
+	"appearance.wallpaper_mode":    true,
+	"appearance.wallpaper_enabled": true,
+	"appearance.bing.enabled":      true,
+	"appearance.bing.mkt":          true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -191,29 +205,33 @@ func applyHotReloadWarnings() []string {
 // protected by auth middleware (password + localhost bypass). Frontend
 // renders secrets using <input type="password"> for secure display.
 type configResponse struct {
-	Version             string               `json:"version"`
-	HasPassword         bool                 `json:"has_password"`          // true when a password is configured
-	LocalhostAuthExempt bool                 `json:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
-	DefaultAgent        string               `json:"default_agent"`
-	Chat                configChat           `json:"chat"`
-	Session             configSession        `json:"session"`
-	RecentProjects      configRecentProjects `json:"recent_projects"`
-	Upload              configUpload         `json:"upload"`
-	Terminal            configTerminal       `json:"terminal"`
-	TTS                 configTTS            `json:"tts"`
-	STT                 configSTT            `json:"stt"`
-	RAG                 configRAG            `json:"rag"`
-	PortForward         configPortForward    `json:"port_forward"`
-	FRP                 configFRP            `json:"frp"`
-	Summarize           configSummarize      `json:"summarize"`
-	AISummary           configAISummary      `json:"ai_summary"`
-	DingTalk            configDingTalk       `json:"dingtalk"`
-	Feishu              configFeishu         `json:"feishu"`
-	PushMode            string               `json:"push_mode"`
-	FileSearch          configFileSearch     `json:"file_search"`
-	TLS                 configTLS            `json:"tls"`
-	Fonts               configFonts          `json:"fonts"`
-	Appearance          configAppearance     `json:"appearance"`
+	Version        string               `json:"version"`
+	HasPassword    bool                 `json:"has_password"` // true when a password is configured
+	DefaultAgent   string               `json:"default_agent"`
+	Chat           configChat           `json:"chat"`
+	Session        configSession        `json:"session"`
+	RecentProjects configRecentProjects `json:"recent_projects"`
+	Upload         configUpload         `json:"upload"`
+	Terminal       configTerminal       `json:"terminal"`
+	TTS            configTTS            `json:"tts"`
+	STT            configSTT            `json:"stt"`
+	RAG            configRAG            `json:"rag"`
+	PortForward    configPortForward    `json:"port_forward"`
+	FRP            configFRP            `json:"frp"`
+	Summarize      configSummarize      `json:"summarize"`
+	AISummary      configAISummary      `json:"ai_summary"`
+	DingTalk       configDingTalk       `json:"dingtalk"`
+	Feishu         configFeishu         `json:"feishu"`
+	PushMode       string               `json:"push_mode"`
+	FileSearch     configFileSearch     `json:"file_search"`
+	TLS            configTLS            `json:"tls"`
+	Fonts          configFonts          `json:"fonts"`
+	Appearance     configAppearance     `json:"appearance"`
+	Forge          configForge          `json:"forge"`
+	// FirstRun is true on a brand-new install. The frontend uses it to apply
+	// out-of-box appearance defaults (the default theme) without overriding
+	// choices an existing user has already made.
+	FirstRun bool `json:"first_run"`
 }
 
 type configChat struct {
@@ -344,6 +362,29 @@ type configFeishu struct {
 	Users     []string `json:"users"`
 }
 
+// configForge exposes the GitHub/GitLab integration settings. Credentials are
+// deliberately NOT returned: the response carries only the set of hosts that
+// have a token (has_token), so a token can be written but never read back.
+type configForge struct {
+	// CredentialHosts lists hosts with a configured token, sorted.
+	CredentialHosts []string `json:"credential_hosts"`
+	// InsecureTLS allows skipping TLS verification for self-hosted instances.
+	InsecureTLS bool `json:"insecure_tls"`
+	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
+	PauseEventTasks bool `json:"pause_event_tasks"`
+	// Notify carries the per-event notification toggles.
+	Notify configForgeNotify `json:"notify"`
+}
+
+type configForgeNotify struct {
+	Opened    bool `json:"opened"`
+	Closed    bool `json:"closed"`
+	Merged    bool `json:"merged"`
+	Reopened  bool `json:"reopened"`
+	Commented bool `json:"commented"`
+	Pipeline  bool `json:"pipeline"`
+}
+
 type configFileSearch struct {
 	DisplayLimit int `json:"display_limit"`
 }
@@ -363,8 +404,133 @@ type configFonts struct {
 
 // configAppearance exposes custom wallpaper settings to the settings panel.
 type configAppearance struct {
-	WallpaperFile string  `json:"wallpaper_file"` // Active wallpaper file name in <DataDir>/theme ("" = none)
-	PanelOpacity  float64 `json:"panel_opacity"`  // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
+	PanelOpacity float64 `json:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
+
+	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "local" or "bing"
+	WallpaperEnabled bool   `json:"wallpaper_enabled"` // Global wallpaper on/off switch
+	ActiveFile       string `json:"active_file"`       // Bare name of the wallpaper currently displayed ("" = none)
+
+	Local configLocalWallpaper `json:"local"`
+	Bing  configBingWallpaper  `json:"bing"`
+}
+
+// configLocalWallpaper exposes the uploaded wallpaper gallery.
+type configLocalWallpaper struct {
+	Selected string                     `json:"selected"` // Bare name of the selected gallery image ("" = none)
+	Items    []configLocalWallpaperItem `json:"items"`
+}
+
+// configLocalWallpaperItem is one gallery entry as sent to the client.
+type configLocalWallpaperItem struct {
+	File       string `json:"file"`
+	Name       string `json:"name"`
+	UploadedAt int64  `json:"uploaded_at"`
+	Size       int64  `json:"size"`
+	// AbsPath is the file's absolute path, for callers that need to address the
+	// file directly — notably GET /api/file/thumb, which takes a path rather
+	// than a bare name and returns a small JPEG instead of the full-size image.
+	// Resolved server-side via wallpaper.FilePath so the client never assembles
+	// a path from the theme directory layout itself. Empty when unresolvable.
+	AbsPath string `json:"abs_path"`
+}
+
+// configBingWallpaper exposes the Bing daily wallpaper state, including the
+// photographer credit shown in the settings panel.
+type configBingWallpaper struct {
+	Enabled         bool   `json:"enabled"`
+	File            string `json:"file"`
+	LastSuccessDate string `json:"last_success_date"`
+	Copyright       string `json:"copyright"`
+	Title           string `json:"title"`
+	Mkt             string `json:"mkt"`
+	LastError       string `json:"last_error"`
+	LastAttemptAt   int64  `json:"last_attempt_at"`
+	// AbsPath mirrors configLocalWallpaperItem.AbsPath for the cached Bing image.
+	AbsPath string `json:"abs_path"`
+}
+
+// buildConfigAppearance renders the appearance section for GET /api/config.
+// active_file is resolved server-side so the client never has to reimplement
+// the mode/enabled precedence.
+func buildConfigAppearance(cfg model.Config) configAppearance {
+	active, _ := wallpaper.ResolveActive(&cfg)
+
+	items := make([]configLocalWallpaperItem, 0, len(cfg.Appearance.Local.Items))
+	for _, it := range cfg.Appearance.Local.Items {
+		items = append(items, configLocalWallpaperItem{
+			File:       it.File,
+			Name:       it.Name,
+			UploadedAt: it.UploadedAt,
+			Size:       it.Size,
+			AbsPath:    absWallpaperPath(it.File),
+		})
+	}
+
+	return configAppearance{
+		PanelOpacity:     cfg.Appearance.PanelOpacity,
+		WallpaperMode:    cfg.Appearance.WallpaperMode,
+		WallpaperEnabled: cfg.Appearance.WallpaperEnabled,
+		ActiveFile:       active,
+		Local: configLocalWallpaper{
+			Selected: cfg.Appearance.Local.Selected,
+			Items:    items,
+		},
+		Bing: configBingWallpaper{
+			Enabled:         cfg.Appearance.Bing.Enabled,
+			File:            cfg.Appearance.Bing.File,
+			LastSuccessDate: cfg.Appearance.Bing.LastSuccessDate,
+			Copyright:       cfg.Appearance.Bing.Copyright,
+			Title:           cfg.Appearance.Bing.Title,
+			Mkt:             cfg.Appearance.Bing.Mkt,
+			LastError:       cfg.Appearance.Bing.LastError,
+			LastAttemptAt:   cfg.Appearance.Bing.LastAttemptAt,
+			AbsPath:         absWallpaperPath(cfg.Appearance.Bing.File),
+		},
+	}
+}
+
+// buildConfigForge builds the forge section of the config response. It exposes
+// only which hosts have a token — never the token value.
+func buildConfigForge(cfg model.Config) configForge {
+	hosts := make([]string, 0, len(cfg.Forge.Credentials))
+	for host, token := range cfg.Forge.Credentials {
+		if token != "" {
+			hosts = append(hosts, host)
+		}
+	}
+	sort.Strings(hosts)
+	return configForge{
+		CredentialHosts: hosts,
+		InsecureTLS:     cfg.Forge.InsecureTLS,
+		PauseEventTasks: cfg.Forge.PauseEventTasks,
+		Notify: configForgeNotify{
+			Opened:    cfg.Forge.Notify.Opened,
+			Closed:    cfg.Forge.Notify.Closed,
+			Merged:    cfg.Forge.Notify.Merged,
+			Reopened:  cfg.Forge.Notify.Reopened,
+			Commented: cfg.Forge.Notify.Commented,
+			Pipeline:  cfg.Forge.Notify.Pipeline,
+		},
+	}
+}
+
+// absWallpaperPath resolves a bare wallpaper file name to its absolute path,
+// returning "" when the name is empty or cannot be resolved. Callers use it to
+// hand a path to GET /api/file/thumb (which returns a small JPEG rather than
+// the full-size image).
+//
+// The resolution goes through wallpaper.FilePath so the containment and
+// extension rules are applied in one place; a name that escapes its directory
+// simply yields no path instead of leaking a filesystem location.
+func absWallpaperPath(name string) string {
+	if name == "" {
+		return ""
+	}
+	abs, ok := wallpaper.FilePath(name)
+	if !ok {
+		return ""
+	}
+	return abs
 }
 
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
@@ -433,7 +599,6 @@ var PatchableConfigPaths = map[string]bool{
 	"ai_summary.format":                 true,
 	"ai_summary.api.base_url":           true,
 	"ai_summary.api.key":                true,
-	"localhost_auth_exempt":             true,
 	"dingtalk.enabled":                  true,
 	"dingtalk.app_key":                  true,
 	"dingtalk.app_secret":               true,
@@ -444,11 +609,22 @@ var PatchableConfigPaths = map[string]bool{
 	"feishu.app_secret":                 true,
 	"feishu.users":                      true,
 	"push_mode":                         true,
+	"forge.insecure_tls":                true,
+	"forge.notify.opened":               true,
+	"forge.notify.closed":               true,
+	"forge.notify.merged":               true,
+	"forge.notify.reopened":             true,
+	"forge.notify.commented":            true,
+	"forge.notify.pipeline":             true,
+	"forge.pause_event_tasks":           true,
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
-	"appearance.wallpaper_file":         true,
 	"appearance.panel_opacity":          true,
+	"appearance.wallpaper_mode":         true,
+	"appearance.wallpaper_enabled":      true,
+	"appearance.bing.enabled":           true,
+	"appearance.bing.mkt":               true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -496,10 +672,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RUnlock()
 
 	resp := configResponse{
-		Version:             getBuildVersion(),
-		HasPassword:         model.SessionToken != "",
-		LocalhostAuthExempt: cfg.LocalhostAuthExempt,
-		DefaultAgent:        cfg.DefaultAgent,
+		Version:      getBuildVersion(),
+		HasPassword:  model.SessionToken != "",
+		DefaultAgent: cfg.DefaultAgent,
+		FirstRun:     model.FirstRun,
 		Chat: configChat{
 			InitialMessages:          cfg.Chat.InitialMessages,
 			PageSize:                 cfg.Chat.PageSize,
@@ -598,10 +774,8 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Fonts: configFonts{
 			Dir: cfg.ResolveFontsDir(),
 		},
-		Appearance: configAppearance{
-			WallpaperFile: cfg.Appearance.WallpaperFile,
-			PanelOpacity:  cfg.Appearance.PanelOpacity,
-		},
+		Appearance: buildConfigAppearance(cfg),
+		Forge:      buildConfigForge(cfg),
 	}
 
 	// Conditionally populate AISummary API sub-config when a base URL is set
@@ -722,6 +896,13 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 		}
 
 		if nested, ok := value.(map[string]any); ok {
+			// A path that is itself a configurable leaf must not receive a map:
+			// recursing would silently accept an empty object, and the merged
+			// YAML (e.g. `wallpaper_enabled: {}`) would then fail to unmarshal
+			// into the typed config on the next startup.
+			if PatchableConfigPaths[path] {
+				return nil, fmt.Errorf("field '%s' must be a scalar value, not an object", path)
+			}
 			nestedFields, err := validatePatchFields(nested, path)
 			if err != nil {
 				return nil, err
@@ -1033,17 +1214,52 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	// appearance — custom wallpaper. panel_opacity must be in the valid range.
-	// wallpaper_file is owned by the theme-background handler (it writes the
-	// file into <DataDir>/theme before recording the name); PATCH is only
-	// allowed to CLEAR it (empty string). A non-empty value patched directly
-	// would be a path-traversal entry point — the GET/serve endpoint joins the
-	// stored value onto <DataDir>/theme.
+	// File names (local.selected / local.items / bing.file) are deliberately
+	// absent: they are written only by the dedicated theme endpoints, which
+	// validate and persist the file alongside the name.
 	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		if v, ok := appearance["panel_opacity"].(float64); ok && (v < 0.5 || v > 1.0) {
-			return fmt.Errorf("appearance.panel_opacity must be between 0.5 and 1.0")
+		// Strict type checks: a wrong-typed value would be silently ignored by
+		// applyConfigPatch's assertions yet still written to config.yaml by
+		// mergePatchIntoRaw, producing a file the typed config cannot parse
+		// (which makes the next startup fail).
+		if raw, present := appearance["panel_opacity"]; present {
+			v, ok := raw.(float64)
+			if !ok {
+				return fmt.Errorf("appearance.panel_opacity must be a number")
+			}
+			if v < 0.5 || v > 1.0 {
+				return fmt.Errorf("appearance.panel_opacity must be between 0.5 and 1.0")
+			}
 		}
-		if v, ok := appearance["wallpaper_file"].(string); ok && v != "" {
-			return fmt.Errorf("appearance.wallpaper_file can only be cleared via PATCH (set to empty); use the theme-background endpoint to set a wallpaper")
+		if raw, present := appearance["wallpaper_mode"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("appearance.wallpaper_mode must be a string")
+			}
+			if v != "local" && v != "bing" {
+				return fmt.Errorf("appearance.wallpaper_mode must be \"local\" or \"bing\"")
+			}
+		}
+		if raw, present := appearance["wallpaper_enabled"]; present {
+			if _, ok := raw.(bool); !ok {
+				return fmt.Errorf("appearance.wallpaper_enabled must be a boolean")
+			}
+		}
+		if bing, ok := appearance["bing"].(map[string]any); ok {
+			if raw, present := bing["enabled"]; present {
+				if _, ok := raw.(bool); !ok {
+					return fmt.Errorf("appearance.bing.enabled must be a boolean")
+				}
+			}
+			if raw, present := bing["mkt"]; present {
+				v, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("appearance.bing.mkt must be a string")
+				}
+				if v != "zh-CN" && v != "en-US" {
+					return fmt.Errorf("appearance.bing.mkt must be \"zh-CN\" or \"en-US\"")
+				}
+			}
 		}
 	}
 
@@ -1065,10 +1281,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		cfg.Feishu.Enabled = (v == "feishu")
 	}
 
-	if v, ok := patch["localhost_auth_exempt"].(bool); ok {
-		cfg.LocalhostAuthExempt = v
-	}
-
 	if tlsMap, ok := patch["tls"].(map[string]any); ok {
 		if v, ok := tlsMap["cert_dir"].(string); ok {
 			cfg.TLS.CertDir = v
@@ -1085,8 +1297,19 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := appearance["panel_opacity"].(float64); ok {
 			cfg.Appearance.PanelOpacity = v
 		}
-		if v, ok := appearance["wallpaper_file"].(string); ok {
-			cfg.Appearance.WallpaperFile = v
+		if v, ok := appearance["wallpaper_mode"].(string); ok {
+			cfg.Appearance.WallpaperMode = v
+		}
+		if v, ok := appearance["wallpaper_enabled"].(bool); ok {
+			cfg.Appearance.WallpaperEnabled = v
+		}
+		if bing, ok := appearance["bing"].(map[string]any); ok {
+			if v, ok := bing["enabled"].(bool); ok {
+				cfg.Appearance.Bing.Enabled = v
+			}
+			if v, ok := bing["mkt"].(string); ok {
+				cfg.Appearance.Bing.Mkt = v
+			}
 		}
 	}
 
@@ -1374,6 +1597,25 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
+	if forgeMap, ok := patch["forge"].(map[string]any); ok {
+		if v, ok := forgeMap["insecure_tls"].(bool); ok {
+			cfg.Forge.InsecureTLS = v
+		}
+		if notify, ok := forgeMap["notify"].(map[string]any); ok {
+			applyBool := func(key string, target *bool) {
+				if v, ok := notify[key].(bool); ok {
+					*target = v
+				}
+			}
+			applyBool("opened", &cfg.Forge.Notify.Opened)
+			applyBool("closed", &cfg.Forge.Notify.Closed)
+			applyBool("merged", &cfg.Forge.Notify.Merged)
+			applyBool("reopened", &cfg.Forge.Notify.Reopened)
+			applyBool("commented", &cfg.Forge.Notify.Commented)
+			applyBool("pipeline", &cfg.Forge.Notify.Pipeline)
+		}
+	}
+
 	// Also update global variables for hot-reloadable fields
 	applyHotReloadGlobals()
 }
@@ -1392,7 +1634,6 @@ func applyHotReloadGlobals() {
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
 	model.DefaultAgentID = cfg.DefaultAgent
-	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 
 	// Hot-reload TTS voice and speed on the existing speech provider.
 	// This is a defensive fallback for when reconfigureOnHotReload is nil
@@ -1488,7 +1729,9 @@ func writeConfigYAML(patch map[string]any) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+	// config.yaml holds secrets (API keys, forge tokens, password hash), so it
+	// must not be world-readable.
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp config: %w", err)
 	}
 

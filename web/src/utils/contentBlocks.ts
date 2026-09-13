@@ -99,7 +99,7 @@ export function statusClass(task: { status: string }): string {
 }
 
 /**
- * Get detailed status label for a scheduled task.
+ * Get detailed status label for a task.
  */
 export function statusLabel(
   task: { status: string; runCount: number; runningCount: number },
@@ -116,7 +116,7 @@ export function statusLabel(
 }
 
 /**
- * Get simple (short) status label for a scheduled task badge.
+ * Get simple (short) status label for a task badge.
  */
 export function statusLabelSimple(
   task: { status: string },
@@ -175,6 +175,31 @@ export function askQuestionSummary(input: Record<string, unknown>): string {
 }
 
 /**
+ * A single ask-question entry is renderable when it carries question text or
+ * at least one option. Mirrors the 'valid' branch of classifyAskQuestionsInput
+ * (renderToolDetail.ts) without importing it (keeps this module dependency-free).
+ */
+function isRenderableQuestion(q: unknown): boolean {
+  if (!q || typeof q !== 'object' || Array.isArray(q)) return false
+  const entry = q as Record<string, unknown>
+  const hasQuestion = typeof entry.question === 'string' && entry.question.trim() !== ''
+  const hasOptions = Array.isArray(entry.options) && entry.options.length > 0
+  return hasQuestion || hasOptions
+}
+
+/**
+ * Extract the renderable questions from an AskUserQuestion tool input.
+ * Returns [] for non-objects, a missing/wrongly-typed `questions` field, or an
+ * array with no renderable entry (an unanswerable/malformed call).
+ */
+export function extractAskQuestions(input: unknown): Array<Record<string, unknown>> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return []
+  const questions = (input as Record<string, unknown>).questions
+  if (!Array.isArray(questions)) return []
+  return questions.filter(isRenderableQuestion) as Array<Record<string, unknown>>
+}
+
+/**
  * Build a block key for DOM rendering and tool expand state tracking.
  * Uses msgId if available, otherwise msgIndex.
  */
@@ -191,7 +216,7 @@ export function blockTaskKey(msgId: string | number, bi: number): string {
 }
 
 /**
- * Build an index: block index → sorted array of scheduled task keys.
+ * Build an index: block index → sorted array of task keys.
  * This pre-computes the mapping to avoid O(n) scan per block per render.
  */
 export function buildTaskKeyIndex(
@@ -215,7 +240,7 @@ export function buildTaskKeyIndex(
 }
 
 /**
- * Check if a block has any scheduled tasks based on the pre-computed index.
+ * Check if a block has any tasks based on the pre-computed index.
  */
 export function hasScheduledTasks(
   taskKeyIndex: Record<string, string[]>,
@@ -225,7 +250,7 @@ export function hasScheduledTasks(
 }
 
 /**
- * Return all scheduled task keys for a block, sorted by tag index.
+ * Return all task keys for a block, sorted by tag index.
  */
 export function scheduledTaskKeys(
   taskKeyIndex: Record<string, string[]>,
@@ -235,48 +260,41 @@ export function scheduledTaskKeys(
 }
 
 // ────────────────────────────────────────────────────────────
-// @ command badge detection
-// ────────────────────────────────────────────────────────────
-
-/** Match @ command prefix at start of text: @chatsearch or @task followed by space */
-const AT_COMMAND_RE = /^(@chatsearch|@task)(\s[\s\S]*)?$/
-
-export interface AtCommandBadge {
-  command: string    // e.g. "@chatsearch"
-  rest: string       // e.g. " my query" (including the leading space) or ""
-}
-
-/**
- * Extract @ command prefix from a text block.
- * Returns null if the text doesn't start with an @ command.
- */
-export function extractAtCommand(text: string): AtCommandBadge | null {
-  if (!text.startsWith('@')) return null
-  const match = text.match(AT_COMMAND_RE)
-  if (!match) return null
-  return { command: match[1], rest: match[2] || '' }
-}
-
-// ────────────────────────────────────────────────────────────
-// Slash command badge detection (ACP backend commands)
+// Slash command badge detection (agent + ClawBench built-in commands)
 // ────────────────────────────────────────────────────────────
 
 /** Match slash command prefix at start of text: /command-name (with optional space+rest) */
 const SLASH_COMMAND_RE = /^\/(\w[\w:-]*)(\s[\s\S]*)?$/
 
+/**
+ * ClawBench built-in commands are namespaced under "/cb-" so they can be
+ * distinguished from the current agent's ACP commands (e.g. "/compact").
+ * Mirrors the backend constants in internal/handler/clawbench_command.go.
+ *
+ * The names are listed explicitly rather than matched as a bare "/cb-" prefix:
+ * an agent command that happens to start with "cb-" must still render as an
+ * agent badge (see the /cb-something case in contentBlocks.test.ts).
+ */
+const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task|usage)(\s|$)/
+
 export interface SlashCommandBadge {
   command: string    // e.g. "/commit"
   rest: string       // e.g. " fix auth bug" (including the leading space) or ""
+  clawbench: boolean // true for ClawBench built-in /cb-* commands
 }
 
 /**
  * Extract slash command prefix from a text block.
  * Returns null if the text doesn't start with a slash command.
- * Unlike @ commands, slash commands are dynamic (from ACP) — any /word match is valid.
+ * Covers both agent commands (dynamic, from ACP) and ClawBench built-ins.
  */
 export function extractSlashCommand(text: string): SlashCommandBadge | null {
   if (!text.startsWith('/')) return null
   const match = text.match(SLASH_COMMAND_RE)
   if (!match) return null
-  return { command: '/' + match[1], rest: match[2] || '' }
+  return {
+    command: '/' + match[1],
+    rest: match[2] || '',
+    clawbench: CLAWBENCH_COMMAND_RE.test(text),
+  }
 }

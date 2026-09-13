@@ -123,31 +123,31 @@ defineExpose({ getSelectedIds })
 
 .kcf-selected {
   flex-shrink: 0;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
 }
 
 .kcf-selected-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .kcf-selected-actions {
   margin-left: auto;
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kcf-action-btn {
-  font-size: 12px;
-  color: var(--accent, #4f8ef7);
+  font-size: var(--font-size-sm);
+  color: var(--accent-color);
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   border-radius: 0;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   font-family: inherit;
 }
 
@@ -156,21 +156,21 @@ defineExpose({ getSelectedIds })
 }
 
 .kcf-action-btn-danger {
-  color: var(--danger, #e74c3c);
+  color: var(--color-red);
 }
 
 .kcf-section-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
 }
 
 .kcf-count {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #eee);
-  border-radius: 10px;
-  padding: 0 6px;
+  border-radius: var(--radius-md);
+  padding:0 var(--space-3);
   min-width: 18px;
   text-align: center;
 }
@@ -178,45 +178,45 @@ defineExpose({ getSelectedIds })
 .kcf-selected-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kcf-draggable {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kcf-empty-hint {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   text-align: center;
-  padding: 16px 0;
+  padding: var(--space-7) 0;
 }
 
 .kcf-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 0 12px;
+  margin:0 var(--space-6);
   flex-shrink: 0;
 }
 
 .kcf-available {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   -webkit-overflow-scrolling: touch;
 }
 
 .kcf-group {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .kcf-group-title {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -224,7 +224,7 @@ defineExpose({ getSelectedIds })
 .kcf-group-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kcf-chip {
@@ -234,31 +234,31 @@ defineExpose({ getSelectedIds })
   justify-content: center;
   height: 36px;
   min-width: 36px;
-  padding: 0 10px;
+  padding:0 var(--space-5);
   border: 1px solid var(--border-color, #e0e0e0);
   border-radius: 0;
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-family: inherit;
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base), opacity var(--duration-base);
 }
 
 .kcf-chip:active {
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 .kcf-chip-active {
-  border-color: var(--accent, #4f8ef7);
-  background: var(--accent-bg, rgba(79, 142, 247, 0.1));
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .kcf-chip-selected {
-  border-color: var(--accent, #4f8ef7);
-  background: var(--accent-bg, rgba(79, 142, 247, 0.1));
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 .kcf-chip-label {
@@ -267,7 +267,7 @@ defineExpose({ getSelectedIds })
 
 /* Drag animation states */
 .kcf-ghost {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
 }
 
 .kcf-chosen {
@@ -280,6 +280,6 @@ defineExpose({ getSelectedIds })
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   transform: scale(1.08);
   z-index: 10;
-  opacity: 0.9;
+  opacity: var(--opacity-hover);
 }
 </style>

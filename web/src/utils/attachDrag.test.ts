@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   ATTACH_DRAG_MIME,
   setAttachDragData,
@@ -9,6 +9,7 @@ import {
   buildAttachDragImage,
   cleanupDragGhost,
   resolveAccentColor,
+  startAttachDrag,
 } from '@/utils/attachDrag'
 
 function mockDataTransfer(): DataTransfer {
@@ -249,6 +250,87 @@ describe('buildAttachDragImage', () => {
     const el2 = buildAttachDragImage('second.ts', false)
     expect(el1.parentElement).toBeNull() // first ghost cleaned up
     expect(el2.parentElement).toBe(document.body)
+    cleanupDragGhost()
+  })
+
+  it('a stale safety timer from an earlier ghost does not remove a newer one', () => {
+    // Regression: the 5s auto-clean timer used to call cleanupDragGhost()
+    // unconditionally. pendingGhost is module-global, so an old timer firing
+    // during a newer drag would delete the NEW ghost mid-drag.
+    vi.useFakeTimers()
+    try {
+      const elA = buildAttachDragImage('a.png', false)
+      // 2s later a new drag replaces the ghost (A's timer now due at t=5s,
+      // B's at t=7s).
+      vi.advanceTimersByTime(2000)
+      const elB = buildAttachDragImage('b.png', false)
+      expect(elA.parentElement).toBeNull()
+
+      // A's stale timer fires at t=5s — B must survive (still current ghost).
+      vi.advanceTimersByTime(3000)
+      expect(document.querySelector('[data-attach-ghost]')).toBe(elB)
+
+      // B's own timer still cleans it up at t=7s.
+      vi.advanceTimersByTime(2000)
+      expect(document.querySelector('[data-attach-ghost]')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      cleanupDragGhost()
+    }
+  })
+})
+
+describe('startAttachDrag', () => {
+  beforeEach(() => {
+    document.documentElement.setAttribute('data-theme', 'dark')
+    cleanupDragGhost()
+  })
+
+  interface MockDragEvent {
+    e: DragEvent
+    dt: DataTransfer
+    setDragImage: ReturnType<typeof vi.fn>
+  }
+  function dragEvent(): MockDragEvent {
+    const setDragImage = vi.fn()
+    const dt = Object.assign(mockDataTransfer(), { setDragImage }) as DataTransfer
+    return { e: { dataTransfer: dt } as unknown as DragEvent, dt, setDragImage }
+  }
+
+  it('writes the internal payload, sets effectAllowed and installs a ghost', () => {
+    const { e, dt, setDragImage } = dragEvent()
+    const ok = startAttachDrag(e, 'assets/logo.png', 'logo.png')
+    expect(ok).toBe(true)
+    expect(dt.effectAllowed).toBe('copy')
+    expect(readAttachDragData(dt)).toEqual({ path: 'assets/logo.png', isDir: false })
+    expect(setDragImage).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-attach-ghost]')).toBeTruthy()
+    cleanupDragGhost()
+  })
+
+  it('attaches directories with isDir true', () => {
+    const { e, dt } = dragEvent()
+    startAttachDrag(e, 'src/utils', 'utils', true)
+    expect(readAttachDragData(dt)).toEqual({ path: 'src/utils', isDir: true })
+    cleanupDragGhost()
+  })
+
+  it('returns false and writes nothing when the path is empty', () => {
+    const { e, dt, setDragImage } = dragEvent()
+    expect(startAttachDrag(e, '', 'x.png')).toBe(false)
+    expect(readAttachDragData(dt)).toBeNull()
+    expect(setDragImage).not.toHaveBeenCalled()
+  })
+
+  it('returns false when the event has no dataTransfer', () => {
+    expect(startAttachDrag({} as DragEvent, 'a.png', 'a.png')).toBe(false)
+  })
+
+  it('falls back to the path as the ghost label when name is empty', () => {
+    const { e } = dragEvent()
+    startAttachDrag(e, 'deep/dir/pic.png', '')
+    const ghost = document.querySelector('[data-attach-ghost]')
+    expect(ghost?.textContent).toContain('deep/dir/pic.png')
     cleanupDragGhost()
   })
 })

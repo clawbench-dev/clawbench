@@ -1947,43 +1947,6 @@ func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
 	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
 
-func TestServeConfig_Get_LocalhostAuthExempt(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = true
-
-	req := newRequest(t, http.MethodGet, "/api/config", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.Equal(t, true, resp["localhost_auth_exempt"])
-}
-
-func TestServeConfig_Patch_LocalhostAuthExempt(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = false
-
-	body := `{"localhost_auth_exempt":true}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.LocalhostAuthExempt)
-	assert.True(t, model.LocalhostAuthExempt)
-}
-
 // --- SetReconfigureFunc and reconfigureOnHotReload ---
 
 func TestSetReconfigureFunc(t *testing.T) {
@@ -2042,28 +2005,6 @@ func TestReconfigureOnHotReload_NilDoesNotPanic(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestServeConfig_Patch_LocalhostAuthExempt_IsHotField(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.LocalhostAuthExempt = false
-
-	// localhost_auth_exempt is a hot-reload field — no restart should be needed
-	body := `{"localhost_auth_exempt":true}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NoError(t, err)
-	assert.False(t, resp["needs_restart"].(bool), "localhost_auth_exempt is hot-reloadable, should not need restart")
 }
 
 // --- FRP config validation tests ---
@@ -2643,7 +2584,6 @@ func TestServeConfig_Get_Appearance(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
 	cfg.Appearance.PanelOpacity = 0.9
 	model.ConfigInstance = cfg
 
@@ -2657,7 +2597,6 @@ func TestServeConfig_Get_Appearance(t *testing.T) {
 
 	appearance, ok := resp["appearance"].(map[string]any)
 	require.True(t, ok, "response should contain appearance section")
-	assert.Equal(t, "background.png", appearance["wallpaper_file"])
 	assert.Equal(t, 0.9, appearance["panel_opacity"])
 }
 
@@ -2726,26 +2665,78 @@ func TestServeConfig_Patch_AppearancePanelOpacityLowerBoundAccepted(t *testing.T
 	assert.Equal(t, 0.5, model.ConfigInstance.Appearance.PanelOpacity)
 }
 
-func TestServeConfig_Patch_AppearanceWallpaperFileNonEmptyRejected(t *testing.T) {
+func TestServeConfig_Get_AppearanceExposesResolvedActiveFile(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	cfg := model.Config{}
+	cfg.Appearance.WallpaperMode = "local"
+	cfg.Appearance.WallpaperEnabled = true
+	cfg.Appearance.Local.Selected = "local-1-a.png"
+	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
+		{File: "local-1-a.png", Name: "a.png", UploadedAt: 5, Size: 6},
+	}
 	model.ConfigInstance = cfg
 
-	// Non-empty wallpaper_file is owned by the theme-background handler — a
-	// direct PATCH would be a path-traversal entry point for the GET endpoint.
-	body := `{"appearance":{"wallpaper_file":"background.png"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	appearance, ok := resp["appearance"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "local-1-a.png", appearance["active_file"])
+	assert.Equal(t, "local", appearance["wallpaper_mode"])
+	assert.Equal(t, true, appearance["wallpaper_enabled"])
+
+	local, ok := appearance["local"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "local-1-a.png", local["selected"])
+	items, ok := local["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
 }
 
-func TestServeConfig_Patch_AppearanceWallpaperFileClearAllowed(t *testing.T) {
+func TestServeConfig_Get_AppearanceExposesBingStatus(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.Appearance.WallpaperMode = "bing"
+	cfg.Appearance.WallpaperEnabled = true
+	cfg.Appearance.Bing.Enabled = true
+	cfg.Appearance.Bing.File = "bing-20260910.jpg"
+	cfg.Appearance.Bing.Copyright = "© Someone"
+	cfg.Appearance.Bing.Title = "A Title"
+	cfg.Appearance.Bing.Mkt = "zh-CN"
+	cfg.Appearance.Bing.LastError = "boom"
+	model.ConfigInstance = cfg
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	appearance, ok := resp["appearance"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "bing-20260910.jpg", appearance["active_file"])
+
+	bing, ok := appearance["bing"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, bing["enabled"])
+	assert.Equal(t, "bing-20260910.jpg", bing["file"])
+	assert.Equal(t, "© Someone", bing["copyright"])
+	assert.Equal(t, "A Title", bing["title"])
+	assert.Equal(t, "boom", bing["last_error"])
+}
+
+func TestServeConfig_Patch_WallpaperEnabledAllowed(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -2754,17 +2745,213 @@ func TestServeConfig_Patch_AppearanceWallpaperFileClearAllowed(t *testing.T) {
 	defer func() { model.DataDir = origDataDir }()
 
 	cfg := model.Config{}
-	cfg.Appearance.WallpaperFile = "background.png"
+	cfg.Appearance.WallpaperEnabled = true
 	model.ConfigInstance = cfg
 
-	// Empty string = clear, allowed by PATCH (file cleanup is the DELETE
-	// endpoint's job; config clear alone is safe).
-	body := `{"appearance":{"wallpaper_file":""}}`
+	body := `{"appearance":{"wallpaper_enabled":false}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "", model.ConfigInstance.Appearance.WallpaperFile)
+	assert.False(t, model.ConfigInstance.Appearance.WallpaperEnabled)
+}
+
+func TestServeConfig_Patch_WallpaperModeAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"appearance":{"wallpaper_mode":"bing"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "bing", model.ConfigInstance.Appearance.WallpaperMode)
+}
+
+func TestServeConfig_Patch_WallpaperModeEnumValidated(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"appearance":{"wallpaper_mode":"nonsense"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.WallpaperMode)
+}
+
+func TestServeConfig_Patch_BingEnabledAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"appearance":{"bing":{"enabled":true}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Appearance.Bing.Enabled)
+}
+
+func TestServeConfig_Patch_BingMktEnumValidated(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"appearance":{"bing":{"mkt":"fr-FR"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.Bing.Mkt)
+}
+
+func TestServeConfig_Patch_LocalSelectedRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	// local.selected is a file name resolved inside <DataDir>/theme/local, so a
+	// direct PATCH would be a path-traversal entry point. It must be rejected by
+	// the whitelist even when nested inside the appearance object.
+	body := `{"appearance":{"local":{"selected":"../../etc/passwd"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.Local.Selected)
+}
+
+func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	// bing.file is likewise server-owned (the fetch worker writes it after
+	// storing the image) and must not be settable through PATCH.
+	body := `{"appearance":{"bing":{"file":"../../etc/passwd"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.Bing.File)
+}
+
+func TestServeConfig_Patch_LocalItemsRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	// The gallery list is written only by the upload endpoint, which also stores
+	// the file — a PATCH-supplied list would reference nonexistent/arbitrary files.
+	body := `{"appearance":{"local":{"items":[{"file":"../../etc/passwd"}]}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.Local.Items)
+}
+
+func TestServeConfig_Patch_WrongTypedValuesRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A wrong-typed value is ignored by applyConfigPatch's assertions but would
+	// still be merged into config.yaml, producing a file the typed config cannot
+	// parse — which makes the next server startup fail outright. Every one of
+	// these must be rejected with 400 instead of silently corrupting the config.
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"wallpaper_enabled as object", `{"appearance":{"wallpaper_enabled":{}}}`},
+		{"wallpaper_enabled as string", `{"appearance":{"wallpaper_enabled":"yes"}}`},
+		{"wallpaper_mode as number", `{"appearance":{"wallpaper_mode":123}}`},
+		{"wallpaper_mode as object", `{"appearance":{"wallpaper_mode":{}}}`},
+		{"bing.enabled as object", `{"appearance":{"bing":{"enabled":{}}}}`},
+		{"bing.mkt as number", `{"appearance":{"bing":{"mkt":5}}}`},
+		{"bing.mkt as object", `{"appearance":{"bing":{"mkt":{}}}}`},
+		{"panel_opacity as object", `{"appearance":{"panel_opacity":{}}}`},
+		{"panel_opacity as string", `{"appearance":{"panel_opacity":"0.5"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model.ConfigInstance = model.Config{}
+			origDataDir := model.DataDir
+			model.DataDir = t.TempDir()
+			defer func() { model.DataDir = origDataDir }()
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body %s must be rejected", tc.body)
+			// Nothing may have been written.
+			assert.NoFileExists(t, filepath.Join(model.DataDir, "config", "config.yaml"),
+				"a rejected patch must not write config.yaml")
+		})
+	}
+}
+
+func TestServeConfig_Get_ExposesFirstRun(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origFirstRun := model.FirstRun
+	defer func() { model.FirstRun = origFirstRun }()
+
+	// The frontend needs this flag to apply the factory theme only on a fresh
+	// install, without overriding an existing user's choice.
+	model.FirstRun = true
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["first_run"])
+
+	model.FirstRun = false
+	req2 := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req2, model.SessionToken)
+	w2 := callHandler(ServeConfig, req2)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var resp2 map[string]any
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
+	assert.Equal(t, false, resp2["first_run"])
 }

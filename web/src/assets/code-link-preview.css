@@ -4,7 +4,7 @@
 
 .code-link-preview-floating {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-sheet);
   display: flex;
   flex-direction: column;
   width: min(720px, calc(100vw - 24px));
@@ -12,13 +12,13 @@
   min-height: 0;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e0e0e0);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
   color: var(--text-primary, #202124);
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
   overflow: hidden;
-  transition: box-shadow 0.15s ease;
+  transition: box-shadow var(--duration-base) ease;
 }
 
 body.code-preview-dragging {
@@ -34,14 +34,14 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-primary, #ffffff);
   border-bottom: 1px solid var(--border-color, #ebebeb);
   cursor: grab;
   user-select: none;
   touch-action: none;
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .code-preview-header:active {
@@ -51,7 +51,7 @@ body.code-preview-dragging * {
 .code-preview-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -72,9 +72,9 @@ body.code-preview-dragging * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 4px;
-  font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
-  font-size: 12px;
+  gap: var(--space-1) var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   line-height: 1.35;
   max-height: 38px;
   overflow: hidden;
@@ -83,7 +83,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-title-dir {
-  color: var(--text-tertiary, #9aa0a6);
+  color: var(--text-hint);
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -102,7 +102,7 @@ body.code-preview-dragging * {
 .code-preview-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -110,16 +110,16 @@ body.code-preview-dragging * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 6px;
+  padding:3px var(--space-3);
   height: 24px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--duration-base), color var(--duration-base);
 }
 
 .code-preview-btn:hover {
@@ -128,13 +128,13 @@ body.code-preview-dragging * {
 }
 
 .code-preview-btn:focus-visible {
-  outline: 2px solid var(--primary-color, #1a73e8);
+  outline: 2px solid var(--accent-color);
   outline-offset: -1px;
 }
 
 .code-preview-btn.is-pinned,
 .code-preview-btn.is-active {
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   background: rgba(26, 115, 232, 0.1);
 }
 
@@ -145,7 +145,7 @@ body.code-preview-dragging * {
 
 .code-preview-btn.is-pinned svg {
   transform: rotate(-30deg);
-  transition: transform 0.15s ease;
+  transition: transform var(--duration-base) ease;
 }
 
 .code-preview-notices {
@@ -153,9 +153,9 @@ body.code-preview-dragging * {
 }
 
 .code-preview-notice {
-  padding: 4px 10px;
-  font-size: 11px;
-  line-height: 1.4;
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
 }
 
@@ -166,7 +166,7 @@ body.code-preview-dragging * {
 
 .code-preview-notice.notice-info {
   background: rgba(59, 130, 246, 0.1);
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
 }
 
 .code-preview-content {
@@ -184,8 +184,8 @@ body.code-preview-dragging * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
-  gap: 12px;
+  padding:24px var(--space-7);
+  gap: var(--space-6);
   color: var(--text-secondary, #888);
   text-align: center;
   background: var(--bg-primary, #fff);
@@ -198,7 +198,7 @@ body.code-preview-dragging * {
   width: 20px;
   height: 20px;
   border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--primary-color, #1a73e8);
+  border-top-color: var(--accent-color);
   border-radius: 50%;
   animation: code-preview-spin 0.8s linear infinite;
   flex-shrink: 0;
@@ -212,8 +212,8 @@ body.code-preview-dragging * {
   min-height: 0;
   position: relative;
   line-height: 20px;
-  font-family: var(--font-mono, 'SF Mono', Menlo, Monaco, Consolas, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   background: var(--code-bg, #1e1e1e);
   tab-size: 2;
   -moz-tab-size: 2;
@@ -224,7 +224,7 @@ body.code-preview-dragging * {
   flex-direction: column;
   min-width: max-content;
   width: 100%;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
 }
 
 .code-preview-scroll.is-word-wrap .code-preview-lines {
@@ -242,8 +242,8 @@ body.code-preview-dragging * {
 
 .code-preview-line-row.is-target-line {
   background: rgba(59, 130, 246, 0.12);
-  background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--primary-color, #3b82f6);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent-color);
 }
 
 .code-preview-line-number {
@@ -256,31 +256,31 @@ body.code-preview-dragging * {
      so short line ranges (e.g. 10–99) do not waste horizontal space. */
   width: calc(var(--gutter-digits, 2) * 1ch + 20px);
   min-width: 0;
-  padding: 0 8px 0 6px;
+  padding:0 var(--space-4) 0 var(--space-3);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-family: var(--font-mono);
   background: var(--code-bg, var(--bg-primary, #ffffff));
   border-right: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
   color: var(--text-muted, #8c8c8c);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 20px;
   align-self: stretch;
 }
 
 .code-preview-line-row.is-target-line .code-preview-line-number,
 .code-preview-line-number.is-target-line {
-  color: var(--primary-color, #1a73e8);
-  font-weight: 600;
+  color: var(--accent-color);
+  font-weight: var(--font-weight-semibold);
   background: rgba(59, 130, 246, 0.12);
-  background: color-mix(in srgb, var(--primary-color, #3b82f6) 12%, var(--code-bg, var(--bg-primary, #ffffff)));
+  background: color-mix(in srgb, var(--accent-color) 12%, var(--code-bg, var(--bg-primary, #ffffff)));
 }
 
 .code-preview-line-code {
   flex: 1;
   min-width: 0;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   line-height: 20px;
 }
 
@@ -315,14 +315,14 @@ body.code-preview-dragging * {
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border-top: 1px dashed var(--border-color, #e0e0e0);
   border-bottom: 1px dashed var(--border-color, #e0e0e0);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   user-select: none;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
@@ -337,16 +337,16 @@ body.code-preview-dragging * {
 .code-preview-expand-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  color: var(--primary-color, #1a73e8);
+  gap: var(--space-3);
+  padding:3px var(--space-4);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-ui);
+  color: var(--accent-color);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--duration-base) ease, border-color var(--duration-base) ease;
 }
 
 .code-preview-expand-btn:hover {
@@ -359,7 +359,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-expand-hint {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #8c8c8c);
   font-weight: normal;
 }
@@ -370,7 +370,7 @@ body.code-preview-dragging * {
 .code-preview-expand-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
@@ -379,16 +379,16 @@ body.code-preview-dragging * {
 }
 
 .code-preview-expand-btn.expand-all:hover {
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
   background: rgba(0, 0, 0, 0.05);
 }
 
 .code-preview-title.is-clickable {
   cursor: pointer;
-  border-radius: 4px;
-  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-2);
   margin: -1px -4px;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--duration-base) ease;
 }
 
 .code-preview-title.is-clickable:hover {
@@ -399,8 +399,8 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px 3px 12px;
+  gap: var(--space-4);
+  padding:3px var(--space-3) 3px var(--space-6);
   min-height: 28px;
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
@@ -417,8 +417,8 @@ body.code-preview-dragging * {
 .code-preview-meta-info {
   display: flex;
   align-items: center;
-  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -436,11 +436,11 @@ body.code-preview-dragging * {
 .code-preview-search-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   flex-shrink: 0;
 }
 
@@ -448,22 +448,22 @@ body.code-preview-dragging * {
   flex: 1;
   min-width: 0;
   height: 24px;
-  padding: 2px 6px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
   border: 1px solid var(--border-color, #ccc);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #202124);
   outline: none;
 }
 
 .code-preview-search-input:focus {
-  border-color: var(--primary-color, #1a73e8);
-  box-shadow: 0 0 0 1px var(--primary-color, #1a73e8);
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 1px var(--accent-color);
 }
 
 .code-preview-search-count {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   white-space: nowrap;
 }
@@ -477,7 +477,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-filename {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #202124);
   word-break: break-all;
   display: -webkit-box;
@@ -491,9 +491,9 @@ body.code-preview-dragging * {
 .code-preview-line-ref {
   font-size: 0.92em;
   line-height: inherit;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-family: var(--font-mono);
   font-weight: 400;
-  color: var(--text-tertiary, #80868b);
+  color: var(--text-hint);
   flex-shrink: 0;
 }
 
@@ -505,7 +505,7 @@ body.code-preview-dragging * {
 
 .code-preview-line-row.is-current-search-match {
   background-color: rgba(255, 214, 0, 0.45);
-  box-shadow: inset 3px 0 0 var(--primary-color, #1a73e8);
+  box-shadow: inset 3px 0 0 var(--accent-color);
 }
 
 /* Mobile BottomSheet Header & Footer styles */
@@ -544,7 +544,7 @@ body.code-preview-dragging * {
    .bs-header so it wins over the base .bs-header-title (flex-shrink:0,
    inline-flex) regardless of stylesheet injection order. */
 .bs-header .code-preview-sheet-title {
-  font-family: var(--font-mono, 'SF Mono', Monaco, monospace);
+  font-family: var(--font-mono);
   flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
@@ -553,14 +553,14 @@ body.code-preview-dragging * {
 }
 
 .bs-header .code-preview-sheet-title .code-preview-line-ref {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 400;
-  margin-left: 4px;
+  margin-left: var(--space-2);
 }
 
 .code-preview-sheet-dir-marquee {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #80868b);
 }
 
@@ -568,18 +568,18 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   min-height: 32px;
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-5);
   box-sizing: border-box;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
 }
 
 .code-preview-sheet-meta-info {
-  font-size: 11px;
-  color: var(--text-tertiary, #80868b);
+  font-size: var(--font-size-xs);
+  color: var(--text-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -590,7 +590,7 @@ body.code-preview-dragging * {
 .code-preview-sheet-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -610,8 +610,8 @@ body.code-preview-dragging * {
 .code-preview-sheet-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   /* Natural content width; when wider than the footer row it overflows and
      the .bs-footer above scrolls horizontally. */
   width: 100%;
@@ -637,7 +637,7 @@ body.code-preview-dragging * {
 /* Active state (e.g. search bar open) — tint the neutral pill. */
 .code-preview-footer-btn.is-active {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, var(--bg-tertiary, #f1f3f5));
-  color: var(--primary-color, #1a73e8);
+  color: var(--accent-color);
 }
 
 /* Icon-only footer buttons: collapse the shared pill padding to a 30px round
@@ -658,11 +658,11 @@ body.code-preview-dragging * {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .code-preview-btn.icon-only.close {
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
   line-height: 1;
 }
 
@@ -680,18 +680,18 @@ body.code-preview-dragging * {
 /* Custom Fast Tooltip */
 .code-preview-tooltip {
   position: absolute;
-  z-index: 1300;
+  z-index: var(--z-preview-tooltip);
   pointer-events: none;
-  padding: 4px 8px;
-  font-size: 11px;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-size-xs);
   line-height: 14px;
-  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  font-weight: 500;
+  font-family: var(--font-ui);
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.2px;
   color: #ffffff;
   background: rgba(32, 33, 36, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   white-space: nowrap;
   max-width: min(380px, calc(100% - 16px));
@@ -702,7 +702,7 @@ body.code-preview-dragging * {
 
 .code-preview-tooltip-fade-enter-active,
 .code-preview-tooltip-fade-leave-active {
-  transition: opacity 0.1s ease;
+  transition: opacity var(--duration-fast) ease;
 }
 
 .code-preview-tooltip-fade-enter-from,
@@ -714,4 +714,227 @@ body.code-preview-dragging * {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── Media preview body (image / SVG / video / audio / PDF) ─────────────────
+   The pane is a flex child of .code-preview-content, so it already has the
+   card's remaining height. Media is centered and contained so the card's
+   width AND height are both used, without ever overflowing. */
+.code-preview-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+/* Raster image + SVG: scale to fit whichever axis runs out first. */
+.code-preview-media-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* Video keeps its aspect ratio and stretches to the available box. */
+.code-preview-media-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+/* Audio has no intrinsic visual size — center a compact stacked player. */
+.code-preview-media-audio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  padding:24px var(--space-8);
+  width: 100%;
+  min-height: 0;
+  color: var(--text-secondary, #666);
+}
+
+.code-preview-media-audio-icon {
+  color: var(--text-hint);
+}
+
+.code-preview-media-audio-name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary, #202124);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-preview-media-audio-player {
+  width: min(420px, 100%);
+}
+
+/* PDF: pdf.js fills the pane; the component's own height:100% needs a sized
+   flex parent, which .code-preview-media provides. */
+.code-preview-media.is-pdf {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.code-preview-media.is-pdf > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Load failure: message centered over the pane. */
+.code-preview-media-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary, #666);
+  background: var(--bg-primary, #fff);
+}
+
+.code-preview-media {
+  position: relative;
+}
+
+/* Media cards get more room: images/video/PDF are the content, so the card
+   grows toward the viewport instead of the code-tuned 65vh/480px cap. Width
+   also widens so landscape media is not letterboxed into a narrow column.
+   The inline maxHeight from cardStyle still clamps to the placement box. */
+.code-link-preview-floating.is-media {
+  width: min(960px, calc(100vw - 24px));
+  /* Lift the code-tuned min(65vh, 480px) cap: media IS the content, so let it
+     fill the viewport. cardStyle's inline maxHeight (when set) still clamps to
+     the placement box below this. */
+  max-height: min(88vh, calc(100vh - 24px));
+}
+
+/* The media pane sits directly under the header/meta rows; give it a floor so
+   a small image still reads as a preview rather than a sliver. */
+.code-link-preview-floating.is-media .code-preview-content {
+  min-height: 220px;
+}
+
+/* PDF body needs the code background replaced with the viewer's own. */
+.code-link-preview-floating.is-media .code-preview-content {
+  background: var(--bg-secondary, #f5f5f5);
+}
+
+/* ── Docked pane (file manager bottom pane) ─────────────────────────────────
+   Same card markup as the floating preview, but laid out inline inside the
+   caller's split pane: no fixed positioning, no float shadow/rounding, and it
+   fills the pane both ways. All inline placement styles are suppressed in JS
+   (cardStyle returns {}), so these rules are authoritative. */
+.code-link-preview-floating.is-docked {
+  position: relative;
+  inset: auto;
+  left: auto;
+  top: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--bg-primary, #ffffff);
+}
+/* The docked pane sits under the file list, so the top edge needs no divider —
+   the SplitDivider already draws it. */
+.code-link-preview-floating.is-docked .code-preview-header {
+  cursor: default;
+}
+.code-link-preview-floating.is-docked .code-preview-meta {
+  cursor: default;
+}
+
+/* ── Compact layout: docked pane on a touch / narrow device ─────────────────
+   Mirrors the mobile (BottomSheet) mode's toolbar rather than restyling the
+   desktop card: ONE row, matching `.code-preview-sheet-row2` — the file name on
+   the left, icon tools plus Close on the right. The desktop title row (file
+   path) is not rendered at all in this mode, and neither is the line/size
+   summary: the name is what identifies the pane. */
+.code-link-preview-floating.is-compact .code-preview-meta {
+  /* Exactly the mobile sheet row's metrics (.code-preview-sheet-row2): a 32px
+     row with 28px buttons — the same weight as the 31px desktop meta row, not
+     a thicker bar. The tight paddings/gaps are what let a 10-tool code file
+     fit beside the file name on a 390px screen without the name collapsing. */
+  gap: var(--space-3);
+  min-height: 32px;
+  padding: var(--space-1) var(--space-4);
+}
+.code-link-preview-floating.is-compact .code-preview-meta-info {
+  /* The file name is the only thing on the left. A code file shows up to 10
+     tools, which would otherwise crush the name to zero width — so the name
+     keeps a floor and the tool row scrolls instead. */
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 84px;
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+}
+.code-link-preview-floating.is-compact .code-preview-compact-name {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #202124);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-link-preview-floating.is-compact .code-preview-actions {
+  /* Scrolls rather than shrinking the name away. */
+  flex: 0 1 auto;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+/* Close ends the row but lives OUTSIDE the scrollable strip, so a long tool set
+   cannot scroll it out of reach. */
+.code-link-preview-floating.is-compact .code-preview-meta > .code-preview-btn.close {
+  flex: 0 0 auto;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: var(--space-1);
+  color: var(--text-secondary, #5f6368);
+}
+.code-link-preview-floating.is-compact .code-preview-actions::-webkit-scrollbar {
+  display: none;
+}
+.code-link-preview-floating.is-compact .code-preview-btn {
+  /* Same 28px target as the mobile sheet's `.icon-only` buttons — the desktop
+     24px control is too small to tap, but a bigger row is what made this feel
+     heavy, so match the mobile mode instead of inventing a new size. */
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.code-link-preview-floating.is-compact .code-preview-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.code-link-preview-floating.is-compact .code-preview-actions-divider {
+  height: 14px;
+  margin: 0 1px;
 }

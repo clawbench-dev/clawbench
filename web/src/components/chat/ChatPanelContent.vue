@@ -15,6 +15,8 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
+      :midTurnSupported="midTurnSupported"
+      :pendingActionBusy="pendingActionBusy"
       @touchstart="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -25,6 +27,7 @@
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
       @remove-pending="handleRemovePending"
+      @pending-action="handlePendingAction"
       @render-flush="handleRenderFlush"
       @toggle-summary="handleToggleSummary"
       @ensure-content="(msg) => ensureMessageContent(msg)"
@@ -193,7 +196,7 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { buildMultiQuoteMessage, relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { dedupeFiles, buildSendChannels } from '@/utils/fileAttachmentUtils.ts'
+import { buildSendPayload } from '@/utils/fileAttachmentUtils.ts'
 import { enqueueAndMaybeStart } from '@/utils/chatQueueSend.ts'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -228,6 +231,26 @@ const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-se
 const identity = useSessionIdentity()
 const agentsComposable = useAgents()
 const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
+
+/** Whether the current agent's backend can join a running turn. Drives the
+ *  queued bubble's single action: "insert into the current reply" vs
+ *  "interrupt and send".
+ *
+ *  Two conditions, because the capability is per-backend but the ability is
+ *  per-transport: injection goes through the agent's live ACP connection
+ *  (ai.InjectMidTurn returns a decline when there is none), so a CLI session of
+ *  a steer-capable backend cannot actually insert. Showing "insert" there would
+ *  make the label lie about what the button does — the one thing it must not
+ *  do — so fall back to "interrupt and send" for CLI sessions. */
+const midTurnSupported = computed(() => {
+  if (!agentsComposable.supportsMidTurn(identity.currentAgentId.value || '')) return false
+  const transport = identity.currentTransport.value
+  // Unknown transport: assume ACP, since a steer-capable backend defaults to it
+  // (the button still fails safe — the backend declines and the UI reports it).
+  return transport !== 'cli'
+})
+/** queueId (or id) of the queued bubble whose action request is in flight. */
+const pendingActionBusy = ref('')
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -316,6 +339,12 @@ function handleRemoveAttachedEntry(entry) {
     const startLine = typeof entry === 'string' ? undefined : entry?.startLine
     const endLine = typeof entry === 'string' ? undefined : entry?.endLine
     removeAttachedFileByPath(path, startLine, endLine)
+    // A drag-drop / clipboard-paste upload also has a mirror entry in
+    // pendingFiles (upload lifecycle) that feeds the send payload. Removing
+    // only the attached card left the file in the message and kept the
+    // now-empty tags row mounted. Whole-file removals clear that mirror too;
+    // a ranged removal of a project file has no pending mirror to clear.
+    if (startLine === undefined) removePendingByPath(path)
 }
 
 async function handleQuoteClick(q) {
@@ -354,9 +383,9 @@ const {
 } = useToolDetailDrawer({
   chatRender: render,
   tabId: 'chat',
-  onFileOpen: async (path, lineStart, lineEnd) => {
+  onFileOpen: async (path, lineStart, lineEnd, lineRanges) => {
     // openFilePath decides the destination tab itself (file → view, dir → browse).
-    await openFilePath(path, lineStart, lineEnd, 'chat')
+    await openFilePath(path, lineStart, lineEnd, 'chat', lineRanges)
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })
@@ -527,7 +556,7 @@ const stream = useChatStream({
   },
 })
 
-const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
+const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, removePendingByPath, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
 const { stagedQuotes, removeStagedQuote, clearAll, removeAttachedFileByPath, snapshotAttachments, restoreAttachments, discardAttachmentDraft } = useChatContext()
 
 const manager = useSessionManager({
@@ -846,13 +875,10 @@ async function sendMessage(text) {
      }
 
     // Build file paths and entries from attachedFiles (unified channel).
-    // Paths carrying a line-range reference must go through the entries
-    // channel ONLY (never filePaths) or the backend would strip their ranges.
-    // Uploaded files always travel through the entries channel.
-    const uploadedFiles = pendingFiles.value.filter(f => f.path).map(f => ({ path: f.path, isDir: false }))
-    const projectFiles = attachedFiles.value.map(f => ({ path: f.path, isDir: f.isDir ?? false, startLine: f.startLine, endLine: f.endLine }))
-    const allFiles = dedupeFiles([...uploadedFiles, ...projectFiles])
-    const { filePaths } = buildSendChannels(projectFiles)
+    // buildSendPayload preserves kind/url on URL attachments and routes
+    // line-range entries through the entries channel only (never filePaths) or
+    // the backend would strip their ranges.
+    const { allFiles, filePaths } = buildSendPayload(pendingFiles.value, attachedFiles.value)
 
     // Clear input state before async request
     clearAll()
@@ -945,8 +971,8 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
-            // Session already running — the message was enqueued.
-            // Mark the pre-pushed user message as pending (ID is already pendingId).
+            // The message was queued for the next turn (sending never joins the
+            // running turn), so mark it pending: it waits for its own drain.
             const localIdx = messages.value.findLastIndex(
                 (m) => m.role === 'user' && m.id === pendingId
             )
@@ -1088,6 +1114,22 @@ async function handleLoadMore() {
  *  Passes it directly to the manager for backend DELETE. */
 function handleRemovePending(queueId) {
     manager.handleRemovePending(queueId)
+}
+
+/** Single adaptive action on a queued bubble. The backend capability decides
+ *  what it does; the button label already told the user which, so here we only
+ *  route to the matching endpoint. */
+async function handlePendingAction(queueId) {
+    if (!queueId || pendingActionBusy.value) return
+    pendingActionBusy.value = String(queueId)
+    try {
+        await manager.handlePendingAction(
+            String(queueId),
+            midTurnSupported.value ? 'insert' : 'interrupt',
+        )
+    } finally {
+        pendingActionBusy.value = ''
+    }
 }
 
 function showMetadata(msg) {
@@ -1359,19 +1401,18 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 10px 20px 8px;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-8) var(--space-4);
   background: var(--bg-primary);
   color: var(--text-primary);
   border-radius: 24px;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.3px;
   position: absolute;
   top: 48px;
   left: 0;
   right: 0;
-  display: flex;
   justify-content: center;
   z-index: 10;
   max-width: 260px;
@@ -1398,22 +1439,22 @@ onUnmounted(() => {
 .session-indicator-position {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Dots bar (<=15 sessions) */
 .session-dots {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .session-dot {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--text-tertiary, rgba(128, 128, 128, 0.4));
-  transition: all 0.15s ease-out;
+  background: var(--text-hint);
+  transition: all var(--duration-base) ease-out;
 }
 
 .session-dot.active {
@@ -1431,8 +1472,8 @@ onUnmounted(() => {
 .session-capsule-track {
   width: 80px;
   height: 3px;
-  border-radius: 2px;
-  background: var(--text-tertiary, rgba(128, 128, 128, 0.3));
+  border-radius: var(--radius-xs);
+  background: var(--text-hint);
   position: relative;
 }
 
@@ -1440,15 +1481,15 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--accent-color);
-  transition: left 0.2s ease-out;
+  transition: left var(--duration-slow) ease-out;
 }
 
 /* Numeric label */
 .session-position-count {
-  font-size: 10px;
-  color: var(--text-tertiary, rgba(128, 128, 128, 0.6));
+  font-size: var(--font-size-2xs);
+  color: var(--text-hint);
   white-space: nowrap;
   min-width: 24px;
   text-align: center;
@@ -1485,11 +1526,11 @@ onUnmounted(() => {
 }
 
 .session-indicator-enter-active {
-  transition: opacity 0.15s ease-out;
+  transition: opacity var(--duration-base) ease-out;
 }
 
 .session-indicator-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 
 .session-indicator-enter-from {
@@ -1525,23 +1566,23 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 20px 12px;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6);
   color: var(--text-muted, #9ca3af);
 }
 .tool-call-empty-msg {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   font-style: italic;
 }
 .tool-call-retry-btn {
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 6px;
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color, #e5e7eb);
   background: var(--bg-secondary, #f3f4f6);
   color: var(--text-secondary, #6b7280);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
 }
 @media (hover: hover) {
   .tool-call-retry-btn:hover {

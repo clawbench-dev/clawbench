@@ -1,6 +1,6 @@
 # DingTalk Bot Push Configuration
 
-ClawBench supports push notifications via DingTalk bot. Receive instant messages when AI sessions complete, permission approvals are needed, or scheduled task status changes.
+ClawBench supports push notifications via DingTalk bot. Receive instant messages when AI sessions complete, permission approvals are needed, or task status changes.
 
 ---
 
@@ -88,10 +88,10 @@ Send a message in the format `@SessionID message content` to append a message to
 | Session Completed | AI session finished, includes response preview |
 | Session Cancelled | AI session cancelled by user |
 | Permission Pending | AI requests approval for an action (e.g., Bash command, file modification) |
-| Task Started | Scheduled task started execution |
-| Task Completed | Scheduled task finished successfully, includes response preview |
-| Task Failed | Scheduled task execution failed |
-| Task Cancelled | Scheduled task cancelled |
+| Task Started | Task started execution |
+| Task Completed | Task finished successfully, includes response preview |
+| Task Failed | Task execution failed |
+| Task Cancelled | Task cancelled |
 
 > When a WebSocket client is connected to ClawBench (user is actively using the web UI), push notifications are automatically suppressed to avoid duplicate alerts.
 

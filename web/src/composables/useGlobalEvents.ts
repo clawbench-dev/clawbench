@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useReconnect } from './useReconnect'
+import { useForgeUnread } from './useForgeUnread'
 import { useAppMode } from './useAppMode'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
@@ -331,6 +332,15 @@ function connect() {
                 // Dispatch chat_recommendation for the chat input bar to auto-fill / show a suggestion chip
                 if (msg.event === 'chat_recommendation') {
                     window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: msg.data }))
+                }
+
+                // Forge (GitHub/GitLab) change events: re-derive the unread
+                // badge on LIVE events only. Replayed events are caught-up
+                // history, so they must not inflate the badge after a reconnect.
+                // The count is refetched (debounced) rather than incremented
+                // locally so it stays correct after the tab has been opened.
+                if (msg.event === 'forge_event' && !msg.replayed) {
+                    useForgeUnread().onForgeEvent()
                 }
 
                 // Browser notification: when page is not focused, show browser

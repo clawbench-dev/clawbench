@@ -10,20 +10,21 @@ import { ChatPage } from '../pages/chat.page'
  * - Mode config option
  *
  * Key ACP behaviors tested:
- * 1. Slash command autocomplete menu appears when typing "/"
- * 2. @ command autocomplete still works (ClawBench built-in, not affected)
+ * 1. Unified command autocomplete menu appears when typing "/"
+ * 2. ClawBench built-in commands (/cb-*) appear in the same menu
  * 3. Slash command badge renders in user messages
- * 4. @ command badge still renders
+ * 4. ClawBench built-in badge renders for /cb-* messages
  * 5. Mode chip is visible for ACP sessions
- * 6. GET /api/ai/commands returns discovered commands
- * 7. Slash commands are pre-fetched via REST API on page load/session switch
- *    (no need to send a message first if ACP connection already cached commands)
+ * 6. GET /api/agents exposes discovered commands via acpStates
+ * 7. Slash commands are pre-loaded from GET /api/agents on page load/session
+ *    switch (no need to send a message first if ACP connection already cached
+ *    commands)
  *
  * IMPORTANT: ACP connections are lazy — established on first message.
  * The first test in each "cold" group must still send a message to warm up
  * the ACP connection pool. After that, subsequent tests can rely on
- * prefetchCommands (GET /api/ai/commands) to load slash commands without
- * requiring an active SSE stream.
+ * GET /api/agents (acpStates) to load slash commands without requiring an
+ * active SSE stream.
  *
  * SERIAL: Tests must run serially because the ACP mock agent is a single
  * subprocess. Concurrent Prompt requests on the same agent process can
@@ -39,68 +40,70 @@ test.describe.serial('ACP Slash Commands', () => {
   })
 
   // ───────────────────────────────────────────────────────
-  // @ command tests (ClawBench built-in, no ACP needed)
+  // ClawBench built-in command tests (no ACP needed)
   // ───────────────────────────────────────────────────────
 
-  test('should show @ command autocomplete for built-in commands', async ({ page }) => {
+  test('should show ClawBench built-in commands in the unified / menu', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@')
+    await chat.textarea.fill('/')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuItem = page.locator('.completion-item')
+    await expect(menuItem.first()).toBeVisible({ timeout: 3000 })
 
-    const chatsearchItem = page.locator('.at-menu-item').filter({ hasText: '@chatsearch' })
+    const chatsearchItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-chatsearch' })
     await expect(chatsearchItem).toBeVisible()
 
-    const taskItem = page.locator('.at-menu-item').filter({ hasText: '@task' })
+    const taskItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-task' })
     await expect(taskItem).toBeVisible()
   })
 
-  test('should show @chatsearch filtered when typing @c', async ({ page }) => {
+  test('should filter to /cb-chatsearch when typing /cb-c', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@c')
+    await chat.textarea.fill('/cb-c')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuItem = page.locator('.completion-item')
+    await expect(menuItem.first()).toBeVisible({ timeout: 3000 })
 
-    const chatsearchItem = page.locator('.at-menu-item').filter({ hasText: '@chatsearch' })
+    const chatsearchItem = page.locator('.completion-item').filter({ hasText: '/cb-chatsearch' })
     await expect(chatsearchItem).toBeVisible()
 
-    const taskItem = page.locator('.at-menu-item').filter({ hasText: '@task' })
+    const taskItem = page.locator('.completion-item').filter({ hasText: '/cb-task' })
     await expect(taskItem).not.toBeVisible()
   })
 
-  test('should show @ command badge in user message after sending @chatsearch', async ({ page }) => {
+  test('should NOT open the slash command menu when typing @', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@chatsearch test query')
+    await chat.textarea.fill('@')
+
+    // @ is the file-reference trigger, never the slash-command trigger.
+    const commandItems = page.locator('.completion-item--clawbench, .completion-item--agent')
+    await expect(commandItems.first()).not.toBeVisible({ timeout: 1500 })
+  })
+
+  test('should show ClawBench badge in user message after sending /cb-chatsearch', async ({ page }) => {
+    await chat.textarea.click()
+    await chat.textarea.fill('/cb-chatsearch test query')
     await page.waitForTimeout(200)
     await chat.sendButton.click()
 
     const userMsg = chat.getLastUserMessage()
     await expect(userMsg).toBeVisible({ timeout: 5000 })
 
-    // Badge should be rendered with .at-command-badge class
-    const atBadge = userMsg.locator('.at-command-badge')
-    const isBadgeVisible = await atBadge.isVisible({ timeout: 3000 }).catch(() => false)
-
-    if (isBadgeVisible) {
-      await expect(atBadge).toContainText('@chatsearch')
-    } else {
-      // Fallback: the message text should at least contain @chatsearch
-      await expect(userMsg).toContainText('@chatsearch')
-    }
+    // Badge should be rendered with .clawbench-command-badge class
+    const badge = userMsg.locator('.clawbench-command-badge')
+    await expect(badge).toContainText('/cb-chatsearch')
   })
 
-  test('should close @ menu on blur', async ({ page }) => {
+  test('should close command menu on blur', async ({ page }) => {
     await chat.textarea.click()
-    await chat.textarea.fill('@')
+    await chat.textarea.fill('/')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).toBeVisible({ timeout: 3000 })
+    const menuItem = page.locator('.completion-item')
+    await expect(menuItem.first()).toBeVisible({ timeout: 3000 })
 
     await page.locator('body').click({ position: { x: 10, y: 10 } })
 
-    await expect(atMenu).not.toBeVisible({ timeout: 2000 })
+    await expect(menuItem.first()).not.toBeVisible({ timeout: 2000 })
   })
 
   // ───────────────────────────────────────────────────────
@@ -119,7 +122,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 5000 })
 
     const count = await slashItems.count()
@@ -133,8 +136,8 @@ test.describe.serial('ACP Slash Commands', () => {
 
   test('should show slash command autocomplete after page reload via prefetch', async ({ page }) => {
     // Previous test already established ACP connection and cached commands.
-    // Reload the page — prefetchCommands should load slash commands via
-    // GET /api/ai/commands without needing to send a message first.
+    // Reload the page — slash commands reload from GET /api/agents
+    // (acpStates[].commands) without needing to send a message first.
     await page.reload()
     await page.waitForLoadState('networkidle')
     await page.waitForTimeout(500)
@@ -147,16 +150,16 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands (loaded via prefetch)
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()
     expect(count).toBeGreaterThan(0)
   })
 
-  test('should show slash command autocomplete after session switch via prefetch', async ({ page }) => {
+  test('should show slash command autocomplete after session switch via agents API', async ({ page }) => {
     // Previous tests warmed the ACP connection pool. Create a new session
-    // and switch to it — prefetchCommands in switchSession should load commands.
+    // and switch to it — commands reload from GET /api/agents acpStates.
     await chat.createSessionWithAgent('acp-mock')
 
     // Type / to trigger slash command menu — should work without sending a message
@@ -164,7 +167,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands (loaded via prefetch on session switch)
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()
@@ -277,10 +280,13 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.waitForACPCommands()
 
     const result = await page.evaluate(async () => {
-      const resp = await fetch('/api/ai/commands')
-      if (!resp.ok) return { ok: false, status: resp.status }
+      const resp = await fetch('/api/agents')
+      if (!resp.ok) return { ok: false, status: resp.status, count: 0, firstCommand: undefined }
       const data = await resp.json()
-      return { ok: true, count: data.commands?.length || 0, firstCommand: data.commands?.[0]?.name }
+      const all = Object.values(data.acpStates || {}).flatMap(
+        (s) => (s as { commands?: { name: string }[] }).commands || [],
+      )
+      return { ok: true, count: all.length, firstCommand: all[0]?.name }
     })
 
     expect(result.ok).toBe(true)
@@ -297,7 +303,7 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.click()
     await chat.textarea.fill('/')
 
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 5000 })
 
     // Click elsewhere to blur the textarea
@@ -315,8 +321,48 @@ test.describe.serial('ACP Slash Commands', () => {
     await chat.textarea.click()
     await chat.textarea.fill('hello world')
 
-    const atMenu = page.locator('.at-menu-title')
-    await expect(atMenu).not.toBeVisible({ timeout: 1000 })
+    const menuItem = page.locator('.completion-item')
+    await expect(menuItem.first()).not.toBeVisible({ timeout: 1000 })
+  })
+
+  test('should open the command menu when a slash is inserted at the head of existing text', async ({ page }) => {
+    // Mirrors the @ interaction: with text already present, placing the caret
+    // at the start and typing "/" must still offer commands.
+    await chat.textarea.click()
+    await chat.textarea.fill('hello world')
+    // Put the caret at the very start, then insert the slash there.
+    await chat.textarea.evaluate((el: HTMLTextAreaElement) => {
+      el.setSelectionRange(0, 0)
+      el.dispatchEvent(new Event('select', { bubbles: true }))
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await chat.textarea.evaluate((el: HTMLTextAreaElement) => {
+      el.setRangeText('/', 0, 0, 'end')
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    const menuItem = page.locator('.completion-item')
+    await expect(menuItem.first()).toBeVisible({ timeout: 3000 })
+    // The trailing "hello world" must not filter the built-ins out.
+    await expect(page.locator('.completion-item--clawbench').first()).toBeVisible()
+  })
+
+  test('should replace only the typed slash token when selecting a command mid-text', async ({ page }) => {
+    await chat.textarea.click()
+    await chat.textarea.fill('hello world')
+    await chat.textarea.evaluate((el: HTMLTextAreaElement) => {
+      el.setRangeText('/', 0, 0, 'end')
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    const chatsearchItem = page.locator('.completion-item--clawbench').filter({ hasText: '/cb-chatsearch' })
+    await expect(chatsearchItem).toBeVisible({ timeout: 3000 })
+    await chatsearchItem.click()
+
+    // "/" replaced by "/cb-chatsearch "; the original text is preserved.
+    await expect(chat.textarea).toHaveValue('/cb-chatsearch hello world')
   })
 
   test('should show placeholder hint mentioning @ and /', async ({ page }) => {

@@ -75,9 +75,9 @@ const commitTarget = computed(() => {
 .git-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   overflow-x: auto;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   scrollbar-width: none;
   flex: 1;
@@ -87,14 +87,14 @@ const commitTarget = computed(() => {
   display: none;
 }
 .git-crumb {
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 .git-crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   cursor: default;
 }
@@ -110,7 +110,7 @@ const commitTarget = computed(() => {
 }
 .git-crumb-sep {
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .git-file-open-btn {
   display: inline-flex;
@@ -125,8 +125,8 @@ const commitTarget = computed(() => {
   cursor: pointer;
   padding: 0;
   line-height: 1;
-  opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  opacity: var(--opacity-muted);
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   flex-shrink: 0;
 }

@@ -82,9 +82,18 @@ func setupTestBinDir(t *testing.T) string {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
 	origDataDir := DataDir
+	origFirstRun := FirstRun
+	origHealed := HealedBingFetch
 	BinDir = tmpDir
 	DataDir = filepath.Join(tmpDir, ".clawbench")
-	t.Cleanup(func() { BinDir = origBinDir; DataDir = origDataDir })
+	// ApplyDefaults writes process-global flags; restore them so one test's
+	// fresh-install / heal state cannot leak into another.
+	t.Cleanup(func() {
+		BinDir = origBinDir
+		DataDir = origDataDir
+		FirstRun = origFirstRun
+		HealedBingFetch = origHealed
+	})
 	return tmpDir
 }
 
@@ -172,8 +181,151 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Appearance.PanelOpacity != 0.85 {
 		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
 	}
-	if cfg.Appearance.WallpaperFile != "" {
-		t.Errorf("Appearance.WallpaperFile = %q, want empty (no wallpaper set)", cfg.Appearance.WallpaperFile)
+	// A nil presence map with no database present is a fresh install, which
+	// pre-selects the Bing source but leaves the wallpaper switch off.
+	if cfg.Appearance.WallpaperMode != "bing" {
+		t.Errorf("Appearance.WallpaperMode = %q, want bing (fresh install)", cfg.Appearance.WallpaperMode)
+	}
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("Appearance.WallpaperEnabled = true, want false (wallpaper is off by default)")
+	}
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Appearance.Bing.Enabled = false, want true (fresh install)")
+	}
+	if cfg.Appearance.Bing.Mkt != "zh-CN" {
+		t.Errorf("Appearance.Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
+	}
+}
+
+// seedExistingInstall marks the current DataDir as a pre-existing installation
+// by creating the database file that InitDB would have produced.
+func seedExistingInstall(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(DataDir, 0o755); err != nil {
+		t.Fatalf("create data dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, "ClawBench.db"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed db marker: %v", err)
+	}
+}
+
+// TestApplyDefaultsHealsBingModeWithFetchDisabled covers configs written before
+// the mode endpoint kept the two in step: mode says Bing while the fetch switch
+// is off. The settings UI cannot reach or repair this state, so loading the
+// config must turn the switch back on.
+func TestApplyDefaultsHealsBingModeWithFetchDisabled(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperMode = "bing"
+	cfg.Appearance.Bing.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
+
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = false, want true when the mode is Bing")
+	}
+	// The flag is what tells startup to write the repaired value to disk.
+	if !HealedBingFetch {
+		t.Error("HealedBingFetch = false, want true so the repair is persisted")
+	}
+}
+
+// TestApplyDefaultsLocalModeLeavesBingFetchAlone is the counterpart: a local
+// install must not have Bing fetching switched on by loading its config.
+func TestApplyDefaultsLocalModeLeavesBingFetchAlone(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	cfg.Appearance.WallpaperMode = "local"
+	cfg.Appearance.Bing.Enabled = false
+	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
+
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want it untouched for a local-mode install")
+	}
+	if HealedBingFetch {
+		t.Error("HealedBingFetch = true, want no heal for a local-mode install")
+	}
+}
+
+// TestApplyDefaultsFreshInstallBingPreselected pins the out-of-box appearance: a
+// brand new install has no config.yaml and no database. The wallpaper switch is
+// off, but the Bing source is pre-selected so turning the switch on shows the
+// Bing daily image without a further choice.
+func TestApplyDefaultsFreshInstallBingPreselected(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Appearance.WallpaperMode != "bing" {
+		t.Errorf("WallpaperMode = %q, want bing", cfg.Appearance.WallpaperMode)
+	}
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = true, want false (wallpaper must be off by default)")
+	}
+	if !cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = false, want true")
+	}
+	if cfg.Appearance.Bing.Mkt != "zh-CN" {
+		t.Errorf("Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
+	}
+}
+
+// TestApplyDefaultsExistingInstallBingOff is the regression guard for upgrades:
+// an existing install that never set a wallpaper must not suddenly get one.
+func TestApplyDefaultsExistingInstallBingOff(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+
+	// A database file marks this install as pre-existing, and an empty presence
+	// map models a config.yaml that exists but has no appearance section.
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, map[string]bool{"port": true})
+
+	if cfg.Appearance.WallpaperMode != "" {
+		t.Errorf("WallpaperMode = %q, want empty (existing install must not enable Bing)", cfg.Appearance.WallpaperMode)
+	}
+	if cfg.Appearance.WallpaperEnabled {
+		t.Error("WallpaperEnabled = true, want false (existing install must not enable a wallpaper)")
+	}
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want false (existing install must not enable Bing)")
+	}
+	_ = tmpDir
+}
+
+// TestApplyDefaultsExistingInstallWithoutConfigFile covers the case that a
+// missing config.yaml alone must not be mistaken for a fresh install: a
+// long-running install that never wrote a config still has its database.
+func TestApplyDefaultsExistingInstallWithoutConfigFile(t *testing.T) {
+	setupTestBinDir(t)
+	seedExistingInstall(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.Appearance.Bing.Enabled {
+		t.Error("Bing.Enabled = true, want false: a database without config.yaml is an existing install")
+	}
+}
+
+func TestIsFreshInstall(t *testing.T) {
+	setupTestBinDir(t)
+
+	if !IsFreshInstall(nil) {
+		t.Error("IsFreshInstall(nil) = false with no database, want true")
+	}
+	if IsFreshInstall(map[string]bool{}) {
+		t.Error("IsFreshInstall(non-nil) = true, want false: a config.yaml means the install has run")
+	}
+
+	seedExistingInstall(t)
+	if IsFreshInstall(nil) {
+		t.Error("IsFreshInstall(nil) = true with a database present, want false")
 	}
 }
 
@@ -218,19 +370,14 @@ func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
 
 	cfg := Config{}
 	cfg.Appearance.PanelOpacity = 0.7
-	cfg.Appearance.WallpaperFile = "background.png"
 
 	ApplyDefaults(&cfg, map[string]bool{
-		"appearance":                true,
-		"appearance.panel_opacity":  true,
-		"appearance.wallpaper_file": true,
+		"appearance":               true,
+		"appearance.panel_opacity": true,
 	})
 
 	if cfg.Appearance.PanelOpacity != 0.7 {
 		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
-	}
-	if cfg.Appearance.WallpaperFile != "background.png" {
-		t.Errorf("Appearance.WallpaperFile = %q, want %q (explicitly set)", cfg.Appearance.WallpaperFile, "background.png")
 	}
 }
 
@@ -592,25 +739,6 @@ func TestApplyDefaults_LogLevel(t *testing.T) {
 	ApplyDefaults(&cfg2, map[string]bool{"log_level": true})
 	if cfg2.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want %q (explicitly set)", cfg2.LogLevel, "debug")
-	}
-}
-
-func TestApplyDefaults_LocalhostAuthExempt(t *testing.T) {
-	setupTestBinDir(t)
-
-	// Default: true when not in presence map
-	cfg := Config{}
-	ApplyDefaults(&cfg, nil)
-	if !cfg.LocalhostAuthExempt {
-		t.Error("LocalhostAuthExempt should default to true when absent from config")
-	}
-
-	// Explicitly set to false via presence map
-	cfg2 := Config{}
-	cfg2.LocalhostAuthExempt = false
-	ApplyDefaults(&cfg2, map[string]bool{"localhost_auth_exempt": true})
-	if cfg2.LocalhostAuthExempt {
-		t.Error("LocalhostAuthExempt should stay false when explicitly set")
 	}
 }
 

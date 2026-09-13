@@ -139,7 +139,7 @@ export interface QuoteMessageItem {
   note?: string
 }
 
-function buildQuoteBlock(quote: QuoteMessageItem): string {
+export function buildQuoteBlock(quote: QuoteMessageItem): string {
   const langPrefix = quote.language ? `${quote.language}:` : ':'
   let lineSuffix = ''
   if (quote.startLine && quote.endLine && quote.startLine !== quote.endLine) {
@@ -148,6 +148,43 @@ function buildQuoteBlock(quote: QuoteMessageItem): string {
     lineSuffix = `:${quote.startLine}`
   }
   return `\`\`\`${langPrefix}${quote.filePath}${lineSuffix}\n${quote.text}\n\`\`\``
+}
+
+/**
+ * Build a message whose quoted block comes FIRST, then a single newline, then
+ * the user's own input.
+ *
+ * This is deliberately NOT `buildMultiQuoteMessage`: that one puts the prompt
+ * first and joins with a blank line, which is right for the file-preview quote
+ * flow. Here the quote is the subject of the message and the input is the
+ * instruction about it, so the block leads.
+ *
+ * An empty input still emits the trailing newline, so the caret lands on the
+ * line after the block and the user can start typing straight away.
+ */
+export function buildQuoteFirstMessage(quoteBlock: string, userMessage: string): string {
+  const input = userMessage.trim()
+  if (!quoteBlock) return input
+  return input ? `${quoteBlock}\n${input}` : `${quoteBlock}\n`
+}
+
+/**
+ * Read the quote source label from a container's ancestors.
+ *
+ * Issue/PR pages are not files, so they cannot use `data-file-path` — that
+ * attribute is what marks a markdown body as an attachable file (see
+ * mdBlockAttach/mdMermaidAttach) and would sprout "add to chat" buttons on
+ * every code block in the issue body. A dedicated attribute keeps the quote
+ * labelled without claiming the content is a file.
+ *
+ * Returns null when the container is not inside a labelled region, so callers
+ * can fall back to the normal file-path handling.
+ */
+export function getQuoteSource(container: HTMLElement): { label: string; language: string } | null {
+  const el = container.closest<HTMLElement>('[data-quote-source]')
+  const label = el?.getAttribute('data-quote-source') || ''
+  if (!label) return null
+  return { label, language: el?.getAttribute('data-quote-language') || '' }
 }
 
 /** Build one prompt from an optional overall question and ordered quoted selections. */

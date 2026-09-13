@@ -3,6 +3,7 @@ import { mount, shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '@/components/chat/ChatInputBar.vue'
+import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 
 // ── Mocks ────────────────────────────────────────────────────
 const mockFetchItems = vi.fn()
@@ -142,6 +143,9 @@ afterEach(() => {
   pendingTimers.length = 0
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
+  // The text draft store is module-level and shared across mounts, so clear it
+  // between cases to keep them independent.
+  _resetChatDraftsForTesting()
 })
 
 beforeEach(() => {

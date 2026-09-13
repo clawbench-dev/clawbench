@@ -46,16 +46,20 @@ test.describe('Plan Progress Panel', () => {
     await expect(page.locator('.plan-panel')).not.toBeVisible()
   })
 
-  test('plan panel appears after injecting plan data', async ({ page }) => {
+  test('plan panel appears collapsed after injecting plan data', async ({ page }) => {
     await injectPlanEntries(page, sampleEntries)
     await expect(page.locator('.plan-panel')).toBeVisible({ timeout: 5000 })
+    // The panel opens collapsed by default.
+    await expect(page.locator('.plan-chip')).toBeVisible()
+    await expect(page.locator('.plan-expanded')).not.toBeVisible()
   })
 
-  test('plan panel shows stepped timeline entries', async ({ page }) => {
+  test('plan panel shows stepped timeline entries once expanded', async ({ page }) => {
     await injectPlanEntries(page, sampleEntries)
 
-    // Wait for the plan panel to appear
-    await expect(page.locator('.plan-panel')).toBeVisible({ timeout: 5000 })
+    // Expand the collapsed chip first.
+    await expect(page.locator('.plan-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.plan-chip').click()
 
     // Should show plan entries
     const entries = page.locator('.plan-entry')
@@ -69,8 +73,10 @@ test.describe('Plan Progress Panel', () => {
   test('plan panel collapses on toggle click', async ({ page }) => {
     await injectPlanEntries(page, sampleEntries)
 
-    // Wait for the expanded plan panel
-    await expect(page.locator('.plan-expanded')).toBeVisible({ timeout: 5000 })
+    // Expand first (default is collapsed).
+    await expect(page.locator('.plan-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.plan-chip').click()
+    await expect(page.locator('.plan-expanded')).toBeVisible()
 
     // Click the collapse toggle (▲ button in header)
     await page.locator('.plan-expanded__toggle').click()
@@ -83,13 +89,8 @@ test.describe('Plan Progress Panel', () => {
   test('collapsed chip shows in-progress task', async ({ page }) => {
     await injectPlanEntries(page, sampleEntries)
 
-    // Wait for plan panel
-    await expect(page.locator('.plan-panel')).toBeVisible({ timeout: 5000 })
-
-    // Collapse it
-    const toggleBtn = page.locator('.plan-expanded__toggle')
-    await toggleBtn.click()
-    await expect(page.locator('.plan-chip')).toBeVisible()
+    // Panel opens collapsed — the chip should be visible right away.
+    await expect(page.locator('.plan-chip')).toBeVisible({ timeout: 5000 })
 
     // Chip text should show the in-progress task
     const chipText = page.locator('.plan-chip__text')
@@ -99,10 +100,8 @@ test.describe('Plan Progress Panel', () => {
   test('clicking collapsed chip expands the panel', async ({ page }) => {
     await injectPlanEntries(page, sampleEntries)
 
-    // Wait for plan panel and collapse
-    await expect(page.locator('.plan-expanded')).toBeVisible({ timeout: 5000 })
-    await page.locator('.plan-expanded__toggle').click()
-    await expect(page.locator('.plan-chip')).toBeVisible()
+    // Panel opens collapsed.
+    await expect(page.locator('.plan-chip')).toBeVisible({ timeout: 5000 })
 
     // Click the chip to expand
     await page.locator('.plan-chip').click()

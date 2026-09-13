@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -599,7 +601,7 @@ func TestServeAISessionUpdate_WhitespaceTitleIgnored(t *testing.T) {
 }
 
 // TestServeAISessionUpdate_TitleMarksRenamed verifies that a manual rename sets
-// title_renamed so the first-message auto-title will not clobber it.
+// title_source=custom so the first-message auto-title will not clobber it.
 func TestServeAISessionUpdate_TitleMarksRenamed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -615,7 +617,7 @@ func TestServeAISessionUpdate_TitleMarksRenamed(t *testing.T) {
 
 	renamed, err := service.GetSessionTitleRenamed(sessionID)
 	require.NoError(t, err)
-	assert.True(t, renamed, "manual rename must set title_renamed")
+	assert.True(t, renamed, "manual rename must mark the title custom")
 
 	// The first user message must not overwrite the user's title.
 	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "user", "this is a long first message", nil, false, "NewSession")
@@ -624,6 +626,83 @@ func TestServeAISessionUpdate_TitleMarksRenamed(t *testing.T) {
 	got, err := service.GetSessionTitle(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, "User Chosen Name", got)
+}
+
+// TestServeAISessionUpdate_TitleViaBodySessionID verifies that the rename
+// target is taken from the body sessionId when present, even when the
+// chat_session_id cookie points at a DIFFERENT session. This is the
+// "renamed title gets clobbered" bug: the frontend sends {sessionId, title} in
+// the body, so resolving the target from the cookie would rename the wrong
+// session and leave the intended one unlocked for the first message to
+// overwrite.
+func TestServeAISessionUpdate_TitleViaBodySessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	target, err := service.CreateSession(env.ProjectDir, "claude", "New Session 1", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	other, err := service.CreateSession(env.ProjectDir, "claude", "New Session 2", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// No query param. Cookie points at `other`; body points at `target`.
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": target,
+		"title":     "Renamed Target",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	req = withSessionCookie(req, other)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	gotTarget, err := service.GetSessionTitle(target)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed Target", gotTarget, "body sessionId must win over the cookie")
+
+	gotOther, err := service.GetSessionTitle(other)
+	require.NoError(t, err)
+	assert.Equal(t, "New Session 2", gotOther, "the cookie's session must be untouched")
+
+	// And the target's first message must not overwrite the rename.
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", target, "user", "first message", nil, false, "NewSession")
+	require.NoError(t, err)
+	gotTarget, err = service.GetSessionTitle(target)
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed Target", gotTarget)
+}
+
+// TestServeAISessionUpdate_BodySessionIDUnknown verifies a body sessionId that
+// does not exist is rejected instead of silently falling back to the cookie.
+func TestServeAISessionUpdate_BodySessionIDUnknown(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": "does-not-exist",
+		"title":     "Whatever",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestServeAISessionUpdate_BodySessionIDForeignProject verifies the project
+// ownership guard: a body sessionId belonging to another project is rejected.
+func TestServeAISessionUpdate_BodySessionIDForeignProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	foreign := filepath.Join(env.WatchDir, "other-project")
+	require.NoError(t, os.MkdirAll(foreign, 0o755))
+	sessionID, err := service.CreateSession(foreign, "claude", "Foreign", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId": sessionID,
+		"title":     "Should Not Apply",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusForbidden)
 }
 
 func TestServeAISessionUpdate_AutoApproveWithACPConn(t *testing.T) {

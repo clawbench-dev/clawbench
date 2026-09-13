@@ -108,7 +108,7 @@ See [AGENTS.md](AGENTS.md) for build and run commands.
 ```
 feat(android): push notifications show AI reply preview
 docs: add RAG deployment documentation
-refactor(scheduler): optimize scheduled task dispatch logic
+refactor(scheduler): optimize task dispatch logic
 test: improve backend test coverage — internal/handler
 chore: upgrade Go version to 1.25
 ```

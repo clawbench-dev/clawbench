@@ -15,7 +15,7 @@ import { ChatPage } from '../pages/chat.page'
  *
  * Persistence mechanisms tested:
  * 1. Mode chip text restored after page reload (via GET /api/ai/chat modeState)
- * 2. Slash commands restored after page reload (via prefetchCommands GET /api/ai/commands)
+ * 2. Slash commands restored after page reload (via GET /api/agents acpStates)
  * 3. ACP state restored when switching back to a previous session
  * 4. Thinking effort selection restored after page reload
  *
@@ -87,23 +87,23 @@ test.describe.serial('ACP Session State Persistence', () => {
     // Wait for commands to be cached
     await chat.waitForACPCommands()
 
-    // Reload the page — prefetchCommands should load slash commands via
-    // GET /api/ai/commands without needing to send a message first
+    // Reload the page — slash commands come back from GET /api/agents
+    // (acpStates[].commands) without needing to send a message first
     await page.reload()
     await page.waitForLoadState('networkidle')
 
     // Wait for textarea to be ready
     await expect(chat.textarea).toBeVisible({ timeout: 5000 })
 
-    // Wait for commands to be available via REST API
+    // Wait for commands to be available via the agents REST API
     await chat.waitForACPCommands()
 
     // Type / to trigger slash command menu — should work without sending a message
     await chat.textarea.click()
     await chat.textarea.fill('/')
 
-    // Slash command menu should appear with ACP commands (loaded via prefetch)
-    const slashItems = page.locator('.at-menu-label.slash-label')
+    // Slash command menu should appear with ACP commands (loaded from acpStates)
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()

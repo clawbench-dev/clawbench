@@ -10,7 +10,7 @@ ClawBench 内置 RAG 历史记忆系统。系统持续把聊天消息分块写�
 聊天消息 → Indexer → 文本提取 → 分块 → SQLite chat_chunks + FTS5
                                       └→ OpenAI 兼容 Embedding → vec0
 
-AI 智能体 → clawbench rag / RAG API → RRF 混合检索 → 历史片段
+AI 智能体 → RAG API（HTTP）→ RRF 混合检索 → 历史片段
 ```
 
 所有 RAG 数据都保存在 `<data-dir>/ClawBench.db`。系统不会创建 `rag.duckdb` 或独立向量数据库。
@@ -38,9 +38,9 @@ rag:
   api_key: ""
   chunk_size: 512
   chunk_overlap: 64
-  poll_interval: "10s"
-  batch_size: 10
-  search_limit: 20
+  poll_interval: "5s"
+  batch_size: 50
+  search_limit: 100
   search_pool_size: 20
   retention_days: 90
 ```
@@ -52,9 +52,9 @@ rag:
 | `api_key` | 空 | 云端嵌入服务的可选密钥 |
 | `chunk_size` | `512` | 分块 token 数 |
 | `chunk_overlap` | `64` | 相邻分块重叠 token 数 |
-| `poll_interval` | `10s` | Indexer 轮询间隔 |
-| `batch_size` | `10` | 每轮处理的消息数 |
-| `search_limit` | `20` | 默认结果数 |
+| `poll_interval` | `5s` | Indexer 轮询间隔 |
+| `batch_size` | `50` | 每轮处理的消息数（热生效） |
+| `search_limit` | `100` | 默认结果数 |
 | `search_pool_size` | `20` | 各检索源参与 RRF 融合的候选数 |
 | `retention_days` | `90` | 软删除数据保留天数；`0` 表示永久保留 |
 
@@ -66,23 +66,23 @@ Indexer 每轮读取未索引消息，提取用户文本和助手的 `text` 内�
 
 搜索优先融合 FTS5 与向量候选；嵌入不可用时只运行全文检索。切换到不同维度的嵌入模型时，系统检测维度差异并重建向量索引，SQLite 中的文本分块仍然保留，随后自动回填向量。
 
-推荐通过 CLI 搜索：
+推荐直接调用 HTTP API：
 
 ```bash
-clawbench rag search --project /path/to/project --query "SSH 隧道保活" --limit 20 --exclude-session-id abc-123
-clawbench rag message --project /path/to/project --id 42
-clawbench rag session --project /path/to/project --session-id abc-123
+# 语义 / 全文混合检索（POST，query 字段名为 q）
+curl -X POST http://localhost:20000/api/rag/search \
+  -H 'Content-Type: application/json' \
+  -b 'clawbench_project=/path/to/project' \
+  -d '{"q":"SSH 隧道保活","limit":20,"exclude_session_id":"abc-123"}'
+
+# 按 ID 取完整消息（含 thinking / tool_use 块）
+curl 'http://localhost:20000/api/rag/message?id=42'
+
+# 取会话全部消息
+curl 'http://localhost:20000/api/rag/session?id=abc-123'
 ```
 
-对应 HTTP API 为：
-
-```text
-GET /api/rag/search?q=...&limit=20
-GET /api/rag/message?id=42
-GET /api/rag/session?session_id=abc-123
-```
-
-搜索支持 `project`、`backend`、`role`、`session_id`、`exclude_session_id`、`from` 和 `to` 过滤参数。HTTP API 需要认证，localhost 请求按认证中间件规则旁路。
+`POST /api/rag/search` 支持 `q`、`limit`、`backend`、`role`、`session_id`、`exclude_session_id`、`from` 和 `to` 过滤参数。项目范围通过 `clawbench_project` Cookie 传递；localhost 请求按认证中间件规则免密。
 
 ## 删除与维护
 

@@ -263,8 +263,8 @@ func TestBridgeCodeBuddyPlanFromToolUpdate_NoRawResponse(t *testing.T) {
 
 // --- mapACPSessionUpdate end-to-end bridge ---
 
-// mapACPSessionUpdate emits a raw_output debug event (AppendRawOutput) and the
-// bridge plan_update. Drain skipping raw_output, then check for plan_update.
+// mapACPSessionUpdate emits the bridge plan_update alongside tool events.
+// Drain them and check for plan_update.
 func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T) {
 	conn := newACPConn(cbCodebuddyAgent(), "session-map-1")
 	ch := make(chan StreamEvent, 16)
@@ -289,8 +289,7 @@ func TestMapACPSessionUpdate_CodebuddyTaskCreate_BridgesPlanUpdate(t *testing.T)
 	// forward path, then our bridge call (placed before deb) runs too.
 	mapACPSessionUpdate(update, ch, ctx, conn, nil)
 
-	// raw_output (from AppendRawOutput) + tool_use/tool_result + plan_update.
-	// Gather events skipping raw_output, look for plan_update.
+	// tool_use/tool_result + plan_update. Gather events, look for plan_update.
 	planEvents := 0
 	toolEvents := 0
 drainLoop:
@@ -298,8 +297,6 @@ drainLoop:
 		select {
 		case ev := <-ch:
 			switch ev.Type {
-			case "raw_output":
-				continue
 			case "plan_update":
 				planEvents++
 				require.NotNil(t, ev.Plan)

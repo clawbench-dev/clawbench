@@ -144,8 +144,7 @@ const currentFileName = computed(() => {
 const imgStyle = computed(() => {
     const style = {
         transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
-        transition: isDragging.value ? 'none' : 'transform 0.1s ease-out'
-    }
+        transition: isDragging.value ? 'none' : 'transform var(--duration-fast) ease-out'}
     // For images: once natural dimensions are known, set explicit width/height
     // and disable CSS max-width/max-height so transform: scale() handles fitting.
     // Before dimensions are ready, CSS max-width/max-height constrains as fallback.
@@ -687,26 +686,29 @@ function collectMdImages(container, clickedImg, clickedMermaid, clickedSvg) {
 
     let node = walker.nextNode()
     while (node) {
-        if (node.tagName === 'IMG') {
-            const src = fullImgSrc(node)
+        // Advance the walker before any branch can `continue`; otherwise an
+        // IMG with no resolvable src would re-visit the same node forever.
+        const current = node
+        node = walker.nextNode()
+        if (current.tagName === 'IMG') {
+            const src = fullImgSrc(current)
             if (!src) continue
-            const alt = node.alt || ''
+            const alt = current.alt || ''
             const name = alt || extractImageName(src)
             list.push({ src, name })
-            if (node === clickedImg) startIdx = list.length - 1
-        } else if (node.classList.contains('mermaid')) {
-            const svg = node.querySelector('svg')
+            if (current === clickedImg) startIdx = list.length - 1
+        } else if (current.classList.contains('mermaid')) {
+            const svg = current.querySelector('svg')
             if (!svg) continue
-            const name = deriveMermaidName(node)
+            const name = deriveMermaidName(current)
             list.push({ src: '', name, svg: svg.outerHTML })
-            if (node === clickedMermaid) startIdx = list.length - 1
-        } else if (node.classList.contains('lightbox-svg')) {
+            if (current === clickedMermaid) startIdx = list.length - 1
+        } else if (current.classList.contains('lightbox-svg')) {
             // Inline SVG (non-mermaid) returned directly by the AI
-            const name = node.getAttribute('data-name') || 'diagram.svg'
-            list.push({ src: '', name, svg: node.outerHTML })
-            if (node === clickedSvg) startIdx = list.length - 1
+            const name = current.getAttribute('data-name') || 'diagram.svg'
+            list.push({ src: '', name, svg: current.outerHTML })
+            if (current === clickedSvg) startIdx = list.length - 1
         }
-        node = walker.nextNode()
     }
     return { list, startIdx }
 }
@@ -833,7 +835,7 @@ onUnmounted(() => {
     /* Above all overlays/dialogs (CompletionPopover z 9998, etc.): the popover's
        expanded markdown summary renders lightbox-able images, and the full-screen
        viewer must sit on top when opened from there. */
-    z-index: 10000;
+    z-index: var(--z-lightbox);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -854,19 +856,19 @@ onUnmounted(() => {
     left: 16px;
     right: 16px;
     display: flex;
-    gap: 8px;
+    gap: var(--space-4);
     z-index: 10;
     align-items: center;
 }
 
 .lb-filename {
     color: rgba(255,255,255,0.85);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     user-select: none;
     pointer-events: none;
     background: rgba(0,0,0,0.5);
-    padding: 4px 12px;
-    border-radius: 12px;
+    padding: var(--space-2) var(--space-6);
+    border-radius: var(--radius-lg);
     backdrop-filter: blur(4px);
     flex: 1;
     overflow: hidden;
@@ -876,7 +878,7 @@ onUnmounted(() => {
 
 .lb-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-4);
     align-items: center;
     margin-left: auto;
     flex-shrink: 0;
@@ -888,7 +890,7 @@ onUnmounted(() => {
     left: 16px;
     right: 16px;
     display: flex;
-    gap: 8px;
+    gap: var(--space-4);
     z-index: 10;
     align-items: center;
     justify-content: center;
@@ -896,14 +898,14 @@ onUnmounted(() => {
 
 .lb-counter {
     color: rgba(255,255,255,0.7);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     min-width: 40px;
     text-align: center;
     user-select: none;
     pointer-events: none;
     background: rgba(0,0,0,0.5);
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: var(--space-1) var(--space-4);
+    border-radius: var(--radius-md);
     backdrop-filter: blur(4px);
 }
 
@@ -918,7 +920,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s, transform 0.15s;
+    transition: background var(--duration-base), transform var(--duration-base);
     backdrop-filter: blur(8px);
     touch-action: manipulation;
     flex-shrink: 0;

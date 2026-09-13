@@ -23,7 +23,7 @@ export interface UseSessionManagerOptions {
   loading: Ref<boolean>
 
   // Session operations (from useChatSession)
-  switchSessionCore: (sessionId: string) => Promise<void>
+  switchSessionCore: (sessionId: string, projectPath?: string) => Promise<void>
   createSessionCore: (agentId?: string) => Promise<void>
   archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
@@ -122,6 +122,9 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (!resp.ok) {
         throw new Error(`enqueue failed: ${resp.status}`)
       }
+      // Sending always queues while a turn is running, for every backend — the
+      // bubble stays pending until its own turn drains. Joining the running
+      // turn is a separate, explicit action on that bubble (handlePendingAction).
     } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added.
@@ -159,6 +162,78 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     }
   }
 
+  /**
+   * Act on a queued message: insert it into the running turn, or interrupt the
+   * turn so it runs next. Which one the backend supports is decided by
+   * `mode` — the caller passes 'insert' only when the agent reports
+   * supportsMidTurn, so the endpoint and the button label always agree.
+   *
+   * Returns true when the action took effect. On a decline (turn already
+   * finished, backend refused) the message stays queued and the caller simply
+   * reports it — nothing is lost either way.
+   */
+  async function handlePendingAction(queueId: string, mode: 'insert' | 'interrupt'): Promise<boolean> {
+    if (!queueId) return false
+    const sessionId = identity.currentSessionId.value
+    const path = mode === 'insert' ? '/api/ai/queue/inject' : '/api/ai/queue/interrupt'
+
+    try {
+      const resp = await fetch(
+        `${path}?session_id=${encodeURIComponent(sessionId)}&queueId=${encodeURIComponent(queueId)}`,
+        { method: 'POST' },
+      )
+      const data = await resp.json().catch(() => null) as {
+        inserted?: boolean
+        interrupted?: boolean
+        reason?: string
+        msgKey?: string
+      } | null
+
+      // A 500 means the message may be stranded (claimed but not restored to
+      // the queue), so it must NOT be reported as "still queued" — the user has
+      // to resend. Distinguish it from the benign 409 decline.
+      if (!resp.ok && mode === 'insert') {
+        toast.show(
+          data?.msgKey === 'QueueInjectStranded'
+            ? gt('chat.pending.insertStranded')
+            : gt('chat.pending.actionFailed'),
+          { icon: '⚠️', type: 'error' },
+        )
+        return false
+      }
+
+      if (mode === 'insert') {
+        if (data?.inserted) {
+          // The bubble stays in the list (it is part of the conversation now) —
+          // only its pending state goes. The backend also broadcasts
+          // queue_inject for other devices; this clears it locally right away.
+          dispatch({ type: 'clear_queued_pending', queueId })
+          return true
+        }
+        // 409 decline: the message is still queued, so it will run on its own.
+        toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
+        return false
+      }
+
+      // interrupt: the turn is stopping and the drain loop will pick this
+      // message up. The bubble stays pending until its own turn starts.
+      if (data?.interrupted) return true
+      if (data?.reason === 'not_queued') {
+        // The bubble's turn already ran (or it was cancelled): stopping the
+        // current reply would achieve nothing, so the backend refused. Say so
+        // rather than leaving the click with no feedback.
+        toast.show(gt('chat.pending.interruptNotQueued'), { icon: '⚠️', type: 'info' })
+        return false
+      }
+      // Nothing to interrupt (turn already ended) — the drain loop will run the
+      // queue anyway, so this is not a failure worth alarming about.
+      return false
+    } catch {
+      toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
+      return false
+    }
+  }
+
   // ── Cleanup ──
 
   /** Clean up streaming state when user wants to interact with session management
@@ -181,14 +256,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   // ── Unified session operations (cleanup + core) ──
 
-  async function switchSession(sessionId: string) {
+  async function switchSession(sessionId: string, projectPath?: string) {
     cleanupActiveStream()
     _clearInputState()
     // No clearPendingMessages here — loadHistory's parseMessages + queueAppend
     // replaces the entire messages array, so old pending messages are naturally
     // removed. Explicit clearPendingMessages would erase pending messages before
     // loadHistory can restore them from the backend queue field.
-    await switchSessionCore(sessionId)
+    await switchSessionCore(sessionId, projectPath)
     _restoreInputState()
   }
 
@@ -318,6 +393,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // Queue operations
     enqueueMessage,
     handleRemovePending,
+    handlePendingAction,
     // Unified session operations
     switchSession,
     createSession,

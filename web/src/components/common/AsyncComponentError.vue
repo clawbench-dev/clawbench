@@ -22,21 +22,21 @@ const message = computed(() => props.label || '组件加载失败，请点击重
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   min-height: 120px;
   padding: 32px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .async-component-error .li-retry {
-  padding: 4px 14px;
+  padding: var(--space-2) 14px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 

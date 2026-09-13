@@ -277,76 +277,55 @@ public class FloatingStatusViewTest {
     }
 
     // =====================================================
-    // Idle state: all-zero counts render the "空闲" label instead of stats.
+    // Zero counts: every stat group hidden, logo only. The window itself is
+    // hidden by the controller in this state (see FloatingStatusControllerTest),
+    // so the capsule is only ever built transiently with no counts.
     // =====================================================
 
     @Test
-    public void renderStats_zeroCounts_showsIdleLabel() throws Exception {
+    public void renderStats_zeroCounts_hidesEveryStatGroup() throws Exception {
         FloatingStatusView capsule = newCapsule();
 
         capsule.renderStats(0, 0, 0);
 
         List<String> texts = collectTexts(capsule);
-        assertTrue("zero counts must show the idle label, got: " + texts,
-                texts.contains("空闲"));
         assertFalse("zero counts must hide every stat label, got: " + texts,
                 texts.contains("执行中") || texts.contains("待审批") || texts.contains("未读"));
         capsule.stopBreathing();
     }
 
     @Test
-    public void renderStats_fromIdleToActive_hidesIdleLabel() throws Exception {
+    public void renderStats_fromIdleToActive_showsStatGroups() throws Exception {
         FloatingStatusView capsule = newCapsule();
         capsule.renderStats(0, 0, 0);
-        assertTrue("idle label must be visible before any content",
-                collectTexts(capsule).contains("空闲"));
+        assertFalse("no stat labels before any content",
+                collectTexts(capsule).contains("执行中"));
 
         capsule.renderStats(1, 0, 0);
 
         List<String> texts = collectTexts(capsule);
-        assertFalse("the idle label must disappear once a session is active, got: " + texts,
-                texts.contains("空闲"));
         assertTrue("the running stat must appear, got: " + texts,
                 texts.contains("执行中 1"));
         capsule.stopBreathing();
     }
 
     @Test
-    public void renderStats_fromActiveToIdle_showsIdleLabel() throws Exception {
+    public void renderStats_fromActiveToIdle_hidesStatGroups() throws Exception {
         FloatingStatusView capsule = newCapsule();
         capsule.renderStats(1, 0, 0);
-        assertFalse("no idle label while a session is active",
-                collectTexts(capsule).contains("空闲"));
+        assertTrue("the running stat must be visible while active",
+                collectTexts(capsule).contains("执行中 1"));
 
         capsule.renderStats(0, 0, 0);
 
-        assertTrue("the idle label must return when all counts drop to zero",
-                collectTexts(capsule).contains("空闲"));
+        assertFalse("all stat labels must hide when every count drops to zero",
+                collectTexts(capsule).contains("执行中"));
         capsule.stopBreathing();
     }
 
     // =====================================================
     // refreshLocaleText: re-resolves strings after a system locale change.
     // =====================================================
-
-    @Test
-    public void refreshLocaleText_switchesIdleLabelToNewLocale() throws Exception {
-        FloatingStatusView capsule = newCapsule();
-        capsule.renderStats(0, 0, 0);
-        assertTrue("idle label must be Chinese under the zh qualifier, got: " + collectTexts(capsule),
-                collectTexts(capsule).contains("空闲"));
-
-        // Switch the runtime qualifiers to English and re-resolve the label.
-        RuntimeEnvironment.setQualifiers("en");
-        capsule.refreshLocaleText();
-
-        List<String> texts = collectTexts(capsule);
-        assertTrue("idle label must follow the new locale, got: " + texts,
-                texts.contains("Idle"));
-        capsule.stopBreathing();
-
-        RuntimeEnvironment.setQualifiers("zh");
-    }
 
     @Test
     public void refreshLocaleText_reRendersStatLabelsInNewLocale() throws Exception {

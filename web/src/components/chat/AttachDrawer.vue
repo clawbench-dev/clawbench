@@ -69,12 +69,12 @@
         <button
           v-for="item in recentReferencedFiles" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="toggleAttached(item.path)"
+          @click="toggleAttached(item.path, item.isDir === true)"
         >
           <div class="ad-icon-wrap">
-            <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
+            <img v-if="!item.isDir && isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
+            <FileIcon v-else :path="item.path" :is-dir="item.isDir === true" :size="28" class="ad-file-icon" />
             <Check v-show="isAttached(item.path)" :size="12" class="ad-icon-check" />
           </div>
           <div class="ad-file-info">
@@ -185,6 +185,9 @@ import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 interface ReferencedFile {
   path: string
   count: number
+  /** Whether the referenced entry is a directory (drives the folder icon and
+   *  the isDir flag sent with the attachment). */
+  isDir?: boolean
 }
 
 const props = withDefaults(defineProps<{
@@ -408,22 +411,22 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
 }
 .ad-upload-btn {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px;
+  gap: var(--space-2);
+  padding:0 var(--space-4);
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
   background: var(--bg-hover);
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
 }
 .ad-upload-label {
@@ -438,23 +441,23 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-tab-bar {
   display: flex;
   gap: 0;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   overflow-x: auto;
   border-bottom: 1px solid var(--border-color);
   -webkit-overflow-scrolling: touch;
   flex-shrink: 0;
 }
 .ad-tab {
-  padding: 8px 14px;
-  font-size: 13px;
-  font-weight: 500;
+  padding: var(--space-4) 14px;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   border: none;
   background: none;
   color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--duration-base), border-color var(--duration-base);
 }
 .ad-tab-active {
   color: var(--accent-color);
@@ -465,34 +468,34 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-content {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 .ad-empty {
-  padding: 24px 16px;
+  padding:24px var(--space-7);
   text-align: center;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 /* File row */
 .ad-file-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: var(--space-5);
+  padding: var(--space-5) 14px;
   width: 100%;
   border: none;
   background: none;
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 .ad-file-row:active {
   background: var(--bg-hover);
 }
 .ad-file-attached {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
 }
 
 /* Icon container: holds icon or thumbnail.
@@ -506,7 +509,7 @@ defineExpose({ activeTab, handleFileDrop })
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   position: relative;
 }
 .ad-icon-wrap .ad-thumb {
@@ -515,7 +518,7 @@ defineExpose({ activeTab, handleFileDrop })
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .ad-file-icon {
@@ -529,15 +532,15 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-file-name {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ad-file-meta {
   display: block;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -555,8 +558,8 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-open {
   flex-shrink: 0;
   color: var(--text-muted);
-  opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s;
+  opacity: var(--opacity-muted);
+  transition: opacity var(--duration-base), color var(--duration-base);
 }
 .ad-file-row:active .ad-file-open {
   opacity: 1;
@@ -576,12 +579,12 @@ defineExpose({ activeTab, handleFileDrop })
   bottom: -3px;
   width: 14px;
   height: 14px;
-  padding: 2px;
+  padding: var(--space-1);
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--accent-color);
   color: #fff;
-  box-shadow: 0 0 0 2px var(--bg-panel, #fff);
+  box-shadow: 0 0 0 2px var(--bg-primary);
   pointer-events: none;
 }
 
@@ -589,31 +592,31 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-delete {
   flex-shrink: 0;
   color: var(--text-muted);
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: pointer;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base);
 }
 .ad-file-row:active .ad-file-delete {
   opacity: 1;
-  color: var(--danger-color, #dc3545);
+  color: var(--color-red);
 }
 @media (hover: hover) {
   .ad-file-row:hover .ad-file-delete {
     opacity: 1;
-    color: var(--danger-color, #dc3545);
+    color: var(--color-red);
   }
 }
 
 /* Current item label */
 .ad-label {
   display: inline-block;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   padding: 1px 5px;
-  border-radius: 3px;
-  margin-right: 6px;
+  border-radius: var(--radius-xs);
+  margin-right: var(--space-3);
   vertical-align: middle;
   letter-spacing: 0.3px;
 }
@@ -624,11 +627,11 @@ defineExpose({ activeTab, handleFileDrop })
 /* Upload progress percent in icon slot */
 .ad-uploading-icon {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .ad-upload-pct {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
   color: var(--accent-color);
   letter-spacing: -0.3px;
 }

@@ -283,15 +283,15 @@ defineExpose({ observeList, unobserveList, commitSearch })
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .drilldown-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
+  gap: var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #212529);
   overflow: hidden;
   flex: 1;
@@ -299,12 +299,12 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .drilldown-count {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
 }
 
@@ -327,7 +327,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
   color: var(--text-muted, #999);
   flex-shrink: 0;
   padding: 0;
-  transition: background 0.15s, color 0.15s, transform 0.3s;
+  transition: background var(--duration-base), color var(--duration-base), transform 0.3s;
 }
 
 @media (hover: hover) {
@@ -342,7 +342,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .drilldown-refresh-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -384,9 +384,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
 .drilldown-item {
   display: flex;
   align-items: center;
-  padding: 10px 14px;
+  padding: var(--space-5) 14px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   height: 64px;
   box-sizing: border-box;
@@ -409,8 +409,8 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-commit-msg {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -420,9 +420,9 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-commit-meta {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
-  margin-top: 2px;
+  margin-top: var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -433,7 +433,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
 }
 
 .git-load-more {
-  padding: 20px 14px;
+  padding: var(--space-8) 14px;
   display: flex;
   justify-content: center;
   min-height: 60px;
@@ -453,7 +453,7 @@ defineExpose({ observeList, unobserveList, commitSearch })
     align-items: center;
     justify-content: center;
     color: var(--text-muted, #999);
-    font-size: 14px;
+    font-size: var(--font-size-lg);
 }
 
 .empty-state-card {
@@ -462,32 +462,32 @@ defineExpose({ observeList, unobserveList, commitSearch })
     align-items: center;
     text-align: center;
     padding: 32px 24px;
-    gap: 8px;
+    gap: var(--space-4);
 }
 
 .empty-state-title {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
 }
 
 .empty-state-desc {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-muted);
 }
 
 .empty-state-hint {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: var(--space-2);
 }
 
 .empty-state-hint code {
     background: var(--bg-tertiary);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-xs);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
 }
 
 /* Selected commit highlight */
@@ -510,32 +510,32 @@ defineExpose({ observeList, unobserveList, commitSearch })
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 16px;
+  padding-top: var(--space-7);
   color: var(--text-muted, #ccc);
 }
 
 /* Short SHA tag */
 .git-commit-sha {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, monospace);
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 1px 4px;
-  border-radius: 3px;
-  margin-right: 4px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
+  margin-right: var(--space-2);
 }
 
 /* Ref tags */
 .git-commit-refs {
   display: inline-flex;
   gap: 3px;
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 .git-ref-tag {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 .ref-head { background: #1a1a2e; color: #fff; }

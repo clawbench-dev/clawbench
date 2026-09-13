@@ -524,10 +524,10 @@ onMounted(() => {
 .stats-body {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* ── Outlined grouping card (aligns with overview-card) ── */
@@ -535,17 +535,17 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm, 6px);
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .stats-card-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
+  gap: var(--space-3);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   margin: 0;
 }
@@ -555,11 +555,11 @@ onMounted(() => {
 }
 .stats-count-chip {
   margin-left: auto;
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 1px 7px;
   line-height: 16px;
 }
@@ -570,11 +570,11 @@ onMounted(() => {
 .stats-filter-group {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
 .stats-filter-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   flex-shrink: 0;
   min-width: 4em;
@@ -584,7 +584,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
   flex: 1;
 }
@@ -593,12 +593,12 @@ onMounted(() => {
   border: 1px solid var(--border-color);
   background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-secondary);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 3px 11px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 18px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 @media (hover: hover) {
@@ -618,8 +618,8 @@ onMounted(() => {
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm, 6px);
-  padding: 2px 6px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-sm);
 }
 .stats-date-sep {
   flex-shrink: 0;
@@ -630,7 +630,7 @@ onMounted(() => {
 .stats-summary {
   display: flex;
   align-items: stretch;
-  gap: 12px;
+  gap: var(--space-6);
   min-width: 0;
 }
 /* Narrow container: stack vertically — donut on top (full width), value cards
@@ -642,7 +642,7 @@ onMounted(() => {
   flex: 0 0 190px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .stats-summary.is-stacked .stats-donut-col {
@@ -657,21 +657,21 @@ onMounted(() => {
   width: 100%;
 }
 .stats-donut-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: var(--space-3);
   min-height: 20px;
 }
 .stats-donut-back {
   border: none;
   background: var(--bg-tertiary);
   color: var(--text-secondary);
-  border-radius: 10px;
-  padding: 0 8px;
-  font-size: 11px;
+  border-radius: var(--radius-md);
+  padding:0 var(--space-4);
+  font-size: var(--font-size-xs);
   line-height: 18px;
   cursor: pointer;
   flex-shrink: 0;
@@ -684,7 +684,7 @@ onMounted(() => {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   align-content: start;
 }
@@ -692,22 +692,22 @@ onMounted(() => {
   background: var(--bg-elevated, var(--bg-primary));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm, 6px);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .stats-total-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .stats-total-value {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   word-break: break-all;
@@ -715,12 +715,12 @@ onMounted(() => {
 
 /* ── Error / loading / empty ── */
 .stats-error {
-  padding: 9px 12px;
+  padding:9px var(--space-6);
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
   color: var(--color-red, #ef4444);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .stats-loading,
 .stats-empty {
@@ -728,29 +728,29 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 48px 0;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 .stats-empty-icon {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
 }
 
 /* ── Detail table ── */
 .stats-table-wrap {
   overflow-x: auto;
   margin: 0 -10px;
-  padding: 0 10px;
+  padding:0 var(--space-5);
 }
 .stats-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 .stats-table th,
 .stats-table td {
-  padding: 7px 8px;
+  padding:7px var(--space-4);
   border-bottom: 1px solid var(--border-color);
   text-align: right;
   white-space: nowrap;
@@ -761,7 +761,7 @@ onMounted(() => {
 }
 .stats-table th {
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   background: var(--bg-secondary, var(--bg-primary));
   cursor: pointer;
   user-select: none;
@@ -780,7 +780,7 @@ onMounted(() => {
   gap: 3px;
 }
 .stats-sort-arrow {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .stats-th-num.sorted {
   color: var(--accent-color, #4f8cff);

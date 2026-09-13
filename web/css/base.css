@@ -28,12 +28,12 @@
    still reference the full screen, causing overflow. 100vh stays stable. */
 html, body {
     height: 100vh;
-    font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif);
-    font-size: 15px;
-    line-height: 1.6;
+    font-family: var(--font-ui);
+    font-size: var(--font-size-xl);
+    line-height: var(--line-height-relaxed);
     background: var(--bg-primary);
     color: var(--text-primary);
-    transition: background 0.2s, color 0.2s;
+    transition: background var(--duration-slow), color var(--duration-slow);
 }
 
 /* ── Custom wallpaper layer ──────────────────────────────────────────
@@ -78,14 +78,6 @@ html, body {
     position: absolute;
     inset: 0;
     background: var(--wallpaper-scrim);
-}
-
-/* Gaussian blur class: applied by App.vue only when blur radius > 0 so we
-   never create a filter layer needlessly. The scale factor lives in the
-   inline style (it must track the live radius); this class only needs to
-   exist as a stable hook. */
-.wallpaper-image--blurred {
-    will-change: filter, transform;
 }
 
 /* Edge fade via an alpha MASK on the image itself (not a colored overlay).
@@ -178,7 +170,10 @@ html.wallpaper-active .image-preview-body,
 html.wallpaper-active .audio-preview-body,
 html.wallpaper-active .pdf-preview-container,
 html.wallpaper-active .pdf-error,
-html.wallpaper-active .office-preview-container {
+html.wallpaper-active .office-preview-container,
+html.wallpaper-active .forge-panel,
+html.wallpaper-active .forge-detail,
+html.wallpaper-active .forge-comment-body {
     background: transparent;
 }
 
@@ -192,8 +187,14 @@ html.wallpaper-active .execution-item,
 html.wallpaper-active .overview-card,
 html.wallpaper-active .proxy-port-item,
 html.wallpaper-active .form-section,
-html.wallpaper-active .stats-card-panel {
+html.wallpaper-active .stats-card-panel,
+html.wallpaper-active .forge-comment {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+}
+/* The forge error card keeps its red wash but must sit on the same translucent
+   base as other cards, or it reads as an opaque block over the wallpaper. */
+html.wallpaper-active .forge-error-card {
+    background: color-mix(in srgb, var(--color-red) 6%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
 }
 html.wallpaper-active .settings-card__body,
 html.wallpaper-active .group-panel__card,
@@ -216,14 +217,18 @@ html.wallpaper-active .form-header,
 html.wallpaper-active .proxy-header,
 html.wallpaper-active .detail-actions,
 html.wallpaper-active .form-footer,
-html.wallpaper-active .exec-detail-actions {
+html.wallpaper-active .exec-detail-actions,
+html.wallpaper-active .forge-header,
+html.wallpaper-active .forge-detail-header,
+html.wallpaper-active .forge-detail-footer {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
 }
 html.wallpaper-active .terminal-tab-bar,
 html.wallpaper-active .stats-tab-bar,
 html.wallpaper-active .drilldown-header,
 html.wallpaper-active .manage-tabs,
-html.wallpaper-active .toc-dock {
+html.wallpaper-active .toc-dock,
+html.wallpaper-active .forge-tabs {
     background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
 }
 html.wallpaper-active .dir-toolbar {
@@ -231,6 +236,15 @@ html.wallpaper-active .dir-toolbar {
 }
 html.wallpaper-active .dir-nav-bottom {
     background: color-mix(in srgb, var(--bg-primary) var(--panel-alpha), transparent);
+}
+/* File manager resident search dock and its search pill. Both use the top
+   toolbar's material (--bg-tertiary), so both go translucent together at that
+   token — a translucent pill over a solid dock would still read as opaque. */
+html.wallpaper-active .fs-nav-bottom {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+}
+html.wallpaper-active .fs-nav-bottom .search-pill {
+    background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
 }
 
 /* Section-title bands inside settings cards keep a translucent tint so the
@@ -261,7 +275,7 @@ html.wallpaper-active .settings-agents-index__rescan-row:active {
 }
 html.wallpaper-active .task-item.is-running,
 html.wallpaper-active .execution-item.running {
-    background: color-mix(in srgb, var(--success-color, #16a34a) 5%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
+    background: color-mix(in srgb, var(--color-green) 5%, color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent));
 }
 
 /* OfficePreview re-encodes its wrappers with !important deep overrides —
@@ -342,7 +356,7 @@ html.wallpaper-active .drilldown-item:active {
 }
 ::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);

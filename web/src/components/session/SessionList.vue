@@ -1,53 +1,181 @@
 <template>
-  <div class="session-list" ref="listRef">
-    <!-- Only show the full-screen spinner on first load / when the list is empty.
-         On background refreshes the existing list stays visible so it can be
-         swapped seamlessly to the new data (see loadSessions). -->
-    <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
-    <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
-    <template v-else>
-      <TransitionGroup name="session-list" tag="div" class="session-rows">
-        <div
-          v-for="(session, idx) in sessionsWithStatus"
-          :key="session.id"
-          class="session-row"
-          :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx }"
-        >
-          <span v-if="session.running" class="session-running-line"></span>
-          <div
-            class="session-item"
-            :class="{ active: session.id === currentSessionId }"
-            @click="selectSession(session.id, session.backend)"
+  <div class="session-list">
+    <!-- ── Project pane: pinned + recent sections, infinite-scrolling ── -->
+    <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
+      <!-- Only show the full-screen spinner on first load / when the list is empty.
+           On background refreshes the existing list stays visible so it can be
+           swapped seamlessly to the new data (see loadSessions). -->
+      <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
+      <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
+      <template v-else>
+        <!-- Pinned section: only shown when there are pinned sessions -->
+        <section v-if="pinnedSessions.length > 0" class="session-section">
+          <SessionGroupHeader
+            :title="t('common.pinnedSection')"
+            :count="pinnedSessions.length"
+            :collapsed="pinnedCollapsed"
+            @toggle="pinnedCollapsed = !pinnedCollapsed"
           >
-            <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-            <div class="session-item-info">
-              <div class="session-item-header">
-                <span class="session-item-title">{{ session.title }}</span>
+            <template #icon><Pin :size="12" class="session-group-pin-icon" /></template>
+          </SessionGroupHeader>
+          <TransitionGroup v-show="!pinnedCollapsed" name="session-list" tag="div" class="session-rows">
+            <div
+              v-for="(session, idx) in pinnedSessions"
+              :key="session.id"
+              :data-session-id="session.id"
+              class="session-row pinned"
+              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+              @contextmenu.prevent="showContextMenu($event, session)"
+              v-long-press="onSessionLongPress"
+            >
+              <span v-if="session.running" class="session-running-line"></span>
+              <div
+                class="session-item"
+                :class="{ active: session.id === currentSessionId }"
+                @click="selectSession(session.id, session.backend)"
+              >
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
+                </div>
               </div>
-              <div class="session-item-meta">
-                <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+                <Archive :size="15" />
+              </button>
+            </div>
+          </TransitionGroup>
+        </section>
+
+        <!-- Recent (unpinned) section -->
+        <section class="session-section">
+          <SessionGroupHeader
+            v-if="pinnedSessions.length > 0"
+            :title="t('common.recentSection')"
+            :count="unpinnedSessions.length"
+            :collapsed="recentCollapsed"
+            @toggle="recentCollapsed = !recentCollapsed"
+          />
+          <TransitionGroup v-show="!recentCollapsed" name="session-list" tag="div" class="session-rows">
+            <div
+              v-for="(session, idx) in unpinnedSessions"
+              :key="session.id"
+              :data-session-id="session.id"
+              class="session-row"
+              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === unpinnedIndexOffset + idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+              @contextmenu.prevent="showContextMenu($event, session)"
+              v-long-press="onSessionLongPress"
+            >
+              <span v-if="session.running" class="session-running-line"></span>
+              <div
+                class="session-item"
+                :class="{ active: session.id === currentSessionId }"
+                @click="selectSession(session.id, session.backend)"
+              >
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
+                </div>
+              </div>
+              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+                <Archive :size="15" />
+              </button>
+            </div>
+          </TransitionGroup>
+        </section>
+
+        <div ref="sentinelRef" class="session-list-sentinel"></div>
+        <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
+        <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
+      </template>
+    </div>
+
+    <!-- ── Cross-project pane: active sessions in OTHER projects ── -->
+    <div v-show="activeTab === 'cross'" class="session-list-pane session-list-pane--cross">
+      <LoadingIndicator v-if="crossLoading && !crossLoaded" size="md" :label="t('common.loading')" />
+      <div v-else-if="crossGroups.length === 0" class="session-empty">{{ t('session.crossEmpty') }}</div>
+      <template v-else>
+        <div v-for="group in crossGroups" :key="group.name" class="cross-group">
+          <SessionGroupHeader
+            :title="group.displayName"
+            :count="group.sessions.length"
+            :subtitle="group.displayPath"
+            :subtitle-title="group.name"
+            :collapsed="isCrossCollapsed(group.name)"
+            @toggle="toggleCrossCollapsed(group.name)"
+          />
+          <div v-show="!isCrossCollapsed(group.name)" class="cross-group-rows">
+            <div
+              v-for="session in group.sessions"
+              :key="group.name + '/' + session.id"
+              class="cross-session-row"
+              :class="{ running: session.running }"
+            >
+              <span v-if="session.running" class="session-running-line"></span>
+              <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
+                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+                <div class="session-item-info">
+                  <div class="session-item-header">
+                    <span class="session-item-title">{{ session.title }}</span>
+                  </div>
+                  <div class="session-item-meta">
+                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-            <Archive :size="15" />
-          </button>
         </div>
-      </TransitionGroup>
-      <div ref="sentinelRef" class="session-list-sentinel"></div>
-      <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
-      <div v-else-if="!hasMore && sessions.length > 0" class="session-list-end"></div>
-    </template>
+      </template>
+    </div>
+
+    <!-- Context menu for pin/unpin & rename — reuses the shared file-manager
+         context menu (.context-menu / .context-menu-item in css/components.css)
+         so positioning, styling and viewport clamping stay in one place. -->
+    <Teleport to="body">
+      <div v-if="contextMenu.visible" class="context-menu visible" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }" @click.stop @contextmenu.prevent.stop>
+        <div class="context-menu-item" @click.stop="togglePin(contextMenu.sessionId, contextMenu.pinned)">
+          <component :is="contextMenu.pinned ? PinOff : Pin" :size="14" />
+          {{ contextMenu.pinned ? t('common.unpin') : t('common.pin') }}
+        </div>
+        <div class="context-menu-item" @click.stop="renameSessionFromMenu(contextMenu.sessionId)">
+          <PencilLine :size="14" />
+          {{ t('common.renameSession') }}
+        </div>
+        <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
+          <Archive :size="14" />
+          {{ t('common.archive') }}
+        </div>
+      </div>
+      <!-- Full-viewport click-catcher: one tap/click anywhere dismisses the menu.
+           Re-dispatching contextmenu through it keeps right-click-on-another-row
+           working while the menu is open (mirrors FileManagerContent). -->
+      <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
+    </Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
@@ -55,7 +183,10 @@ import { useListKeys } from '@/composables/useListKeys'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
+import { apiPatch } from '@/utils/api.ts'
+import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -63,14 +194,16 @@ const props = defineProps({
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
   isActive: { type: Boolean, default: true },
+  activeTab: { type: String, default: 'project' },
 })
 
-const emit = defineEmits(['select', 'archive', 'destroy'])
+const emit = defineEmits(['select', 'archive', 'destroy', 'update:activeTab'])
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
+const { groups: crossGroups, loading: crossLoading, loaded: crossLoaded } = useCrossProjectSessions()
 
 const sessions = ref([])
 const loading = ref(false)
@@ -91,6 +224,30 @@ const sessionsWithStatus = computed(() => {
     running: props.runningSessionIds.has(s.id),
   }))
 })
+
+// Display order is pinned-first, then the rest — matching the backend's
+// `ORDER BY pinned DESC, created_at DESC`. Both sections are derived from the
+// same source array so the rendered DOM order equals sessionsWithStatus order,
+// which is what useListNav indexes into.
+const pinnedSessions = computed(() => sessionsWithStatus.value.filter(s => s.pinned))
+const unpinnedSessions = computed(() => sessionsWithStatus.value.filter(s => !s.pinned))
+// Global nav index of the first unpinned row: pinned rows occupy [0, n).
+const unpinnedIndexOffset = computed(() => pinnedSessions.value.length)
+
+const pinnedCollapsed = ref(false)
+const recentCollapsed = ref(false)
+
+// Cross-project group collapse state, keyed by absolute project path. In-memory
+// only: the pane is v-show'd (never unmounted) while the app runs, so the state
+// survives tab switches and list reloads, and resets on page reload.
+const crossCollapsed = reactive(new Set())
+function isCrossCollapsed(name) {
+  return crossCollapsed.has(name)
+}
+function toggleCrossCollapsed(name) {
+  if (crossCollapsed.has(name)) crossCollapsed.delete(name)
+  else crossCollapsed.add(name)
+}
 
 async function loadSessions() {
   // Keep the existing list on screen during background refreshes — only show
@@ -131,17 +288,16 @@ async function loadSessions() {
  * Each page is fetched after the previous one's last row (cursor semantics
  * identical to loadMoreSessions below).
  *
- * The cursor is the row's createdAt, NOT updatedAt: the backend orders and
- * filters paged sessions by created_at (GetSessionsPaged), so sending
- * updatedAt — which is >= createdAt and bumped on every message — makes the
- * `created_at < cursor` filter match rows already shown on the previous page,
- * duplicating the list.
+ * The cursor is the last row's full sort key — createdAt + id + pinned — NOT
+ * updatedAt: the backend orders and filters paged sessions by
+ * (pinned DESC, created_at DESC, id DESC), so sending updatedAt (which is
+ * >= createdAt and bumped on every message) makes the cursor filter match rows
+ * already shown, and omitting pinned re-returns every pinned row on each page.
  */
 async function fetchSessionsUpTo(minCount) {
   const limit = pageSize.value
   const accumulated = []
-  let cursorTime = null
-  let cursorId = null
+  let cursor = null
   // Always fetch at least one page; afterwards keep going only when a reload
   // must preserve a deeper list (minCount > pageSize). On a plain first load
   // (minCount = 0) one page is exactly right — the remaining pages are loaded
@@ -153,9 +309,7 @@ async function fetchSessionsUpTo(minCount) {
   let pages = 0
   for (;;) {
     let url = `/api/ai/sessions?limit=${limit}`
-    if (cursorTime && cursorId) {
-      url += `&cursor=${encodeURIComponent(cursorTime)}&cursor_id=${encodeURIComponent(cursorId)}`
-    }
+    if (cursor) url += buildCursorQuery(cursor)
     const resp = await fetch(url)
     const data = await resp.json()
     const list = data.sessions || []
@@ -174,11 +328,21 @@ async function fetchSessionsUpTo(minCount) {
       serverHasMore = false
       break
     }
-    cursorTime = last.createdAt
-    cursorId = last.id
+    cursor = last
   }
   hasMore.value = serverHasMore
   return accumulated
+}
+
+/**
+ * Build the cursor query string for the row the next page starts after.
+ * `pinned` is part of the sort key, so it must travel with the cursor —
+ * without it the backend cannot exclude already-seen pinned rows.
+ */
+function buildCursorQuery(row) {
+  return `&cursor=${encodeURIComponent(row.createdAt)}`
+    + `&cursor_id=${encodeURIComponent(row.id)}`
+    + `&cursor_pinned=${row.pinned ? 1 : 0}`
 }
 
 async function loadMoreSessions() {
@@ -194,8 +358,8 @@ async function loadMoreSessions() {
       hasMore.value = false
       return
     }
-    // Cursor = createdAt (backend paginates by created_at, see fetchSessionsUpTo).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}&cursor=${encodeURIComponent(last.createdAt)}&cursor_id=${encodeURIComponent(last.id)}`)
+    // Cursor = the last row's full sort key (pinned, createdAt, id).
+    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}`)
     const data = await resp.json()
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]
@@ -221,6 +385,18 @@ function selectSession(sessionId, backend) {
   emit('select', sessionId, backend)
 }
 
+/**
+ * Cross-project row click. Emits the owning project path as a third argument so
+ * App.vue can hot-switch projects before opening the session. The row's class is
+ * deliberately `.cross-session-item` (NOT `.session-item`): scrollActiveIntoView
+ * maps useListNav's index onto `querySelectorAll('.session-item')`, and the nav
+ * count only covers project rows — sharing the class would silently corrupt
+ * keyboard navigation.
+ */
+function selectCrossSession(session, projectPath) {
+  emit('select', session.id, session.backend, projectPath)
+}
+
 async function archiveSession(sessionId) {
   const isRunning = props.runningSessionIds.has(sessionId)
   const confirmMsg = isRunning ? t('session.confirmArchiveRunning') : t('session.confirmArchive')
@@ -234,6 +410,134 @@ async function archiveSession(sessionId) {
     const session = sessions.value.find(s => s.id === sessionId)
     emit('archive', sessionId, session?.backend)
   }
+}
+
+const contextMenu = reactive({ visible: false, x: 0, y: 0, sessionId: '', pinned: false })
+
+/** Resolve a session by id, open the menu anchored at viewport coords. */
+function openContextMenu(x, y, sessionId, pinned) {
+  contextMenu.visible = true
+  // Viewport (getBoundingClientRect) space → position:fixed CSS space: under
+  // the app's CSS UI-zoom the raw clientX/clientY would be over-scaled and push
+  // the menu past the right/bottom edge. toFixedCSS applies the inverse scale.
+  contextMenu.x = toFixedCSS(x)
+  contextMenu.y = toFixedCSS(y)
+  contextMenu.sessionId = sessionId
+  contextMenu.pinned = !!pinned
+  nextTick(() => clampContextMenu())
+}
+
+function showContextMenu(event, session) {
+  openContextMenu(event.clientX, event.clientY, session.id, session.pinned)
+}
+
+function onSessionLongPress(e, capturedSessionId) {
+  // Prefer the session id captured at touchstart time by the directive — it is
+  // the id of the row that was actually pressed. Important: inside the
+  // directive's setTimeout callback `e.currentTarget` is null (the touch event
+  // has already finished dispatching), so reading the DOM attribute from the
+  // event target at fire-time can return a different row when TransitionGroup
+  // has moved/reused DOM nodes (e.g. after pinning reorders the list).
+  let sessionId = capturedSessionId
+  if (!sessionId) {
+    const el = e.currentTarget || e.target
+    sessionId = el?.dataset?.sessionId || el?.closest('[data-session-id]')?.dataset?.sessionId
+  }
+  if (!sessionId) return
+  const session = sessionsWithStatus.value.find(s => s.id === sessionId)
+  if (!session) return
+  const touch = e.touches[0]
+  openContextMenu(touch.clientX, touch.clientY + 10, sessionId, session.pinned)
+}
+
+function closeContextMenu() {
+  contextMenu.visible = false
+}
+
+/**
+ * Right-click while the menu is open lands on the full-viewport overlay, not on
+ * a row. Hide the overlay for one hit-test so elementFromPoint reveals the row
+ * underneath, then re-open the menu for that row — otherwise a second
+ * right-click anywhere would just close the menu (mirrors FileManagerContent).
+ */
+function handleOverlayContextMenu(e) {
+  const overlay = e.currentTarget
+  const prev = overlay.style.pointerEvents
+  overlay.style.pointerEvents = 'none'
+  let row = null
+  try {
+    row = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-session-id]') || null
+  } finally {
+    overlay.style.pointerEvents = prev
+  }
+  if (!row) { closeContextMenu(); return }
+  const session = sessionsWithStatus.value.find(s => s.id === row.dataset.sessionId)
+  if (!session) { closeContextMenu(); return }
+  openContextMenu(e.clientX, e.clientY, session.id, session.pinned)
+}
+
+// Clamp menu position to stay within the viewport on all sides. Mirrors
+// FileManagerContent.clampCtxMenu: viewport dims and the stored coords are both
+// in getBoundingClientRect() space, so the comparison is zoom-consistent.
+function clampContextMenu() {
+  const menu = document.querySelector('.context-menu.visible')
+  if (!menu) return
+  const pad = 8
+  const vp = getZoomedViewport()
+  const vpW = toFixedCSS(vp.width)
+  const vpH = toFixedCSS(vp.height)
+  const maxX = vpW - menu.offsetWidth - pad
+  const maxY = vpH - menu.offsetHeight - pad
+  contextMenu.x = Math.max(pad, Math.min(contextMenu.x, maxX))
+  contextMenu.y = Math.max(pad, Math.min(contextMenu.y, maxY))
+}
+
+async function togglePin(sessionId, currentPinned) {
+  closeContextMenu()
+  const newPinned = !currentPinned
+  // Optimistic update
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (session) session.pinned = newPinned
+  try {
+    await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { pinned: newPinned })
+    // Refresh list to ensure correct sort order
+    store.state.sessionListVersion++
+  } catch (err) {
+    // Rollback on failure
+    if (session) session.pinned = currentPinned
+    appLog.e('SessionList', 'Failed to toggle pin:', err)
+  }
+}
+
+async function renameSessionFromMenu(sessionId) {
+  closeContextMenu()
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session) return
+  const current = session.title || ''
+  const newTitle = await dialog.prompt(
+    t('chat.sessionRename.prompt'),
+    {
+      title: t('chat.sessionRename.title'),
+      value: current,
+      placeholder: t('chat.sessionRename.placeholder'),
+      confirmText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+    }
+  )
+  if (newTitle === null || newTitle.trim() === '' || newTitle.trim() === current) return
+  try {
+    await apiPatch(`/api/ai/session/update?session_id=${encodeURIComponent(sessionId)}`, { title: newTitle.trim() })
+    session.title = newTitle.trim()
+    store.state.sessionListVersion++
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to rename session:', err)
+  }
+}
+
+function archiveFromMenu(sessionId) {
+  const session = sessions.value.find(s => s.id === sessionId)
+  closeContextMenu()
+  emit('archive', sessionId, session?.backend)
 }
 
 function addSessionLocally(session) {
@@ -257,6 +561,11 @@ function reload() {
   loadSessions()
 }
 
+// Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
+// then newest-first) is exactly the rendered DOM order. Both sections bind
+// `session-row-active` against that same global index — the unpinned section
+// offsets by the pinned count — so the highlight and Enter target stay aligned
+// with what the user sees.
 const listNav = useListNav({
   getCount: () => sessionsWithStatus.value.length,
   onConfirm: (idx) => {
@@ -265,7 +574,10 @@ const listNav = useListNav({
   },
   onActiveChange: scrollActiveIntoView,
 })
-useListKeys({ isOpen: () => props.isActive, nav: listNav })
+// Keyboard navigation is scoped to the project tab: cross-project rows are
+// deliberately outside useListNav (click/tap only), so leaving the nav active
+// while the cross pane is shown would let arrow keys scroll invisible rows.
+useListKeys({ isOpen: () => props.isActive && props.activeTab === 'project', nav: listNav })
 
 function scrollActiveIntoView(index) {
   const items = listRef.value?.querySelectorAll('.session-item') || []
@@ -274,6 +586,49 @@ function scrollActiveIntoView(index) {
 }
 
 watch(sessionsWithStatus, () => listNav.reset())
+
+// The project pane is v-show'd (not unmounted) so its scroll position and
+// pagination depth survive tab switches. But when hidden its scroll root has
+// zero size, which makes the load-more sentinel intersect immediately and
+// triggers bogus pagination. Pause the observer while the cross tab is shown
+// and re-arm it on return.
+watch(() => props.activeTab, async (tab) => {
+  if (tab === 'project') {
+    await nextTick()
+    setupObserver()
+  } else {
+    if (observer) { observer.disconnect(); observer = null }
+  }
+})
+
+// Reset to the project tab whenever the current project changes: the session we
+// just opened belongs to the (new) current project and must be visible in the
+// project list, not hidden behind the cross tab.
+watch(() => store.state.projectRoot, () => {
+  if (props.activeTab !== 'project') emit('update:activeTab', 'project')
+})
+
+// Bring the active session into view after a cross-project jump. The row may
+// not be loaded yet (pagination), so retry once after a reload settles.
+watch(() => props.currentSessionId, async (id) => {
+  if (!id) return
+  await nextTick()
+  if (scrollActiveRowIntoView()) return
+  await nextTick()
+  scrollActiveRowIntoView()
+})
+
+/** Scroll the row carrying .session-item.active into view. */
+function scrollActiveRowIntoView() {
+  const rows = listRef.value?.querySelectorAll('.session-row') || []
+  for (const row of rows) {
+    if (row.querySelector('.session-item.active')) {
+      if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+      return true
+    }
+  }
+  return false
+}
 
 // Real-time sync: reload when the global session list version bumps. This fires
 // after create/archive/destroy/read/completion — including cases that don't emit
@@ -300,14 +655,26 @@ onUnmounted(() => {
   removeEventHandler = null
   if (reloadDebounce) { clearTimeout(reloadDebounce); reloadDebounce = null }
   if (observer) { observer.disconnect(); observer = null }
+  contextMenu.visible = false
 })
 </script>
 
 <style scoped>
+/* Root is a flex column hosting the two mutually-exclusive panes. The tab bar
+   itself is rendered by the wrapper (sidebar bottom / BottomSheet #footer) so
+   it can stay pinned outside the scroll area. */
 .session-list {
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
+}
+
+/* Each pane owns its own scrolling so tab switches preserve scroll position. */
+.session-list-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .session-rows {
@@ -317,7 +684,7 @@ onUnmounted(() => {
 
 .session-list-enter-active,
 .session-list-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity var(--duration-slow) ease, transform var(--duration-slow) ease;
 }
 
 .session-list-enter-from {
@@ -331,7 +698,7 @@ onUnmounted(() => {
 }
 
 .session-list-move {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .session-empty {
@@ -340,7 +707,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .session-item {
@@ -350,26 +717,31 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border-color, #dee2e6);
+  padding: var(--space-5) var(--space-6);
   cursor: pointer;
 }
 
 /* Accent border lives on the row so it encloses the archive button too. */
 .session-item.active {
-  padding-left: 8px;
-}
-
-.session-row.active .session-item {
-  border-top-color: transparent;
+  padding-left: var(--space-4);
 }
 
 .session-row.session-row-active {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border-radius: 0;
 }
 
+/* Selected-row tint. Declared on the row (not on .session-item) so it fills the
+   34px archive-button cell as well — when it lived on .session-item the archive
+   cell kept showing the row's own background (green for a running session) and
+   the selection looked cut short. Painted as a background-image rather than a
+   background-color so a running row's green fill still shows through beneath
+   the translucent tint instead of being replaced. */
 .session-row.active {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent),
+    color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent)
+  );
   border-left: 4px solid var(--accent-color, #0066cc);
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
@@ -378,7 +750,7 @@ onUnmounted(() => {
 }
 
 .session-row.running {
-  background: rgba(34, 197, 94, 0.05);
+  background-color: rgba(34, 197, 94, 0.05);
   overflow: hidden;
 }
 
@@ -419,23 +791,25 @@ onUnmounted(() => {
   animation: scan-bg 2s ease-in-out infinite;
 }
 
+/* Running + selected: keep the green fill in the background-color slot so the
+   active tint (background-image) stays layered on top. */
 .session-row.active.running {
-  background: rgba(34, 197, 94, 0.05);
+  background-color: rgba(34, 197, 94, 0.05);
 }
 
 @media (hover: hover) {
   .session-row:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
   }
   .session-row.active.running:hover {
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
 
 .session-item-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
@@ -443,7 +817,7 @@ onUnmounted(() => {
 .session-item-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
 }
@@ -451,16 +825,16 @@ onUnmounted(() => {
 .session-item-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
   flex-wrap: nowrap;
   overflow: hidden;
 }
 
 .session-item-title {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -485,7 +859,7 @@ onUnmounted(() => {
 
 @keyframes badge-breathe {
   0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
+  50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
 }
 
 @keyframes scan-bg {
@@ -497,6 +871,10 @@ onUnmounted(() => {
   display: flex;
   align-items: stretch;
   position: relative;
+  /* Row separator lives here (not on .session-item / .session-archive-btn) so it
+     spans the full row width. Drawn on the two cells it stopped short of the
+     archive button, leaving a gap. */
+  border-top: 1px solid var(--border-color, #dee2e6);
 }
 
 .session-archive-btn {
@@ -509,8 +887,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-top: 1px solid var(--border-color, #dee2e6);
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -524,7 +901,7 @@ onUnmounted(() => {
 }
 
 .session-item-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   white-space: nowrap;
   overflow: hidden;
@@ -532,26 +909,26 @@ onUnmounted(() => {
 }
 
 .session-item-agent {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .session-item-model {
-  font-size: 9px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
   flex-shrink: 1;
   background: rgba(100, 100, 100, 0.08);
   color: var(--text-muted, #999);
@@ -567,5 +944,87 @@ onUnmounted(() => {
 
 .session-list-end {
   height: 0;
+}
+
+/* ── Pinned / section grouping ── */
+
+/* Section groups. The collapsible header itself is the shared
+   SessionGroupHeader component; only the wrapper layout lives here. */
+.session-section {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Slot content passed into SessionGroupHeader is compiled in THIS component's
+   scope, so its styling must live here — the child's scoped rules do not reach
+   it. */
+.session-group-pin-icon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+/* ── Long-press feedback ── */
+
+.session-row.long-pressing .session-item {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+/* The context menu itself uses the shared .context-menu / .context-menu-item
+   styles from css/components.css (same as the file manager). */
+
+/* ── Cross-project pane ── */
+
+.cross-group + .cross-group {
+  border-top: 1px solid var(--border-color, #dee2e6);
+}
+
+/* The group header (shared SessionGroupHeader) is the primary visual distinction
+   from project rows: it names the owning project so a row can never be mistaken
+   for a local one. */
+.cross-session-row {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.cross-session-row.running {
+  background: rgba(34, 197, 94, 0.05);
+  overflow: hidden;
+}
+
+.cross-session-row.running::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(34, 197, 94, 0.14), transparent);
+  animation: scan-bg 2s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cross-session-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: var(--space-5) var(--space-6);
+  border-top: 1px solid var(--border-color, #dee2e6);
+  cursor: pointer;
+  /* Subtle left rail marks rows as belonging to another project. */
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+@media (hover: hover) {
+  .cross-session-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  }
+  .cross-session-row.running .cross-session-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  }
 }
 </style>

@@ -103,7 +103,7 @@ export class ChatPage {
 
   /**
    * Wait for ACP slash commands to be available.
-   * Polls the /api/ai/commands endpoint until commands are returned.
+   * Polls GET /api/agents until any agent's cached acpStates expose commands.
    * Uses relative URL so the browser's auth cookies are included.
    */
   async waitForACPCommands(timeout = 20000): Promise<void> {
@@ -111,10 +111,13 @@ export class ChatPage {
     while (Date.now() - start < timeout) {
       try {
         const result = await this.page.evaluate(async () => {
-          const resp = await fetch('/api/ai/commands')
+          const resp = await fetch('/api/agents')
           if (!resp.ok) return { ok: false, count: 0 }
           const data = await resp.json()
-          return { ok: true, count: data.commands?.length || 0 }
+          const states = (data.acpStates || {}) as Record<string, { commands?: unknown[] }>
+          let count = 0
+          for (const s of Object.values(states)) count += s.commands?.length || 0
+          return { ok: true, count }
         })
         if (result.count > 0) return
       } catch {

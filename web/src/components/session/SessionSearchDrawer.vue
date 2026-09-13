@@ -645,8 +645,8 @@ defineExpose({ focusSearchInput })
 .session-search-input-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 14px;
+  gap: var(--space-3);
+  padding: var(--space-5) 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -667,14 +667,14 @@ defineExpose({ focusSearchInput })
   flex-shrink: 0;
   max-width: 88px;
   height: 26px;
-  padding: 0 6px;
+  padding:0 var(--space-3);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
   color: var(--text-muted, #999);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: border-color var(--duration-base), color var(--duration-base), background var(--duration-base);
 }
 
 .filter-dropdown-btn.filter-active {
@@ -691,7 +691,7 @@ defineExpose({ focusSearchInput })
 
 .filter-dropdown-caret {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: var(--opacity-soft);
 }
 
 @media (hover: hover) {
@@ -707,8 +707,8 @@ defineExpose({ focusSearchInput })
 .time-range-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
+  gap: var(--space-3);
+  padding: var(--space-3) 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
@@ -726,13 +726,13 @@ defineExpose({ focusSearchInput })
   height: 22px;
   padding: 0 9px;
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #666);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition: border-color var(--duration-base), color var(--duration-base), background var(--duration-base);
 }
 
 .time-chip.active {
@@ -744,7 +744,7 @@ defineExpose({ focusSearchInput })
 .time-range-sep {
   flex-shrink: 0;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .time-date-input {
@@ -752,9 +752,9 @@ defineExpose({ focusSearchInput })
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
 }
 
 @media (hover: hover) {
@@ -767,22 +767,22 @@ defineExpose({ focusSearchInput })
 .filter-menu-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
   background: none;
   color: var(--text-primary, #1a1a1a);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 .filter-menu-item.selected {
   color: var(--accent-color, #4a90d9);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .filter-menu-check {
@@ -809,15 +809,15 @@ defineExpose({ focusSearchInput })
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
 .session-search-error {
   padding: 24px;
   text-align: center;
-  color: var(--color-error, #e74c3c);
-  font-size: 13px;
+  color: var(--color-red);
+  font-size: var(--font-size-md);
   flex-shrink: 0;
 }
 
@@ -833,15 +833,15 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-end {
-  padding: 12px;
+  padding: var(--space-6);
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .session-search-count {
-  padding: 6px 14px;
-  font-size: 11px;
+  padding: var(--space-3) 14px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
@@ -849,20 +849,20 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-mode {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: rgba(124, 58, 237, 0.08);
   color: var(--color-purple, #7c3aed);
-  margin-left: 6px;
-  font-weight: 500;
+  margin-left: var(--space-3);
+  font-weight: var(--font-weight-medium);
 }
 
 .session-search-item {
-  padding: 10px 14px;
+  padding: var(--space-5) 14px;
   border-bottom: 1px solid var(--border-color, #f0f0f0);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 @media (hover: hover) {
@@ -880,13 +880,13 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .session-search-item-title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -896,16 +896,16 @@ defineExpose({ focusSearchInput })
 }
 
 .session-search-item-meta {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   flex-shrink: 0;
 }
 
 .session-search-item-preview {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
   color: var(--text-secondary, #666);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -916,36 +916,36 @@ defineExpose({ focusSearchInput })
 .session-search-item-preview :deep(mark) {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0 1px;
 }
 
 .session-search-item-footer {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
 .session-search-item-archived {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
-  color: var(--color-warning, #e6a23c);
+  color: var(--color-orange);
 }
 
 .session-search-item-backend {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #eee);
   color: var(--text-secondary, #666);
 }
 
 .session-search-item-chunks {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
 }
 
 /* ── Drilldown detail view ── */
@@ -959,10 +959,10 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base);
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: var(--space-1);
 }
 
 @media (hover: hover) {
@@ -979,17 +979,17 @@ defineExpose({ focusSearchInput })
 /* ACP "load external session" button — right side of the search header */
 .acp-resume-header-btn {
   height: 26px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   border: none;
   background: none;
   color: var(--text-secondary, #495057);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border-radius: 6px;
-  font-size: 12px;
-  transition: background 0.15s, color 0.15s;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  transition: background var(--duration-base), color var(--duration-base);
   margin-left: auto;
   flex-shrink: 0;
   white-space: nowrap;
@@ -1009,14 +1009,14 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-archived-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
+  font-size: var(--font-size-2xs);
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: rgba(230, 162, 60, 0.12);
-  color: var(--color-warning, #e6a23c);
-  font-weight: 500;
+  color: var(--color-orange);
+  font-weight: var(--font-weight-medium);
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-left: var(--space-3);
 }
 
 .detail-page {
@@ -1029,18 +1029,18 @@ defineExpose({ focusSearchInput })
 .detail-meta-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: var(--space-3);
+  padding: var(--space-4) 14px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
 }
 
 .detail-meta-badge {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 4px;
-  font-weight: 500;
+  font-size: var(--font-size-2xs);
+  padding: var(--space-1) 7px;
+  border-radius: var(--radius-xs);
+  font-weight: var(--font-weight-medium);
 }
 
 .detail-meta-backend {
@@ -1054,13 +1054,13 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-meta-time {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   margin-left: auto;
 }
 
 .detail-chunk {
-  padding: 10px 14px;
+  padding: var(--space-5) 14px;
   border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.04));
 }
 
@@ -1068,16 +1068,16 @@ defineExpose({ focusSearchInput })
   padding: 24px;
   text-align: center;
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .detail-chunk-role {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 0;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: var(--space-1) 0;
   letter-spacing: 0.3px;
 }
 
@@ -1090,16 +1090,15 @@ defineExpose({ focusSearchInput })
 }
 
 .detail-chunk-text {
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 4px 0 0;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+  padding: var(--space-2) 0 0;
   word-break: break-word;
-  overflow-wrap: break-word;
 }
 
 .detail-chunk-text :deep(mark.search-hl) {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0 1px;
   color: inherit;
 }
@@ -1108,7 +1107,7 @@ defineExpose({ focusSearchInput })
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
   flex-shrink: 0;
 }
@@ -1116,9 +1115,9 @@ defineExpose({ focusSearchInput })
 /* Override BottomSheet's default footer padding/border to stay compact
    (matches the task-exec-detail bottom action bar). */
 :deep(.bs-footer) {
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   border-top: none;
-  gap: 6px;
+  gap: var(--space-3);
 }
 </style>
 

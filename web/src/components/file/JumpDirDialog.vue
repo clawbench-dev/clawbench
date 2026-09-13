@@ -50,15 +50,15 @@ function doConfirm() {
 
 <style scoped>
 .jump-dialog-body {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
 }
 .jump-path-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   background: var(--bg-primary);
   color: var(--text-primary);
   outline: none;

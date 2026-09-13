@@ -1191,7 +1191,8 @@ describe('AskUserQuestion action handler', () => {
 
       // Unselected option should have pointer-events: none
       expect(optB.style.pointerEvents).toBe('none')
-      expect(optB.style.opacity).toBe('0.4')
+      // jsdom 不解析 var()，断言 token 名（0.4 由 --opacity-disabled 保证）
+      expect(optB.style.opacity).toBe('var(--opacity-disabled)')
       cleanup(container)
     })
 

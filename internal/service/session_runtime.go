@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -499,6 +500,120 @@ func UnregisterSessionCancel(sessionID string) {
 	sessionCancels.Delete(sessionID)
 }
 
+// sessionTurnCancels holds the cancel func for the CURRENT turn of a session,
+// as opposed to sessionCancels which stops the whole execution goroutine.
+//
+// The drain loop runs many turns on one goroutine, all sharing a single
+// long-lived context. That is correct for "stop everything" (user cancel,
+// shutdown) but useless for "stop just this turn" — cancelling the shared
+// context would abort every subsequent queued turn too. The interrupt action
+// ("interrupt and send") needs exactly the narrower scope, so each turn
+// registers its own derived context here for the duration of that turn.
+var sessionTurnCancels sync.Map // map[string]*sessionTurn
+
+// sessionTurn is one running turn's registration. The id makes the entry
+// addressable: an interrupt must prove it is stopping the SAME turn the caller
+// observed, or it could kill a turn that started in between (see
+// InterruptSessionTurnIfCurrent).
+type sessionTurn struct {
+	id     uint64
+	cancel context.CancelFunc
+}
+
+// turnSeq hands out the turn ids. Monotonic, never reused.
+var turnSeq atomic.Uint64
+
+// RegisterSessionTurnCancel records the cancel func for the turn about to run
+// and returns its id. Overwrites any previous turn's entry (only one turn runs
+// at a time).
+func RegisterSessionTurnCancel(sessionID string, cancel context.CancelFunc) uint64 {
+	id := turnSeq.Add(1)
+	sessionTurnCancels.Store(sessionID, &sessionTurn{id: id, cancel: cancel})
+	return id
+}
+
+// UnregisterSessionTurnCancel clears the current turn's cancel func. Called
+// when the turn ends, so a later interrupt cannot cancel a finished turn.
+func UnregisterSessionTurnCancel(sessionID string) {
+	sessionTurnCancels.Delete(sessionID)
+}
+
+// CurrentTurnID returns the id of the turn running right now, if any. Callers
+// pair it with InterruptSessionTurnIfCurrent so their interrupt only lands on
+// the turn they actually inspected.
+func CurrentTurnID(sessionID string) (uint64, bool) {
+	v, ok := sessionTurnCancels.Load(sessionID)
+	if !ok {
+		return 0, false
+	}
+	t, ok := v.(*sessionTurn)
+	if !ok {
+		return 0, false
+	}
+	return t.id, true
+}
+
+// InterruptSessionTurnIfCurrent stops the turn identified by expectedTurnID,
+// leaving the session's execution goroutine alive so its drain loop still
+// delivers queued messages afterwards.
+//
+// This is what "interrupt and send" does: unlike CancelSession it does NOT mark
+// the session not-running, does NOT clear the queue and does NOT emit a terminal
+// "cancelled" event — the session simply moves on to the next queued message.
+// The cancel reason is recorded so the executor finalizes the interrupted turn
+// without stamping it "cancelled" (the user did not abandon the reply; they
+// redirected it).
+//
+// The id check is what makes this safe against a check-then-act race: a caller
+// reads CurrentTurnID, decides to interrupt, and by then the old turn may have
+// finished and the drain loop started the NEXT queued message. Interrupting that
+// one would cut off the reply to a message the user never asked to stop, so this
+// only acts when the registered turn is still the one the caller saw.
+//
+// Returns false when no turn is registered, or the registered turn is no longer
+// expectedTurnID (already finished and replaced) — the caller then reports that
+// nothing was interrupted.
+func InterruptSessionTurnIfCurrent(sessionID string, expectedTurnID uint64) bool {
+	v, ok := sessionTurnCancels.Load(sessionID)
+	if !ok {
+		return false
+	}
+	t, ok := v.(*sessionTurn)
+	if !ok || t.id != expectedTurnID {
+		return false
+	}
+	// Atomic compare-and-delete: only the caller that removes the entry wins, so
+	// two concurrent interrupts cannot both report success.
+	if !sessionTurnCancels.CompareAndDelete(sessionID, t) {
+		return false
+	}
+
+	// Do NOT overwrite a reason that is already recorded for this turn.
+	//
+	// sessionCancelReasons is a single slot per session, read by the executor as
+	// "why did THIS turn end". A concurrent user cancel (or graceful shutdown)
+	// stores "user"/"restart" for the same slot; clobbering it with "interrupt"
+	// would make the drain loop keep the queue and treat a genuine cancel as a
+	// redirect — the user's cancel would be swallowed and later queued messages
+	// would run against a cancelled session context.
+	//
+	// Only claim the slot when it is empty: whoever recorded a reason first owns
+	// the turn's outcome. LoadOrStore writes only if the key is absent, which is
+	// exactly that check, and reports via `loaded` whether a reason already
+	// existed. (Note: CompareAndSwap with a nil old value does NOT match an
+	// absent key — it returns false — so it cannot be used here.)
+	if _, loaded := sessionCancelReasons.LoadOrStore(sessionID, cancelReasonInterrupt); loaded {
+		// A stronger reason already won. Still cancel the turn — the caller asked
+		// to stop it — but leave the recorded reason alone so the executor and
+		// drain loop honor the original intent (e.g. a real user cancel must
+		// still clear the queue rather than being treated as a redirect).
+		slog.Info("interrupt: turn already had a cancel reason; keeping it",
+			"session", sessionID)
+	}
+	t.cancel()
+	return true
+}
+
 // CancelAllSessions cancels every registered session context without clearing
 // the running state or finalizing anything. Called by the graceful-shutdown
 // path so every active executor's event loop exits on ctx.Done() and runs
@@ -677,7 +792,7 @@ func ForceCancelSession(sessionID string) {
 // triggerChatSummarization triggers summarization for every assistant message
 // in a session that does not yet have a summary.
 // Skipped for cancelled/disconnected sessions (those use skipEvent=true in SetSessionRunning).
-// Reading summaries always extract the conclusion (no AI), matching scheduled tasks.
+// Reading summaries always extract the conclusion (no AI), matching tasks.
 //
 // Summarizing all (not just the last) assistant messages is important because
 // queued/drained messages share the same session goroutine: when a long reply

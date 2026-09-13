@@ -101,9 +101,9 @@ const parts = computed(() => {
 .dir-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   overflow-x: auto;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
   scrollbar-width: none;
 }
@@ -112,11 +112,11 @@ const parts = computed(() => {
 }
 
 .crumb {
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   display: inline-flex;
   align-items: center;
 }
@@ -129,7 +129,7 @@ const parts = computed(() => {
 }
 
 .crumb.current {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   cursor: default;
 }
@@ -143,21 +143,21 @@ const parts = computed(() => {
 
 .crumb-sep {
   color: var(--text-muted, #999);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .crumb-copy-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 6px;
+  padding:3px var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 @media (hover: hover) {
   .crumb-copy-btn:hover {

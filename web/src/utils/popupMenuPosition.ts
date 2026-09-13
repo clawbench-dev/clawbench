@@ -60,6 +60,16 @@ export function computeMenuStyle(
 
   const gap = 4
 
+  // --- Effective width: never let the menu overflow the viewport ---
+  // maxWidth is a CSS (pre-zoom) value, so compare it against the viewport
+  // width expressed in the same CSS space. On narrow viewports (mobile) or
+  // under CSS zoom, the requested maxWidth can exceed the space between the
+  // two edge margins; shrink it so left/right clamping alone cannot push the
+  // menu past the screen edge.
+  const cssViewportWidth = toFixedCSS(viewportWidth)
+  const availableWidth = Math.max(0, cssViewportWidth - edgeMargin * 2)
+  const effectiveMaxWidth = Math.min(maxWidth, availableWidth)
+
   // --- Vertical positioning: prefer above anchor, flip below when near top ---
   const spaceAbove = rect.top - edgeMargin
   const spaceBelow = viewportHeight - rect.bottom - edgeMargin
@@ -81,8 +91,8 @@ export function computeMenuStyle(
   }
 
   const horizontal = alignRight
-    ? computeRight(rect, maxWidth, edgeMargin, viewportWidth)
-    : computeLeft(rect, maxWidth, edgeMargin, viewportWidth)
+    ? computeRight(rect, effectiveMaxWidth, edgeMargin, viewportWidth)
+    : computeLeft(rect, effectiveMaxWidth, edgeMargin, viewportWidth)
 
   if (goBelow) {
     // Menu appears BELOW the anchor
@@ -92,7 +102,7 @@ export function computeMenuStyle(
       position: 'fixed',
       top: `${top}px`,
       ...horizontal,
-      maxWidth: `${maxWidth}px`,
+      maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableBelow)}px)`,
     }
     // When the menu doesn't scroll itself the caller handles overflow
@@ -108,7 +118,7 @@ export function computeMenuStyle(
     position: 'fixed',
     bottom: `${bottom}px`,
     ...horizontal,
-    maxWidth: `${maxWidth}px`,
+    maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableAbove)}px)`,
   }
   if (scrollable) style.overflowY = 'auto'

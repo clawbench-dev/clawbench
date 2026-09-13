@@ -56,7 +56,6 @@
     <string name="floating_stat_running">Running %1$d</string>
     <string name="floating_stat_pending">Pending %1$d</string>
     <string name="floating_stat_unread">Unread %1$d</string>
-    <string name="floating_idle">Idle</string>
     <string name="session_untitled">(Untitled)</string>
     <!-- Main activity: connection / login errors -->
     <string name="conn_file_picker_title">Select file</string>
@@ -82,6 +81,11 @@
     <string name="conn_err_request">Request error (%1$d), please check the server address.</string>
     <string name="conn_err_http_failed">Connection failed, please check the server address and network.</string>
     <string name="conn_render_crash">Page rendering error, please reconnect.</string>
+    <!-- Native pre-WebView version mismatch gate (APK older than server) -->
+    <string name="version_mismatch_title">Version mismatch</string>
+    <string name="version_mismatch_message">APK version: %1$s\nServer version: %2$s\n\nThe app is older than the server. Updating the APK is recommended for the best experience.</string>
+    <string name="version_mismatch_download">Download APK</string>
+    <string name="version_mismatch_skip">Force skip</string>
     <!-- Background service notifications -->
     <string name="ssh_notification_reconnecting">SSH tunnel disconnected, reconnecting…</string>
     <string name="ssh_notification_recovering">SSH tunnel reconnected</string>
@@ -111,10 +115,10 @@
     <string name="push_session_completed">Session completed</string>
     <string name="push_session_cancelled">Session cancelled</string>
     <string name="push_action_required">Action required</string>
-    <string name="push_task_started">Scheduled task started</string>
-    <string name="push_task_completed">Scheduled task completed</string>
-    <string name="push_task_failed">Scheduled task failed</string>
-    <string name="push_task_cancelled">Scheduled task cancelled</string>
+    <string name="push_task_started">Task started</string>
+    <string name="push_task_completed">Task completed</string>
+    <string name="push_task_failed">Task failed</string>
+    <string name="push_task_cancelled">Task cancelled</string>
     <string name="splash_cancel">Cancel</string>
     <string name="splash_status_connecting">Connecting…</string>
     <string name="splash_status_loading">Loading page…</string>

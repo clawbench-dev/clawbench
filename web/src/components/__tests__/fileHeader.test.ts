@@ -96,42 +96,41 @@ beforeEach(() => {
   mockToastShow.mockReset()
 })
 
-describe('FileHeader — handleAttachToChat', () => {
-  it('adds file to chat context and shows success toast', async () => {
+describe('FileHeader — handleQuoteInChat', () => {
+  // The attach/detach toggle was replaced by the shared quote composer. The
+  // header now only emits; App.vue attaches the file and opens the composer.
+  it('emits quoteInChat with the file path', async () => {
     const wrapper = mountHeader()
 
-    await wrapper.vm.handleAttachToChat()
+    await wrapper.vm.handleQuoteInChat()
     await nextTick()
 
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('/test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'success' }),
-    )
+    expect(wrapper.emitted('quoteInChat')).toEqual([['/test.ts']])
   })
 
-  it('shows info toast when file is already attached', async () => {
-    mockHasAttachedFile.mockReturnValue(true)
+  it('no longer touches the chat context or toasts', async () => {
+    // Regression: this used to add/remove the file and toast, which made the
+    // button a toggle.
+    mockAddAttachedFile.mockReset()
+    mockRemoveAttachedFileByPath.mockReset()
+    mockToastShow.mockReset()
     const wrapper = mountHeader()
 
-    await wrapper.vm.handleAttachToChat()
+    await wrapper.vm.handleQuoteInChat()
     await nextTick()
 
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('/test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'info' }),
-    )
+    expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
+    expect(mockToastShow).not.toHaveBeenCalled()
   })
 
   it('does nothing when file path is missing', async () => {
     const wrapper = mountHeader({ file: { name: 'no-path', content: '' } })
 
-    await wrapper.vm.handleAttachToChat()
+    await wrapper.vm.handleQuoteInChat()
     await nextTick()
 
-    expect(mockAddAttachedFile).not.toHaveBeenCalled()
+    expect(wrapper.emitted('quoteInChat')).toBeFalsy()
   })
 })
 

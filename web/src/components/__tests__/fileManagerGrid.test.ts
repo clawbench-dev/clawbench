@@ -189,6 +189,15 @@ describe('isThumbable (thumbnail eligibility)', () => {
     expect(isThumbable({ type: 'dir', name: 'images' })).toBe(false)
   })
 
+  it('allows an unknown non-dir entry type (blacklist, not whitelist)', () => {
+    // A future backend entry type must not silently lose its thumbnail.
+    expect(isThumbable({ type: 'video', name: 'clip.png' })).toBe(true)
+  })
+
+  it('excludes an unknown entry type only when the extension is not thumbable', () => {
+    expect(isThumbable({ type: 'video', name: 'clip.mp4' })).toBe(false)
+  })
+
   it('excludes non-image files', () => {
     expect(isThumbable({ type: 'file', name: 'readme.md' })).toBe(false)
   })
@@ -199,8 +208,11 @@ describe('isThumbable (thumbnail eligibility)', () => {
     expect(isThumbable({ type: 'file', name: 'photo.GIF' })).toBe(true)
   })
 
-  it('excludes entries with unknown type', () => {
-    expect(isThumbable({ type: 'symlink', name: 'link.png' })).toBe(false)
+  it('allows any non-dir type whose extension is thumbable', () => {
+    // Deliberate rule: only 'dir' is excluded. The backend never emits
+    // 'symlink' (symlinks are typed dir/file/image plus a `symlink` flag), and
+    // a future non-dir type must not silently lose its thumbnail.
+    expect(isThumbable({ type: 'symlink', name: 'link.png' })).toBe(true)
   })
 
   it('matches exact extensions, not substrings', () => {

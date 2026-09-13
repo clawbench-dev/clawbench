@@ -500,3 +500,78 @@ func TestGetPushMode_Dingtalk(t *testing.T) {
 		t.Errorf("expected dingtalk, got %q", mode)
 	}
 }
+
+// TestPushForgeEvent_NotStarted covers the gate: without a running manager the
+// event is dropped rather than queued.
+func TestPushForgeEvent_NotStarted(t *testing.T) {
+	origMgr := GetManager()
+	SetManager(nil)
+	defer SetManager(origMgr)
+
+	if PushForgeEvent("Title", "Body") {
+		t.Error("expected false when the manager is not started")
+	}
+}
+
+// TestPushForgeEvent_NilDB covers the second gate: a started manager with no DB
+// adapter has nowhere to read subscribers from.
+func TestPushForgeEvent_NilDB(t *testing.T) {
+	origDB := db
+	db = nil
+	defer func() { db = origDB }()
+
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	if PushForgeEvent("Title", "Body") {
+		t.Error("expected false with a nil DB")
+	}
+}
+
+// TestPushForgeEvent_EmptyContent covers the content guard: an empty title or
+// body would render an unusable notification, so it is dropped before send.
+func TestPushForgeEvent_EmptyContent(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{{UserID: "u"}}}
+
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	if PushForgeEvent("", "Body") {
+		t.Error("expected false for an empty title")
+	}
+	if PushForgeEvent("Title", "") {
+		t.Error("expected false for an empty body")
+	}
+}
+
+// TestPushForgeEvent_NoSubscribers covers the delegation to
+// sendToAllSubscribers when the gates pass but nobody is subscribed.
+func TestPushForgeEvent_NoSubscribers(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []common.SubscriberInfo{}}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "k", AppSecret: "s"})
+	mgr.started = true
+	origMgr := GetManager()
+	SetManager(mgr)
+	defer SetManager(origMgr)
+
+	if PushForgeEvent("Title", "Body") {
+		t.Error("expected false with no subscribers")
+	}
+}

@@ -37,6 +37,7 @@
             @share-external="emit('shareExternal')"
             @share-link="emit('shareLink')"
             @set-as-background="(path) => emit('setAsBackground', path)"
+            @quote-in-chat="(path) => emit('quoteInChat', path)"
             @jump="(line, anchorId) => emit('jump', line, anchorId)"
             @jump-page="emit('jumpPage', $event)"
           />
@@ -88,6 +89,7 @@ import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
 import GitHistoryDrawer from '@/components/git/GitHistoryDrawer.vue'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
+import { readLineTargetFromEl } from '@/composables/useFilePathAnnotation.ts'
 
 const { isWideScreen } = getWideScreenState()
 
@@ -118,6 +120,7 @@ const emit = defineEmits([
   'overlayClose', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink',
   'setAsBackground',
   'captureScroll',
+  'quoteInChat',
 ])
 
 const contentRef = ref(null)
@@ -156,11 +159,9 @@ function handleContentClick(event) {
     event.preventDefault()
     event.stopPropagation()
     fileViewerRef.value?.captureScroll?.()
-    const filePath = btn.getAttribute('data-file-path')
-    const lineStart = btn.getAttribute('data-line-start')
-    const lineEnd = btn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(btn)
     if (filePath) {
-      emit('openFile', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+      emit('openFile', { path: filePath, lineStart, lineEnd, lineRanges })
     }
     return
   }
@@ -171,11 +172,9 @@ function handleContentClick(event) {
     event.preventDefault()
     event.stopPropagation()
     fileViewerRef.value?.captureScroll?.()
-    const filePath = pathSpan.getAttribute('data-file-path')
-    const lineStart = pathSpan.getAttribute('data-line-start')
-    const lineEnd = pathSpan.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(pathSpan)
     if (filePath) {
-      emit('openFile', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+      emit('openFile', { path: filePath, lineStart, lineEnd, lineRanges })
     }
     return
   }

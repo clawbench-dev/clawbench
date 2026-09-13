@@ -79,7 +79,7 @@ function formatDate(dateStr) {
 
 <style scoped>
 .diff-meta-panel {
-  padding: 12px 14px;
+  padding: var(--space-6) 14px;
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   display: flex;
@@ -91,8 +91,8 @@ function formatDate(dateStr) {
 .diff-meta-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  font-size: 13px;
+  gap: var(--space-5);
+  font-size: var(--font-size-md);
 }
 
 .diff-meta-label {
@@ -108,13 +108,13 @@ function formatDate(dateStr) {
 }
 
 .diff-meta-sha {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
-  border-radius: 3px;
-  padding: 1px 4px;
-  transition: background 0.15s;
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-2);
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -125,24 +125,24 @@ function formatDate(dateStr) {
 
 .sha-copied-text {
   color: var(--color-green, #16a34a);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 400;
 }
 
 .diff-meta-row-msg .diff-meta-value {
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .diff-meta-file-name {
-  font-weight: 600;
+  font-weight: var(--font-weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .diff-meta-file-path {
-  font-family: var(--font-mono, 'SF Mono', 'Fira Code', Menlo, Monaco, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #555);
   overflow: hidden;
   text-overflow: ellipsis;

@@ -93,13 +93,13 @@
 .chat-message.assistant code,
 .table-row-value code {
     background: var(--bg-tertiary);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 
 /* User message inline code uses translucent overlay on blue background */
 .chat-message.user code {
     background: rgba(0, 0, 0, 0.15);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 
 /* Code Block */
@@ -208,7 +208,7 @@
 .chat-message.user ol,
 .table-row-value ul,
 .table-row-value ol {
-    padding-left: 20px;
+    padding-left: var(--space-8);
 }
 
 .markdown-body li,
@@ -228,7 +228,7 @@
 .markdown-body td,
 .chat-message.assistant th,
 .chat-message.assistant td {
-    padding: 8px 14px;
+    padding: var(--space-4) 14px;
     border: 1px solid var(--table-border);
     text-align: left;
 }
@@ -236,7 +236,7 @@
 .markdown-body th,
 .chat-message.assistant th {
     background: var(--bg-tertiary);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 .markdown-body tr:nth-child(odd) td,
@@ -312,14 +312,14 @@
 
 .chat-message.user th,
 .chat-message.user td {
-    padding: 8px 14px;
+    padding: var(--space-4) 14px;
     border: 1px solid rgba(255, 255, 255, 0.2);
     text-align: left;
 }
 
 .chat-message.user th {
     background: rgba(0, 0, 0, 0.15);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
     color: rgba(255, 255, 255, 0.95);
 }
 
@@ -336,7 +336,7 @@
 .chat-message.assistant tbody tr[data-row-idx],
 .chat-message.user tbody tr[data-row-idx] {
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background var(--duration-fast);
     -webkit-tap-highlight-color: transparent;
 }
 
@@ -360,11 +360,11 @@
 
 /* ── Table row form modal ── */
 .table-row-form {
-    padding: 4px 0;
+    padding: var(--space-2) 0;
 }
 
 .table-row-field {
-    padding: 10px 16px;
+    padding: var(--space-5) var(--space-7);
     border-bottom: 1px solid var(--border-color, #e0e0e0);
 }
 
@@ -373,38 +373,37 @@
 }
 
 .table-row-label {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
     color: var(--text-muted, #888);
-    margin-bottom: 4px;
+    margin-bottom: var(--space-2);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
 .table-row-value {
-    font-size: 14px;
+    font-size: var(--font-size-lg);
     color: var(--text-primary, #1a1a1a);
     word-break: break-word;
-    overflow-wrap: break-word;
     cursor: text;
     user-select: text;
     -webkit-user-select: text;
 }
 
 .table-row-value code {
-    font-size: 13px;
-    padding: 1px 4px;
+    font-size: var(--font-size-md);
+    padding:1px var(--space-2);
 }
 
 .table-row-value pre {
-    margin: 6px 0;
-    padding: 8px;
+    margin: var(--space-3) 0;
+    padding: var(--space-4);
     border-radius: var(--radius-sm); /* overridden to 0 by .code-block-wrapper pre when wrapped */
 }
 
 .table-row-value blockquote {
-    margin: 6px 0;
-    padding: 4px 12px;
+    margin: var(--space-3) 0;
+    padding: var(--space-2) var(--space-6);
 }
 
 /* ── Table row modal layout overrides ── */
@@ -415,16 +414,16 @@
 .table-row-value h1,
 .table-row-value h2,
 .table-row-value h3 {
-    margin: 6px 0 3px;
-    font-weight: 600;
+    margin: var(--space-3) 0 3px;
+    font-weight: var(--font-weight-semibold);
 }
 
-.table-row-value h1 { font-size: 16px; }
-.table-row-value h2 { font-size: 14px; }
-.table-row-value h3 { font-size: 13px; }
+.table-row-value h1 { font-size: var(--font-size-2xl); }
+.table-row-value h2 { font-size: var(--font-size-lg); }
+.table-row-value h3 { font-size: var(--font-size-md); }
 
 .table-row-value img {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
     width: 200px;
     height: auto;
     max-width: none;
@@ -432,23 +431,23 @@
 }
 
 .table-row-value hr {
-    margin: 8px 0;
+    margin: var(--space-4) 0;
 }
 
 .table-row-value ul,
 .table-row-value ol {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .table-row-nav-btn {
-    padding: 6px 16px;
+    padding: var(--space-3) var(--space-7);
     border: 1px solid var(--border-color, #e0e0e0);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: var(--bg-tertiary, #f0f0f0);
     color: var(--text-primary, #1a1a1a);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    transition: background var(--duration-base), opacity var(--duration-base);
 }
 
 .table-row-nav-btn:hover:not(:disabled) {
@@ -456,7 +455,7 @@
 }
 
 .table-row-nav-btn:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: default;
 }
 
@@ -478,7 +477,7 @@
     width: auto;
     max-width: 100%;
     object-fit: cover;
-    margin: 4px 0;
+    margin: var(--space-2) 0;
 }
 
 /* Image inside table */
@@ -514,9 +513,9 @@
 .markdown-body .chat-file-path,
 .chat-message.assistant .chat-file-path,
 .table-row-value .chat-file-path {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     background: var(--bg-secondary);
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     padding: 0 3px;
 }
 
@@ -528,26 +527,26 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     border: none;
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
     vertical-align: middle;
     margin-left: 1px;
-    padding: 2px;
+    padding: var(--space-1);
     line-height: 1;
-    opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base);
     outline: none;
     box-shadow: none;
 }
 
 /* User message file path annotation & open button */
 .chat-message.user .chat-file-path {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     background: rgba(0, 0, 0, 0.15);
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     padding: 0 3px;
 }
 
@@ -566,8 +565,8 @@
     margin-left: 1px;
     padding: 0;
     line-height: 1;
-    opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s;
+    opacity: var(--opacity-muted);
+    transition: opacity var(--duration-base), color var(--duration-base);
     outline: none;
     box-shadow: none;
 }
@@ -583,7 +582,7 @@
 .markdown-body .chat-file-open-btn.external,
 .chat-message.assistant .chat-file-open-btn.external,
 .table-row-value .chat-file-open-btn.external {
-    opacity: 0.7;
+    opacity: var(--opacity-soft);
     color: #e67e22;
 }
 

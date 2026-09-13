@@ -241,6 +241,12 @@ func (s *Scheduler) LoadTasksFromDB(projectPath string) error {
 		if task.Status != "active" {
 			continue
 		}
+		// Event-triggered tasks are never registered with cron: they are matched
+		// against forge events at dispatch time. Skipping them here prevents a
+		// failed cron registration on every startup.
+		if task.IsEventTriggered() {
+			continue
+		}
 		// Validate agent_id against loaded agents
 		if _, ok := model.Agents[task.AgentID]; !ok {
 			// Skip registration but do NOT pause — the agent may not be loaded yet
@@ -294,12 +300,25 @@ func (s *Scheduler) cleanZombieExecutions() {
 	}
 }
 
-// AddTask creates a new scheduled task, persists it, and registers it with cron.
+// AddTask creates a new task, persists it, and registers it with cron.
 func (s *Scheduler) AddTask(task *model.ScheduledTask) error {
 	now := time.Now()
 	task.CreatedAt = now
 	task.UpdatedAt = now
 	task.Status = "active"
+
+	// Event-triggered tasks have no cron schedule: they are driven by forge
+	// events. Validating their event configuration replaces cron parsing, and
+	// they are never registered with the cron scheduler.
+	if task.IsEventTriggered() {
+		if err := validateEventTask(task); err != nil {
+			return err
+		}
+		if err := insertTask(task); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	// Calculate next run time
 	schedule, err := cron.ParseStandard(task.CronExpr)
@@ -398,6 +417,14 @@ func (s *Scheduler) ResumeTask(id int64) error {
 		return fmt.Errorf("task is not paused")
 	}
 
+	// Event tasks have no cron entry to restore; flipping the status back to
+	// active is enough (the event matcher reads status from the DB).
+	if task.IsEventTriggered() {
+		_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		task.Status = "active"
+		return nil
+	}
+
 	schedule, err := cron.ParseStandard(task.CronExpr)
 	if err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
@@ -420,14 +447,53 @@ func (s *Scheduler) TriggerTask(id int64) error {
 	if _, loaded := s.taskRunning.LoadOrStore(id, struct{}{}); loaded {
 		return fmt.Errorf("task %d already has a running execution", id)
 	}
-	go s.executeTask(task, task.ProjectPath, "manual")
+	go s.executeTask(task, task.ProjectPath, "manual", nil)
 	return nil
+}
+
+// triggerTaskWithContext runs an event-triggered task synchronously, attaching
+// the forge event context to its prompt. It blocks until the execution finishes
+// so the caller's event queue drains strictly in order.
+//
+// It returns false when the task could not be started because another run
+// (cron, manual, or a previous event) holds the running flag. The caller must
+// requeue the event in that case — dropping it would lose the event, which is
+// the bug this whole queue exists to avoid.
+func (s *Scheduler) triggerTaskWithContext(id int64, triggerType string, ec EventContext) bool {
+	task, err := GetTaskByID(id)
+	if err != nil {
+		slog.Warn("event task not found", slog.Int64("task_id", id), slog.String("err", err.Error()))
+		return true // nothing to retry: the task is gone
+	}
+	if _, loaded := s.taskRunning.LoadOrStore(id, struct{}{}); loaded {
+		slog.Info("event task deferred: already running", slog.Int64("task_id", id))
+		return false
+	}
+	s.executeTask(task, task.ProjectPath, triggerType, &ec)
+	return true
 }
 
 // UpdateTask updates an existing task's configuration and re-registers if needed.
 func (s *Scheduler) UpdateTask(task *model.ScheduledTask) error {
 	// Update timestamp
 	task.UpdatedAt = time.Now()
+
+	// Event-triggered tasks carry no cron schedule. Validate the event
+	// configuration and drop any stale cron entry (a task may have been switched
+	// from cron to event), then persist.
+	if task.IsEventTriggered() {
+		if err := validateEventTask(task); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if entryID, ok := s.entries[task.ID]; ok {
+			s.cron.Remove(entryID)
+			delete(s.entries, task.ID)
+		}
+		s.mu.Unlock()
+		task.NextRunAt = nil
+		return updateTask(task)
+	}
 
 	// Recalculate next run time if cron expression changed
 	schedule, err := cron.ParseStandard(task.CronExpr)
@@ -474,6 +540,92 @@ func (s *Scheduler) UpdateTask(task *model.ScheduledTask) error {
 	return nil
 }
 
+// Forge event subscription keys.
+//
+// An event is identified by BOTH the item kind and the transition, so "a new
+// issue" and "a new PR" are distinct triggers. Keys are "<kind>.<transition>",
+// e.g. "issue.opened", "pr.merged".
+//
+// A bare legacy key ("opened") is still accepted and matches EITHER kind, so
+// tasks stored before the split keep working without a migration.
+const (
+	forgeEventKindIssue = "issue"
+	forgeEventKindPR    = "pr"
+)
+
+// forgeEventTransitions lists the subscribable transitions per kind. merged is
+// PR-only: an issue has no merge, so offering issue.merged would create a
+// trigger that can never fire.
+var forgeEventTransitions = map[string][]string{
+	forgeEventKindIssue: {"opened", "closed", "reopened", "commented"},
+	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented"},
+}
+
+// forgeRetiredEventTypes are accepted but no longer offered.
+//
+// Nothing derives these events yet (no code path emits a pipeline change), so
+// subscribing would create a trigger that can never fire. They stay VALID so a
+// task that already stores one is not rejected on its next edit — the editor
+// cannot render a checkbox for them, and rejecting on save would strand the
+// user with a task they cannot fix from the UI.
+var forgeRetiredEventTypes = []string{"pipeline_done"}
+
+// forgeEventKey builds the canonical kind-scoped subscription key.
+func forgeEventKey(kind, transition string) string { return kind + "." + transition }
+
+// validForgeEventTypes is the set of event types an event task may subscribe to:
+// every kind-scoped key, plus the bare legacy keys for backward compatibility.
+var validForgeEventTypes = func() map[string]bool {
+	out := make(map[string]bool)
+	for kind, transitions := range forgeEventTransitions {
+		for _, tr := range transitions {
+			out[forgeEventKey(kind, tr)] = true
+			// The bare form is the pre-split spelling; it stays valid so an
+			// existing task is not rejected on its next edit.
+			out[tr] = true
+		}
+	}
+	for _, tr := range forgeRetiredEventTypes {
+		out[tr] = true
+		out[forgeEventKey(forgeEventKindPR, tr)] = true
+	}
+	return out
+}()
+
+// OfferedForgeEventTypesForTest exposes the offered vocabulary so a test can
+// assert that a retired type is no longer presented to users.
+func OfferedForgeEventTypesForTest() []string {
+	out := make([]string, 0)
+	for kind, transitions := range forgeEventTransitions {
+		for _, tr := range transitions {
+			out = append(out, forgeEventKey(kind, tr))
+		}
+	}
+	return out
+}
+
+// ValidateEventSubscription checks a comma-separated event subscription. It is
+// exported so the HTTP layer can reject a bad configuration as a 400 before
+// AddTask/UpdateTask would turn it into a 500.
+func ValidateEventSubscription(eventTypes string) error {
+	types := model.SplitEventTypes(eventTypes)
+	if len(types) == 0 {
+		return fmt.Errorf("event task must subscribe to at least one event type")
+	}
+	for _, t := range types {
+		if !validForgeEventTypes[t] {
+			return fmt.Errorf("unknown event type %q", t)
+		}
+	}
+	return nil
+}
+
+// validateEventTask checks an event-triggered task's configuration. It replaces
+// cron-expression validation for event tasks.
+func validateEventTask(task *model.ScheduledTask) error {
+	return ValidateEventSubscription(task.EventTypes)
+}
+
 // registerTask adds a task's cron job to the scheduler.
 func (s *Scheduler) registerTask(task *model.ScheduledTask) error {
 	s.mu.Lock()
@@ -484,6 +636,11 @@ func (s *Scheduler) registerTask(task *model.ScheduledTask) error {
 // registerTaskLocked adds a task's cron job to the scheduler.
 // The caller must hold s.mu lock.
 func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
+	// Event-triggered tasks have no cron entry: they are matched against forge
+	// events at dispatch time, so registering them here would fail cron parsing.
+	if task.IsEventTriggered() {
+		return nil
+	}
 	schedule, err := cron.ParseStandard(task.CronExpr)
 	if err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
@@ -510,7 +667,7 @@ func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 			)
 			return
 		}
-		s.executeTask(current, projectPath, "auto")
+		s.executeTask(current, projectPath, "auto", nil)
 	}))
 
 	// Lock is already held by caller
@@ -591,9 +748,13 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 }
 
-// executeTask runs a scheduled task by invoking the AI backend and inserting
+// executeTask runs a task by invoking the AI backend and inserting
 // the result as an assistant message in the original session.
-func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, triggerType string) { //nolint:gocognit,gocyclo // task execution with session lifecycle
+//
+// eventCtx, when non-nil, carries the forge event that triggered this run: its
+// variables are rendered into the prompt and its payload is persisted on the
+// execution record for traceability.
+func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, triggerType string, eventCtx *EventContext) { //nolint:gocognit,gocyclo // task execution with session lifecycle
 	// Ensure taskRunning flag is always cleaned up, even on early-return
 	// paths (agent not found, session creation failure, backend creation failure).
 	// Without this, the task is permanently stuck — no future execution possible (ISS-303).
@@ -636,14 +797,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error(
-				"scheduled task execution panicked",
+				"task execution panicked",
 				slog.Int64("task_id", task.ID),
 				slog.String("session_id", sessionID),
 				slog.Any("panic", r),
 				slog.String("stack", string(debug.Stack())),
 			)
 			// Finalize the streaming placeholder message to prevent streaming=1 leak
-			errMsg := "Scheduled task internal error, please retry"
+			errMsg := "Task internal error, please retry"
 			errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg}}})
 			if _, finalizeErr := FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent)); finalizeErr != nil {
 				slog.Warn("failed to finalize streaming message on panic", slog.String("error", finalizeErr.Error()))
@@ -656,7 +817,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	}()
 
 	// Mark session as running so ACP idle sweep does not close the connection
-	// while the scheduled task is still executing. Without this, the 5-minute
+	// while the task is still executing. Without this, the 5-minute
 	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
 	// sweep closing connection" after ~5m, causing "peer disconnected").
 	// skipEvent=true because the scheduler emits its own task events.
@@ -668,13 +829,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	}()
 
 	slog.Info(
-		"executing scheduled task",
+		"executing task",
 		slog.Int64("task_id", task.ID),
 		slog.String("session_id", sessionID),
 		slog.String("name", task.Name),
 	)
 
-	// ACP scheduled tasks have no user present to approve permission requests.
+	// ACP tasks have no user present to approve permission requests.
 	// Enable auto-approve so the ACP client automatically selects the first
 	// allow option, preventing indefinite blocking on permission dialogs.
 	if agent.Transport == "acp-stdio" {
@@ -691,18 +852,34 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.Error("failed to record task execution", slog.String("err", err.Error()))
 	}
 
+	// Render the final prompt. For event-triggered runs the forge event context
+	// is prepended as a fixed, read-only block; the task's own prompt follows as
+	// the user's instruction. Cron runs use the prompt verbatim.
+	renderedPrompt := task.Prompt
+	if eventCtx != nil {
+		renderedPrompt = RenderEventContext(*eventCtx) + "\n\n" + task.Prompt
+		// Persist the event payload on the execution so the notification can
+		// deep-link back to the originating issue/PR.
+		if executionID != 0 {
+			if err := SetTaskExecutionEventPayload(executionID, eventCtx.URL, RenderEventContext(*eventCtx)); err != nil {
+				slog.Warn("failed to record event payload on execution",
+					slog.Int64("execution_id", executionID), slog.String("err", err.Error()))
+			}
+		}
+	}
+
 	// Write user message (the prompt)
-	if _, err := AddChatMessage(projectPath, backendName, sessionID, "user", task.Prompt, nil, false, task.Name); err != nil {
+	if _, err := AddChatMessage(projectPath, backendName, sessionID, "user", renderedPrompt, nil, false, task.Name); err != nil {
 		slog.Error("failed to write user message for task", slog.String("err", err.Error()))
 	}
 
-	// Build chat request — no session resume, standalone execution
-	// ScheduledExecution flag prevents recursive task creation at the
-	// handler level: even if the AI outputs a <schedule-proposal> tag,
-	// the handler will not create a task from it.
-	// Anti-recursion is also enforced by the @task on-demand injection
-	// mechanism: task instructions are only injected when the user
-	// explicitly uses @task, so they never appear during scheduled execution.
+	// Build chat request — no session resume, standalone execution.
+	//
+	// Anti-recursion relies on the prompt layer alone: the task-management
+	// instructions are injected only when the user explicitly types /cb-task,
+	// so they never appear in a scheduled execution's context. ScheduledExecution
+	// is still set below, but it only controls backend session handling (pi's
+	// --no-session) — it is NOT a handler-level guard.
 	systemPrompt := agent.SystemPrompt
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {
@@ -719,7 +896,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	effectiveThinking := agent.ThinkingEffort
 
 	chatReq := ai.ChatRequest{
-		Prompt:             task.Prompt,
+		Prompt:             renderedPrompt,
 		SessionID:          sessionID,
 		WorkDir:            projectPath,
 		SystemPrompt:       systemPrompt,
@@ -874,7 +1051,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Finalize: persist blocks to DB, save metadata, drain raw output
+	// Finalize: persist blocks to DB, save metadata, drain remaining events
 	runResult = executor.Finalize(runResult, nil)
 
 	// Mark execution as completed
@@ -905,6 +1082,18 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		currentStatus = task.Status
 	}
 	newStatus := currentStatus
+
+	// Event-triggered tasks do not participate in cron completion semantics:
+	// there is no next cron run and no repeat-mode exhaustion. They simply record
+	// the run and stay active so the next matching event fires again.
+	if task.IsEventTriggered() {
+		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+			time.Now(), task.ID)
+		slog.Info("event task execution completed",
+			slog.Int64("task_id", task.ID),
+			slog.String("session_id", sessionID))
+		return
+	}
 
 	// Check repeat mode — for "limited", read current DB value to decide completion
 	if task.RepeatMode == "limited" {
@@ -963,7 +1152,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	)
 
 	// Generate summary asynchronously — use the shared summarizeMessage so that
-	// scheduled tasks follow the exact same strategy as interactive chat
+	// tasks follow the exact same strategy as interactive chat
 	// (respecting chatSummaryMode, AI with simple fallback). Keyed by the
 	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
 	// This unifies the summary storage model so ContinueFromExecution no longer
@@ -981,6 +1170,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 
 	if projectPath == "" {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -989,6 +1179,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			FROM scheduled_tasks s ORDER BY s.created_at DESC`
 	} else {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -1007,7 +1198,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	for rows.Next() {
 		var t model.ScheduledTask
 		var lastRun, nextRun, lastRead sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {
@@ -1030,6 +1221,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var lastRun, nextRun, lastRead sql.NullTime
 	err := dbRead.QueryRow(
 		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
+		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
@@ -1037,7 +1229,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 		 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
 		FROM scheduled_tasks s WHERE s.id = ?`,
 		id,
-	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
+	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,9 +1248,9 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
 	result, err := WriteExec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1074,8 +1266,8 @@ func insertTask(task *model.ScheduledTask) error {
 // updateTask updates an existing task in the database.
 func updateTask(task *model.ScheduledTask) error {
 	_, err := WriteExec(
-		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, session_id=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
+		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
 	)
 	return err
 }
@@ -1098,6 +1290,17 @@ func UpdateExecutionStatus(sessionID string, status string) error {
 	_, err := WriteExec(
 		"UPDATE task_executions SET status = ? WHERE session_id = ?",
 		status, sessionID,
+	)
+	return err
+}
+
+// SetTaskExecutionEventPayload records the forge event that triggered an
+// execution, so a notification can deep-link back to the originating item and
+// the run can be traced to its cause.
+func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary string) error {
+	_, err := WriteExec(
+		"UPDATE task_executions SET event_url = ?, event_summary = ? WHERE id = ?",
+		eventURL, eventSummary, executionID,
 	)
 	return err
 }
@@ -1245,4 +1448,13 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 		).Scan(&count)
 	}
 	return count > 0, err
+}
+
+// triggerModeOrDefault normalizes an empty trigger mode to "cron" so existing
+// tasks (and callers that do not set it) keep their cron behavior.
+func triggerModeOrDefault(task *model.ScheduledTask) string {
+	if task.TriggerMode == "" {
+		return "cron"
+	}
+	return task.TriggerMode
 }

@@ -37,9 +37,9 @@ withDefaults(
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   box-sizing: border-box;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .li-label {
@@ -49,7 +49,7 @@ withDefaults(
 /* Default: vertical block used for empty content areas */
 .loading-indicator:not(.inline) {
   flex-direction: column;
-  padding: 24px 16px;
+  padding:24px var(--space-7);
   min-height: 80px;
 }
 
@@ -58,16 +58,16 @@ withDefaults(
   inset: 0;
   z-index: 5;
   background: var(--bg-primary, #fff);
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
 }
 
 /* Full-screen overlay (covers the entire viewport) */
 .loading-indicator.fixed {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-popover);
   background: var(--bg-primary, #fff);
-  opacity: 0.85;
+  opacity: var(--opacity-hover);
 }
 
 .loading-indicator.inline {
@@ -125,10 +125,10 @@ withDefaults(
 /* Shared fade transition for loading overlays (non-scoped, applied by callers
    wrapping <LoadingIndicator> in <Transition name="loading-fade">). */
 .loading-fade-enter-active {
-  transition: opacity 0.12s ease-out;
+  transition: opacity var(--duration-base) ease-out;
 }
 .loading-fade-leave-active {
-  transition: opacity 0.18s ease-in;
+  transition: opacity var(--duration-slow) ease-in;
 }
 .loading-fade-enter-from,
 .loading-fade-leave-to {

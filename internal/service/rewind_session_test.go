@@ -170,14 +170,12 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	assert.NoError(t, service.UpsertToolCall(asst1ID, sessID, "toolu_keep", "Read", []byte(`{"file_path":"/a.go"}`), "keep-out", "success", "a.go", true, 0))
 	assert.NoError(t, service.UpsertThinking(asst1ID, sessID, "th_keep", "keep text"))
 	assert.NoError(t, service.SaveSummary("chat_message", asst1ID, "keep summary"))
-	assert.NoError(t, service.SaveRawResponse(sessID, "claude", asst1ID, "keep raw"))
 	meta := minimalMetadata()
 	assert.NoError(t, service.SaveMetadata(asst1ID, meta))
 
 	assert.NoError(t, service.UpsertToolCall(asst2ID, sessID, "toolu_cut", "Bash", []byte(`{"command":"ls"}`), "cut-out", "success", "ls", true, 0))
 	assert.NoError(t, service.UpsertThinking(asst2ID, sessID, "th_cut", "cut text"))
 	assert.NoError(t, service.SaveSummary("chat_message", asst2ID, "cut summary"))
-	assert.NoError(t, service.SaveRawResponse(sessID, "claude", asst2ID, "cut raw"))
 	assert.NoError(t, service.SaveMetadata(asst2ID, minimalMetadata()))
 
 	// A metadata row with a dead/missing message_id and one for user2 metadata.
@@ -215,9 +213,6 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 0, n)
 	err = db.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message' AND target_id = ?", asst2ID).Scan(&n)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, n)
-	err = db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE message_id = ?", asst2ID).Scan(&n)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, n)
 	// chat_metadata (the usage ledger) must SURVIVE a rewind: the removed turns

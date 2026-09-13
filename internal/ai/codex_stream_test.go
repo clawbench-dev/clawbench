@@ -581,8 +581,7 @@ const (
 func parseResumeOutput(input string) []StreamEvent {
 	ch := make(chan StreamEvent, 64)
 	scanner := bufio.NewScanner(strings.NewReader(input))
-	var rawLines strings.Builder
-	parseCodexResumeOutput(scanner, ch, "test-session-id", &rawLines)
+	parseCodexResumeOutput(scanner, ch, "test-session-id")
 	close(ch)
 	var events []StreamEvent
 	for ev := range ch {
@@ -1437,8 +1436,7 @@ Hi the`
 	reader := &errorReader{data: []byte(partial), err: fmt.Errorf("i/o timeout")}
 	scanner := bufio.NewScanner(reader)
 	ch := make(chan StreamEvent, 64)
-	var rawLines strings.Builder
-	parseCodexResumeOutput(scanner, ch, "", &rawLines)
+	parseCodexResumeOutput(scanner, ch, "")
 	close(ch)
 
 	var events []StreamEvent

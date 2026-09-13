@@ -56,7 +56,7 @@
     <rect x="348" y="204" width="115" height="28" rx="6" fill="#1f2937" stroke="#3b82f6"/>
     <text x="405" y="223" text-anchor="middle" font-size="10" fill="#93c5fd" font-weight="600">🔀 Git 操作</text>
     <rect x="118" y="242" width="105" height="28" rx="6" fill="#1f2937" stroke="#3b82f6"/>
-    <text x="170" y="261" text-anchor="middle" font-size="10" fill="#93c5fd" font-weight="600">⏰ 定时任务</text>
+    <text x="170" y="261" text-anchor="middle" font-size="10" fill="#93c5fd" font-weight="600">⏰ 任务</text>
     <rect x="233" y="242" width="105" height="28" rx="6" fill="#1f2937" stroke="#3b82f6"/>
     <text x="285" y="261" text-anchor="middle" font-size="10" fill="#93c5fd" font-weight="600">💻 Web 终端</text>
     <rect x="348" y="242" width="115" height="28" rx="6" fill="#1f2937" stroke="#3b82f6"/>

@@ -27,25 +27,25 @@ defineProps({
     margin: 0 auto;
     background: color-mix(in srgb, var(--accent-color) 85%, var(--bg-tertiary));
     color: #fff;
-    border-radius: 16px;
-    padding: 6px 14px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-3) 14px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 500;
+    gap: var(--space-3);
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
     box-shadow: var(--shadow-md);
     cursor: pointer;
-    z-index: 9999;
+    z-index: var(--z-popover);
     white-space: normal;
     width: fit-content;
     min-width: 80px;
     max-width: 88vw;
     text-align: left;
-    line-height: 1.4;
+    line-height: var(--line-height-snug);
     -webkit-tap-highlight-color: transparent;
     user-select: none;
-    transition: opacity 0.1s, transform 0.1s;
+    transition: opacity var(--duration-fast), transform var(--duration-fast);
 }
 
 .toast-error {
@@ -79,12 +79,12 @@ defineProps({
 }
 
 .toast:active {
-    opacity: 0.8;
+    opacity: var(--opacity-hover);
     transform: scale(0.97);
 }
 
 .toast-icon {
-    font-size: 16px;
+    font-size: var(--font-size-2xl);
 }
 
 .toast-text {

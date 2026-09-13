@@ -197,6 +197,110 @@ func TestSchema_TitleRenamedMigration_Idempotent(t *testing.T) {
 	assert.Contains(t, columns, "title_renamed")
 }
 
+// TestSchema_TitleSourceColumnExists verifies the additive migration that
+// replaces title_renamed with the title_source priority enum.
+func TestSchema_TitleSourceColumnExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_source", "chat_sessions should have title_source column")
+}
+
+// TestSchema_TitleSourceBackfill verifies the one-time backfill maps existing
+// rows to the correct source: title_renamed=1 -> custom; otherwise a session
+// with a user message -> auto; a session with no user messages -> placeholder.
+func TestSchema_TitleSourceBackfill(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: create the full current schema, then drop title_source to
+	// simulate a pre-migration database. Building via InitDB (rather than a
+	// hand-written partial schema) guarantees every other table/index exists,
+	// so the second InitDB below exercises ONLY the title_source migration.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	// custom: renamed by the user.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-custom', '/p', 'claude', 'Mine', 1)")
+	require.NoError(t, err)
+	// auto: has a user message, not renamed.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-auto', '/p', 'claude', 'Auto', 0)")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id) VALUES ('/p', 'user', 'hi', 's-auto')")
+	require.NoError(t, err)
+	// placeholder: no messages, not renamed.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-ph', '/p', 'claude', 'New Session 1', 0)")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN title_source")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column and runs the backfill.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	got := map[string]string{}
+	rows, err := db.Query("SELECT id, title_source FROM chat_sessions")
+	require.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var id, source string
+		require.NoError(t, rows.Scan(&id, &source))
+		got[id] = source
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, "custom", got["s-custom"])
+	assert.Equal(t, "auto", got["s-auto"])
+	assert.Equal(t, "placeholder", got["s-ph"])
+}
+
+// TestSchema_TitleSourceMigration_Idempotent verifies running InitDB twice does
+// not fail on the already-present title_source column.
+func TestSchema_TitleSourceMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	err = InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
+	assert.Contains(t, columns, "title_source")
+}
+
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir
@@ -1430,14 +1534,6 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_default INTEGER NOT NULL DEFAULT 0
 		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL,
-			backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
 	`)
 	assert.NoError(t, err)
 
@@ -1799,11 +1895,6 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, project_path TEXT UNIQUE NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE TABLE IF NOT EXISTS ai_raw_responses (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
-			message_id INTEGER NOT NULL, backend TEXT NOT NULL DEFAULT '',
-			raw_output TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, target_type TEXT NOT NULL,
 			target_id INTEGER NOT NULL, summary TEXT NOT NULL,
@@ -1900,6 +1991,80 @@ func TestSchema_DropHistoryDeletedColumn_Idempotent(t *testing.T) {
 
 	columns = getTableColumns(t, UnsafeDBForTest(), "chat_history")
 	assert.NotContains(t, columns, "deleted", "deleted column should still not exist after second InitDB")
+}
+
+// TestSchema_DropsLegacyRawResponsesTable verifies that InitDB drops the
+// legacy ai_raw_responses table on an existing install (the feature was
+// removed because a single multi-hundred-MB row INSERT could hold the global
+// write lock long enough to stall other sessions' streaming flushes and cause
+// their stream events to be dropped).
+func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Step 1: Create a DB with the legacy ai_raw_responses table (and indexes).
+	dbDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(dbDir, 0o755))
+	oldDB, err := sql.Open("sqlite", filepath.Join(dbDir, "ClawBench.db"))
+	assert.NoError(t, err)
+	oldDB.SetMaxOpenConns(1)
+	oldDB.Exec("PRAGMA journal_mode=WAL")
+	oldDB.Exec("PRAGMA busy_timeout=5000")
+
+	_, err = oldDB.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS ai_raw_responses (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id),
+			backend TEXT NOT NULL DEFAULT '',
+			raw_output TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_raw_responses_session ON ai_raw_responses(session_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_raw_responses_message ON ai_raw_responses(message_id);
+	`)
+	assert.NoError(t, err)
+	oldDB.Close()
+
+	// Step 2: Run InitDB — should drop the legacy table.
+	err = InitDB()
+	assert.NoError(t, err)
+
+	var tableCount int
+	err = UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'",
+	).Scan(&tableCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, tableCount, "legacy ai_raw_responses table should be dropped")
+
+	// Step 3: InitDB must stay idempotent on a DB that no longer has the table.
+	CloseDB()
+	err = InitDB()
+	assert.NoError(t, err)
+	err = UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'",
+	).Scan(&tableCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, tableCount, "table must stay absent after a second InitDB")
+	CloseDB()
 }
 
 // TestSchema_RenameSessionDeletedToArchived verifies that when a database has
@@ -3318,4 +3483,89 @@ func TestSaveGetSummaryWithCards(t *testing.T) {
 	if gotCards == nil || len(gotCards.TaskIDs) != 2 {
 		t.Fatalf("cards mismatch: %+v", gotCards)
 	}
+}
+
+// TestSchema_ProjectForgesTableExists verifies the project_forges table and its
+// indexes are created by InitDB. This is the DDL contract for the GitHub/GitLab
+// integration's project↔repo binding.
+func TestSchema_ProjectForgesTableExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	err := InitDB()
+	assert.NoError(t, err)
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
+	for _, col := range []string{"id", "project_path", "platform", "host", "owner", "repo", "source", "created_at", "updated_at"} {
+		assert.True(t, columns[col], "project_forges should have %s column", col)
+	}
+}
+
+// TestSchema_ForgeItemsCommentsBaselinedMigration covers the migration that
+// fixes historical-comment replay.
+//
+// A database predating the column must gain it, and rows that already recorded
+// a comment id must be backfilled to baselined=1 — otherwise every already-seen
+// item would look like "comments never fetched" and would replay its history
+// once more after upgrade.
+func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Build a LEGACY forge_items table: no comments_baselined column, and one
+	// row that already knows a comment id (id 42) plus one that never had any.
+	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
+	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = legacy.Exec(`
+		CREATE TABLE forge_items (
+			platform TEXT NOT NULL, host TEXT NOT NULL, owner TEXT NOT NULL,
+			repo TEXT NOT NULL, item_type TEXT NOT NULL, number INTEGER NOT NULL,
+			state TEXT NOT NULL, merged INTEGER NOT NULL DEFAULT 0,
+			last_comment_id INTEGER NOT NULL DEFAULT 0,
+			last_comment_updated_at DATETIME, item_updated_at DATETIME,
+			seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (platform, host, owner, repo, item_type, number));`)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`INSERT INTO forge_items
+		(platform,host,owner,repo,item_type,number,state,merged,last_comment_id)
+		VALUES ('github','github.com','a','b','issue',1,'open',0,42),
+		       ('github','github.com','a','b','issue',2,'open',0,0)`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	// Run the real migration.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "forge_items")
+	assert.Contains(t, columns, "comments_baselined",
+		"the migration must add comments_baselined to an existing database")
+
+	// The row that had already seen a comment is baselined; the comment-less
+	// row stays unbaselined so its first comment pass absorbs history silently.
+	var baselined1, baselined2 int
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT comments_baselined FROM forge_items WHERE number = 1`).Scan(&baselined1))
+	require.NoError(t, UnsafeDBForTest().QueryRow(
+		`SELECT comments_baselined FROM forge_items WHERE number = 2`).Scan(&baselined2))
+	assert.Equal(t, 1, baselined1, "a row with a known comment id must be backfilled as baselined")
+	assert.Equal(t, 0, baselined2, "a row with no comment id must stay unbaselined")
 }

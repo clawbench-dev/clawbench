@@ -67,7 +67,7 @@ vi.mock('@/composables/useLocale', () => ({
 }))
 
 vi.mock('@/stores/app', () => ({
-    store: { state: { chatInitialMessages: 50, chatPageSize: 50, projectRoot: '/test/project' } },
+    store: { state: { chatInitialMessages: 50, chatPageSize: 50, projectRoot: '/test/project', sessionListVersion: 0 } },
 }))
 
 vi.mock('@/utils/chatSessionUtils', () => ({
@@ -75,8 +75,10 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, clearSessionIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, registerSessionDrawerRef, registerOpenSessionTabOverride, reconcileRunningSessions, renameSession } from '@/composables/useSessionIdentity'
 import { recordRecentSession } from '@/composables/useRecentSession'
+import { store } from '@/stores/app'
+import { useChatContext } from '@/composables/useChatContext'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -212,7 +214,9 @@ describe('useSessionIdentity', () => {
             const identity = useSessionIdentity()
             await identity.switchSession('session-2')
 
-            expect(mockSwitch).toHaveBeenCalledWith('session-2')
+            // switchSession forwards an optional projectPath (cross-project jump);
+            // with none supplied the second argument is undefined.
+            expect(mockSwitch).toHaveBeenCalledWith('session-2', undefined)
         })
 
         it('does nothing when callback is a no-op', async () => {
@@ -387,6 +391,111 @@ describe('useSessionIdentity', () => {
             await identity.sendMessage('hello')
 
             expect(mockSend).toHaveBeenCalledWith('hello')
+        })
+
+        it('carries pending attachments through the direct API call', async () => {
+            // Regression: the fallback hardcoded filePaths: [] and omitted
+            // `files`, so a URL attachment (added by the issue/PR quote flow)
+            // was silently dropped whenever ChatPanel was not mounted.
+            // registerSessionActions assigns every callback, so supply the full
+            // set: leaving sendMessage undefined is what forces the fallback,
+            // and the rest must stay intact to avoid leaking into other tests.
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                archiveSession: vi.fn(),
+                sendMessage: undefined as never,
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(true),
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+            })
+
+            const ctx = useChatContext()
+            ctx.clearAll()
+            ctx.addUrlAttachment('https://github.com/acme/widgets/issues/7', 'acme/widgets#7')
+
+            const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+            vi.stubGlobal('fetch', fetchMock)
+
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-attach'
+
+            await identity.sendMessage('look at this')
+
+            const call = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/ai/queue'))
+            expect(call, 'the fallback must post to the queue endpoint').toBeTruthy()
+            const body = JSON.parse(call![1].body)
+            expect(body.files).toHaveLength(1)
+            expect(body.files[0]).toMatchObject({
+                kind: 'url',
+                url: 'https://github.com/acme/widgets/issues/7',
+                path: 'acme/widgets#7',
+            })
+
+            vi.unstubAllGlobals()
+            ctx.clearAll()
+        })
+
+        it('clears the attachment batch after a successful send', async () => {
+            // registerSessionActions assigns every callback, so supply the full
+            // set: leaving sendMessage undefined is what forces the fallback,
+            // and the rest must stay intact to avoid leaking into other tests.
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                archiveSession: vi.fn(),
+                sendMessage: undefined as never,
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(true),
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+            })
+
+            const ctx = useChatContext()
+            ctx.clearAll()
+            ctx.addUrlAttachment('https://github.com/acme/widgets/issues/8', 'acme/widgets#8')
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }))
+
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-clear'
+
+            await identity.sendMessage('x')
+
+            expect(ctx.attachedFiles.value, 'the batch must not be re-sent').toHaveLength(0)
+
+            vi.unstubAllGlobals()
+            ctx.clearAll()
+        })
+
+        it('keeps the attachment batch when the send fails', async () => {
+            // registerSessionActions assigns every callback, so supply the full
+            // set: leaving sendMessage undefined is what forces the fallback,
+            // and the rest must stay intact to avoid leaking into other tests.
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                archiveSession: vi.fn(),
+                sendMessage: undefined as never,
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(true),
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+            })
+
+            const ctx = useChatContext()
+            ctx.clearAll()
+            ctx.addUrlAttachment('https://github.com/acme/widgets/issues/9', 'acme/widgets#9')
+
+            vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }))
+
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-fail'
+
+            await identity.sendMessage('x')
+
+            expect(ctx.attachedFiles.value, 'a failed send must not discard the attachments').toHaveLength(1)
+
+            vi.unstubAllGlobals()
+            ctx.clearAll()
         })
 
         it('delegates to registered callback when available', async () => {
@@ -1614,6 +1723,40 @@ describe('useSessionIdentity', () => {
             vi.unstubAllGlobals()
         })
 
+        it('bumps sessionListVersion so a mounted session list refreshes its title', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(true)
+            expect(store.state.sessionListVersion).toBe(before + 1)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not bump sessionListVersion on server failure', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+            identity.currentSessionTitle.value = 'Old Title'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+            vi.stubGlobal('fetch', mockFetch)
+
+            const before = store.state.sessionListVersion
+            const result = await renameSession('New Title')
+
+            expect(result).toBe(false)
+            expect(store.state.sessionListVersion).toBe(before)
+
+            vi.unstubAllGlobals()
+        })
+
         it('returns false when no session ID', async () => {
             const identity = useSessionIdentity()
             identity.currentSessionId.value = ''
@@ -1723,13 +1866,6 @@ describe('useSessionIdentity', () => {
         })
     })
 
-    // ── prefetchCommands (deprecated no-op) ──
-
-    describe('prefetchCommands', () => {
-        it('resolves without error (no-op)', async () => {
-            await expect(prefetchCommands('any-agent')).resolves.toBeUndefined()
-        })
-    })
 
     // ── registerSessionDrawerRef / openAgentSelector ──
 

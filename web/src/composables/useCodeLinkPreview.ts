@@ -7,15 +7,16 @@
  * - Single active instance across screen
  * - Request generation tracking & AbortController to prevent race conditions
  * - Deduplication and LRU caching (previewCache)
- * - Switch: markdownCodeLinkPreview (default false)
+ * - Switch: markdownCodeLinkPreview (default true)
  * - Touch detection ((hover: none), (pointer: coarse))
  */
 
-import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref } from 'vue'
+import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref, type ComputedRef } from 'vue'
 import { store } from '@/stores/app'
 import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
+import { parseLineRanges } from '@/utils/lineRanges'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
@@ -32,7 +33,7 @@ import {
 } from '@/utils/codeLinkPreview'
 
 export type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error'
-export type PreviewMode = 'transient' | 'pinned' | 'sheet'
+export type PreviewMode = 'transient' | 'pinned' | 'sheet' | 'docked'
 export type PreviewErrorCode = 'binary' | 'too-large' | 'not-file' | 'not-found' | 'access-denied' | 'network'
 export type PreviewRenderMode = 'rendered' | 'source'
 
@@ -40,6 +41,8 @@ export interface PreviewTarget {
   filePath: string
   lineStart?: number
   lineEnd?: number
+  /** Full multi-range target (canonical "90-91,309,938-943"), when annotated. */
+  lineRanges?: string
   anchorEl?: HTMLElement
 }
 
@@ -61,6 +64,15 @@ export interface UseCodeLinkPreviewOptions {
   source?: NavigationSurface
   /** Called synchronously before opening the target file in full view. */
   onBeforeOpen?: () => void
+  /** Replace the global markdownCodeLinkPreview switch with a caller-owned
+   *  gate. Used by the file manager's explicit "preview mode", which must work
+   *  independently of the markdown-link-preview preference. */
+  enabled?: Ref<boolean> | ComputedRef<boolean>
+  /** CSS selector for elements that should NOT count as an "outside" click
+   *  when dismissing an unpinned card. The file manager lists pass their row
+   *  selector so clicking another row retargets the card in place instead of
+   *  closing and reopening it. */
+  outsideClickIgnoreSelector?: string
 }
 
 // Only one preview surface should be visible across chat/file panes. Keep the
@@ -73,7 +85,14 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const { localConfig } = useSettingsConfig()
   const { isPC } = usePlatformDetect()
 
-  const enabled = computed(() => localConfig.markdownCodeLinkPreview === true)
+  const enabled = computed(() => options.enabled
+    ? options.enabled.value
+    : localConfig.markdownCodeLinkPreview === true)
+
+  // Selector for clicks that should not dismiss an unpinned card (see
+  // outsideClickIgnoreSelector). Exposed so CodeLinkPreview's document
+  // pointerdown handler can honor it.
+  const outsideClickIgnoreSelector = options.outsideClickIgnoreSelector ?? ''
 
   // Reactive preview state
   const visible = ref(false)
@@ -90,6 +109,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const extraBelowLines = ref(0)
   const placement = ref<CardPlacementResult | null>(null)
   const isPinned = computed(() => mode.value === 'pinned')
+  /** Docked = rendered inline in a caller-owned pane (file manager bottom pane)
+   *  rather than as a floating card. It has no placement/drag and is always
+   *  "open until closed". */
+  const isDocked = computed(() => mode.value === 'docked')
 
   // ── Rendered-vs-source view ─────────────────────────────────────────────
   // The preview has two body renderers: the line-based code slice (source)
@@ -104,6 +127,27 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const filePath = target.value?.filePath || ''
     return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
   })
+
+  // ── Media targets (image / SVG / video / audio / PDF) ────────────────────
+  // These are served as raw bytes by /api/local-file/ (correct MIME, no size
+  // cap, inline), NOT by /api/file — which is JSON, 10 MiB-capped and reports
+  // every raster image as binary. The preview short-circuits the fetch for
+  // them and renders a media body straight from the URL.
+  const fileType = computed(() => {
+    const filePath = target.value?.filePath || ''
+    return filePath ? getFileType(filePath) : null
+  })
+  const isImageTarget = computed(() => Boolean(fileType.value?.isImage))
+  const isVideoTarget = computed(() => Boolean(fileType.value?.isVideo))
+  const isAudioTarget = computed(() => Boolean(fileType.value?.isAudio))
+  const isPdfTarget = computed(() => Boolean(fileType.value?.isPdf))
+  const isMediaTarget = computed(() =>
+    isImageTarget.value || isVideoTarget.value || isAudioTarget.value || isPdfTarget.value
+  )
+
+  // Bumped by refresh() for media targets so the media element re-requests its
+  // URL (media bypasses the JSON fetch/cache entirely).
+  const mediaRefreshNonce = ref(0)
 
   const hasExplicitLineRange = computed(() => {
     const t = target.value
@@ -143,6 +187,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         contextExpansion: contextExpansion.value,
         expandAboveLines: extraAboveLines.value,
         expandBelowLines: extraBelowLines.value,
+        lineRanges: target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined,
       }
     )
   }
@@ -151,9 +196,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const el = anchorEl || target.value?.anchorEl
     if (!el || typeof el.getBoundingClientRect !== 'function') return
     const rect = el.getBoundingClientRect()
-    // Realistic card dimensions (compact initial estimate before DOM measurement)
-    const cardWidth = customWidth ?? Math.min(720, typeof window !== 'undefined' ? window.innerWidth - 24 : 700)
-    const cardHeight = customHeight ?? Math.min(260, typeof window !== 'undefined' ? Math.min(260, window.innerHeight * 0.4) : 240)
+    // Realistic card dimensions (compact initial estimate before DOM measurement).
+    // Media cards are wider/taller (the file IS the content), so estimate them
+    // accordingly — otherwise the placement clamp would size the card as if it
+    // were a narrow code slice and leave viewport space unused.
+    const media = isMediaTarget.value
+    const defaultWidth = media ? 960 : 720
+    const defaultHeight = media ? 420 : 260
+    const cardWidth = customWidth ?? Math.min(defaultWidth, typeof window !== 'undefined' ? window.innerWidth - 24 : 700)
+    const cardHeight = customHeight ?? Math.min(defaultHeight, typeof window !== 'undefined' ? Math.min(defaultHeight, window.innerHeight * 0.6) : 240)
     placement.value = placeNearAnchor(rect, cardWidth, cardHeight)
   }
 
@@ -169,6 +220,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     errorCode.value = null
     errorMessage.value = null
     isLargeFile.value = false
+
+    // Media files are served as raw bytes by /api/local-file/ and rendered
+    // straight from that URL — there is no JSON content to fetch, and /api/file
+    // would reject every raster image as binary (10 MiB cap + null-byte sniff).
+    // Go straight to 'ready' so the media body can mount.
+    if (isMediaTarget.value) {
+      fileContent.value = null
+      slicedCode.value = null
+      status.value = 'ready'
+      return
+    }
 
     const projectRoot = store.state.projectRoot || ''
     const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath)
@@ -247,6 +309,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     contextExpansion.value = 0
     extraAboveLines.value = 0
     extraBelowLines.value = 0
+    mediaRefreshNonce.value = 0
     visible.value = true
 
     // Markdown files without a pinned line range default to the rendered
@@ -256,7 +319,8 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
     // Once pinned (including after dragging), retain the current placement
     // while switching to another link. The card is reused in-place.
-    if (mode.value !== 'sheet' && !wasPinned) {
+    // Docked panes have no placement to compute.
+    if (mode.value !== 'sheet' && mode.value !== 'docked' && !wasPinned) {
       updatePlacement(newTarget.anchorEl)
     }
 
@@ -284,6 +348,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     contextExpansion.value = 0
     extraAboveLines.value = 0
     extraBelowLines.value = 0
+    mediaRefreshNonce.value = 0
     placement.value = null
     mode.value = 'transient'
     renderMode.value = 'source'
@@ -294,12 +359,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   const pin = () => {
-    if (!visible.value || mode.value === 'sheet') return
+    if (!visible.value || mode.value === 'sheet' || mode.value === 'docked') return
     mode.value = 'pinned'
   }
 
   const unpin = () => {
-    if (!visible.value || mode.value === 'sheet') return
+    if (!visible.value || mode.value === 'sheet' || mode.value === 'docked') return
     mode.value = 'transient'
   }
 
@@ -316,6 +381,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const refresh = () => {
     if (!target.value) return
+    // Media is not fetched through fetchPreview (no JSON body), so a refresh
+    // must instead force the media element to re-request its URL. Bumping this
+    // nonce feeds MediaPreviewBody's cache-busting param.
+    if (isMediaTarget.value) {
+      mediaRefreshNonce.value += 1
+      return
+    }
     fetchPreview(target.value, true)
   }
 
@@ -362,9 +434,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const openFull = () => {
     if (!target.value) return
-    const { filePath, lineStart, lineEnd } = target.value
+    const { filePath, lineStart, lineEnd, lineRanges } = target.value
     options.onBeforeOpen?.()
-    openFilePath(filePath, lineStart, lineEnd, options.source)
+    if (lineRanges) {
+      openFilePath(filePath, lineStart, lineEnd, options.source, lineRanges)
+    } else {
+      openFilePath(filePath, lineStart, lineEnd, options.source)
+    }
     close()
   }
 
@@ -393,11 +469,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const endAttr = targetEl.getAttribute('data-line-end')
     const lineStart = startAttr ? parseInt(startAttr, 10) : undefined
     const lineEnd = endAttr ? parseInt(endAttr, 10) : undefined
+    const lineRanges = targetEl.getAttribute('data-line-ranges') || undefined
 
     return {
       filePath,
       lineStart,
       lineEnd,
+      lineRanges,
       anchorEl: targetEl,
     }
   }
@@ -495,10 +573,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   return {
     enabled,
+    outsideClickIgnoreSelector,
     visible,
     status,
     mode,
     isPinned,
+    isDocked,
     target,
     fileContent,
     slicedCode,
@@ -514,6 +594,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     hasExplicitLineRange,
     canRenderMarkdown,
     effectiveRenderMode,
+    isImageTarget,
+    isVideoTarget,
+    isAudioTarget,
+    isPdfTarget,
+    isMediaTarget,
+    mediaRefreshNonce,
     showPreview,
     close,
     pin,

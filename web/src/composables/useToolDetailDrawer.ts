@@ -32,7 +32,7 @@ interface ToolDetailDrawerOptions {
   /** Tab ID this drawer belongs to (e.g. 'chat', 'tasks'). The drawer auto-hides
    *  when the user switches away and auto-restores when switching back. */
   tabId: string
-  onFileOpen?: (path: string, lineStart?: number, lineEnd?: number) => void
+  onFileOpen?: (path: string, lineStart?: number, lineEnd?: number, lineRanges?: string) => void
   findLiveBlock?: (ids: { msgId: string | number; blockIdx: number }) => ToolBlock | null
   /** Optional session ID for tool-call API fallback. When the session has
    *  multiple assistant messages (e.g. ACP sessions), the tool call may
@@ -221,11 +221,12 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     }
   }
 
-  function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
-    const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
+  function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number; lineRanges?: string }) {
+    const { path, lineStart, lineEnd, lineRanges } = typeof payload === 'string' ? { path: payload, lineStart: undefined, lineEnd: undefined, lineRanges: undefined } : payload
     drawer.close()
     if (onFileOpen) {
-      onFileOpen(path, lineStart, lineEnd)
+      if (lineRanges) onFileOpen(path, lineStart, lineEnd, lineRanges)
+      else onFileOpen(path, lineStart, lineEnd)
     }
   }
 

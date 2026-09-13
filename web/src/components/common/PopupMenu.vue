@@ -9,7 +9,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { computeMenuStyle } from '@/utils/popupMenuPosition'
 
 const props = defineProps({
@@ -62,44 +62,26 @@ function onLayoutChange() {
   if (props.show) updatePosition()
 }
 
-watch(() => props.show, (val) => {
-  if (val) {
-    // Compute position — defer one frame so that a soft keyboard dismissal
-    // triggered by the same tap can begin before we read getBoundingClientRect().
-    // The menu is inside a Transition so it won't paint until the next tick anyway.
-    requestAnimationFrame(() => {
-      if (!props.show) return // may have been closed already
-      updatePosition()
-    })
-    // Listen for layout changes that could move the anchor
-    window.addEventListener('scroll', onLayoutChange, true) // capture to catch all scrolls
-    window.addEventListener('resize', onLayoutChange)
-    // On mobile, soft keyboard show/hide triggers visualViewport resize but
-    // NOT window.resize (iOS, PWA standalone, or Android non-adjustResize).
-    // Listen to both so the popup repositions after keyboard state changes.
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', onLayoutChange)
-      window.visualViewport.addEventListener('scroll', onLayoutChange)
-    }
-    // Use setTimeout to avoid the opening click being treated as outside click
-    setTimeout(() => {
-      if (props.show) {
-        document.addEventListener('click', handleClickOutside)
-      }
-    }, 0)
-  } else {
-    window.removeEventListener('scroll', onLayoutChange, true)
-    window.removeEventListener('resize', onLayoutChange)
-    if (window.visualViewport) {
-      window.visualViewport.removeEventListener('resize', onLayoutChange)
-      window.visualViewport.removeEventListener('scroll', onLayoutChange)
-    }
-    document.removeEventListener('click', handleClickOutside)
+function bindOpenListeners() {
+  // Listen for layout changes that could move the anchor
+  window.addEventListener('scroll', onLayoutChange, true) // capture to catch all scrolls
+  window.addEventListener('resize', onLayoutChange)
+  // On mobile, soft keyboard show/hide triggers visualViewport resize but
+  // NOT window.resize (iOS, PWA standalone, or Android non-adjustResize).
+  // Listen to both so the popup repositions after keyboard state changes.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onLayoutChange)
+    window.visualViewport.addEventListener('scroll', onLayoutChange)
   }
-})
+  // Use setTimeout to avoid the opening click being treated as outside click
+  setTimeout(() => {
+    if (props.show) {
+      document.addEventListener('click', handleClickOutside)
+    }
+  }, 0)
+}
 
-// Cleanup on unmount
-onBeforeUnmount(() => {
+function unbindOpenListeners() {
   window.removeEventListener('scroll', onLayoutChange, true)
   window.removeEventListener('resize', onLayoutChange)
   if (window.visualViewport) {
@@ -107,6 +89,43 @@ onBeforeUnmount(() => {
     window.visualViewport.removeEventListener('scroll', onLayoutChange)
   }
   document.removeEventListener('click', handleClickOutside)
+}
+
+/** Position the menu for the current anchor geometry, one frame later. */
+function schedulePosition() {
+  // Compute position — defer one frame so that a soft keyboard dismissal
+  // triggered by the same tap can begin before we read getBoundingClientRect().
+  // The menu is inside a Transition so it won't paint until the next tick anyway.
+  requestAnimationFrame(() => {
+    if (!props.show) return // may have been closed already
+    updatePosition()
+  })
+}
+
+watch(() => props.show, (val) => {
+  if (val) {
+    schedulePosition()
+    bindOpenListeners()
+  } else {
+    unbindOpenListeners()
+  }
+})
+
+// A parent may mount this component with `show` already true (e.g. a menu whose
+// own `v-if` is driven by the same condition that opens it). The `show` watcher
+// above only fires on a *change*, so without this the menu would render
+// unpositioned — a static block in the teleport target instead of a fixed
+// popup. Position and bind on mount too.
+onMounted(() => {
+  if (props.show) {
+    schedulePosition()
+    bindOpenListeners()
+  }
+})
+
+// Cleanup on unmount
+onBeforeUnmount(() => {
+  unbindOpenListeners()
 })
 </script>
 
@@ -114,16 +133,16 @@ onBeforeUnmount(() => {
 .popup-menu {
   background: var(--bg-secondary, #fff);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
-  z-index: 9999;
+  z-index: var(--z-popover);
   padding: 0;
 }
 
 /* Fade animation for menu appearance */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
 }
 
 .menu-fade-enter-from,

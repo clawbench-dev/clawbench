@@ -10,10 +10,17 @@
          Reads from localStorage (clawbench-settings-theme or legacy 'theme' key).
          Migrates old 'light'/'dark' values to new named theme IDs.
          Sets data-theme (theme ID), data-theme-base (light|dark), data-hljs-theme.
-         Must run synchronously before any rendering to avoid a single white frame. -->
+         Must run synchronously before any rendering to avoid a single white frame.
+
+         On a brand-new install the factory theme is gruvbox-dark, but the server
+         flag that confirms a fresh install (config.first_run) is not available
+         this early. So an empty localStorage — which only a first-ever visit can
+         have — is used as a guess, and 'clawbench-fresh-theme-guess' records it so
+         useSettingsConfig can revert if the server turns out to be pre-existing. -->
     <script>
       (function() {
         var DARK_IDS = ['github-dark','one-dark-pro','catppuccin-mocha','dracula','nord','tokyo-night','solarized-dark','solarized-deep','gruvbox-dark','high-contrast-dark','night-owl','ayu-dark','vitesse-dark','rose-pine','everforest-dark','kanagawa'];
+        var GUESS_KEY = 'clawbench-fresh-theme-guess';
         var t = null;
         try { var s = localStorage.getItem('clawbench-settings-theme'); if (s) t = JSON.parse(s); } catch {}
         if (t === null) { try { t = localStorage.getItem('theme'); } catch {} }
@@ -23,7 +30,15 @@
         // Remove stale accent color key
         try { localStorage.removeItem('clawbench-settings-accentColor'); } catch {}
         if (!t || t === 'auto') {
-          t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light';
+          var freshVisit = false;
+          try { freshVisit = localStorage.length === 0; } catch {}
+          if (freshVisit) {
+            // First-ever visit: assume a fresh install and use the factory theme.
+            t = 'gruvbox-dark';
+            try { localStorage.setItem(GUESS_KEY, '1'); } catch {}
+          } else {
+            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'github-dark' : 'github-light';
+          }
         }
         var base = DARK_IDS.indexOf(t) >= 0 ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);

@@ -8,6 +8,25 @@
 
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onContentTouchStart" @touchend="onContentTouchEnd" @touchcancel="onContentTouchEnd" @scroll="handleScroll">
+      <!-- Trigger source: links an event-triggered run back to its issue/PR and
+           shows the exact context block that was prepended to the prompt, so
+           the run can be read against what actually triggered it. -->
+      <div v-if="execDetail?.eventUrl || execDetail?.eventSummary" class="exec-event-card">
+        <a v-if="execDetail?.eventUrl" class="exec-event-source" :href="execDetail.eventUrl" target="_blank" rel="noopener noreferrer">
+          <Zap :size="12" />
+          <span>{{ eventSourceText || t('task.exec.eventTriggeredFrom') }}</span>
+          <ExternalLink :size="11" />
+        </a>
+        <button
+          v-if="execDetail?.eventSummary"
+          class="exec-event-toggle"
+          @click="eventContextOpen = !eventContextOpen"
+        >
+          <ChevronDown :size="12" :class="{ 'exec-event-chevron-collapsed': !eventContextOpen }" class="exec-event-chevron" />
+          <span>{{ t('task.exec.eventContext') }}</span>
+        </button>
+        <pre v-if="execDetail?.eventSummary && eventContextOpen" class="exec-event-context">{{ execDetail.eventSummary }}</pre>
+      </div>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value && !isRunning" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -88,7 +107,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, Square } from 'lucide-vue-next'
+import { MessageSquare, Square, Zap, ExternalLink, ChevronDown } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
@@ -111,6 +130,7 @@ import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import { terminateExecution } from '@/utils/taskExecUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
+import { eventSourceLabel } from '@/utils/forgeEventLabels'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 
@@ -126,7 +146,7 @@ const { t } = useI18n()
 const { refreshExecDetail } = useTaskTab()
 const identity = useSessionIdentity()
 const theme = inject('theme', ref('light'))
-const { openFilePath, verifyFilePaths } = useFilePathAnnotation()
+const { openFilePath, verifyFilePaths, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -134,6 +154,13 @@ const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTab
 // ── Continue conversation logic ──
 const continueLoading = ref(false)
 const isRunning = computed(() => props.execDetail?.status === 'running')
+
+// ── Event trigger context ──
+// The run's source is identified by its URL; the backend also stored the exact
+// context block it prepended to the prompt, which the user can expand to see
+// what the AI was told about the event.
+const eventContextOpen = ref(false)
+const eventSourceText = computed(() => eventSourceLabel(props.execDetail?.eventUrl))
 
 // ── Terminate (cancel) running execution ──
 const cancelling = ref(false)
@@ -363,9 +390,10 @@ const {
 } = useToolDetailDrawer({
   chatRender,
   tabId: 'tasks',
-  onFileOpen: (path, lineStart, lineEnd) => {
-    openFilePath(path, lineStart, lineEnd, 'task')
-    emit('open-file', { path, lineStart, lineEnd })
+  onFileOpen: (path, lineStart, lineEnd, lineRanges) => {
+    if (lineRanges) openFilePath(path, lineStart, lineEnd, 'task', lineRanges)
+    else openFilePath(path, lineStart, lineEnd, 'task')
+    emit('open-file', { path, lineStart, lineEnd, lineRanges })
   },
   findLiveBlock: findLiveToolBlock,
   sessionId: () => props.execDetail?.sessionId,
@@ -548,12 +576,11 @@ function handleContentClick(event) {
   event.preventDefault()
   event.stopPropagation()
   codeLinkPreview.close()
-  const filePath = linkOrBtn.getAttribute('data-file-path')
-  const lineStart = linkOrBtn.getAttribute('data-line-start')
-  const lineEnd = linkOrBtn.getAttribute('data-line-end')
+  const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
   if (filePath) {
-    openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
-    emit('open-file', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
+    if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'task', lineRanges)
+    else openFilePath(filePath, lineStart, lineEnd, 'task')
+    emit('open-file', { path: filePath, lineStart, lineEnd, lineRanges })
   }
 }
 
@@ -617,9 +644,9 @@ onUnmounted(() => {
 .exec-detail-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -630,7 +657,7 @@ onUnmounted(() => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -638,11 +665,11 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
-  opacity: 0.5;
+  opacity: var(--opacity-muted);
   cursor: not-allowed;
 }
 
@@ -660,15 +687,123 @@ onUnmounted(() => {
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: var(--space-6) 0;
+}
+
+/* The event band belongs flush under the header — it is a header strip, not a
+   floating card — but the scroll container's top padding would otherwise leave
+   a 12px strip of page background above it, separating the band from the header
+   it annotates. Drop that padding only when the band is present; the
+   message-only case keeps its breathing room. */
+.exec-detail-content:has(> .exec-event-card) {
+  padding-top: 0;
+}
+
+/* Trigger source for event-triggered runs: a source link plus the collapsible
+   context block the backend prepended to the prompt.
+
+   Rendered as a full-bleed band — no outer margin, no radius — so it reads as
+   the run's header strip rather than a floating card. Two details make it hold
+   together:
+   - Horizontal padding matches the chat content below (--space-6), so the
+     source pill, the toggle and the message text share one left edge. At
+     padding:0 all three sat flush against the viewport edge.
+   - A bottom border delimits the band. Without it the band's own background
+     ran straight into the summary tab bar's identical --bg-secondary, and the
+     two merged into one featureless grey block. */
+.exec-event-card {
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
+  background: var(--bg-secondary, #f3f4f6);
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.exec-event-source {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e7eb);
+  color: var(--text-secondary, #4b5563);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  max-width: 100%;
+}
+
+/* The owner/repo slug can outrun the viewport, so the text truncates rather
+   than widening the pill. ellipsis needs all three of these on the *text*
+   item — the container's own text-overflow is inert here because the label is
+   a flex item, not inline text. The icons are pinned so they survive the
+   squeeze instead of collapsing to nothing. */
+.exec-event-source span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.exec-event-source > svg {
+  flex-shrink: 0;
+}
+
+.exec-event-source:hover {
+  color: var(--accent-color, #2563eb);
+  border-color: var(--accent-color, #2563eb);
+}
+
+.exec-event-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  border: none;
+  background: transparent;
+  padding: var(--space-1) 0;
+  color: var(--text-muted, #6b7280);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .exec-event-toggle:hover { color: var(--text-secondary, #4b5563); }
+}
+
+.exec-event-chevron {
+  transition: transform var(--duration-slow) ease;
+}
+
+.exec-event-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+
+.exec-event-context {
+  margin: 0;
+  padding: var(--space-4) var(--space-5);
+  border: 1px dashed var(--border-color, #d1d5db);
+  border-radius: 0;
+  background: var(--bg-primary, #fff);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+  color: var(--text-secondary, #4b5563);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  font-family: var(--font-mono);
 }
 
 /* Fixed bottom action bar */
 .exec-detail-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -684,9 +819,9 @@ onUnmounted(() => {
 
 .exec-detail-empty {
   text-align: center;
-  padding: 40px 12px;
+  padding:40px var(--space-6);
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 .exec-cancelled-notice {
@@ -694,6 +829,6 @@ onUnmounted(() => {
   text-align: center;
   color: var(--text-muted, #999);
   font-style: italic;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 </style>

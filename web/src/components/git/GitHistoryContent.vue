@@ -801,7 +801,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ─── Drill-down shared ────────────────────────────────────────────────── */
@@ -822,25 +822,25 @@ onMounted(async () => {
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .drilldown-count {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
 }
 
 .diff-nav {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
-  margin-left: 6px;
+  margin-left: var(--space-3);
 }
 
 .diff-nav-btn {
@@ -850,13 +850,13 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary, #555);
   cursor: pointer;
   padding: 0;
   line-height: 1;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -867,15 +867,15 @@ onMounted(async () => {
 }
 
 .diff-nav-btn:disabled {
-  opacity: 0.3;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
 .diff-nav-count {
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  padding: 0 4px;
+  padding:0 var(--space-2);
   white-space: nowrap;
 }
 
@@ -885,16 +885,16 @@ onMounted(async () => {
 }
 
 .drilldown-list {
-  padding: 6px 0;
+  padding: var(--space-3) 0;
 }
 
 .drilldown-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 11px 14px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   border-bottom: 1px solid var(--border-color, #dee2e6);
 }
 
@@ -914,7 +914,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   color: var(--text-muted, #999);
-  font-size: 14px;
+  font-size: var(--font-size-lg);
 }
 
 /* ─── File list (project mode) ────────────────────────────────────────── */
@@ -927,10 +927,10 @@ onMounted(async () => {
 }
 
 .git-file-type-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-bold);
+  padding: var(--space-1) 5px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
@@ -952,7 +952,7 @@ onMounted(async () => {
 
 .git-file-name {
   color: var(--text-primary, #212529);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -960,24 +960,24 @@ onMounted(async () => {
 
 .git-file-dir {
   color: var(--text-muted, #999);
-  font-size: 11px;
-  opacity: 0.85;
+  font-size: var(--font-size-xs);
+  opacity: var(--opacity-hover);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .file-group-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  padding: 8px 14px 4px;
+  padding: var(--space-4) 14px var(--space-2);
   letter-spacing: 0.03em;
 }
 
 .merge-group + .merge-group {
   border-top: 1px solid var(--border-color, #dee2e6);
-  margin-top: 4px;
-  padding-top: 4px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 </style>

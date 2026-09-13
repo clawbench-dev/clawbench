@@ -502,7 +502,7 @@ onBeforeUnmount(() => {
    .share-toc/.share-btn/…) lives in css/share-chrome.css — the SAME source the
    markdown HTML export embeds. Only page-specific rules stay below. */
 
-.share-status { font-size: 12px; color: var(--text-muted, #656d76); }
+.share-status { font-size: var(--font-size-sm); color: var(--text-muted, #656d76); }
 .share-error { color: #cf222e; }
 
 /* Active (rendered preview shown) state for the view toggle */
@@ -516,7 +516,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   padding: 32px;
   text-align: center;
@@ -527,15 +527,15 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 100%;
   padding: 32px;
   color: var(--text-muted, #656d76);
   text-align: center;
 }
 
-.share-error-title { font-size: 16px; font-weight: 600; color: var(--text-primary, #1f2328); }
-.share-error-desc { font-size: 13px; max-width: 480px; word-break: break-word; }
+.share-error-title { font-size: var(--font-size-2xl); font-weight: var(--font-weight-semibold); color: var(--text-primary, #1f2328); }
+.share-error-desc { font-size: var(--font-size-md); max-width: 480px; word-break: break-word; }
 
 .share-html-iframe {
   width: 100%;
@@ -560,13 +560,13 @@ onBeforeUnmount(() => {
 .share-download-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 8px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
+  border-radius: var(--radius-sm);
   background: var(--accent-color, #0969da);
   color: #fff;
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   cursor: pointer;
 }
 

@@ -442,33 +442,47 @@ describe('FileHeader', () => {
     expect(wrapper.emitted('toggleToc')).toBeTruthy()
   })
 
-  it('adds file to chat context when attach button is clicked', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    mockAddAttachedFile.mockReset()
+  // The attach/detach toggle was replaced by the shared quote composer: the
+  // header now only emits, and App.vue opens the composer with the file
+  // attached. Detaching happens from the chip in the chat input.
+  it('emits quoteInChat with the file path when the quote button is clicked', async () => {
     const wrapper = mountHeader()
     const vm = wrapper.vm as any
-    vm.$.setupState.handleAttachToChat()
+    vm.$.setupState.handleQuoteInChat()
     await nextTick()
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('/tmp/main.ts')
+    expect(wrapper.emitted('quoteInChat')).toEqual([['/tmp/main.ts']])
   })
 
-  it('removes file from chat context when already attached', async () => {
-    mockHasAttachedFile.mockReturnValue(true)
+  it('does not emit quoteInChat when the file has no path', async () => {
+    const wrapper = mountHeader({ file: { name: 'test.ts', path: '', content: '' } })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleQuoteInChat()
+    await nextTick()
+    expect(wrapper.emitted('quoteInChat')).toBeFalsy()
+  })
+
+  it('no longer attaches to the chat context itself', async () => {
+    // Regression: the header used to add/remove the file directly. That made the
+    // button a toggle; the composer is now the single entry point.
+    mockAddAttachedFile.mockReset()
     mockRemoveAttachedFileByPath.mockReset()
     const wrapper = mountHeader()
     const vm = wrapper.vm as any
-    vm.$.setupState.handleAttachToChat()
-    await nextTick()
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('/tmp/main.ts')
-  })
-
-  it('does not attach when file has no path', async () => {
-    const wrapper = mountHeader({ file: { name: 'test.ts', path: '', content: '' } })
-    const vm = wrapper.vm as any
-    mockAddAttachedFile.mockReset()
-    vm.$.setupState.handleAttachToChat()
+    vm.$.setupState.handleQuoteInChat()
     await nextTick()
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
+    expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
+  })
+
+  it('shows the message bubble icon, not the old paperclip', () => {
+    // lucide is not stubbed in this file, so identify the icon by its
+    // `lucide-<name>` class rather than a data attribute.
+    const wrapper = mountHeader()
+    const btn = wrapper.find('[aria-label="file.header.quoteInChat"]')
+    expect(btn.exists(), 'the header must expose the quote action').toBe(true)
+    const svg = btn.find('svg')
+    expect(svg.classes()).toContain('lucide-message-square')
+    expect(svg.classes()).not.toContain('lucide-paperclip')
   })
 
   describe('media file filtering', () => {

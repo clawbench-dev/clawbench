@@ -84,6 +84,9 @@
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('previewMode')" class="toolbar-btn" :class="{ active: filePreviewMode }" @click="togglePreviewMode()" :title="filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn')">
+            <ScanEye :size="16" />
+          </button>
           <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
             <CheckSquare :size="16" />
           </button>
@@ -139,6 +142,12 @@
                   <LayoutGrid v-if="viewMode === 'list'" :size="14" />
                   <LayoutList v-else :size="14" />
                   <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('previewMode')">
+                <button class="toolbar-dropdown-item" :class="{ active: filePreviewMode }" @click="togglePreviewMode(); moreMenuOpen = false">
+                  <ScanEye :size="14" />
+                  <span>{{ filePreviewMode ? t('file.previewModeOff') : t('file.previewModeOn') }}</span>
                 </button>
               </template>
               <template v-if="toolbarCollapsedIds.includes('multiselect')">
@@ -197,6 +206,20 @@
       <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
+    <!-- File list + (optional) docked preview pane. When preview mode is on
+         and a file is open, this becomes a draggable top/bottom split; when
+         off, the wrappers are display:contents so the list fills as before. -->
+    <SplitView
+      class="fm-split"
+      orientation="vertical"
+      :enabled="previewPaneEnabled"
+      :ratio="previewSplitRatio"
+      :min-left="previewPaneMinTop"
+      :min-right="previewPaneMinBottom"
+      :title="t('file.previewPaneResize')"
+      @update:ratio="onPreviewRatioChange"
+    >
+      <template #top>
     <!-- File list / grid area wrapper — non-scrolling, so overlays (loading,
          paste) stay fixed over the visible viewport instead of scrolling away
          with the list content -->
@@ -252,7 +275,7 @@
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
             </span>
-            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry))">
+            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
               <Paperclip :size="12" />
             </span>
           </div>
@@ -324,7 +347,7 @@
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
           </span>
-          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry))">
+          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
             <Paperclip :size="12" />
           </span>
         </div>
@@ -352,6 +375,31 @@
       {{ t('file.search.truncated') }}
     </div>
     </div>
+      </template>
+
+      <template #bottom>
+        <div v-if="previewPaneVisible" class="fm-preview-pane">
+          <!-- Directory target: list its contents instead of previewing a file. -->
+          <DirPreviewBody
+            v-if="previewShowsDir"
+            :entries="dirPreview.entries.value"
+            :loading="dirPreview.loading.value"
+            :error="dirPreview.error.value"
+            :visible="dirPreview.visible"
+            :dir-name="dirPreviewName"
+            @open-file="onDirPreviewOpenFile"
+            @open-dir="onDirPreviewOpenDir"
+            @closed="collapsePreviewPane"
+          />
+          <CodeLinkPreview
+            v-else
+            :docked="true"
+            :preview="codeLinkPreview"
+            @closed="collapsePreviewPane"
+          />
+        </div>
+      </template>
+    </SplitView>
 
     <!-- Bottom dock: resident search bar -->
     <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
@@ -483,7 +531,8 @@ import { appLog } from '@/utils/appLog'
 import { copyText } from '@/utils/clipboard'
 import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2 } from 'lucide-vue-next'
+import { useDirPreview } from '@/composables/useDirPreview'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -503,11 +552,15 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import SplitView from '@/components/common/SplitView.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
+import CodeLinkPreview from './CodeLinkPreview.vue'
+import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
@@ -780,11 +833,17 @@ watch(moreMenuOpen, (open) => {
   if (open) nextTick(() => updateMoreMenuStyle())
 })
 
-// Responsive toolbar overflow
+// Responsive toolbar overflow. The demotable list is the same on every
+// platform — preview mode is available on mobile too, so it takes a slot like
+// any other button and can collapse into the More dropdown.
 const dirToolbarRef = ref(null)
+const demotableToolbarIds = computed(() => [
+  'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
+  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
+])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle', 'multiselect', 'hidden', 'jump', 'sharedFiles'],
+  () => demotableToolbarIds.value,
   // Fixed slots reserved outside the demotable list: the sort dropdown and the
   // "more" dropdown. (The toolbar search button was removed when the search bar
   // became resident, so this dropped from 3 to 2.)
@@ -797,6 +856,156 @@ const showMoreDropdown = computed(() => moreDropdownItemCount.value > 0)
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
 watch(viewMode, v => setLocalConfig('fileView', v))
+
+// ── Preview mode: single-click a file to open the quick preview card ──
+// Desktop-only (touch keeps its existing tap-to-open-the-full-viewer flow).
+// The card itself is the shared CodeLinkPreview surface, anchored at the row.
+const filePreviewMode = ref(localConfig.filePreviewMode === true)
+watch(filePreviewMode, v => setLocalConfig('filePreviewMode', v))
+// FileManagerContent is kept alive (v-show) across tab switches, so it never
+// remounts to pick up a change made from the Settings drawer. Mirror it.
+watch(() => localConfig.filePreviewMode, v => { filePreviewMode.value = v === true })
+function togglePreviewMode() {
+    filePreviewMode.value = !filePreviewMode.value
+}
+
+const codeLinkPreview = useCodeLinkPreview({
+    // Gate on the file manager's own preview-mode toggle rather than the global
+    // markdown-link-preview preference.
+    enabled: computed(() => filePreviewMode.value),
+    outsideClickIgnoreSelector: '.file-item, .grid-item',
+    source: 'browse',
+})
+
+// ── Docked preview pane (bottom of a top/bottom split) ──────────────────────
+// The pane is visible while preview mode is on AND a file is open; the close
+// button collapses it without turning preview mode off, so the list fills the
+// panel until the next single-click re-opens it.
+const PREVIEW_PANE_RATIO_KEY = 'clawbench-fm-preview-split-ratio'
+const DEFAULT_PREVIEW_PANE_RATIO = 0.6
+const previewSplitRatio = ref(readStoredPreviewRatio())
+/** Set false by the pane's close button; reset true on every new preview. */
+const previewPaneOpen = ref(false)
+
+function readStoredPreviewRatio() {
+    try {
+        const raw = Number(localStorage.getItem(PREVIEW_PANE_RATIO_KEY))
+        if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw
+    } catch { /* ignore */ }
+    return DEFAULT_PREVIEW_PANE_RATIO
+}
+
+function onPreviewRatioChange(ratio) {
+    previewSplitRatio.value = ratio
+    try {
+        localStorage.setItem(PREVIEW_PANE_RATIO_KEY, String(ratio))
+    } catch { /* ignore */ }
+}
+
+/** Split only when preview mode is on and something is previewed, and the pane
+ *  isn't collapsed. A directory target counts (its listing is the preview). */
+const previewPaneEnabled = computed(() =>
+    filePreviewMode.value && previewPaneOpen.value && previewTargetActive.value,
+)
+
+/** True when the pane has content to show — either a file preview or a
+ *  directory listing. */
+const previewTargetActive = computed(() =>
+    codeLinkPreview.visible.value || dirPreviewPath.value !== '',
+)
+
+/** The directory whose contents the pane lists. Empty when previewing a file
+ *  (or nothing). Set by a directory click; cleared by a file click. */
+const dirPreviewPath = ref('')
+
+const dirPreview = useDirPreview({
+    active: computed(() => filePreviewMode.value && previewPaneOpen.value && dirPreviewPath.value !== ''),
+    dirPath: dirPreviewPath,
+    showHidden: computed(() => props.showHidden),
+})
+
+/** The pane (and the card inside it) exists only while the split is active. */
+const previewPaneVisible = computed(() => previewPaneEnabled.value)
+
+/** Which body the pane renders: a directory listing or a file preview. */
+const previewShowsDir = computed(() => dirPreviewPath.value !== '')
+
+/** Base name of the directory the pane lists, for the pane toolbar title. */
+const dirPreviewName = computed(() => {
+    const p = dirPreviewPath.value
+    if (!p) return ''
+    const base = p.replace(/\/+$/, '').split('/').pop()
+    return base || p
+})
+
+// Minimum pane heights. Mobile viewports are short (a phone leaves ~500px for
+// the panel), so the desktop minimums would leave almost no room to drag; use
+// tighter floors there and keep the roomier desktop values on a PC.
+const previewPaneMinTop = computed(() => (isPC.value ? 160 : 120))
+const previewPaneMinBottom = computed(() => (isPC.value ? 200 : 140))
+
+function collapsePreviewPane() {
+    previewPaneOpen.value = false
+}
+
+/** Whether a single click should open the quick preview instead of only
+ *  selecting. Files preview their contents; directories preview their listing
+ *  (both in the docked pane, and both on desktop and touch). */
+function shouldPreviewOnClick(action, path) {
+    return filePreviewMode.value && !!path && (action === 'file' || action === 'dir')
+}
+
+/** Show a directory's listing in the pane. Clears any file preview so the two
+ *  bodies never fight over the same pane. */
+function showDirPreview(dirPath) {
+    codeLinkPreview.close()
+    dirPreviewPath.value = dirPath
+    previewPaneOpen.value = true
+    // Opening the pane shrinks the list to the top half of the split, which can
+    // push the just-clicked entry out of view — re-assert it once the split has
+    // relaid out (`nearest` leaves an entry that is still visible untouched).
+    scrollSelectedIntoView(selectedPath.value)
+}
+
+/** Show a file preview in the pane, dropping any directory listing. */
+function showFilePreview(filePath, anchorEl) {
+    dirPreviewPath.value = ''
+    previewPaneOpen.value = true
+    codeLinkPreview.showPreview({ filePath, anchorEl }, 'docked')
+    scrollSelectedIntoView(selectedPath.value)
+}
+
+/** Pane clicked a directory: navigate the main list into it and collapse the
+ *  pane. The listing the pane showed has become the main list, so keeping the
+ *  pane open would just duplicate it — and the two must never disagree. */
+function onDirPreviewOpenDir(name) {
+    const target = joinPath(dirPreviewPath.value || props.currentDir, name)
+    dirPreviewPath.value = ''
+    emit('navigateDir', target)
+}
+
+/** Pane clicked a file: open it in the full-screen viewer, matching a
+ *  double-click in the main list. */
+function onDirPreviewOpenFile(name) {
+    emit('selectFile', joinPath(dirPreviewPath.value || props.currentDir, name))
+}
+
+/** Close the preview when the directory it was anchored in changes. Turning
+ *  preview mode / desktop-ness off is handled by the composable's own
+ *  enabled-watch. */
+watch(() => props.currentDir, () => {
+    codeLinkPreview.close()
+    dirPreviewPath.value = ''
+})
+
+// Turning preview mode off collapses the pane too (the composable closes its
+// own state via the enabled-watch; this drops the split back to a full list).
+watch(filePreviewMode, on => {
+    if (!on) {
+        previewPaneOpen.value = false
+        dirPreviewPath.value = ''
+    }
+})
 
 // ── Unified selection for both files and directories ──
 const selectedPath = ref('')
@@ -1645,20 +1854,70 @@ function handleItemClick(e) {
         return
     }
 
+    // Touch + preview mode: a tap selects the entry (and previews a file);
+    // tapping the already-selected entry enters it (open viewer / navigate).
+    // Deliberately NOT a timed double-tap: touch browsers don't reliably
+    // synthesize `dblclick`, and a timing window silently fails slow tappers.
+    // "Tap the selected item again" has no timing constraint and matches the
+    // iOS Files / Google Drive convention.
+    if (!isPC.value && filePreviewMode.value) {
+        const alreadySelected = selectedPath.value === path
+        selectedPath.value = path
+        setRangeAnchor(path)
+        if (alreadySelected) {
+            codeLinkPreview.close()
+            dirPreviewPath.value = ''
+            openItem(action, path)
+            return
+        }
+        // First tap: both files and directories preview in the docked pane —
+        // a file shows its contents, a directory shows its listing. Entering
+        // (viewer / navigation) needs the second tap on the selected entry.
+        if (shouldPreviewOnClick(action, path)) {
+            if (action === 'dir') {
+                showDirPreview(path)
+            } else {
+                showFilePreview(path, item)
+            }
+        }
+        return
+    }
+
     selectedPath.value = path
     setRangeAnchor(path)
-    // PC: single click only selects — opening requires a double-click (or Enter).
+
+    // Single click/tap: preview in the docked pane when preview mode is on.
+    // Desktop keeps the native double-click to enter.
+    if (shouldPreviewOnClick(action, path)) {
+        if (action === 'dir') {
+            showDirPreview(path)
+        } else {
+            showFilePreview(path, item)
+        }
+        return
+    }
     if (isPC.value) return
+
+    // Touch without preview mode: the original one-tap-to-enter behavior.
     openItem(action, path)
 }
 
 function handleItemDblClick(e) {
     if (props.dirLoading) return
+    // Touch enters through the select-then-tap path in handleItemClick. Some
+    // touch browsers still emit a native dblclick, which would enter twice —
+    // ignore it here so exactly one open happens per gesture.
+    if (!isPC.value) return
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     if (multiSelect.active) return
     const action = item.dataset.action
     const path = item.dataset.path
+    // Double-click always opens the full viewer; drop any quick-preview the
+    // preceding single click may have opened — a file preview OR a directory
+    // listing, since a directory double-click navigates into it.
+    codeLinkPreview.close()
+    dirPreviewPath.value = ''
     selectedPath.value = path
     openItem(action, path)
 }
@@ -1852,13 +2111,14 @@ function doBatchArchive() {
 
 function doAttachToChat() {
     const path = ctxMenu.entry.path
+    const isDir = ctxMenu.entry.type === 'dir'
     closeCtxMenu()
     if (hasAttachedFile(path)) {
         removeAttachedFileByPath(path)
         toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
         return
     }
-    addAttachedFile(path)
+    addAttachedFile(path, isDir)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
 
     // Fly-to-chat particle animation
@@ -1874,12 +2134,12 @@ function doAttachToChat() {
     }
 }
 
-function toggleAttach(path) {
+function toggleAttach(path, isDir = false) {
     if (hasAttachedFile(path)) {
         removeAttachedFileByPath(path)
         toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
     } else {
-        addAttachedFile(path)
+        addAttachedFile(path, isDir)
         toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
 }
@@ -2174,12 +2434,43 @@ function scrollSelectedIntoView(path) {
   position: relative;
 }
 
+/* Top/bottom split hosting the file list and the docked preview pane. It must
+   grow with the panel and be the flex child that carries the remaining height,
+   so the list's own flex:1 still resolves against a bounded parent.
+
+   `display: flex` is set here UNCONDITIONALLY, not left to SplitView's active
+   state: when the split is disabled (preview closed) SplitView's pane wrappers
+   become `display: contents`, so the slot content's layout parent is this root.
+   Without flex here the list's `flex: 1; min-height: 0` is inert, its height
+   grows to the content height, and it overflows the panel — painting over the
+   resident search bar below. */
+.fm-split {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The docked preview pane fills its half of the split. No top border: the
+   SplitView divider directly above already draws the 1px separator, and both
+   are shown/hidden by the same `previewPaneEnabled` — a border here stacked a
+   second line right under the divider's. */
+.fm-preview-pane {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ── File manager specific ── */
 
 .fm-header-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     flex: 1;
     min-width: 0;
 }
@@ -2187,8 +2478,8 @@ function scrollSelectedIntoView(path) {
 .fm-project-path {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
+    gap: var(--space-2);
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2201,7 +2492,7 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
     cursor: pointer;
     color: var(--text-muted, #999);
-    transition: color 0.15s;
+    transition: color var(--duration-base);
 }
 @media (hover: hover) {
     .fm-copy-icon:hover {
@@ -2224,14 +2515,14 @@ function scrollSelectedIntoView(path) {
     align-items: center;
     min-width: 0;
     background: var(--bg-tertiary, #f5f5f5);
-    padding: 3px 8px;
+    padding:3px var(--space-4);
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
 
 .dir-toolbar-btns {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     flex: 1;
     min-width: 0;
 }
@@ -2240,7 +2531,7 @@ function scrollSelectedIntoView(path) {
 .dir-nav-bottom {
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-primary, #fff);
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
 }
 
 .dir-nav-bottom :deep(.dir-breadcrumb) {
@@ -2263,17 +2554,17 @@ function scrollSelectedIntoView(path) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-secondary, #666);
 }
 
 .ms-select-all-btn {
     width: auto;
     height: auto;
-    padding: 3px 10px;
+    padding:3px var(--space-5);
     border: none;
-    border-radius: 10px;
-    font-size: 11px;
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-xs);
     background: var(--bg-secondary, #e0e0e0);
     color: var(--text-secondary, #666);
     cursor: pointer;
@@ -2306,7 +2597,7 @@ function scrollSelectedIntoView(path) {
 /* ── Cut item half-transparent effect ── */
 .file-item.cut-item,
 .grid-item.cut-item {
-    opacity: 0.5;
+    opacity: var(--opacity-muted);
 }
 
 /* ── File list area ── */
@@ -2327,7 +2618,7 @@ function scrollSelectedIntoView(path) {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 6px;
+    padding: var(--space-2) var(--space-3);
 }
 
 /* Unified toolbar button */
@@ -2344,7 +2635,7 @@ function scrollSelectedIntoView(path) {
     background: var(--bg-tertiary, #f0f0f0);
     color: var(--text-secondary, #666);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all var(--duration-base);
     flex-shrink: 0;
 }
 
@@ -2365,7 +2656,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-btn:disabled {
-    opacity: 0.35;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
 }
 @media (hover: hover) {
@@ -2396,14 +2687,14 @@ function scrollSelectedIntoView(path) {
 .file-item {
     display: flex;
     align-items: center;
-    padding: 6px 8px;
+    padding: var(--space-3) var(--space-4);
     border-radius: 0;
     min-height: 44px;
     cursor: pointer;
-    transition: background 0.15s;
-    gap: 8px;
+    transition: background var(--duration-base);
+    gap: var(--space-4);
     color: var(--text-secondary, #666);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     user-select: none;
     -webkit-user-select: none;
 }
@@ -2420,7 +2711,7 @@ function scrollSelectedIntoView(path) {
 }
 .file-item.dir-item {
     color: var(--text-primary, #1a1a1a);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .file-item.dir-item .file-icon {
@@ -2459,8 +2750,8 @@ function scrollSelectedIntoView(path) {
 .file-item.active .file-icon-wrap,
 .file-item.ctx-highlight .file-icon-wrap {
     box-sizing: border-box;
-    border-radius: 6px;
-    padding: 2px;
+    border-radius: var(--radius-sm);
+    padding: var(--space-1);
     width: 28px;
     height: 28px;
     display: flex;
@@ -2516,10 +2807,10 @@ function scrollSelectedIntoView(path) {
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
-    padding: 2px;
+    padding: var(--space-1);
     cursor: pointer;
     z-index: 2;
-    transition: transform 0.15s, background 0.15s;
+    transition: transform var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2539,7 +2830,7 @@ function scrollSelectedIntoView(path) {
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
-    padding: 2px;
+    padding: var(--space-1);
     z-index: 2;
 }
 
@@ -2556,7 +2847,7 @@ function scrollSelectedIntoView(path) {
     flex-shrink: 0;
     width: 28px;
     height: 28px;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     object-fit: contain;
 }
 
@@ -2584,7 +2875,7 @@ function scrollSelectedIntoView(path) {
 
 /* Containing directory shown under a search hit (global / recursive search). */
 .file-parent-dir {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     white-space: nowrap;
     overflow: hidden;
@@ -2597,7 +2888,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .file-meta {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     flex-shrink: 0;
 }
@@ -2609,7 +2900,7 @@ function scrollSelectedIntoView(path) {
 /* Empty State */
 .empty-state {
     text-align: center;
-    padding: 40px 20px;
+    padding:40px var(--space-8);
     color: var(--text-muted, #999);
 }
 
@@ -2617,15 +2908,15 @@ function scrollSelectedIntoView(path) {
 .empty-state svg {
     width: 48px;
     height: 48px;
-    margin-bottom: 12px;
-    opacity: 0.5;
+    margin-bottom: var(--space-6);
+    opacity: var(--opacity-muted);
 }
 
 /* Truncate hint */
 .truncate-hint {
     text-align: center;
-    padding: 10px 16px;
-    font-size: 12px;
+    padding: var(--space-5) var(--space-7);
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f5f5f5);
     border-top: 1px solid var(--border-color, #e5e5e5);
@@ -2638,10 +2929,10 @@ function scrollSelectedIntoView(path) {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 8px;
+    padding: var(--space-4);
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-    gap: 8px;
+    gap: var(--space-4);
     align-content: start;
 }
 
@@ -2650,9 +2941,9 @@ function scrollSelectedIntoView(path) {
     flex-direction: column;
     align-items: center;
     cursor: pointer;
-    border-radius: 8px;
-    padding: 6px;
-    transition: background 0.15s, opacity 0.15s;
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    transition: background var(--duration-base), opacity var(--duration-base);
     position: relative;
     user-select: none;
     -webkit-user-select: none;
@@ -2690,14 +2981,14 @@ function scrollSelectedIntoView(path) {
 .grid-thumb {
     width: 100%;
     aspect-ratio: 1;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-tertiary, #f5f5f5);
     position: relative;
-    transition: background 0.15s, box-shadow 0.15s;
+    transition: background var(--duration-base), box-shadow var(--duration-base);
 }
 
 .grid-thumb .attach-badge {
@@ -2710,10 +3001,10 @@ function scrollSelectedIntoView(path) {
     background: var(--accent-color, #4a90d9);
     color: #fff;
     border-radius: 50%;
-    padding: 2px;
+    padding: var(--space-1);
     cursor: pointer;
     z-index: 2;
-    transition: transform 0.15s, background 0.15s;
+    transition: transform var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2742,8 +3033,8 @@ function scrollSelectedIntoView(path) {
 }
 
 .grid-name {
-    margin-top: 4px;
-    font-size: 12px;
+    margin-top: var(--space-2);
+    font-size: var(--font-size-sm);
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2754,14 +3045,14 @@ function scrollSelectedIntoView(path) {
 
 .grid-item.grid-dir .grid-name {
     color: var(--text-primary, #1a1a1a);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 /* Containing directory shown under a search hit in grid view. */
 .grid-parent-dir {
     margin-top: 1px;
-    font-size: 10px;
-    line-height: 1.2;
+    font-size: var(--font-size-2xs);
+    line-height: var(--line-height-tight);
     text-align: center;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2772,7 +3063,7 @@ function scrollSelectedIntoView(path) {
 
 .grid-item.grid-dir.grid-active .grid-name {
     color: var(--accent-color, #4a90d9);
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
 }
 
 /* Grid multi-select check */
@@ -2803,7 +3094,7 @@ function scrollSelectedIntoView(path) {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: 6px 12px;
+    padding: var(--space-3) var(--space-6);
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
     flex-shrink: 0;
 }
@@ -2811,7 +3102,7 @@ function scrollSelectedIntoView(path) {
 .dir-upload-progress-main {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
 }
 
 .dir-upload-progress-bar {
@@ -2819,8 +3110,8 @@ function scrollSelectedIntoView(path) {
     height: 3px;
     min-width: 0;
     background: var(--accent-color, #4a90d9);
-    border-radius: 2px;
-    transition: width 0.15s ease;
+    border-radius: var(--radius-xs);
+    transition: width var(--duration-base) ease;
 }
 
 .dir-upload-cancel {
@@ -2836,21 +3127,21 @@ function scrollSelectedIntoView(path) {
     background: var(--bg-tertiary, #f0f0f0);
     color: var(--text-secondary, #666);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all var(--duration-base);
 }
 
 @media (hover: hover) {
     .dir-upload-cancel:hover {
-        background: var(--danger-color, #ef4444);
+        background: var(--color-red);
         color: #fff;
     }
 }
 
 .dir-upload-progress-count {
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--text-secondary, #666);
     white-space: nowrap;
-    line-height: 1.2;
+    line-height: var(--line-height-tight);
 }
 
 /* ── Drop overlay ── */
@@ -2861,13 +3152,13 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: var(--space-5);
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 10%, var(--bg-primary, #fff));
     color: var(--accent-color, #4a90d9);
-    font-size: 14px;
-    font-weight: 500;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
     pointer-events: none;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 
 [data-theme-base="dark"] .drop-overlay {
@@ -2882,17 +3173,17 @@ function scrollSelectedIntoView(path) {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    background: color-mix(in srgb, var(--success-color, #22c55e) 10%, var(--bg-primary, #fff));
-    color: var(--success-color, #22c55e);
-    font-size: 14px;
-    font-weight: 500;
+    gap: var(--space-5);
+    background: color-mix(in srgb, var(--color-green) 10%, var(--bg-primary, #fff));
+    color: var(--color-green);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-medium);
     pointer-events: none;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 
 [data-theme-base="dark"] .paste-overlay {
-    background: color-mix(in srgb, var(--success-color, #22c55e) 12%, var(--bg-primary, #1a1a1a));
+    background: color-mix(in srgb, var(--color-green) 12%, var(--bg-primary, #1a1a1a));
 }
 
 .paste-fade-enter-active,
@@ -2906,26 +3197,32 @@ function scrollSelectedIntoView(path) {
 }
 
 /* ── Bottom dock: resident search bar ── */
+/* Same material as the top toolbar (.dir-toolbar, --bg-tertiary) so the two
+   bars read as a matched pair framing the listing. */
 .fs-nav-bottom {
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
     border-top: 1px solid var(--border-color, #e5e5e5);
-    background: var(--bg-primary, #fff);
-    padding: 5px 10px 4px;
-    gap: 2px;
+    background: var(--bg-tertiary, #f5f5f5);
+    padding:5px var(--space-5) var(--space-2);
+    gap: var(--space-1);
 }
 
 .fs-input-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     min-width: 0;
 }
 
 .fs-input-row :deep(.search-pill) {
     flex: 1;
     min-width: 0;
+    /* Match the dock material (--bg-tertiary) instead of SearchInput's shared
+       default (--bg-primary) — the pill is the only control on the dock, so a
+       contrasting fill would read as a nested box rather than one bar. */
+    background: var(--bg-tertiary, #f5f5f5);
 }
 
 .fs-toggle-btn {
@@ -2935,12 +3232,12 @@ function scrollSelectedIntoView(path) {
     width: 28px;
     height: 28px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted, #999);
     cursor: pointer;
     flex-shrink: 0;
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base);
     padding: 0;
 }
 
@@ -2959,7 +3256,7 @@ function scrollSelectedIntoView(path) {
    user-operable. */
 .fs-toggle-btn:disabled {
     cursor: default;
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
 }
 
 .fs-toggle-btn:disabled:hover {
@@ -2967,8 +3264,8 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-results-count {
-    padding: 6px 14px;
-    font-size: 11px;
+    padding: var(--space-3) 14px;
+    font-size: var(--font-size-xs);
     color: var(--text-muted, #999);
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-secondary, #f8f9fa);
@@ -2976,10 +3273,10 @@ function scrollSelectedIntoView(path) {
 }
 
 .fs-truncated {
-    padding: 10px 14px;
+    padding: var(--space-5) 14px;
     text-align: center;
     color: var(--text-muted, #999);
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     background: var(--bg-secondary, #f8f9fa);
     border-top: 1px solid var(--border-color, #e5e5e5);
 }
@@ -2989,31 +3286,31 @@ function scrollSelectedIntoView(path) {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: var(--space-5);
     padding: 40px 24px;
     text-align: center;
 }
 
 .fs-search-empty-icon {
     color: var(--text-muted, #999);
-    opacity: 0.6;
+    opacity: var(--opacity-muted);
 }
 
 .fs-search-empty-text {
-    font-size: 13px;
+    font-size: var(--font-size-md);
     color: var(--text-secondary, #666);
     margin: 0;
 }
 
 .fs-search-empty-sub {
-    font-size: 12px;
+    font-size: var(--font-size-sm);
     color: var(--text-muted, #999);
     margin: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
-    padding: 0 12px;
+    padding:0 var(--space-6);
 }
 
 .fs-result-dir-btn {
@@ -3024,13 +3321,13 @@ function scrollSelectedIntoView(path) {
     width: 26px;
     height: 26px;
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-muted, #999);
     cursor: pointer;
     padding: 0;
-    transition: background 0.15s, color 0.15s;
-    margin-left: 4px;
+    transition: background var(--duration-base), color var(--duration-base);
+    margin-left: var(--space-2);
 }
 
 @media (hover: hover) {
@@ -3053,26 +3350,26 @@ function scrollSelectedIntoView(path) {
 <style>
 .toolbar-dropdown {
     position: fixed;
-    z-index: 9999;
+    z-index: var(--z-popover);
     min-width: 140px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-    padding: 4px;
+    padding: var(--space-2);
 }
 
 .toolbar-dropdown .toolbar-dropdown-item {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     width: 100%;
-    padding: 6px 10px;
+    padding: var(--space-3) var(--space-5);
     border: none;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: none;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--font-size-md);
     cursor: pointer;
     white-space: nowrap;
 }
@@ -3085,7 +3382,7 @@ function scrollSelectedIntoView(path) {
 
 .toolbar-dropdown .toolbar-dropdown-item.active {
     color: var(--accent-color, #4a90d9);
-    font-weight: 500;
+    font-weight: var(--font-weight-medium);
 }
 
 .toolbar-dropdown .toolbar-dropdown-item svg {
@@ -3097,7 +3394,7 @@ function scrollSelectedIntoView(path) {
 }
 
 .toolbar-dropdown .toolbar-dropdown-item:disabled {
-    opacity: 0.4;
+    opacity: var(--opacity-disabled);
     cursor: not-allowed;
 }
 

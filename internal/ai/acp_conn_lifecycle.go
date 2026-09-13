@@ -414,6 +414,8 @@ func (c *ACPConn) killProcessLocked() {
 	oldCmd := c.cmd
 	oldFilter := c.stdoutFilter
 	c.stdoutFilter = nil
+	c.stdin = nil
+	c.rawRPC = nil
 	c.mu.Unlock()
 	c.reapProcess(oldCmd, oldFilter)
 	c.mu.Lock()
@@ -441,6 +443,8 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 		oldCmd := c.cmd
 		oldFilter := c.stdoutFilter
 		c.stdoutFilter = nil
+		c.stdin = nil
+		c.rawRPC = nil
 		c.mu.Unlock()
 		c.reapProcess(oldCmd, oldFilter)
 		c.mu.Lock()
@@ -550,8 +554,20 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	// - Some agents emit terminal escape sequences on stdout
 	stdoutFilter := newACPStdoutFilter(stdoutPipe)
 
-	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutFilter)
+	// Share one write lock between the SDK and the raw JSON-RPC side channel
+	// (see acp_raw_rpc.go). Passing the wrapper to the SDK is what makes that
+	// possible: its own write mutex is private, so both parties must go through
+	// the same io.Writer or their bytes would interleave mid-line.
+	stdinWriter := &lockedWriter{dst: stdinPipe}
+
+	conn := acp.NewClientSideConnection(client, stdinWriter, stdoutFilter)
 	conn.SetLogger(slog.Default())
+
+	// Raw side channel: lets backends call private methods the SDK rejects
+	// (e.g. CodeBuddy's session/steer). Responses are demuxed from the filter's
+	// tee by request-id prefix.
+	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
+	stdoutFilter.SetRawSink(rawRPC)
 
 	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer initCancel()
@@ -645,6 +661,8 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	c.conn = conn
 	c.client = client
 	c.stdoutFilter = stdoutFilter
+	c.stdin = stdinWriter
+	c.rawRPC = rawRPC
 	c.acpSID = "" // cleared on respawn — will be set by ensureAliveWithSession
 	c.alive = true
 	c.lastUsed = time.Now()

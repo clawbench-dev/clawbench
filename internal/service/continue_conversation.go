@@ -63,7 +63,7 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 	return true, existingID, nil
 }
 
-// ContinueFromExecution creates a new chat session from a scheduled task execution,
+// ContinueFromExecution creates a new chat session from a task execution,
 // copying the original session's chat_history and summaries. If a continued session
 // already exists (and is not archived), it returns the existing session ID with
 // alreadyExists=true.
@@ -716,11 +716,6 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	}()
 
 	childPred := "SELECT id FROM chat_history WHERE session_id = ? AND id > ?"
-	// ai_raw_responses: FK on message_id but NO cascade.
-	_, _ = tx.Exec(
-		"DELETE FROM ai_raw_responses WHERE session_id = ? AND message_id IN ("+childPred+")",
-		sessionID, sessionID, anchorID,
-	)
 	// chat_tool_calls / chat_thinking: FK ON DELETE CASCADE, but deleted
 	// explicitly for visible semantics.
 	_, _ = tx.Exec(

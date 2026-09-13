@@ -19,29 +19,13 @@
         </div>
       </div>
 
-      <!-- Schedule card -->
-      <div class="overview-card">
-        <h3 class="card-title">
-          <Clock class="card-icon" :size="14" />
-          {{ t('task.form.frequency') }}
-        </h3>
-        <div class="overview-row">
-          <span class="overview-value font-mono">{{ taskCronExpr }}</span>
-          <span class="overview-subtext">{{ humanizeCron(taskCronExpr) }}</span>
-        </div>
-        <div class="overview-divider"></div>
-        <div class="overview-row">
-          <span class="overview-label">{{ t('chat.contentBlocks.repeat') }}</span>
-          <span class="overview-value">{{ repeatLabel(taskRepeatMode, taskMaxRuns) }}</span>
-        </div>
-        <div v-if="taskRunCount > 0" class="overview-row">
-          <span class="overview-label">{{ t('chat.contentBlocks.statusExecutions', { count: taskRunCount }) }}</span>
-        </div>
-        <div v-if="taskNextRunAt" class="overview-row highlight">
-          <span class="overview-label">{{ t('chat.contentBlocks.nextRun') }}</span>
-          <span class="overview-value">{{ formatDateTimeWithYear(taskNextRunAt) }}</span>
-        </div>
-      </div>
+      <!-- Trigger card: a cron task shows its schedule, an event task shows the
+           forge events it listens for plus the context block injected at
+           runtime. They are separate components because almost no field is
+           shared — rendering one card for both produced a blank cron line and a
+           meaningless "next run: none" on event tasks. -->
+      <TaskScheduleCard v-if="!isEventTriggered" :task="task" />
+      <TaskEventCard v-else :task="task" />
 
       <!-- Prompt preview card (collapsible) -->
       <div class="overview-card">
@@ -63,11 +47,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { ChevronDown, Clock, MessageSquare } from 'lucide-vue-next'
+import { ChevronDown, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import TaskScheduleCard from '@/components/task/TaskScheduleCard.vue'
+import TaskEventCard from '@/components/task/TaskEventCard.vue'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -75,11 +61,10 @@ import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotatio
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app.ts'
-import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/format'
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
-const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
+const { verifyFilePaths, openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
@@ -93,13 +78,12 @@ const taskName = computed(() => task.value.name as string)
 const taskAgentId = computed(() => task.value.agentId as string)
 const taskBackend = computed(() => getAgentBackend(taskAgentId.value))
 const taskStatus = computed(() => task.value.status as string)
-const taskCronExpr = computed(() => task.value.cronExpr as string)
-const taskRepeatMode = computed(() => task.value.repeatMode as string)
-const taskMaxRuns = computed(() => task.value.maxRuns as number)
-const taskRunCount = computed(() => task.value.runCount as number)
 const taskRunningCount = computed(() => task.value.runningCount as number)
-const taskNextRunAt = computed(() => task.value.nextRunAt as string | undefined)
 const taskPrompt = computed(() => task.value.prompt as string)
+
+// Trigger mode selects which card renders above the prompt. Absent means cron
+// (the pre-event-task default the backend also assumes).
+const isEventTriggered = computed(() => (task.value.triggerMode as string) === 'event')
 
 const promptCollapsed = ref(true)
 
@@ -208,11 +192,10 @@ function handlePromptClick(event: MouseEvent) {
     event.preventDefault()
     event.stopPropagation()
     codeLinkPreview.close()
-    const filePath = linkOrBtn.getAttribute('data-file-path')
-    const lineStart = linkOrBtn.getAttribute('data-line-start')
-    const lineEnd = linkOrBtn.getAttribute('data-line-end')
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
     if (filePath) {
-      openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined, 'task')
+      if (lineRanges) openFilePath(filePath, lineStart, lineEnd, 'task', lineRanges)
+      else openFilePath(filePath, lineStart, lineEnd, 'task')
     }
     return
   }
@@ -230,24 +213,24 @@ function handlePromptClick(event: MouseEvent) {
 /* Flows as a plain block inside the parent scroll container (TaskDetailPage.detail-scroll).
    No own scrolling — otherwise we'd get nested scroll containers. */
 .overview-scroll {
-  padding: 8px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Header section */
 .task-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-bottom: 2px;
+  gap: var(--space-2);
+  padding-bottom: var(--space-1);
 }
 
 .task-title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .agent-icon {
@@ -256,8 +239,8 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .task-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
   flex: 1;
@@ -267,11 +250,11 @@ function handlePromptClick(event: MouseEvent) {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -307,24 +290,24 @@ function handlePromptClick(event: MouseEvent) {
 
 @keyframes task-running-pulse {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-  50% { opacity: 0.7; box-shadow: 0 0 8px 3px rgba(34, 197, 94, 0.3); }
+  50% { opacity: var(--opacity-soft); box-shadow: 0 0 8px 3px rgba(34, 197, 94, 0.3); }
 }
 
 .task-meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
 
 .task-id-value {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #f1f3f5);
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -342,18 +325,18 @@ function handlePromptClick(event: MouseEvent) {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   margin: 0;
 }
@@ -373,7 +356,7 @@ function handlePromptClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
@@ -382,7 +365,7 @@ function handlePromptClick(event: MouseEvent) {
   justify-content: center;
   flex-shrink: 0;
   padding: 0;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--duration-slow), color var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -397,7 +380,7 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .prompt-chevron {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .prompt-chevron-collapsed {
@@ -411,52 +394,52 @@ function handlePromptClick(event: MouseEvent) {
 .overview-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 
 .overview-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .overview-row.highlight {
   background: rgba(0, 102, 204, 0.05);
-  padding: 6px;
-  border-radius: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
   margin: -2px -6px;
 }
 
 .overview-row.highlight .overview-value {
   color: var(--accent-color, #0066cc);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
 }
 
 .overview-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
   flex-shrink: 0;
 }
 
 .overview-value {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary, #1a1a1a);
   text-align: right;
   word-break: break-word;
 }
 
 .overview-value.font-mono {
-  font-family: var(--font-mono, 'SF Mono', 'Menlo', monospace);
+  font-family: var(--font-mono);
   background: var(--bg-primary, #fff);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-color, #e5e5e5);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .overview-subtext {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
@@ -465,10 +448,10 @@ function handlePromptClick(event: MouseEvent) {
 .prompt-body.markdown-body {
   overflow-y: visible;
   max-width: 100%;
-  padding: 6px 0 0;
+  padding: var(--space-3) 0 0;
   margin: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 </style>

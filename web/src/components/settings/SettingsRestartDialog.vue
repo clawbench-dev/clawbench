@@ -73,8 +73,8 @@ const displayFields = computed(() =>
 
 .settings-restart-dialog {
   background: var(--bg-primary);
-  border-radius: 14px;
-  padding: 20px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-8);
   margin: 24px;
   max-width: 320px;
   width: 100%;
@@ -82,36 +82,36 @@ const displayFields = computed(() =>
 }
 
 .settings-restart-dialog__header {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   text-align: center;
 }
 
 .settings-restart-dialog__message {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
-  margin: 0 0 12px;
+  margin:0 0 var(--space-6);
   text-align: center;
 }
 
 .settings-restart-dialog__list {
-  margin: 0 0 20px;
-  padding-left: 20px;
-  font-size: 14px;
+  margin:0 0 var(--space-8);
+  padding-left: var(--space-8);
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
-  line-height: 1.6;
+  line-height: var(--line-height-relaxed);
 }
 
 .settings-restart-dialog__list li {
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 
 .settings-restart-dialog__actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Layout only — visuals come from the shared .fbtn pills. */

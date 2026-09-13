@@ -89,36 +89,36 @@ function shortDate(dateStr: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--danger-color, #dc3545);
+  padding: var(--space-4) var(--space-6);
+  font-size: var(--font-size-md);
+  color: var(--color-red);
 }
 
 .retry-btn {
-  font-size: 12px;
-  padding: 3px 10px;
+  font-size: var(--font-size-sm);
+  padding:3px var(--space-5);
   border: 1px solid var(--accent-color, #4a90d9);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
 }
 
 .section-empty {
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-muted, #999);
-  padding: 24px 12px;
+  padding:24px var(--space-6);
   text-align: center;
 }
 
 .tag-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .tag-info {
@@ -138,19 +138,19 @@ function shortDate(dateStr: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
   .tag-action-btn:hover {
-    color: var(--danger-color, #dc3545);
-    background: var(--danger-bg, rgba(220, 53, 69, 0.1));
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 10%, transparent);
   }
 }
 
 .tag-action-btn:active {
-  background: var(--danger-bg, rgba(220, 53, 69, 0.15));
+  background: color-mix(in srgb, var(--color-red) 15%, transparent);
 }
 
 @media (hover: hover) {
@@ -166,7 +166,7 @@ function shortDate(dateStr: string) {
 .tag-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tag-icon {
@@ -175,8 +175,8 @@ function shortDate(dateStr: string) {
 }
 
 .tag-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -184,10 +184,10 @@ function shortDate(dateStr: string) {
 }
 
 .tag-msg {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
-  margin-top: 2px;
-  margin-left: 20px;
+  margin-top: var(--space-1);
+  margin-left: var(--space-8);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -196,13 +196,13 @@ function shortDate(dateStr: string) {
 .tag-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 2px;
-  margin-left: 20px;
+  gap: var(--space-4);
+  margin-top: var(--space-1);
+  margin-left: var(--space-8);
 }
 
 .tag-date {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
 }
 
