@@ -75,7 +75,7 @@ flowchart LR
 
 | 端点 | 方法 | 用途 |
 |------|------|------|
-| `/api/apk` | GET | APK 下载（从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；无需鉴权） |
+| `/api/apk` | GET | APK 下载（恒定从 `go:embed` 读取，路径 `assets/clawbench-android.apk`；不读磁盘 `public/`；无需鉴权） |
 | `/api/health` | GET | 服务端健康检查，返回 `{app, version}`（无需鉴权）；原生层据此做 APK 版本不匹配检测 |
 | `/api/client-log` | POST | 客户端统一日志（200 条/请求上限；`js` 与 `android` 条目汇入同一 `client.log`，行内 `[js]`/`[android]` 标记区分） |
 | `/api/ssh/info` | GET | SSH 隧道状态轮询（无需鉴权） |

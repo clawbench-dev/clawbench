@@ -17,8 +17,19 @@ const (
 
 // ServeAPK serves the embedded Android APK file for download.
 // No authentication required — APK is a public resource.
+//
+// The APK is always read from the build-time embedded FS, never from disk.
+// The APK must match the running binary's version (the upgrade overlay relies
+// on it), and frontend.GetFS() would instead return the disk public/ dir
+// whenever the server's CWD contains one — shadowing the embedded copy and
+// making /api/apk 404 even though the APK is embedded.
 func ServeAPK(w http.ResponseWriter, r *http.Request) {
-	fsys := frontend.GetFS()
+	serveAPK(frontend.EmbeddedFS(), w, r)
+}
+
+// serveAPK is the testable core of ServeAPK: the frontend FS is injected so
+// tests can supply an in-memory APK without a real --android build.
+func serveAPK(fsys fs.FS, w http.ResponseWriter, r *http.Request) {
 	data, err := fs.ReadFile(fsys, apkEmbedPath)
 	if err != nil {
 		slog.Debug("apk: not found in embed", "err", err)
