@@ -54,8 +54,9 @@ export default {
     'media-feature-range-notation': null,
     'selector-not-notation': null,
     'import-notation': null,
-    // The codebase consistently writes full 6-digit hex (`#ffffff`, not
-    // `#fff`). Both are correct; shortening is not a bug fix.
+    // Hex length is mixed: 6-digit dominates (~3400) but 3-digit is also used
+    // in real declarations (~100) and far more often inside `var()` fallbacks.
+    // Both forms are valid and equivalent; normalising is not a bug fix.
     'color-hex-length': null,
 
     // ── 2. Intentional vendor prefixes (Android WebView / desktop shell) ──

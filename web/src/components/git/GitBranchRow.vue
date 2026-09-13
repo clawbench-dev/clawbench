@@ -78,7 +78,7 @@ function handleClick() {
 
 .git-branch-row.current .branch-name {
   color: var(--accent-color, #4a90d9);
-  font-weight: bold;
+  font-weight: var(--font-weight-bold);
 }
 
 [data-app-mode] .git-branch-row.current .branch-name {

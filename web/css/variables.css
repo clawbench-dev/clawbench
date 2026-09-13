@@ -58,7 +58,8 @@
     --font-size-md: 13px;    /* default UI text: chat messages, settings */
     --font-size-lg: 14px;    /* tool icons, dialog titles, primary buttons */
     --font-size-xl: 15px;    /* reading text — matches the html/body base */
-    --font-size-2xl: 16px;   /* page/section headings */
+    --font-size-2xl: 16px;   /* headings, and inputs kept at 16px so mobile
+                                Safari does not zoom when they gain focus */
 
     /* ── Weights. Three steps cover the UI; `400` (regular) is the browser
        default and is left unwritten rather than tokenized, and `800` exists
