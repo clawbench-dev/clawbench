@@ -1569,6 +1569,54 @@ describe('ChatInputBar', () => {
     store.state.currentDir = ''
   })
 
+  it('@ menu closes when the textarea loses focus, like the slash menu', async () => {
+    // Regression: onTextareaBlur used to close only the command menu, so the @
+    // menu stayed hovering after a blank click or a tab switch.
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
+  it('blur closes both completion menus together', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = 'src'
+    store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any
+    const wrapper = mountBar()
+
+    // Slash menu open
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+
+    // @ menu open
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    await wrapper.find('.chat-textarea').trigger('blur')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+
+    store.state.dirEntries = [] as any
+    store.state.currentDir = ''
+  })
+
   it('@ menu fuzzy-filters by basename', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = ''

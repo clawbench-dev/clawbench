@@ -968,6 +968,20 @@ function onFileMenuShowChange(v) {
   if (!v) fileMenu.close()
 }
 
+/**
+ * Dismiss both completion popups together.
+ *
+ * The slash-command and @ file menus are the same kind of popup anchored to the
+ * same textarea, so every dismissal site must close both — otherwise one menu
+ * survives a lifecycle event that dismisses the other (the @ menu used to stay
+ * open after a blank click or a tab switch, because only the command menu was
+ * closed on blur).
+ */
+function closeCompletionMenus() {
+  commandMenu.close()
+  fileMenu.close()
+}
+
 // Recompute both menus whenever the input text changes. A history entry loaded
 // by ArrowUp/ArrowDown must not pop the menu. currentCaret() tolerates the
 // textarea DOM lagging the ref (programmatic restore), so this stays sync.
@@ -1377,10 +1391,14 @@ function onTextareaBlur() {
   if (!inputText.value.trim()) {
     startPlaceholderRotation()
   }
-  // Close the command menu when textarea loses focus (clicking menu items uses
-  // @mousedown.prevent so blur won't fire for those interactions)
+  // Close BOTH completion menus when the textarea loses focus (clicking menu
+  // items uses @mousedown.prevent so blur won't fire for those interactions).
+  // Both menus share one lifecycle: they are the same kind of popup anchored to
+  // the same textarea, so a blur that dismisses one must dismiss the other.
+  // Closing only the command menu left the @ file menu hovering after a click
+  // on blank space or a switch to another tab.
   nextTick(() => {
-    showCommandMenu.value = false
+    closeCompletionMenus()
   })
 }
 
@@ -1675,12 +1693,12 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; commandMenu.close(); fileMenu.close(); showUsagePopup.value = false } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); showUsagePopup.value = false } })
 watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; fileMenu.close() } })
 watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; commandMenu.close() } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); commandMenu.close(); fileMenu.close() } })
+watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
 
 onMounted(() => {
   fetchItems()
