@@ -162,16 +162,16 @@ defineExpose({ startPolling, stopPolling })
 
 <style scoped>
 .system-resources-panel {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .server-info-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 
@@ -193,7 +193,7 @@ defineExpose({ startPolling, stopPolling })
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
   padding: 7px 0;
   border: none;
@@ -203,7 +203,7 @@ defineExpose({ startPolling, stopPolling })
   color: var(--color-red, #ef4444);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
   flex-shrink: 0;
 }
 
@@ -232,7 +232,7 @@ defineExpose({ startPolling, stopPolling })
 .resource-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
 }
@@ -274,13 +274,13 @@ defineExpose({ startPolling, stopPolling })
 .progress-bar {
   height: 4px;
   background: var(--bg-tertiary, #e5e7eb);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease;
 }
 
@@ -300,8 +300,8 @@ defineExpose({ startPolling, stopPolling })
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 20px 0 8px;
+  gap: var(--space-4);
+  padding: var(--space-8) 0 var(--space-4);
 }
 
 .connection-status-icon {

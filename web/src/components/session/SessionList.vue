@@ -661,7 +661,7 @@ onUnmounted(() => {
 
 .session-list-enter-active,
 .session-list-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity var(--duration-slow) ease, transform var(--duration-slow) ease;
 }
 
 .session-list-enter-from {
@@ -675,7 +675,7 @@ onUnmounted(() => {
 }
 
 .session-list-move {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .session-empty {
@@ -694,13 +694,13 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   cursor: pointer;
 }
 
 /* Accent border lives on the row so it encloses the archive button too. */
 .session-item.active {
-  padding-left: 8px;
+  padding-left: var(--space-4);
 }
 
 .session-row.session-row-active {
@@ -774,7 +774,7 @@ onUnmounted(() => {
 .session-item-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
@@ -782,7 +782,7 @@ onUnmounted(() => {
 .session-item-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
 }
@@ -790,7 +790,7 @@ onUnmounted(() => {
 .session-item-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
   flex-wrap: nowrap;
   overflow: hidden;
@@ -852,7 +852,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -875,15 +875,15 @@ onUnmounted(() => {
 
 .session-item-agent {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-secondary, #495057);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -891,8 +891,8 @@ onUnmounted(() => {
 
 .session-item-model {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 1;
   background: rgba(100, 100, 100, 0.08);
@@ -934,8 +934,8 @@ onUnmounted(() => {
 .session-section-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px 4px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6) var(--space-2);
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
@@ -953,7 +953,7 @@ onUnmounted(() => {
   font-size: var(--font-size-2xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #e9ecef);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0 5px;
   line-height: 16px;
 }
@@ -966,7 +966,7 @@ onUnmounted(() => {
 .session-section-chevron {
   margin-left: auto;
   color: var(--text-muted, #999);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
   flex-shrink: 0;
 }
 
@@ -994,8 +994,8 @@ onUnmounted(() => {
 .cross-group-header {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 7px 12px;
+  gap: var(--space-3);
+  padding:7px var(--space-6);
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
   position: sticky;
   top: 0;
@@ -1053,7 +1053,7 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-top: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   /* Subtle left rail marks rows as belonging to another project. */

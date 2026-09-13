@@ -516,7 +516,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   padding: 32px;
   text-align: center;
@@ -527,7 +527,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 100%;
   padding: 32px;
   color: var(--text-muted, #656d76);
@@ -560,9 +560,9 @@ onBeforeUnmount(() => {
 .share-download-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 8px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
+  border-radius: var(--radius-sm);
   background: var(--accent-color, #0969da);
   color: #fff;
   text-decoration: none;

@@ -205,10 +205,10 @@ onMounted(loadHosts)
 
 <style scoped>
 .forge-credentials-row {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .forge-cred-desc {
   color: var(--text-muted);
@@ -218,8 +218,8 @@ onMounted(loadHosts)
 .forge-cred-host {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
@@ -227,7 +227,7 @@ onMounted(loadHosts)
 .forge-cred-host-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .forge-cred-host-name {
   flex: 1;
@@ -241,7 +241,7 @@ onMounted(loadHosts)
 .forge-cred-host-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 /* Verify outcome — green when the token works, red when it does not. */
@@ -271,19 +271,19 @@ onMounted(loadHosts)
 .forge-cred-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full);
   color: var(--color-success);
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 .forge-cred-add {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -291,7 +291,7 @@ onMounted(loadHosts)
   flex: 1;
   min-width: 130px;
   box-sizing: border-box;
-  padding: 7px 12px;
+  padding:7px var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -306,7 +306,7 @@ onMounted(loadHosts)
 .forge-cred-error {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--color-red);
   font-size: var(--font-size-md);
 }

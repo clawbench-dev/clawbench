@@ -76,7 +76,7 @@ const categories = computed(() =>
 
 <style scoped>
 .settings-index {
-  padding: 8px;
+  padding: var(--space-4);
   background: var(--bg-secondary);
   min-height: 100%;
 }
@@ -86,9 +86,9 @@ const categories = computed(() =>
   align-items: center;
   justify-content: space-between;
   height: 48px;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   cursor: pointer;
-  gap: 12px;
+  gap: var(--space-6);
   background: transparent;
   position: relative;
 }
@@ -117,7 +117,7 @@ const categories = computed(() =>
 .settings-index__left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
   min-width: 0;
 }
 

@@ -206,8 +206,8 @@ onBeforeUnmount(() => {
   position: fixed;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
   max-width: min(360px, calc(100vw - 16px));
   white-space: nowrap;
   overflow: hidden;
@@ -219,6 +219,6 @@ onBeforeUnmount(() => {
   line-height: var(--line-height-snug);
   color: var(--text-primary);
   opacity: 0;
-  transition: opacity 0.12s ease;
+  transition: opacity var(--duration-base) ease;
 }
 </style>

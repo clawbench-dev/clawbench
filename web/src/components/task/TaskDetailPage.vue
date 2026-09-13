@@ -147,18 +147,18 @@ async function onRefresh() {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .header-btn {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -166,7 +166,7 @@ async function onRefresh() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
@@ -198,18 +198,18 @@ async function onRefresh() {
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--border-color, #e5e5e5);
-  padding: 8px;
-  gap: 6px;
+  padding: var(--space-4);
+  gap: var(--space-3);
 }
 
 .history-section-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
-  padding: 2px 0;
+  padding: var(--space-1) 0;
   flex-shrink: 0;
 }
 
@@ -217,16 +217,16 @@ async function onRefresh() {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -244,8 +244,8 @@ async function onRefresh() {
 .detail-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;

@@ -220,10 +220,11 @@ describe('FileViewer error display', () => {
         const componentPath = resolve(__dirname, '../file/FileViewer.vue')
         const source = readFileSync(componentPath, 'utf-8')
 
-        // Should have border-radius: 20px for pill shape
+        // Should have pill radius for the bubble shape
         expect(source).toMatch(/border-radius:\s*20px/)
-        // Should have small padding (not 16px banner)
-        expect(source).toMatch(/padding:\s*6px\s+12px/)
+        // Should have small padding (not 16px banner); values now come from
+        // the spacing scale, so assert the tokens (6px / 12px)
+        expect(source).toMatch(/padding:\s*var\(--space-3\)\s+var\(--space-6\)/)
     })
 
     it('error-bubble includes warning icon SVG', () => {

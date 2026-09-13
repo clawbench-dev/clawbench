@@ -64,14 +64,14 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 .st-dialog-body {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 12px 16px 16px;
+  gap: var(--space-7);
+  padding: var(--space-6) var(--space-7) var(--space-7);
 }
 .st-group-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 6px;
+  gap: var(--space-3);
+  margin:0 0 var(--space-3);
   font-size: var(--font-size-md);
   color: var(--text-primary);
 }
@@ -86,14 +86,14 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 }
 .st-table th {
   text-align: left;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   color: var(--text-muted);
   font-weight: var(--font-weight-semibold);
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
 }
 .st-table td {
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   border-bottom: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
   vertical-align: top;
 }
@@ -102,11 +102,11 @@ const title = computed(() => t('appHeader.shortcutTipsDialog.title', { count: al
 .st-cell-action { color: var(--text-primary); }
 .st-kbd {
   display: inline-block;
-  margin: 0 2px;
+  margin:0 var(--space-1);
   padding: 1px 5px;
   border: 1px solid var(--border-color);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-xs);

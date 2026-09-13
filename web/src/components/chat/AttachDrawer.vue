@@ -408,17 +408,17 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
 }
 .ad-upload-btn {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px;
+  gap: var(--space-2);
+  padding:0 var(--space-4);
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
   background: var(--bg-hover);
   color: var(--text-secondary);
@@ -438,14 +438,14 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-tab-bar {
   display: flex;
   gap: 0;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   overflow-x: auto;
   border-bottom: 1px solid var(--border-color);
   -webkit-overflow-scrolling: touch;
   flex-shrink: 0;
 }
 .ad-tab {
-  padding: 8px 14px;
+  padding: var(--space-4) 14px;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   border: none;
@@ -454,7 +454,7 @@ defineExpose({ activeTab, handleFileDrop })
   cursor: pointer;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--duration-base), border-color var(--duration-base);
 }
 .ad-tab-active {
   color: var(--accent-color);
@@ -465,10 +465,10 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-content {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 .ad-empty {
-  padding: 24px 16px;
+  padding:24px var(--space-7);
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-size-md);
@@ -478,15 +478,15 @@ defineExpose({ activeTab, handleFileDrop })
 .ad-file-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: var(--space-5);
+  padding: var(--space-5) 14px;
   width: 100%;
   border: none;
   background: none;
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 .ad-file-row:active {
   background: var(--bg-hover);
@@ -506,7 +506,7 @@ defineExpose({ activeTab, handleFileDrop })
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   position: relative;
 }
 .ad-icon-wrap .ad-thumb {
@@ -515,7 +515,7 @@ defineExpose({ activeTab, handleFileDrop })
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .ad-file-icon {
@@ -556,7 +556,7 @@ defineExpose({ activeTab, handleFileDrop })
   flex-shrink: 0;
   color: var(--text-muted);
   opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base);
 }
 .ad-file-row:active .ad-file-open {
   opacity: 1;
@@ -576,7 +576,7 @@ defineExpose({ activeTab, handleFileDrop })
   bottom: -3px;
   width: 14px;
   height: 14px;
-  padding: 2px;
+  padding: var(--space-1);
   box-sizing: border-box;
   border-radius: 50%;
   background: var(--accent-color);
@@ -591,7 +591,7 @@ defineExpose({ activeTab, handleFileDrop })
   color: var(--text-muted);
   opacity: 0.5;
   cursor: pointer;
-  transition: opacity 0.15s, color 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base);
 }
 .ad-file-row:active .ad-file-delete {
   opacity: 1;
@@ -612,8 +612,8 @@ defineExpose({ activeTab, handleFileDrop })
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   padding: 1px 5px;
-  border-radius: 3px;
-  margin-right: 6px;
+  border-radius: var(--radius-xs);
+  margin-right: var(--space-3);
   vertical-align: middle;
   letter-spacing: 0.3px;
 }
@@ -624,7 +624,7 @@ defineExpose({ activeTab, handleFileDrop })
 /* Upload progress percent in icon slot */
 .ad-uploading-icon {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .ad-upload-pct {
   font-size: var(--font-size-2xs);

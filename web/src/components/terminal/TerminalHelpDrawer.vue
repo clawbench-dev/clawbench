@@ -97,7 +97,7 @@ const sections = computed<HelpSection[]>(() => {
 
 <style>
 .th-content {
-  padding: 2px 16px 16px;
+  padding: var(--space-1) var(--space-7) var(--space-7);
 }
 
 .th-section {
@@ -108,7 +108,7 @@ const sections = computed<HelpSection[]>(() => {
 }
 
 .th-section-title {
-  margin: 0 0 8px;
+  margin:0 0 var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
   color: var(--text-secondary, #495057);
@@ -121,14 +121,14 @@ const sections = computed<HelpSection[]>(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .th-item {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-6);
   font-size: var(--font-size-md);
   line-height: var(--line-height-snug);
 }
@@ -139,8 +139,8 @@ const sections = computed<HelpSection[]>(() => {
   color: var(--text-primary, #1a1a1a);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary, #f1f3f5);
   white-space: nowrap;
 }

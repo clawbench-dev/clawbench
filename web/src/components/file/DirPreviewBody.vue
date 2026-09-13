@@ -123,7 +123,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: var(--space-4);
 }
 
 /* ── Toolbar: mirrors .code-preview-meta (same height, colors, metrics) so the
@@ -132,8 +132,8 @@ function onEntryClick(entry: DirPreviewEntry) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px 3px 12px;
+  gap: var(--space-4);
+  padding:3px var(--space-3) 3px var(--space-6);
   min-height: 28px;
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
@@ -144,7 +144,7 @@ function onEntryClick(entry: DirPreviewEntry) {
 .dir-preview-meta-info {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--font-size-xs);
@@ -167,7 +167,7 @@ function onEntryClick(entry: DirPreviewEntry) {
 .dir-preview-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -176,16 +176,16 @@ function onEntryClick(entry: DirPreviewEntry) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 6px;
+  padding:3px var(--space-3);
   height: 24px;
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--duration-base), color var(--duration-base);
 }
 
 .dir-preview-btn:hover {
@@ -203,7 +203,7 @@ function onEntryClick(entry: DirPreviewEntry) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 100%;
   min-height: 60px;
   color: var(--text-secondary, #888);
@@ -219,17 +219,17 @@ function onEntryClick(entry: DirPreviewEntry) {
 .dir-preview-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .dir-preview-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-primary, #222);
   font-size: var(--font-size-sm);

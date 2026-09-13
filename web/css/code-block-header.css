@@ -30,7 +30,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-size-xs);
@@ -51,7 +51,7 @@
 .code-block-header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
 }
 
 /* ─── Header buttons: copy + wrap toggle ─── */
@@ -64,13 +64,13 @@
     width: 22px;
     height: 22px;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
     opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
 }
@@ -103,7 +103,7 @@
     opacity: 1;
     color: var(--accent-color);
     width: auto;
-    padding: 0 4px;
+    padding:0 var(--space-2);
 }
 
 .code-block-copied-text {
@@ -166,7 +166,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 2px 8px;
+    padding: var(--space-1) var(--space-4);
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
     font-size: var(--font-size-xs);
@@ -187,7 +187,7 @@
 .table-block-header-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
 }
 
 /* ─── Header buttons: copy + wrap toggle ─── */
@@ -200,13 +200,13 @@
     width: 22px;
     height: 22px;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-xs);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
     padding: 0;
     opacity: 0.5;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
+    transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
     outline: none;
     box-shadow: none;
 }
@@ -240,7 +240,7 @@
     opacity: 1;
     color: var(--accent-color);
     width: auto;
-    padding: 0 4px;
+    padding:0 var(--space-2);
 }
 
 .table-block-copied-text {
@@ -278,7 +278,7 @@
     right: 0;
     z-index: 100;
     min-width: 140px;
-    padding: 4px 0;
+    padding: var(--space-2) 0;
     background: var(--code-bg);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md, 6px);
@@ -289,7 +289,7 @@
 .table-block-copy-menu-item {
     display: block;
     width: 100%;
-    padding: 7px 12px;
+    padding:7px var(--space-6);
     border: none;
     background: none;
     color: var(--text-primary);

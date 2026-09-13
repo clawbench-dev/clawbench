@@ -210,7 +210,7 @@ defineExpose({ open: openDrawer })
   flex-direction: column;
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px 16px 16px;
+  padding: var(--space-2) var(--space-7) var(--space-7);
 }
 
 .shared-files-hint {
@@ -221,13 +221,13 @@ defineExpose({ open: openDrawer })
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .shared-files-error { color: #cf222e; }
 .shared-files-retry {
-  padding: 6px 14px;
-  border-radius: 6px;
+  padding: var(--space-3) 14px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-tertiary, #f0f0f0);
   color: var(--text-secondary, #666);
@@ -244,8 +244,8 @@ defineExpose({ open: openDrawer })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 10px 4px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-2);
   border-bottom: 1px solid var(--border-color, rgba(128,128,128,.15));
 }
 .shared-file-row:last-child { border-bottom: none; }
@@ -259,7 +259,7 @@ defineExpose({ open: openDrawer })
 .shared-file-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -267,13 +267,13 @@ defineExpose({ open: openDrawer })
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .shared-file-name-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -289,8 +289,8 @@ defineExpose({ open: openDrawer })
 .shared-file-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px 6px;
-  border-radius: 8px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-sm);
   background: rgba(128,128,128,.15);
   color: var(--text-secondary, #57606a);
 }
@@ -312,7 +312,7 @@ defineExpose({ open: openDrawer })
 .shared-file-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -323,7 +323,7 @@ defineExpose({ open: openDrawer })
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #57606a);
   cursor: pointer;
@@ -335,12 +335,12 @@ defineExpose({ open: openDrawer })
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   height: 28px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   margin-left: auto;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #cf222e;
   font-size: var(--font-size-md);

@@ -596,9 +596,9 @@ onBeforeUnmount(() => {
 .file-header-bar {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-2);
     height: var(--header-height);
-    padding: 0 4px 0 6px;
+    padding:0 var(--space-2) 0 var(--space-3);
     background: var(--bg-secondary);
     border: none;
     border-bottom: 1px solid var(--border-color);
@@ -613,9 +613,9 @@ onBeforeUnmount(() => {
 .file-header-nav {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
     flex-shrink: 0;
-    margin-right: 2px;
+    margin-right: var(--space-1);
 }
 .file-header-back-btn {
     color: var(--text-primary);
@@ -625,7 +625,7 @@ onBeforeUnmount(() => {
 .file-name-wrap {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-2);
     flex: 0 1 auto;
     min-width: 80px;
     max-width: 40%;
@@ -642,7 +642,7 @@ onBeforeUnmount(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
-    transition: color 0.15s;
+    transition: color var(--duration-base);
 }
 @media (hover: hover) {
     .file-path-hint:hover {
@@ -663,7 +663,7 @@ onBeforeUnmount(() => {
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     flex: 1 1 0;
     min-width: 0;
     overflow: hidden;
@@ -671,9 +671,9 @@ onBeforeUnmount(() => {
 }
 
 .file-header-btn {
-    padding: 6px;
+    padding: var(--space-3);
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
     background: transparent;
     font-size: var(--font-size-xs);
     cursor: pointer;
@@ -761,15 +761,15 @@ onBeforeUnmount(() => {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     z-index: 9999;
     min-width: 140px;
-    padding: 4px 0;
+    padding: var(--space-2) 0;
     overflow: hidden;
 }
 
 .file-header-dropdown-menu .dropdown-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-6);
     width: 100%;
     border: none;
     background: none;
@@ -798,7 +798,7 @@ onBeforeUnmount(() => {
     pointer-events: none;
 }
 .file-header-dropdown-menu .dropdown-divider {
-    height: 1px; background: var(--border-color); margin: 4px 0;
+    height: 1px; background: var(--border-color); margin: var(--space-2) 0;
 }
 .file-header-dropdown-menu .dropdown-item.danger {
     color: #ef4444;

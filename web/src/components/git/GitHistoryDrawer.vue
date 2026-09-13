@@ -701,7 +701,7 @@ watch(() => props.open, async (val) => {
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .drilldown-count {
@@ -709,8 +709,8 @@ watch(() => props.open, async (val) => {
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-md);
   flex-shrink: 0;
 }
 
@@ -720,16 +720,16 @@ watch(() => props.open, async (val) => {
 }
 
 .drilldown-list {
-  padding: 6px 0;
+  padding: var(--space-3) 0;
 }
 
 .drilldown-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 11px 14px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   border-bottom: 1px solid var(--border-color, #dee2e6);
 }
 
@@ -764,8 +764,8 @@ watch(() => props.open, async (val) => {
 .git-file-type-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--space-1) 5px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   letter-spacing: 0.02em;
 }
@@ -806,13 +806,13 @@ watch(() => props.open, async (val) => {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted, #999);
-  padding: 8px 14px 4px;
+  padding: var(--space-4) 14px var(--space-2);
   letter-spacing: 0.03em;
 }
 
 .merge-group + .merge-group {
   border-top: 1px solid var(--border-color, #dee2e6);
-  margin-top: 4px;
-  padding-top: 4px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 </style>

@@ -87,13 +87,13 @@ watch(visible, (v) => {
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  padding: 16px;
+  padding: var(--space-7);
 }
 
 .up-panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 380px;
   box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
@@ -101,7 +101,7 @@ watch(visible, (v) => {
 }
 
 .up-header {
-  padding: 14px 16px 8px;
+  padding:14px var(--space-7) var(--space-4);
 }
 
 .up-header h3 {
@@ -112,7 +112,7 @@ watch(visible, (v) => {
 }
 
 .up-body {
-  margin: 0 16px 8px;
+  margin:0 var(--space-7) var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-secondary);
   line-height: var(--line-height-relaxed);
@@ -120,11 +120,11 @@ watch(visible, (v) => {
 
 .up-version-badge {
   display: inline-block;
-  margin: 0 16px 12px;
-  padding: 4px 12px;
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-2) var(--space-6);
   background: color-mix(in srgb, var(--accent-color) 15%, transparent);
   color: var(--accent-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
   font-variant-numeric: tabular-nums;
@@ -132,7 +132,7 @@ watch(visible, (v) => {
 
 .up-release-link {
   display: block;
-  margin: 0 16px 12px;
+  margin:0 var(--space-7) var(--space-6);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--accent-color);
@@ -141,9 +141,9 @@ watch(visible, (v) => {
 }
 
 .up-docker-hint {
-  margin: 0 16px 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  margin:0 var(--space-7) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   font-size: var(--font-size-sm);
@@ -153,7 +153,7 @@ watch(visible, (v) => {
 
 .up-docker-restart {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--space-2);
   color: var(--text-warning, #d69e2e);
 }
 
@@ -162,22 +162,22 @@ watch(visible, (v) => {
 }
 
 .up-footer {
-  padding: 8px 16px 14px;
+  padding: var(--space-4) var(--space-7) 14px;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .up-upgrade {
   flex: 1;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -185,15 +185,15 @@ watch(visible, (v) => {
 }
 
 .up-skip {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -204,16 +204,16 @@ watch(visible, (v) => {
 }
 
 .up-later {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-size: var(--font-size-md);
   cursor: pointer;
 }
 
-.up-fade-enter-active { transition: opacity 0.2s ease; }
-.up-fade-leave-active { transition: opacity 0.15s ease; }
+.up-fade-enter-active { transition: opacity var(--duration-slow) ease; }
+.up-fade-leave-active { transition: opacity var(--duration-base) ease; }
 .up-fade-enter-from, .up-fade-leave-to { opacity: 0; }
 </style>

@@ -77,14 +77,14 @@ function renderLabel(item: CompletionItem): string {
 .completion-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
   background: none;
   cursor: pointer;
   text-align: left;
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 
 .completion-item--active {

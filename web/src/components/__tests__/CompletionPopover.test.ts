@@ -295,7 +295,8 @@ describe('CompletionPopover', () => {
         const footerRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-footer')).join('\n')
         expect(footerRule).toContain('background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary')
         // 贴边区隔：负 margin 铺满卡片宽度、顶部描边、无圆角
-        expect(footerRule).toContain('margin: 8px -10px -8px')
+        // 水平 -10px 仍是字面量（负间距不入 token 体系），垂直两档走 --space-*
+        expect(footerRule).toContain('margin: var(--space-4) -10px -8px')
         expect(footerRule).toContain('border-top: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent)')
         expect(footerRule).not.toContain('border-radius')
         // "外部"徽章：图标 + 文字，提示这是其他项目的会话
@@ -443,8 +444,9 @@ describe('CompletionPopover', () => {
         const maskRule = cssText.split('\n').filter((line) => line.includes('.summary-overflow .completion-popover-summary.markdown-body.is-collapsed')).join('\n')
         expect(maskRule).toContain('mask-size: 100% 132px')
         // 短内容不应用负 margin 抬升（actions 自然排在摘要下方）
+        // jsdom 不解析 var()，断言 token 名（6px 由 --space-3 保证）
         const actions = document.querySelector('.completion-popover-actions')!
-        expect(window.getComputedStyle(actions).marginTop).toBe('6px')
+        expect(window.getComputedStyle(actions).marginTop).toBe('var(--space-3)')
     })
 
     it('adds the overflow mask and actions overlap once the collapsed summary actually overflows', async () => {
@@ -769,8 +771,8 @@ describe('CompletionPopover', () => {
         expect(actionsRule).toContain('justify-content: flex-end')
         // 胶囊样式：圆角 999px（非圆形按钮），内边距容纳文字（jsdom 序列化为 0px 12px）
         const btnRule = cssText.split('\n').filter((line) => line.includes('.completion-popover-action-btn')).join('\n')
-        expect(btnRule).toContain('border-radius: 999px')
-        expect(btnRule).toContain('padding: 0px 12px')
+        expect(btnRule).toContain('border-radius: var(--radius-full)')
+        expect(btnRule).toContain('padding: 0 var(--space-6)')
 
         // 输入内容后 mark-read 依然存在（不随输入联动）
         const textarea = document.querySelector('.completion-popover-textarea') as HTMLTextAreaElement
@@ -794,14 +796,23 @@ describe('CompletionPopover', () => {
 
         expect(document.querySelector('.completion-popover-input')).toBeTruthy()
         // textarea 与聊天输入框对齐：16px 字号（--font-size-2xl）、行高 20px、上下 padding 4px
-        // jsdom 不解析 var()，字号断言 token 名；16px 由 variables.css 的 token 定义保证
+        // jsdom 不解析 var()：字号断言 token 名，padding 改断言 CSS 规则文本
+        // （简写含两个 var()，computed 值一律解成 0）。4px/8px 由 --space-2/--space-4 保证
         const ta = document.querySelector('.completion-popover-textarea')!
         const taStyles = window.getComputedStyle(ta)
         expect(taStyles.fontSize).toBe('var(--font-size-2xl)')
         expect(taStyles.lineHeight).toBe('20px')
-        expect(taStyles.paddingTop).toBe('4px')
-        expect(taStyles.paddingBottom).toBe('4px')
         expect(taStyles.minHeight).toBe('28px')
+        const taRule = Array.from(document.styleSheets)
+            .map((s) => {
+                try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+                catch { return '' }
+            })
+            .join('\n')
+            .split('\n')
+            .filter((line) => line.includes('.completion-popover-textarea'))
+            .join('\n')
+        expect(taRule).toContain('padding: var(--space-2) var(--space-4)')
         // 发送按钮与聊天输入框对齐：28px 圆形
         const btn = document.querySelector('.completion-popover-send')!
         const btnStyles = window.getComputedStyle(btn)

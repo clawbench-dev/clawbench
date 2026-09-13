@@ -34,9 +34,9 @@
 .share-topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 44px;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   flex-shrink: 0;
   border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, .25));
   background: var(--bg-secondary, #f6f8fa);
@@ -54,7 +54,7 @@
 
 .share-spacer { flex: 1; }
 
-.share-top-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.share-top-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
 
 /* Generic round icon button used by topbar actions (TOC toggle / download) */
 .share-btn {
@@ -63,7 +63,7 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: var(--text-secondary, #57606a);
@@ -102,7 +102,7 @@
   min-height: 0;
   overflow-y: auto;
   border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
-  padding: 8px;
+  padding: var(--space-4);
   box-sizing: border-box;
   background: var(--bg-primary, #fff);
 }
@@ -113,7 +113,7 @@
   color: var(--text-muted, #656d76);
   text-transform: uppercase;
   letter-spacing: .04em;
-  padding: 4px 8px 8px;
+  padding: var(--space-2) var(--space-4) var(--space-4);
 }
 
 .share-toc-item {
@@ -122,11 +122,11 @@
   text-align: left;
   border: none;
   background: none;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-secondary, #57606a);
   cursor: pointer;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

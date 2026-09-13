@@ -266,7 +266,7 @@ defineExpose({
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-6);
   padding: 24px 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
@@ -280,7 +280,7 @@ defineExpose({
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .execution-item {
@@ -288,7 +288,7 @@ defineExpose({
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   overflow: hidden;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 @media (hover: hover) {
@@ -318,8 +318,8 @@ defineExpose({
 .execution-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
   cursor: pointer;
 }
 
@@ -332,13 +332,13 @@ defineExpose({
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .execution-time-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* ── Unread dot (static) ── */
@@ -357,8 +357,8 @@ defineExpose({
 /* ── Trigger type badges ── */
 .exec-trigger-type {
   font-size: var(--font-size-2xs);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
   flex-shrink: 0;
   white-space: nowrap;
@@ -379,15 +379,15 @@ defineExpose({
 /* ── Status badges ── */
 .exec-status-badge {
   font-size: var(--font-size-2xs);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.02em;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 .exec-status-badge.running {
@@ -418,8 +418,8 @@ defineExpose({
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #111827);
   background: rgba(0, 102, 204, 0.05);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -436,7 +436,7 @@ defineExpose({
 .exec-event-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -450,8 +450,8 @@ defineExpose({
   color: var(--text-secondary, #4b5563);
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 4px;
-  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -479,15 +479,15 @@ defineExpose({
 .exec-meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .exec-meta-tag {
   font-size: var(--font-size-xs);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e5e7eb);
   color: var(--text-secondary, #6b7280);
@@ -529,13 +529,13 @@ defineExpose({
   border: none;
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -556,13 +556,13 @@ defineExpose({
   border: none;
   background: transparent;
   color: var(--text-muted, #9ca3af);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: all var(--duration-slow);
   opacity: 0;
 }
 
@@ -596,8 +596,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   color: var(--text-muted, #9ca3af);
   font-size: var(--font-size-sm);
 }

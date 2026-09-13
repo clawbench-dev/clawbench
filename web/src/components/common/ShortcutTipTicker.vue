@@ -151,13 +151,13 @@ watch(effectiveTips, () => {
 .stt-vert-out {
   transform: translateY(-10px);
   opacity: 0;
-  transition: transform 160ms ease, opacity 160ms ease;
+  transition: transform var(--duration-slow) ease, opacity var(--duration-slow) ease;
 }
 
 .stt-vert-in {
   transform: translateY(0);
   opacity: 1;
-  transition: transform 200ms ease, opacity 200ms ease;
+  transition: transform var(--duration-slow) ease, opacity var(--duration-slow) ease;
 }
 
 .stt-hscroll {
@@ -175,11 +175,11 @@ watch(effectiveTips, () => {
 
 .stt-kbd {
   display: inline-block;
-  margin: 0 2px;
+  margin:0 var(--space-1);
   padding: 1px 5px;
   border: 1px solid var(--border-color);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-2xs);
@@ -190,6 +190,6 @@ watch(effectiveTips, () => {
 }
 
 .stt-action {
-  margin-left: 4px;
+  margin-left: var(--space-2);
 }
 </style>

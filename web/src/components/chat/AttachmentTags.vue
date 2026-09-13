@@ -133,8 +133,8 @@ watch(() => props.files, (files) => {
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -146,10 +146,10 @@ watch(() => props.files, (files) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
   height: 40px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   padding-right: 24px;
   flex-shrink: 0;
   max-width: 150px;
@@ -157,7 +157,7 @@ watch(() => props.files, (files) => {
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -179,7 +179,7 @@ watch(() => props.files, (files) => {
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .attachment-thumb-img {
@@ -205,7 +205,7 @@ watch(() => props.files, (files) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   z-index: 1;
 }
 
@@ -245,7 +245,7 @@ watch(() => props.files, (files) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--space-1);
   border-radius: inherit;
   z-index: 1;
 }

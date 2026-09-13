@@ -73,7 +73,7 @@ function onLoaded() {
     justify-content: center;
     padding: 24px;
     background: var(--bg-primary);
-    gap: 16px;
+    gap: var(--space-7);
 }
 
 .audio-icon {
@@ -107,7 +107,7 @@ function onLoaded() {
 .audio-size {
     font-size: var(--font-size-md);
     color: var(--text-muted);
-    margin-top: 4px;
+    margin-top: var(--space-2);
 }
 
 .audio-player {

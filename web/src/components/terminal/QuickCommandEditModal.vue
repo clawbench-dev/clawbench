@@ -126,16 +126,16 @@ async function saveCommand() {
 
 <style>
 .qce-edit-content {
-  padding: 12px;
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-label {
@@ -149,14 +149,14 @@ async function saveCommand() {
 }
 
 .form-input {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .form-input:focus {
@@ -178,7 +178,7 @@ async function saveCommand() {
 .form-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
@@ -192,11 +192,11 @@ async function saveCommand() {
   margin: 0;
   flex-shrink: 0;
   border: 1.5px solid var(--border-color, #999);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-secondary, #fff);
   cursor: pointer;
   position: relative;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 .form-checkbox input[type="checkbox"]:checked {

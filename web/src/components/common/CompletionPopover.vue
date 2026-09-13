@@ -313,7 +313,7 @@ function handleSummaryClick(event: MouseEvent): void {
    长内容撑到留白处形成"几乎占满屏幕"的近全屏卡片 */
 .completion-popover-backdrop.is-expanded {
     align-items: center;
-    padding: 16px;
+    padding: var(--space-7);
     padding-top: calc(16px + var(--header-safe-area-top, 0px));
 }
 
@@ -322,8 +322,8 @@ function handleSummaryClick(event: MouseEvent): void {
     width: 100%;
     background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
     color: var(--text-primary);
-    border-radius: 12px;
-    padding: 8px 10px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5);
     box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
     border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     -webkit-tap-highlight-color: transparent;
@@ -370,8 +370,8 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
 }
 
 .completion-popover-icon {
@@ -398,8 +398,8 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     min-width: 0;
-    margin-bottom: 4px;
-    padding-left: 2px;
+    margin-bottom: var(--space-2);
+    padding-left: var(--space-1);
 }
 
 /* 底部 Footer（外部项目行）：贴满卡片宽度、无外边距的独立区隔带，
@@ -407,8 +407,8 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-footer {
     display: flex;
     align-items: center;
-    margin: 8px -10px -8px;
-    padding: 6px 10px;
+    margin: var(--space-4) -10px -8px;
+    padding: var(--space-3) var(--space-5);
     background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary, #fff));
     border-top: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
 }
@@ -424,7 +424,7 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-project {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-2);
     min-width: 0;
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
@@ -443,7 +443,7 @@ function handleSummaryClick(event: MouseEvent): void {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
     padding: 1px 5px;
     font-size: var(--font-size-2xs);
     line-height: var(--line-height-snug);
@@ -451,7 +451,7 @@ function handleSummaryClick(event: MouseEvent): void {
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
 }
 
 .completion-popover-project-badge svg {
@@ -484,16 +484,16 @@ function handleSummaryClick(event: MouseEvent): void {
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    margin-left: 6px;
-    padding: 2px 9px;
+    gap: var(--space-2);
+    margin-left: var(--space-3);
+    padding: var(--space-1) 9px;
     font-size: var(--font-size-xs);
     line-height: var(--line-height-normal);
     font-weight: var(--font-weight-medium);
     color: var(--accent-color);
     background: color-mix(in srgb, var(--accent-color) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     user-select: none;
 }
 
@@ -504,10 +504,10 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-user-quote {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     min-width: 0;
     max-width: 100%;
-    padding: 3px 8px;
+    padding:3px var(--space-4);
     font-size: var(--font-size-sm);
     line-height: var(--line-height-normal);
     color: var(--text-secondary);
@@ -516,7 +516,7 @@ function handleSummaryClick(event: MouseEvent): void {
     border-radius: 0;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
-    transition: background 0.15s;
+    transition: background var(--duration-base);
 }
 
 .completion-popover-user-quote:active {
@@ -563,7 +563,7 @@ function handleSummaryClick(event: MouseEvent): void {
     line-height: var(--line-height-relaxed);
     color: var(--text-secondary, var(--text-primary));
     word-break: break-word;
-    padding-top: 2px;
+    padding-top: var(--space-1);
 }
 
 /* ── 折叠态摘要：富文本预览按固定高度裁剪（不滚动），底部淡出渐变，
@@ -619,12 +619,12 @@ function handleSummaryClick(event: MouseEvent): void {
    用户消息气泡与助手消息之间除外（气泡已有实底底色，分隔线多余） */
 .completion-popover-meta:not(.completion-popover-meta-user) + .completion-popover-summary {
     border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
-    padding-top: 10px;
-    margin-top: 6px;
+    padding-top: var(--space-5);
+    margin-top: var(--space-3);
 }
 
 /* 覆盖全局 .markdown-body 规则：卡片已有自身 padding，去掉重复 padding；
-   只清左右下，保留顶部——分隔线的 padding-top: 8px 需生效 */
+   只清左右下，保留顶部——分隔线的 padding-top: var(--space-4) 需生效 */
 .completion-popover-summary.markdown-body {
     padding-left: 0;
     padding-right: 0;
@@ -644,14 +644,14 @@ function handleSummaryClick(event: MouseEvent): void {
     min-width: 0;
     display: flex;
     align-items: flex-end;
-    gap: 2px;
-    margin-top: 6px;
-    padding: 4px 6px 6px;
+    gap: var(--space-1);
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3) var(--space-3);
     background: var(--bg-primary, #fff);
     border: none;
     border-radius: 20px;
     overflow: hidden;
-    transition: background 0.2s, box-shadow 0.2s;
+    transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .completion-popover-input:focus-within {
@@ -662,7 +662,7 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover-textarea {
     flex: 1;
     min-width: 0;
-    padding: 4px 8px;
+    padding: var(--space-2) var(--space-4);
     border: none;
     background: transparent;
     color: var(--text-primary);
@@ -693,7 +693,7 @@ function handleSummaryClick(event: MouseEvent): void {
     border: none;
     border-radius: 50%;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: opacity var(--duration-base);
 }
 
 .completion-popover-send.disabled {
@@ -709,14 +709,14 @@ function handleSummaryClick(event: MouseEvent): void {
     align-items: center;
     gap: 5px;
     height: 28px;
-    padding: 0 12px;
-    border-radius: 999px;
+    padding:0 var(--space-6);
+    border-radius: var(--radius-full);
     font-size: var(--font-size-sm);
     line-height: 1;
     font-weight: var(--font-weight-medium);
     white-space: nowrap;
     cursor: pointer;
-    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
+    transition: opacity var(--duration-base), background var(--duration-base), box-shadow var(--duration-base);
     -webkit-tap-highlight-color: transparent;
 }
 
@@ -749,8 +749,8 @@ function handleSummaryClick(event: MouseEvent): void {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 6px;
-    margin-top: 6px;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
 }
 
 .completion-popover.is-expanded .completion-popover-actions {
@@ -765,13 +765,13 @@ function handleSummaryClick(event: MouseEvent): void {
 .completion-popover.summary-overflow:not(.is-expanded) .completion-popover-actions {
     position: relative;
     margin-top: -34px;
-    padding-top: 16px;
+    padding-top: var(--space-7);
     background: linear-gradient(
         to bottom,
         transparent 0%,
         color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary))) 55%
     );
-    border-radius: 0 0 12px 12px;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 /* Android 通知风格：卡片从顶部滑下 + 淡入（标准缓动曲线），离开反向滑回 */
@@ -780,7 +780,7 @@ function handleSummaryClick(event: MouseEvent): void {
 }
 
 .completion-popover-card-leave-active {
-    transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+    transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 
 .completion-popover-card-enter-from,

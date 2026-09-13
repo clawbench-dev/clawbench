@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 2;
-  transition: width 0.15s ease, height 0.15s ease, margin 0.15s ease, background 0.15s ease;
+  transition: width var(--duration-base) ease, height var(--duration-base) ease, margin var(--duration-base) ease, background var(--duration-base) ease;
 }
 
 /* ── Horizontal split (left | right): vertical 1px line, drag on X ── */
@@ -175,7 +175,7 @@ onBeforeUnmount(() => {
 .split-view__gutter-line {
   position: absolute;
   background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
 }
 .split-view__divider--horizontal .split-view__gutter-line {
   left: 50%;

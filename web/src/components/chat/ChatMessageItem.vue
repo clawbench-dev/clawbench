@@ -389,7 +389,7 @@ function handleCopyMessage() {
 <style scoped>
 /* Video player in chat */
 .chat-video-wrapper {
-  margin: 8px 0;
+  margin: var(--space-4) 0;
 }
 
 .chat-video-player {
@@ -406,7 +406,7 @@ function handleCopyMessage() {
   max-width: 80px;
   max-height: 80px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: block;
 }
 
@@ -426,27 +426,27 @@ function handleCopyMessage() {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin-top: 4px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-xs);
+  margin-top: var(--space-2);
 }
 
 /* ── File changes banner ── */
 .chat-file-changes-banner {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     width: 100%;
-    padding: 6px 10px;
-    margin-top: 6px;
+    padding: var(--space-3) var(--space-5);
+    margin-top: var(--space-3);
     border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
-    border-radius: 2px;
+    border-radius: var(--radius-xs);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
     color: var(--accent-color, #0066cc);
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    transition: background var(--duration-base), border-color var(--duration-base), box-shadow var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -466,8 +466,8 @@ function handleCopyMessage() {
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-semibold);
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
-    border-radius: 2px;
-    padding: 0 6px;
+    border-radius: var(--radius-xs);
+    padding:0 var(--space-3);
     min-width: 18px;
     text-align: center;
     line-height: 18px;
@@ -478,14 +478,14 @@ function handleCopyMessage() {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: 4px;
-    gap: 6px;
+    margin-top: var(--space-2);
+    gap: var(--space-3);
 }
 
 .chat-meta-info {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     font-size: var(--font-size-xs);
     color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
     min-width: 0;
@@ -494,7 +494,7 @@ function handleCopyMessage() {
 
 .chat-meta-sep::before {
     content: '·';
-    margin-right: 6px;
+    margin-right: var(--space-3);
 }
 
 .chat-meta-duration {
@@ -532,7 +532,7 @@ function handleCopyMessage() {
 .chat-meta-actions {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space-1);
 }
 
 /* Wrapper around the summary/original toggle button — used as the scroll anchor */
@@ -553,7 +553,7 @@ function handleCopyMessage() {
 /* User message meta bar */
 .chat-meta-bar-user {
     color: color-mix(in srgb, var(--text-secondary) 60%, transparent);
-    transition: color 0.2s;
+    transition: color var(--duration-slow);
 }
 
 /* ── Pending (queued) user message styles ── */
@@ -567,11 +567,11 @@ function handleCopyMessage() {
 .pending-hint {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-2);
     font-size: var(--font-size-2xs);
     color: rgba(255, 255, 255, 0.7);
     flex-basis: 100%;
-    margin-top: 4px;
+    margin-top: var(--space-2);
 }
 
 /* Spinner sits on the translucent user-bubble background → keep it white */
@@ -589,13 +589,13 @@ function handleCopyMessage() {
     gap: 3px;
     background: rgba(255, 255, 255, 0.14);
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     cursor: pointer;
     color: rgba(255, 255, 255, 0.9);
     padding: 1px 7px;
     font-size: var(--font-size-2xs);
     line-height: var(--line-height-relaxed);
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base);
 }
 
 .pending-action:disabled {
@@ -624,10 +624,10 @@ function handleCopyMessage() {
     border: none;
     cursor: pointer;
     color: rgba(255, 255, 255, 0.6);
-    padding: 0 2px;
+    padding:0 var(--space-1);
     font-size: var(--font-size-md);
     line-height: 1;
-    transition: color 0.15s;
+    transition: color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -666,7 +666,7 @@ function handleCopyMessage() {
 <style>
 /* Chat message - non-scoped for v-html penetration */
 .chat-message {
-    padding: 8px 12px;
+    padding: var(--space-4) var(--space-6);
     font-size: var(--font-size-md);
     line-height: var(--line-height-snug);
     min-width: 0;
@@ -710,8 +710,8 @@ function handleCopyMessage() {
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  margin: 4px 0;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -725,14 +725,14 @@ function handleCopyMessage() {
 .chat-message .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 6px;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
   height: 40px;
-  padding: 0 10px;
+  padding:0 var(--space-5);
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   flex-shrink: 0;
   box-sizing: border-box;
 }
@@ -758,7 +758,7 @@ function handleCopyMessage() {
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 .chat-message .attachment-thumb-img {
@@ -803,8 +803,8 @@ function handleCopyMessage() {
 
 .chat-message.user .attachment-file-icon {
   background: rgba(0, 0, 0, 0.15);
-  border-radius: 6px;
-  padding: 2px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1);
 }
 
 @media (hover: hover) {
@@ -846,7 +846,7 @@ function handleCopyMessage() {
     color: white;
     align-self: flex-end;
     border-radius: 20px 20px 0 20px;
-    margin-right: 10px;
+    margin-right: var(--space-5);
     max-width: calc(100% - 20px);
     overflow: hidden;
 }
@@ -863,8 +863,8 @@ function handleCopyMessage() {
 }
 
 .chat-message.user pre {
-    padding: 10px;
-    margin: 6px 0;
+    padding: var(--space-5);
+    margin: var(--space-3) 0;
     border-radius: var(--radius-sm);
     overflow-x: auto;
     max-width: 100%;
@@ -894,7 +894,7 @@ function handleCopyMessage() {
 
 .chat-message.user code {
     font-family: var(--font-mono);
-    padding: 2px 6px;
+    padding: var(--space-1) var(--space-3);
     font-size: var(--font-size-md);
     background: rgba(0, 0, 0, 0.15);
 }
@@ -902,7 +902,7 @@ function handleCopyMessage() {
 .chat-message.user h1,
 .chat-message.user h2,
 .chat-message.user h3 {
-    margin: 6px 0 3px;
+    margin: var(--space-3) 0 3px;
     font-weight: var(--font-weight-semibold);
 }
 
@@ -916,12 +916,12 @@ function handleCopyMessage() {
 
 .chat-message.user ul,
 .chat-message.user ol {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .chat-message.user blockquote {
-    margin: 6px 0;
-    padding: 5px 10px;
+    margin: var(--space-3) 0;
+    padding:5px var(--space-5);
     border-left-color: rgba(255, 255, 255, 0.35);
     background: rgba(0, 0, 0, 0.1);
 }
@@ -941,18 +941,18 @@ function handleCopyMessage() {
 }
 
 .chat-message.user img {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .chat-message.user hr {
-    margin: 8px 0;
+    margin: var(--space-4) 0;
     border-top-color: rgba(255, 255, 255, 0.25);
 }
 
 .chat-message.user .table-wrap {
     overflow-x: auto;
     border: none;
-    border-radius: 6px 6px 0 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     margin: 0.75em 0;
 }
 
@@ -1025,8 +1025,8 @@ function handleCopyMessage() {
 }
 
 .chat-message.assistant pre {
-    padding: 10px;
-    margin: 6px 0;
+    padding: var(--space-5);
+    margin: var(--space-3) 0;
     border-radius: var(--radius-sm);
     overflow-x: auto;
     max-width: 100%;
@@ -1055,14 +1055,14 @@ function handleCopyMessage() {
 
 .chat-message.assistant code {
     font-family: var(--font-mono);
-    padding: 2px 6px;
+    padding: var(--space-1) var(--space-3);
     font-size: var(--font-size-md);
 }
 
 .chat-message.assistant h1,
 .chat-message.assistant h2,
 .chat-message.assistant h3 {
-    margin: 6px 0 3px;
+    margin: var(--space-3) 0 3px;
     font-weight: var(--font-weight-semibold);
 }
 
@@ -1076,12 +1076,12 @@ function handleCopyMessage() {
 
 .chat-message.assistant ul,
 .chat-message.assistant ol {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .chat-message.assistant blockquote {
-    margin: 6px 0;
-    padding: 5px 10px;
+    margin: var(--space-3) 0;
+    padding:5px var(--space-5);
 }
 
 .chat-message.assistant a {
@@ -1090,17 +1090,17 @@ function handleCopyMessage() {
 }
 
 .chat-message.assistant img {
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .chat-message.assistant hr {
-    margin: 8px 0;
+    margin: var(--space-4) 0;
 }
 
 .chat-message.assistant .table-wrap {
     overflow-x: auto;
     border: none;
-    border-radius: 6px 6px 0 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     margin: 0.75em 0;
 }
 
@@ -1125,7 +1125,7 @@ function handleCopyMessage() {
 
 /* ── Audio player in chat (non-scoped for v-html penetration) ── */
 .chat-message .chat-audio-wrapper {
-  margin: 4px 0;
+  margin: var(--space-2) 0;
 }
 
 .chat-message .chat-audio-player {
@@ -1138,11 +1138,11 @@ function handleCopyMessage() {
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-panel {
-  padding: 0 4px;
+  padding:0 var(--space-2);
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-play-button {
-  margin: 0 2px;
+  margin:0 var(--space-1);
 }
 
 .chat-message .chat-audio-player::-webkit-media-controls-current-time-display,

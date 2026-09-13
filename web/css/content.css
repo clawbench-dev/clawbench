@@ -6,7 +6,7 @@
 .markdown-body {
     max-width: min(900px, 100%);
     margin: 0 auto;
-    padding: 10px;
+    padding: var(--space-5);
     font-size: var(--font-size-md);
     border-radius: 0;
     background: transparent;
@@ -23,10 +23,10 @@
    share SPA): the scrollbar element stays FULL-WIDTH so the scrollbar hugs the
    right edge even on wide screens. The reading-column cap (900px) is produced
    with symmetric horizontal padding on the same element (box-sizing: border-box)
-   instead of `max-width` + `margin: 0 auto` — shrinking the element would drag
+   instead of `max-width` + `margin:0 auto` — shrinking the element would drag
    its own scrollbar away from the edge.
 
-   The horizontal padding is `10px + half the slack above 900px`: the 10px keeps
+   The horizontal padding is `var(--space-5) + half the slack above 900px`: the var(--space-5) keeps
    the side margin text always had, and the slack centers the column only when
    the container is wider than the cap (it degrades to 0 when narrower, so small
    screens keep edge-to-edge text exactly as before). */
@@ -81,7 +81,7 @@
 
 .markdown-body pre {
     margin: 1em 0;
-    padding: 12px;
+    padding: var(--space-6);
     border: none;
     font-size: var(--font-size-md);
     line-height: var(--line-height-normal);
@@ -102,7 +102,7 @@
 
 .markdown-body img {
     height: auto;
-    margin: 6px 0;
+    margin: var(--space-3) 0;
 }
 
 .markdown-body hr {
@@ -126,7 +126,7 @@
 /* Mermaid Diagrams */
 .markdown-body .mermaid {
     background: var(--bg-secondary);
-    padding: 20px;
+    padding: var(--space-8);
     border-radius: var(--radius-md);
     margin: 1em 0;
     overflow-x: auto;
@@ -145,7 +145,7 @@
     margin: 1em 0;
     overflow-x: auto;
     overflow-y: hidden;
-    padding: 10px 0;
+    padding: var(--space-5) 0;
 }
 
 /* Raw Content Viewer */

@@ -133,7 +133,7 @@ onBeforeUnmount(() => {
 .popup-menu {
   background: var(--bg-secondary, #fff);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.12);
   z-index: 9999;
   padding: 0;
@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
 /* Fade animation for menu appearance */
 .menu-fade-enter-active,
 .menu-fade-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
 }
 
 .menu-fade-enter-from,

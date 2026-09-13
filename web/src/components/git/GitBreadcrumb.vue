@@ -75,7 +75,7 @@ const commitTarget = computed(() => {
 .git-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   overflow-x: auto;
   font-size: var(--font-size-md);
   color: var(--text-muted, #999);
@@ -87,11 +87,11 @@ const commitTarget = computed(() => {
   display: none;
 }
 .git-crumb {
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 .git-crumb.current {
   font-weight: var(--font-weight-semibold);
@@ -126,7 +126,7 @@ const commitTarget = computed(() => {
   padding: 0;
   line-height: 1;
   opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   flex-shrink: 0;
 }

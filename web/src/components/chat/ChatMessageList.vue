@@ -1270,40 +1270,40 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: var(--space-6) 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Message list container */
 .chat-messages-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-8);
 }
 
 .chat-empty {
   text-align: center;
-  padding: 32px 16px;
+  padding:32px var(--space-7);
   color: var(--text-muted);
   font-size: var(--font-size-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: var(--space-7);
   flex: 1;
 }
 
 .agent-welcome {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: var(--space-6);
+  padding:14px var(--space-7);
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   max-width: 280px;
   width: 100%;
   text-align: left;
@@ -1317,7 +1317,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .agent-welcome-info {
@@ -1347,14 +1347,14 @@ defineExpose({
 
 .agent-welcome-tags {
   display: flex;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .agent-welcome-tag {
   font-size: var(--font-size-2xs);
-  padding: 1px 6px;
-  border-radius: 3px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;
 }
@@ -1401,15 +1401,15 @@ defineExpose({
 .no-agents-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-7);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-md);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1444,13 +1444,13 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 5px 12px;
+  gap: var(--space-3);
+  padding:5px var(--space-6);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -1459,7 +1459,7 @@ defineExpose({
 
 .chat-load-hint {
   cursor: pointer;
-  transition: color 0.15s, opacity 0.15s, background 0.15s;
+  transition: color var(--duration-base), opacity var(--duration-base), background var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1478,10 +1478,10 @@ defineExpose({
 
 /* Transition for load hint switching */
 .load-hint-fade-enter-active {
-  transition: opacity 0.2s ease-out;
+  transition: opacity var(--duration-slow) ease-out;
 }
 .load-hint-fade-leave-active {
-  transition: opacity 0.15s ease-in;
+  transition: opacity var(--duration-base) ease-in;
 }
 .load-hint-fade-enter-from,
 .load-hint-fade-leave-to {
@@ -1497,10 +1497,10 @@ defineExpose({
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   z-index: 3;
   pointer-events: none;
-  padding: 6px 0;
+  padding: var(--space-3) 0;
 }
 
 .scroll-fab-bottom {
@@ -1510,16 +1510,16 @@ defineExpose({
 .scroll-fab-dir {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 /* Direction swap transition (out-in) */
 .scroll-fab-swap-enter-active {
-  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+  transition: opacity var(--duration-base) ease-out, transform var(--duration-base) ease-out;
 }
 
 .scroll-fab-swap-leave-active {
-  transition: opacity 0.1s ease-in, transform 0.1s ease-in;
+  transition: opacity var(--duration-fast) ease-in, transform var(--duration-fast) ease-in;
 }
 
 .scroll-fab-swap-enter-from {
@@ -1546,7 +1546,7 @@ defineExpose({
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
   opacity: 0.6;
-  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s, opacity 0.15s;
+  transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base), opacity var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -1581,7 +1581,7 @@ defineExpose({
   transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .scroll-fab-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 .scroll-fab-bottom.scroll-fab-enter-from {
   opacity: 0;

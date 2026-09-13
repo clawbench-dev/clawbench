@@ -245,7 +245,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   right: 8px;
   background: color-mix(in srgb, var(--bg-tertiary) 88%, var(--bg-elevated, var(--bg-tertiary)));
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
   z-index: 2400;
   max-width: 600px;
@@ -258,10 +258,10 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .quote-bar-row:active {
@@ -276,12 +276,12 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   height: 32px;
   padding: 0;
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
   flex-shrink: 0;
   background: transparent;
   color: var(--accent-color);
   border: 1px solid color-mix(in srgb, var(--accent-color) 45%, var(--border-color));
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 @media (hover: hover) {
@@ -303,12 +303,12 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   justify-content: center;
   min-width: 24px;
   height: 24px;
-  padding: 0 4px;
+  padding:0 var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -334,8 +334,8 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 .quote-bar-expanded {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
 }
 
 /* Quoted snippet block — relative so the floating copy button anchors here */
@@ -344,11 +344,11 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
   border-left: 2px solid var(--accent-color);
   border-radius: 0;
-  margin: 0 2px;
+  margin:0 var(--space-1);
   flex: 1;
   min-width: 0;
 }
@@ -369,7 +369,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 /* Collapsed inline variant — single row, no flex-start */
 .qq-quoted-snippet--inline {
   align-items: center;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   margin: 0;
   border-radius: 0;
   background: color-mix(in srgb, var(--accent-color) 10%, var(--bg-tertiary));
@@ -404,7 +404,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: none;
   border-radius: 20px;
   overflow: hidden;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .qq-input-container:focus-within {
@@ -415,13 +415,13 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 .qq-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  padding: 4px 6px 6px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .qq-textarea {
   flex: 1;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -452,7 +452,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background var(--duration-base), opacity var(--duration-base);
   flex-shrink: 0;
 }
 
@@ -487,7 +487,7 @@ defineExpose({ expanded, expand, displayQuoteText, onVisibleChange, inputRef, in
 }
 
 .quote-bar-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 
 .quote-bar-enter-from,

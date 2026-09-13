@@ -136,7 +136,7 @@ function handleBodyInput(event) {
 .tool-detail-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
   flex: 1;
   --tool-accent: var(--text-muted);
@@ -163,7 +163,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: color-mix(in srgb, var(--tool-accent) 80%, transparent);
   background: color-mix(in srgb, var(--tool-accent) 14%, transparent);
   display: inline-flex;
@@ -197,7 +197,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   background: color-mix(in srgb, var(--tool-accent) 12%, transparent);
   color: color-mix(in srgb, var(--tool-accent) 90%, transparent);
@@ -207,7 +207,7 @@ function handleBodyInput(event) {
 
 /* Body */
 .tool-detail-body {
-  padding: 12px 14px;
+  padding: var(--space-6) 14px;
   overflow-y: auto;
   overflow-x: clip;
   font-size: var(--font-size-sm);
@@ -227,29 +227,29 @@ function handleBodyInput(event) {
 <style>
 /* Non-scoped styles for v-html penetration — tool detail rendering in bottom sheet */
 .tool-detail-body .tool-output-section {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   border-top: 1px solid var(--border-color);
-  padding-top: 8px;
+  padding-top: var(--space-4);
 }
 
 .tool-detail-body .tool-output-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .tool-detail-body .tool-output-header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   margin-left: auto;
 }
 
 .tool-detail-body .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
   font-weight: var(--font-weight-semibold);
@@ -262,8 +262,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .tool-output-status {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -303,9 +303,9 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: normal;
   word-break: break-word;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-family: inherit;
   line-height: var(--line-height-relaxed);
 }
@@ -321,29 +321,29 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-output-body .agent-call-prompt h4 {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  margin: 8px 0 4px;
+  margin: var(--space-4) 0 var(--space-2);
   color: var(--text-primary);
 }
 .tool-detail-body .tool-output-body .agent-call-prompt ul,
 .tool-detail-body .tool-output-body .agent-call-prompt ol {
-  margin: 4px 0;
-  padding-left: 20px;
+  margin: var(--space-2) 0;
+  padding-left: var(--space-8);
 }
 .tool-detail-body .tool-output-body .agent-call-prompt li {
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .tool-detail-body .tool-output-body .agent-call-prompt code {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .tool-detail-body .tool-output-body .agent-call-prompt pre {
-  margin: 4px 0;
-  padding: 6px 8px;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow-x: auto;
 }
 .tool-detail-body .tool-output-body .agent-call-prompt pre code {
@@ -358,7 +358,7 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-output-body .agent-call-prompt hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 6px 0;
+  margin: var(--space-3) 0;
 }
 
 /* Agent call view — shared (Agent/Task) and codex sub-agent lifecycle frames.
@@ -367,20 +367,20 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 .tool-detail-body .agent-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .tool-detail-body .agent-type-badge {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
   font-weight: var(--font-weight-semibold);
@@ -409,7 +409,7 @@ function handleBodyInput(event) {
 .tool-detail-body .wait-call-sender {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-xs);
 }
 .tool-detail-body .codex-agent-path code,
@@ -432,18 +432,18 @@ function handleBodyInput(event) {
 .tool-detail-body .wait-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .wait-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .wait-call-label {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(107, 114, 128, 0.12);
   color: var(--text-secondary);
   font-weight: var(--font-weight-semibold);
@@ -483,8 +483,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .tool-output-content pre {
   background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
 }
 
 /* File header */
@@ -492,9 +492,9 @@ function handleBodyInput(event) {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 6px;
-  padding-bottom: 6px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
   padding-right: 22px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -527,8 +527,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .edit-diff-replace-all {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
   font-weight: var(--font-weight-semibold);
@@ -545,8 +545,8 @@ function handleBodyInput(event) {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
-  padding: 2px 0;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
   user-select: none;
   flex-shrink: 0;
 }
@@ -554,7 +554,7 @@ function handleBodyInput(event) {
 .tool-detail-body .tool-content-header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .tool-detail-body .tool-content-copy-btn,
@@ -565,13 +565,13 @@ function handleBodyInput(event) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
   opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
 }
@@ -594,7 +594,7 @@ function handleBodyInput(event) {
   opacity: 0.8;
   color: #16a34a;
   width: auto;
-  padding: 0 4px;
+  padding:0 var(--space-2);
 }
 
 .tool-detail-body .tool-content-wrap-btn.is-wrapped {
@@ -719,8 +719,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .file-write-badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
   font-weight: var(--font-weight-semibold);
@@ -774,7 +774,7 @@ function handleBodyInput(event) {
 .tool-detail-body .bash-terminal-desc {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -784,8 +784,8 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -793,7 +793,7 @@ function handleBodyInput(event) {
 .tool-detail-body .bash-prompt {
   color: #16a34a;
   font-weight: var(--font-weight-bold);
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 :root[data-theme-base="dark"] .tool-detail-body .bash-prompt {
@@ -816,7 +816,7 @@ function handleBodyInput(event) {
 .tool-detail-body .grep-search-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -825,13 +825,13 @@ function handleBodyInput(event) {
 .tool-detail-body .grep-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tool-detail-body .grep-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -861,14 +861,14 @@ function handleBodyInput(event) {
 .tool-detail-body .glob-tags-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .tool-detail-body .grep-mode-tag {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
   font-weight: var(--font-weight-medium);
@@ -883,7 +883,7 @@ function handleBodyInput(event) {
 .tool-detail-body .glob-pattern-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -892,13 +892,13 @@ function handleBodyInput(event) {
 .tool-detail-body .glob-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tool-detail-body .glob-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -930,7 +930,7 @@ function handleBodyInput(event) {
 .tool-detail-body .web-search-query {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--text-primary);
 }
 
@@ -949,7 +949,7 @@ function handleBodyInput(event) {
 .tool-detail-body .web-fetch-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -957,13 +957,13 @@ function handleBodyInput(event) {
 .tool-detail-body .web-fetch-url-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tool-detail-body .web-fetch-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -1008,7 +1008,7 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1016,14 +1016,14 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .tool-detail-body .agent-type-badge {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
   font-weight: var(--font-weight-semibold);
@@ -1045,9 +1045,9 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: normal;
   word-break: break-word;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-family: inherit;
   line-height: var(--line-height-relaxed);
 }
@@ -1063,29 +1063,29 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-prompt h4 {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  margin: 8px 0 4px;
+  margin: var(--space-4) 0 var(--space-2);
   color: var(--text-primary);
 }
 .tool-detail-body .agent-call-prompt ul,
 .tool-detail-body .agent-call-prompt ol {
-  margin: 4px 0;
-  padding-left: 20px;
+  margin: var(--space-2) 0;
+  padding-left: var(--space-8);
 }
 .tool-detail-body .agent-call-prompt li {
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .tool-detail-body .agent-call-prompt code {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .tool-detail-body .agent-call-prompt pre {
-  margin: 4px 0;
-  padding: 6px 8px;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow-x: auto;
 }
 .tool-detail-body .agent-call-prompt pre code {
@@ -1100,14 +1100,14 @@ function handleBodyInput(event) {
 .tool-detail-body .agent-call-prompt hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 6px 0;
+  margin: var(--space-3) 0;
 }
 
 /* Skill call */
 .tool-detail-body .skill-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1115,7 +1115,7 @@ function handleBodyInput(event) {
 .tool-detail-body .skill-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tool-detail-body .skill-call-icon {
@@ -1139,9 +1139,9 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   line-height: var(--line-height-normal);
 }
@@ -1177,7 +1177,7 @@ function handleBodyInput(event) {
 .tool-detail-body .ls-dir-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .ls-dir-icon {
   font-size: var(--font-size-lg);
@@ -1199,13 +1199,13 @@ function handleBodyInput(event) {
 .tool-detail-body .todo-write-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .tool-detail-body .todo-item {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 2px 0;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
 }
 .tool-detail-body .todo-icon {
   flex-shrink: 0;
@@ -1226,7 +1226,7 @@ function handleBodyInput(event) {
 .tool-detail-body .todo-read-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
@@ -1240,19 +1240,19 @@ function handleBodyInput(event) {
 .tool-detail-body .task-tool-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 .tool-detail-body .task-tool-field {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .task-field-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
   font-weight: var(--font-weight-semibold);
@@ -1277,7 +1277,7 @@ function handleBodyInput(event) {
 .tool-detail-body .mode-switch-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .mode-switch-icon { font-size: var(--font-size-lg); }
@@ -1292,7 +1292,7 @@ function handleBodyInput(event) {
 .tool-detail-body .worktree-switch-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .worktree-switch-icon { font-size: var(--font-size-lg); }
@@ -1308,14 +1308,14 @@ function handleBodyInput(event) {
 .tool-detail-body .send-message-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 .tool-detail-body .send-message-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .send-message-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .send-message-recipient {
@@ -1327,23 +1327,23 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Computer use */
 .tool-detail-body .computer-use-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 .tool-detail-body .computer-use-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .computer-use-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .computer-use-action {
@@ -1351,7 +1351,7 @@ function handleBodyInput(event) {
   text-transform: uppercase;
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
 }
@@ -1366,7 +1366,7 @@ function handleBodyInput(event) {
 .tool-detail-body .team-tool-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .team-tool-icon { font-size: var(--font-size-lg); }
@@ -1379,14 +1379,14 @@ function handleBodyInput(event) {
 .tool-detail-body .chat-reply-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 .tool-detail-body .chat-reply-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .tool-detail-body .chat-reply-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .chat-reply-recipient {
@@ -1398,16 +1398,16 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Save memory */
 .tool-detail-body .save-memory-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1426,16 +1426,16 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Deep think */
 .tool-detail-body .deep-think-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1444,14 +1444,14 @@ function handleBodyInput(event) {
   font-style: italic;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Structured output */
 .tool-detail-body .structured-output-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .structured-output-icon { font-size: var(--font-size-lg); }
@@ -1465,14 +1465,14 @@ function handleBodyInput(event) {
 .tool-detail-body .skill-manage-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .skill-manage-icon { font-size: var(--font-size-lg); }
 .tool-detail-body .skill-manage-action {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(6, 182, 212, 0.12);
   color: #0891b2;
   font-weight: var(--font-weight-semibold);
@@ -1495,7 +1495,7 @@ function handleBodyInput(event) {
 .tool-detail-body .monitor-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1509,8 +1509,8 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1519,7 +1519,7 @@ function handleBodyInput(event) {
 .tool-detail-body .image-gen-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   flex-wrap: wrap;
 }
@@ -1531,8 +1531,8 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .image-gen-size {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(6, 182, 212, 0.12);
   color: #0891b2;
   font-weight: var(--font-weight-semibold);
@@ -1546,7 +1546,7 @@ function handleBodyInput(event) {
 .tool-detail-body .lsp-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   flex-wrap: wrap;
 }
@@ -1571,7 +1571,7 @@ function handleBodyInput(event) {
 .tool-detail-body .git-tool-view {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
 }
 .tool-detail-body .git-tool-icon { font-size: var(--font-size-lg); }
@@ -1580,8 +1580,8 @@ function handleBodyInput(event) {
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
   white-space: pre-wrap;
   word-break: break-word;
   flex: 1;
@@ -1592,7 +1592,7 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-question-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1603,10 +1603,10 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-question-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-tertiary);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .tool-detail-body .ask-question-header {
   font-size: var(--font-size-2xs);
@@ -1622,17 +1622,17 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-question-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 .tool-detail-body .ask-question-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   border: 1px solid var(--border-color);
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 @media (hover: hover) {
   .tool-detail-body .ask-question-option:hover {
@@ -1656,7 +1656,7 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-option-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .tool-detail-body .ask-option-label {
@@ -1670,8 +1670,8 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-question-supplementary {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
 }
 .tool-detail-body .ask-supplementary-label {
   font-size: var(--font-size-2xs);
@@ -1682,15 +1682,15 @@ function handleBodyInput(event) {
 }
 .tool-detail-body .ask-supplementary-input {
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-secondary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 .tool-detail-body .ask-supplementary-input:focus {
@@ -1702,19 +1702,19 @@ function handleBodyInput(event) {
 .tool-detail-body .ask-question-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .tool-detail-body .ask-question-recommend {
-  padding: 6px 16px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-7);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--accent-color);
   background: transparent;
   color: var(--accent-color);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -1733,15 +1733,15 @@ function handleBodyInput(event) {
 
 .tool-detail-body .ask-question-submit {
   align-self: flex-end;
-  padding: 6px 16px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-7);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--accent-color);
   background: var(--accent-color);
   color: white;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
 }
 .tool-detail-body .ask-question-submit:disabled {
   opacity: 0.4;
@@ -1757,7 +1757,7 @@ function handleBodyInput(event) {
 .tool-detail-body .permission-approval-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
@@ -1772,14 +1772,14 @@ function handleBodyInput(event) {
 .tool-detail-body .permission-tool-detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .tool-detail-body .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
   color: #dc2626;
   font-weight: var(--font-weight-semibold);
@@ -1802,13 +1802,13 @@ function handleBodyInput(event) {
   border: 1px solid var(--border-color);
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .tool-detail-body .permission-options {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 /* Buttons reuse the .fbtn colour language from modal-footer-btn.css but drop
@@ -1816,7 +1816,7 @@ function handleBodyInput(event) {
    blocks). Only the interaction-state keep-alive stays here. */
 .tool-detail-body .permission-options .permission-btn {
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .tool-detail-body .permission-options .fbtn:disabled {
   opacity: 0.5;
@@ -1854,11 +1854,11 @@ function handleBodyInput(event) {
 
 .tool-detail-body .permission-result {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 .tool-detail-body .permission-result-approved {
@@ -1883,8 +1883,8 @@ function handleBodyInput(event) {
 
 .tool-detail-body .permission-result-auto-approved {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   background: #dcfce7;
@@ -1900,12 +1900,12 @@ function handleBodyInput(event) {
 
 /* Tool output status badge (for Write/Edit etc. that return short status) */
 .tool-detail-body .tool-output-status-msg {
-  padding: 6px 0;
+  padding: var(--space-3) 0;
 }
 .tool-detail-body .tool-output-ok-badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   background: rgba(34, 197, 94, 0.12);

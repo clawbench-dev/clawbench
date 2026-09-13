@@ -483,8 +483,8 @@ async function handleRetryTunnel() {
 .proxy-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 6px;
+  gap: var(--space-4);
+  padding: var(--space-3);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -495,9 +495,9 @@ async function handleRetryTunnel() {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
@@ -524,7 +524,7 @@ async function handleRetryTunnel() {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--accent-color, #0066cc);
   color: #fff;
   cursor: pointer;
@@ -532,7 +532,7 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 /* Header icon button (scan, etc.) */
@@ -540,7 +540,7 @@ async function handleRetryTunnel() {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -548,7 +548,7 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
   position: relative;
 }
 
@@ -583,9 +583,9 @@ async function handleRetryTunnel() {
 .tunnel-banner {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   border-left: 3px solid;
   flex-shrink: 0;
 }
@@ -624,7 +624,7 @@ async function handleRetryTunnel() {
 .tunnel-banner-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .tunnel-banner-title {
@@ -648,7 +648,7 @@ async function handleRetryTunnel() {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.15);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   margin-left: auto;
   align-self: center;
 }
@@ -664,7 +664,7 @@ async function handleRetryTunnel() {
 
 .proxy-loading,
 .proxy-empty {
-  padding: 24px 12px;
+  padding:24px var(--space-6);
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -672,7 +672,7 @@ async function handleRetryTunnel() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .proxy-empty-icon {
@@ -682,7 +682,7 @@ async function handleRetryTunnel() {
 
 .proxy-empty-hint {
   font-size: var(--font-size-xs);
-  margin-top: 4px;
+  margin-top: var(--space-2);
   color: var(--text-muted, #999);
   opacity: 0.7;
 }
@@ -690,7 +690,7 @@ async function handleRetryTunnel() {
 .proxy-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Two-zone layout: registered ports (top, 50–100%) + detected ports (bottom, 0–50%, pinned to bottom) */
@@ -713,7 +713,7 @@ async function handleRetryTunnel() {
 /* Tunnel guide (web mode) */
 .tunnel-guide {
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -721,13 +721,13 @@ async function handleRetryTunnel() {
 .tunnel-guide-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #666);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   user-select: none;
 }
 
@@ -743,7 +743,7 @@ async function handleRetryTunnel() {
 
 .tunnel-guide-chevron {
   margin-left: auto;
-  transition: transform 0.2s;
+  transition: transform var(--duration-slow);
 }
 
 .tunnel-guide-chevron.expanded {
@@ -751,10 +751,10 @@ async function handleRetryTunnel() {
 }
 
 .tunnel-guide-body {
-  padding: 0 10px 10px;
+  padding:0 var(--space-5) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .tunnel-guide-intro {
@@ -766,7 +766,7 @@ async function handleRetryTunnel() {
 .tunnel-guide-steps {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .tunnel-guide-step {
@@ -780,8 +780,8 @@ async function handleRetryTunnel() {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
-  margin-top: 2px;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-1);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
 }
@@ -817,12 +817,12 @@ async function handleRetryTunnel() {
 .tunnel-guide-command {
   background: var(--bg-tertiary, #f5f5f5);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 4px;
-  padding: 6px 8px;
-  margin-top: 2px;
+  border-radius: var(--radius-xs);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-1);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .tunnel-guide-command code {
@@ -839,14 +839,14 @@ async function handleRetryTunnel() {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: none;
   color: var(--text-secondary, #666);
   font-size: var(--font-size-2xs);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
   align-self: flex-end;
 }
 
@@ -860,9 +860,9 @@ async function handleRetryTunnel() {
 .tunnel-guide-fingerprint {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-2xs);
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .fingerprint-label {
@@ -882,8 +882,8 @@ async function handleRetryTunnel() {
 .port-scan-content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  gap: var(--space-4);
+  padding: var(--space-5);
   min-height: 0;
 }
 
@@ -892,8 +892,8 @@ async function handleRetryTunnel() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 40px 12px;
+  gap: var(--space-6);
+  padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
 }
@@ -915,7 +915,7 @@ async function handleRetryTunnel() {
   color: var(--text-muted, #999);
   cursor: pointer;
   border-radius: 0;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -940,10 +940,10 @@ async function handleRetryTunnel() {
 .port-scan-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 2px;
+  padding: var(--space-1);
 }
 
 .port-scan-item {
@@ -951,15 +951,15 @@ async function handleRetryTunnel() {
   align-items: center;
   justify-content: flex-start;
   text-align: left;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-color, #e5e5e5);
   border-left: 3px solid #3b82f6;
   border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
   color: var(--text-primary, #1a1a1a);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
   min-width: 0;
 }
 
@@ -987,7 +987,7 @@ async function handleRetryTunnel() {
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   border-radius: 0;
   background: rgba(59, 130, 246, 0.12);
   color: #3b82f6;
@@ -1027,8 +1027,8 @@ async function handleRetryTunnel() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 40px 12px;
+  gap: var(--space-4);
+  padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
   opacity: 0.8;
@@ -1037,14 +1037,14 @@ async function handleRetryTunnel() {
 .port-add-content {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
+  gap: var(--space-5);
+  padding: var(--space-5);
 }
 
 .port-add-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .port-add-label {
@@ -1055,9 +1055,9 @@ async function handleRetryTunnel() {
 
 .port-add-input {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -1078,9 +1078,9 @@ async function handleRetryTunnel() {
 
 .port-add-select {
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-lg);
   background: var(--bg-primary, #fff);
   color: var(--text-primary, #1a1a1a);
@@ -1098,7 +1098,7 @@ async function handleRetryTunnel() {
   font-size: var(--font-size-sm);
   color: #dc2626;
   background: rgba(239, 68, 68, 0.08);
-  padding: 6px 10px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-xs);
 }
 </style>

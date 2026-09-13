@@ -144,7 +144,7 @@ onBeforeUnmount(() => {
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   z-index: 5;
-  transition: width 0.15s ease, margin 0.15s ease, background 0.15s ease;
+  transition: width var(--duration-base) ease, margin var(--duration-base) ease, background var(--duration-base) ease;
 }
 .toc-dock--left .toc-dock-divider {
   left: auto;
@@ -185,7 +185,7 @@ onBeforeUnmount(() => {
   width: 1px;
   transform: translateX(-50%);
   background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
 }
 .toc-dock-divider:active .toc-dock-divider__line,
 .toc-dock-divider:hover .toc-dock-divider__line {
@@ -195,8 +195,8 @@ onBeforeUnmount(() => {
 .toc-dock-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   min-height: 28px;
@@ -218,9 +218,9 @@ onBeforeUnmount(() => {
 }
 
 .toc-dock-close {
-  padding: 2px;
+  padding: var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
@@ -230,9 +230,9 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 .toc-dock-side-toggle {
-  padding: 2px;
+  padding: var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;

@@ -22,9 +22,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 30px;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   border-radius: 15px;
   border: 1px solid color-mix(in srgb, var(--text-secondary, #4b5563) 40%, transparent);
   background: var(--bg-tertiary, #f1f3f5);
@@ -36,7 +36,7 @@
   box-sizing: border-box;
   user-select: none;
   text-decoration: none;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--duration-base) ease, border-color var(--duration-base) ease;
 }
 
 .fbtn svg {

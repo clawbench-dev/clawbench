@@ -644,9 +644,9 @@ onUnmounted(() => {
 .exec-detail-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -657,7 +657,7 @@ onUnmounted(() => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary, #f1f3f5);
   color: var(--text-secondary, #666);
   cursor: pointer;
@@ -665,7 +665,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s ease;
+  transition: all var(--duration-slow) ease;
 }
 
 .header-btn:disabled {
@@ -687,20 +687,20 @@ onUnmounted(() => {
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0;
+  padding: var(--space-6) 0;
 }
 
 /* Trigger source for event-triggered runs: a source link plus the collapsible
    context block the backend prepended to the prompt. */
 .exec-event-card {
-  margin: 0 12px 10px;
-  padding: 8px 10px;
+  margin:0 var(--space-6) var(--space-5);
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #e5e7eb);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-secondary, #f3f4f6);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .exec-event-source {
@@ -709,7 +709,7 @@ onUnmounted(() => {
   gap: 5px;
   align-self: flex-start;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
   color: var(--text-secondary, #4b5563);
@@ -729,7 +729,7 @@ onUnmounted(() => {
 .exec-event-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   align-self: flex-start;
   border: none;
   background: transparent;
@@ -744,7 +744,7 @@ onUnmounted(() => {
 }
 
 .exec-event-chevron {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .exec-event-chevron-collapsed {
@@ -753,7 +753,7 @@ onUnmounted(() => {
 
 .exec-event-context {
   margin: 0;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--border-color, #d1d5db);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-primary, #fff);
@@ -770,8 +770,8 @@ onUnmounted(() => {
 .exec-detail-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-top: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -787,7 +787,7 @@ onUnmounted(() => {
 
 .exec-detail-empty {
   text-align: center;
-  padding: 40px 12px;
+  padding:40px var(--space-6);
   color: var(--text-muted, #999);
   font-size: var(--font-size-lg);
 }

@@ -1422,7 +1422,7 @@ onUnmounted(() => {
 .streaming-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .streaming-elapsed {
@@ -1434,9 +1434,9 @@ onUnmounted(() => {
 
 .placeholder-dots {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   align-items: center;
-  padding: 8px 0 4px;
+  padding: var(--space-4) 0 var(--space-2);
 }
 .placeholder-dots span {
   width: 7px; height: 7px;
@@ -1457,8 +1457,8 @@ onUnmounted(() => {
 .thinking-load-error {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
   font-size: var(--font-size-sm);
   color: #dc2626;
 }
@@ -1468,8 +1468,8 @@ onUnmounted(() => {
   background: transparent;
   color: #dc2626;
   font-size: var(--font-size-xs);
-  padding: 1px 8px;
-  border-radius: 4px;
+  padding:1px var(--space-4);
+  border-radius: var(--radius-xs);
   cursor: pointer;
 }
 
@@ -1484,8 +1484,8 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   margin-left: auto;
 }
 
@@ -1496,9 +1496,9 @@ onUnmounted(() => {
 .chat-error-card {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin: 2px 0;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  margin: var(--space-1) 0;
   border-left: 3px solid var(--color-red, #ef4444);
   background: color-mix(in srgb, var(--color-red, #ef4444) 8%, transparent);
 }
@@ -1530,9 +1530,9 @@ onUnmounted(() => {
 .chat-warning-card {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin: 2px 0;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  margin: var(--space-1) 0;
   border-left: 3px solid var(--color-yellow, #f59e0b);
   background: color-mix(in srgb, var(--color-yellow, #f59e0b) 8%, transparent);
 }
@@ -1565,11 +1565,11 @@ onUnmounted(() => {
 
 .error-source-chip {
   flex-shrink: 0;
-  margin-left: 8px;
-  padding: 1px 8px;
+  margin-left: var(--space-4);
+  padding:1px var(--space-4);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   line-height: var(--line-height-relaxed);
   white-space: nowrap;
 }
@@ -1605,15 +1605,15 @@ onUnmounted(() => {
 .chat-warning-card .warning-continue-btn {
   flex-shrink: 0;
   margin-left: auto;
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-5);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -1627,15 +1627,15 @@ onUnmounted(() => {
 .warning-reset-btn {
   flex-shrink: 0;
   margin-left: auto;
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-5);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: #fff;
   background: #f59e0b;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -1651,8 +1651,8 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--thinking-accent) 4%, transparent);
   border: none;
   border-left: 3px solid color-mix(in srgb, var(--thinking-accent) 50%, transparent);
-  border-radius: 0 6px 6px 0;
-  margin: 6px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin: var(--space-3) 0;
   width: 100%;
 }
 
@@ -1662,7 +1662,7 @@ onUnmounted(() => {
 
 /* Collapsed state: pill-shaped clickable chip */
 .chat-thinking.thinking-collapsed {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
@@ -1698,7 +1698,7 @@ onUnmounted(() => {
 
 /* Collapse animation state: transitioning border from callout to pill */
 .chat-thinking.thinking-collapsing {
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border-left: none;
   border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
@@ -1723,13 +1723,13 @@ onUnmounted(() => {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows var(--thinking-transition), opacity 200ms ease, padding 200ms ease;
+  transition: grid-template-rows var(--thinking-transition), opacity var(--duration-slow) ease, padding var(--duration-slow) ease;
 }
 
 .thinking-content-wrapper.thinking-content-open {
   grid-template-rows: 1fr;
   opacity: 1;
-  padding: 0 10px 3px;
+  padding:0 var(--space-5) 3px;
 }
 
 .thinking-inline-content {
@@ -1775,7 +1775,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 10px;
+  padding:3px var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
@@ -1802,7 +1802,7 @@ onUnmounted(() => {
   flex-shrink: 0;
   margin-left: auto;
   color: var(--text-tertiary, #999);
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -1817,15 +1817,15 @@ onUnmounted(() => {
 .thinking-inline-content p:last-child { margin-bottom: 0; }
 .thinking-inline-content pre {
   margin: 0.5em 0;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-xs);
   overflow-x: auto;
   font-size: var(--font-size-xs);
 }
 .thinking-inline-content code {
   font-size: var(--font-size-xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .thinking-inline-content pre code {
   padding: 0;
@@ -1833,7 +1833,7 @@ onUnmounted(() => {
 }
 .thinking-inline-content blockquote {
   margin: 0.5em 0;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   border-left: 2px solid var(--text-tertiary, #aaa);
 }
 .thinking-inline-content h1,
@@ -1856,7 +1856,7 @@ onUnmounted(() => {
 .thinking-inline-content th,
 .thinking-inline-content td {
   border: 1px solid var(--border-color);
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
 }
 .thinking-inline-content th {
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
@@ -1872,8 +1872,8 @@ onUnmounted(() => {
 .thinking-inline-content mark {
   background: rgba(245, 158, 11, 0.2);
   color: inherit;
-  padding: 1px 2px;
-  border-radius: 2px;
+  padding:1px var(--space-1);
+  border-radius: var(--radius-xs);
 }
 
 /* Tool calls display */
@@ -1887,11 +1887,11 @@ onUnmounted(() => {
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, var(--tool-accent) 15%, var(--border-color));
-  padding: 3px 8px;
-  border-radius: 999px;
+  padding:3px var(--space-4);
+  border-radius: var(--radius-full);
   cursor: pointer;
   width: 100%;
-  margin-top: 4px;
+  margin-top: var(--space-2);
   overflow: hidden;
 }
 
@@ -1956,13 +1956,13 @@ onUnmounted(() => {
    styling. */
 .subagent-group {
   --subagent-accent: #ec4899;
-  margin: 0 0 4px;
+  margin:0 0 var(--space-2);
 }
 
 /* Only when expanded does the pill's shape change: it becomes the rounded-
    rectangle top half of the group (small radius, not a pill). */
 .chat-tool-call-group-open {
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .subagent-group-open > .subagent-group-body-wrapper {
@@ -1987,12 +1987,12 @@ onUnmounted(() => {
   justify-content: center;
   flex-shrink: 0;
   padding: 0;
-  margin-left: 2px;
+  margin-left: var(--space-1);
   border: none;
   background: none;
   cursor: pointer;
   color: var(--text-tertiary, #999);
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .subagent-group-toggle:hover {
@@ -2004,7 +2004,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 200ms ease, opacity 200ms ease;
+  transition: grid-template-rows var(--duration-slow) ease, opacity var(--duration-slow) ease;
 }
 
 .subagent-group-body-wrapper.subagent-group-body-open {
@@ -2024,7 +2024,7 @@ onUnmounted(() => {
 }
 
 .subagent-group-body-open .subagent-group-body {
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
 }
 
 /* Bottom "collapse" affordance shown only while the group is open. */
@@ -2032,17 +2032,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   width: 100%;
-  margin-top: 6px;
-  padding: 4px 0;
+  margin-top: var(--space-3);
+  padding: var(--space-2) 0;
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   background: none;
   border: none;
   border-top: 1px solid color-mix(in srgb, var(--subagent-accent) 20%, var(--border-color));
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .subagent-group-footer:hover {
@@ -2051,12 +2051,12 @@ onUnmounted(() => {
 
 /* Inline tool detail — only used by AskUserQuestion (other tools use ToolDetailDrawer) */
 .tool-detail {
-  margin: 2px 0 4px 0;
-  padding: 6px 8px;
+  margin: var(--space-1) 0 var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
   background: var(--bg-primary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-color);
   white-space: normal;
   overflow-x: clip;
@@ -2072,12 +2072,12 @@ onUnmounted(() => {
 }
 
 .scheduled-task-card {
-  margin: 8px 0;
+  margin: var(--space-4) 0;
   border: 1px solid color-mix(in srgb, var(--accent-color, #4a90d9) 30%, var(--border-color, #dee2e6));
   border-radius: 0;
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 6%, var(--bg-primary, #fff));
   cursor: pointer;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: box-shadow var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2105,7 +2105,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
   color: var(--accent-color, #4a90d9);
   font-weight: var(--font-weight-semibold);
@@ -2116,19 +2116,19 @@ onUnmounted(() => {
 
 .stask-icon {
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-right: var(--space-1);
 }
 
 .stask-body {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
 }
 
 .stask-row {
   display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .stask-row strong {
@@ -2144,8 +2144,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 6px 0;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
   font-size: var(--font-size-sm);
   color: var(--accent-color, #0066cc);
   font-weight: var(--font-weight-medium);
@@ -2154,7 +2154,7 @@ onUnmounted(() => {
 .stask-status-badge {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-medium);
   margin-left: auto;
 }
@@ -2169,7 +2169,7 @@ onUnmounted(() => {
   border-radius: 50%;
   flex-shrink: 0;
   align-self: center;
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 .stask-status-dot.status-active {
@@ -2187,13 +2187,13 @@ onUnmounted(() => {
 /* Slash command badge in user messages (agent commands from ACP) */
 .slash-command-badge {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
+  padding:1px var(--space-4);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, #0ea5e9 15%, transparent);
   color: #0ea5e9;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  margin-right: 4px;
+  margin-right: var(--space-2);
   vertical-align: baseline;
   line-height: var(--line-height-relaxed);
 }
@@ -2242,22 +2242,22 @@ onUnmounted(() => {
 
 /* Tool output section */
 .content-blocks .tool-detail .tool-output-section {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   border-top: 1px solid var(--border-color);
-  padding-top: 6px;
+  padding-top: var(--space-3);
 }
 
 .content-blocks .tool-detail .tool-output-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .content-blocks .tool-detail .tool-output-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(34, 197, 94, 0.12);
   color: #16a34a;
   font-weight: var(--font-weight-semibold);
@@ -2270,8 +2270,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-output-status {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -2313,17 +2313,17 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .tool-output-content pre {
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  padding: var(--space-3) var(--space-4);
 }
 
 .content-blocks .tool-detail .tool-file-header {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
   padding-right: 22px;
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
@@ -2355,8 +2355,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .edit-diff-replace-all {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(245, 158, 11, 0.12);
   color: #d97706;
   font-weight: var(--font-weight-semibold);
@@ -2431,8 +2431,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .file-write-badge {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
   font-weight: var(--font-weight-semibold);
@@ -2476,7 +2476,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .bash-terminal-desc {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2486,8 +2486,8 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
   background: var(--bg-tertiary);
-  border-radius: 4px;
-  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  padding: var(--space-3) var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2495,7 +2495,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .bash-prompt {
   color: #16a34a;
   font-weight: var(--font-weight-bold);
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .bash-prompt {
@@ -2514,10 +2514,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
-  margin: 6px 0 2px;
+  margin: var(--space-3) 0 var(--space-1);
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--tool-accent) 25%, var(--border-color));
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   overflow: hidden;
   max-height: none;
@@ -2528,7 +2528,7 @@ onUnmounted(() => {
   flex-wrap: nowrap;
   align-items: center;
   gap: 5px;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   background: color-mix(in srgb, var(--tool-accent) 6%, var(--bg-secondary));
   border-bottom: 1px solid color-mix(in srgb, var(--tool-accent) 12%, var(--border-color));
   cursor: pointer;
@@ -2574,7 +2574,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail.chat-inline-card .chat-card-body {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   overflow-y: auto;
   max-height: 500px;
 }
@@ -2595,7 +2595,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .content-blocks .tool-detail .ask-question-empty {
@@ -2605,7 +2605,7 @@ onUnmounted(() => {
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-invalid {
-  padding: 2px 0;
+  padding: var(--space-1) 0;
 }
 
 .content-blocks .tool-detail .ask-question-view.ask-invalid .ask-question-empty {
@@ -2620,7 +2620,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .ask-question-header {
@@ -2644,18 +2644,18 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .content-blocks .tool-detail .ask-question-option {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2695,7 +2695,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-option-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
   flex: 1;
 }
@@ -2719,19 +2719,19 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .content-blocks .tool-detail .ask-question-recommend {
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   border: 1px solid #8b5cf6;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #8b5cf6;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2766,15 +2766,15 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-question-submit {
   align-self: flex-end;
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   border: 1px solid #f97316;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #f97316;
   color: white;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2825,15 +2825,15 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-supplementary-input {
   width: 100%;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-snug);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -2854,7 +2854,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .grep-search-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -2863,13 +2863,13 @@ onUnmounted(() => {
 .content-blocks .tool-detail .grep-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .grep-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -2899,14 +2899,14 @@ onUnmounted(() => {
 .content-blocks .tool-detail .glob-tags-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .content-blocks .tool-detail .grep-mode-tag {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
   font-weight: var(--font-weight-medium);
@@ -2921,7 +2921,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .glob-pattern-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -2930,13 +2930,13 @@ onUnmounted(() => {
 .content-blocks .tool-detail .glob-path-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .glob-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -2968,7 +2968,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .web-search-query {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--text-primary);
 }
 
@@ -2987,7 +2987,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .web-fetch-view {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -2995,13 +2995,13 @@ onUnmounted(() => {
 .content-blocks .tool-detail .web-fetch-url-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .web-fetch-label {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
   background: rgba(139, 92, 246, 0.12);
   color: #7c3aed;
   font-weight: var(--font-weight-semibold);
@@ -3046,7 +3046,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -3054,14 +3054,14 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .content-blocks .tool-detail .agent-type-badge {
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: rgba(236, 72, 153, 0.12);
   color: #db2777;
   font-weight: var(--font-weight-semibold);
@@ -3083,9 +3083,9 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   white-space: normal;
   word-break: break-word;
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-family: inherit;
   line-height: var(--line-height-relaxed);
 }
@@ -3101,29 +3101,29 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt h4 {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  margin: 8px 0 4px;
+  margin: var(--space-4) 0 var(--space-2);
   color: var(--text-primary);
 }
 .content-blocks .tool-detail .agent-call-prompt ul,
 .content-blocks .tool-detail .agent-call-prompt ol {
-  margin: 4px 0;
-  padding-left: 20px;
+  margin: var(--space-2) 0;
+  padding-left: var(--space-8);
 }
 .content-blocks .tool-detail .agent-call-prompt li {
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .content-blocks .tool-detail .agent-call-prompt code {
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding:1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .content-blocks .tool-detail .agent-call-prompt pre {
-  margin: 4px 0;
-  padding: 6px 8px;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
   background: var(--bg-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   overflow-x: auto;
 }
 .content-blocks .tool-detail .agent-call-prompt pre code {
@@ -3138,14 +3138,14 @@ onUnmounted(() => {
 .content-blocks .tool-detail .agent-call-prompt hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 6px 0;
+  margin: var(--space-3) 0;
 }
 
 /* ── Skill call view ── */
 .content-blocks .tool-detail .skill-call-view {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -3153,7 +3153,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .skill-call-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .content-blocks .tool-detail .skill-call-icon {
@@ -3177,9 +3177,9 @@ onUnmounted(() => {
   font-size: var(--font-size-xs);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-family: var(--font-mono);
   line-height: var(--line-height-normal);
 }
@@ -3188,7 +3188,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-approval-view {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .content-blocks .tool-detail .permission-tool-name {
@@ -3203,7 +3203,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-tool-detail {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -3213,8 +3213,8 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
   color: #b45309;
   font-weight: var(--font-weight-semibold);
@@ -3238,14 +3238,14 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
-  padding: 5px 8px;
+  padding:5px var(--space-4);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .content-blocks .tool-detail .permission-options {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -3255,7 +3255,7 @@ onUnmounted(() => {
    blocks in the same card). Only the interaction-state keep-alive stays here. */
 .content-blocks .tool-detail .permission-options .permission-btn {
   padding: 0 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Buttons keep their normal shape; disabled buttons get the shared .fbtn
@@ -3299,11 +3299,11 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-result {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 
 .content-blocks .tool-detail .permission-result-approved {
@@ -3328,8 +3328,8 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .permission-result-auto-approved {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   background: #dcfce7;

@@ -460,7 +460,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 10px 8px;
+  padding: var(--space-5) var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary, #666);
@@ -468,7 +468,7 @@ defineExpose({
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--duration-base), border-color var(--duration-base);
   position: relative;
 }
 
@@ -490,7 +490,7 @@ defineExpose({
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
   padding: 1px 5px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .manage-tab.active .tab-count {
@@ -527,8 +527,8 @@ defineExpose({
 
 .modal-dialog {
   background: var(--bg-primary, #fff);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-8);
   width: min(320px, 85vw);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
@@ -536,18 +536,18 @@ defineExpose({
 .modal-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .modal-title-icon {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   display: inline-flex;
@@ -558,7 +558,7 @@ defineExpose({
 .modal-msg {
   font-size: var(--font-size-md);
   color: var(--text-secondary, #666);
-  margin: 0 0 16px;
+  margin:0 0 var(--space-7);
   line-height: var(--line-height-normal);
   white-space: pre-line;
   word-break: break-word;
@@ -569,7 +569,7 @@ defineExpose({
 .modal-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Layout only — visuals come from the shared .fbtn pills. */

@@ -213,24 +213,24 @@ function handlePromptClick(event: MouseEvent) {
 /* Flows as a plain block inside the parent scroll container (TaskDetailPage.detail-scroll).
    No own scrolling — otherwise we'd get nested scroll containers. */
 .overview-scroll {
-  padding: 8px;
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Header section */
 .task-header {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-bottom: 2px;
+  gap: var(--space-2);
+  padding-bottom: var(--space-1);
 }
 
 .task-title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .agent-icon {
@@ -250,9 +250,9 @@ function handlePromptClick(event: MouseEvent) {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
@@ -296,7 +296,7 @@ function handlePromptClick(event: MouseEvent) {
 .task-meta-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #666);
 }
@@ -304,10 +304,10 @@ function handlePromptClick(event: MouseEvent) {
 .task-id-value {
   font-family: var(--font-mono);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary, #f1f3f5);
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -325,16 +325,16 @@ function handlePromptClick(event: MouseEvent) {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm, 6px);
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -356,7 +356,7 @@ function handlePromptClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
@@ -365,7 +365,7 @@ function handlePromptClick(event: MouseEvent) {
   justify-content: center;
   flex-shrink: 0;
   padding: 0;
-  transition: background 0.2s, color 0.2s;
+  transition: background var(--duration-slow), color var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -380,7 +380,7 @@ function handlePromptClick(event: MouseEvent) {
 }
 
 .prompt-chevron {
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
 }
 
 .prompt-chevron-collapsed {
@@ -394,20 +394,20 @@ function handlePromptClick(event: MouseEvent) {
 .overview-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 
 .overview-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .overview-row.highlight {
   background: rgba(0, 102, 204, 0.05);
-  padding: 6px;
-  border-radius: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
   margin: -2px -6px;
 }
 
@@ -432,8 +432,8 @@ function handlePromptClick(event: MouseEvent) {
 .overview-value.font-mono {
   font-family: var(--font-mono);
   background: var(--bg-primary, #fff);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-color, #e5e5e5);
   font-size: var(--font-size-sm);
 }
@@ -448,7 +448,7 @@ function handlePromptClick(event: MouseEvent) {
 .prompt-body.markdown-body {
   overflow-y: visible;
   max-width: 100%;
-  padding: 6px 0 0;
+  padding: var(--space-3) 0 0;
   margin: 0;
   background: transparent;
   font-size: var(--font-size-sm);

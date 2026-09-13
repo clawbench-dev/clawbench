@@ -571,10 +571,10 @@ function confirmEdit() {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   min-height: 0;
   cursor: pointer;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-primary);
   position: relative;
 }
@@ -601,7 +601,7 @@ function confirmEdit() {
 .settings-item__left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 1;
   min-width: 0;
 }
@@ -609,7 +609,7 @@ function confirmEdit() {
 .settings-item__text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -623,8 +623,8 @@ function confirmEdit() {
 
 .settings-item__badge {
   font-size: var(--font-size-xs);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
   white-space: nowrap;
@@ -644,7 +644,7 @@ function confirmEdit() {
 .settings-item__right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -662,7 +662,7 @@ function confirmEdit() {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .settings-item__info-detail {
@@ -677,13 +677,13 @@ function confirmEdit() {
 /* Progress bar for info-type items (rendered via parent, not in info-row) */
 .settings-item__progress {
   width: 100%;
-  margin-top: 8px;
+  margin-top: var(--space-4);
 }
 
 .settings-item__progress-track {
   height: 3px;
   background: var(--bg-tertiary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: visible;
   position: relative;
 }
@@ -691,7 +691,7 @@ function confirmEdit() {
 .settings-item__progress-bar {
   height: 100%;
   background: var(--accent-color);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   transition: width 0.5s ease;
 }
 
@@ -719,12 +719,12 @@ function confirmEdit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
+  padding: var(--space-3);
   margin: -6px 0;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s ease;
+  transition: color var(--duration-base) ease;
 }
 
 .settings-item__refresh.refresh-spin--active {
@@ -741,7 +741,7 @@ function confirmEdit() {
 .settings-item__header {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 16px 16px 4px;
+  padding: var(--space-7) var(--space-7) var(--space-2);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: var(--font-weight-medium);
@@ -766,9 +766,9 @@ function confirmEdit() {
 .settings-item__switch-track {
   position: absolute;
   inset: 0;
-  border-radius: 15.5px;
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary);
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
 }
 
 .settings-item__switch-track::after {
@@ -780,7 +780,7 @@ function confirmEdit() {
   height: 27px;
   border-radius: 50%;
   background: var(--bg-primary);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
@@ -812,7 +812,7 @@ function confirmEdit() {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   line-height: 1;
 }
 
@@ -824,25 +824,25 @@ function confirmEdit() {
 .settings-item__editor {
   background: var(--bg-primary);
   border-top: 0.5px solid var(--border-color);
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 
 /* Input row (number / text / password) */
 .settings-item__input-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-7);
 }
 
 .settings-item__number-input,
 .settings-item__text-input {
   flex: 1;
   min-width: 0;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-lg);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -856,9 +856,9 @@ function confirmEdit() {
 /* Password toggle button */
 .settings-item__editor-toggle {
   flex-shrink: 0;
-  padding: 8px;
+  padding: var(--space-4);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   font-size: var(--font-size-2xl);
   cursor: pointer;
@@ -867,9 +867,9 @@ function confirmEdit() {
 
 .settings-item__editor-confirm {
   flex-shrink: 0;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-lg);
@@ -891,19 +891,19 @@ function confirmEdit() {
 .settings-item__textarea-row {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-7);
 }
 
 .settings-item__textarea-input {
   width: 100%;
   min-height: 120px;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-md);
   font-family: inherit;
   line-height: var(--line-height-normal);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;
@@ -922,7 +922,7 @@ function confirmEdit() {
 .settings-item__textarea-warning {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 4px 16px 8px;
+  padding: var(--space-2) var(--space-7) var(--space-4);
   line-height: var(--line-height-snug);
 }
 </style>
@@ -932,8 +932,8 @@ function confirmEdit() {
 .settings-item__option {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
   cursor: pointer;
   min-height: 44px;
   position: relative;
@@ -989,7 +989,7 @@ function confirmEdit() {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 10px 16px 4px;
+  padding: var(--space-5) var(--space-7) var(--space-2);
   background: var(--bg-secondary);
 }
 
@@ -997,8 +997,8 @@ function confirmEdit() {
 .settings-item__option-badge {
   font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
   flex-shrink: 0;
@@ -1009,8 +1009,8 @@ function confirmEdit() {
 .theme-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 10px;
-  padding: 12px 16px 20px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7) var(--space-8);
 }
 
 .theme-picker-grid--wide {
@@ -1023,9 +1023,9 @@ function confirmEdit() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, #ef4444 10%, var(--bg-secondary));
   border: 1px solid color-mix(in srgb, #ef4444 30%, transparent);
 }
@@ -1038,9 +1038,9 @@ function confirmEdit() {
 
 .theme-picker-error-retry {
   flex-shrink: 0;
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-6);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-sm);
@@ -1064,18 +1064,18 @@ function confirmEdit() {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--space-3);
   cursor: pointer;
   position: relative;
 }
 
 .theme-picker-swatch {
   height: 64px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   position: relative;
   overflow: hidden;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: box-shadow var(--duration-base) ease, transform var(--duration-base) ease;
 }
 
 .theme-picker-swatch--auto {
@@ -1099,7 +1099,7 @@ function confirmEdit() {
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
 }
 
 .theme-picker-swatch-label-text {

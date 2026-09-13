@@ -42,16 +42,16 @@ function close() {
 
 <style scoped>
 .ios-install-steps {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .ios-step {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-primary);
   line-height: var(--line-height-snug);

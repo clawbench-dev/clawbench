@@ -223,13 +223,13 @@ watch(visible, (v) => {
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  padding: 16px;
+  padding: var(--space-7);
 }
 
 .ug-panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 380px;
   box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,0.15));
@@ -240,7 +240,7 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 8px;
+  padding:14px var(--space-7) var(--space-4);
 }
 
 .ug-header h3 {
@@ -261,7 +261,7 @@ watch(visible, (v) => {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -272,8 +272,8 @@ watch(visible, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
   font-size: var(--font-size-lg);
 }
 
@@ -284,7 +284,7 @@ watch(visible, (v) => {
 .ug-release-link {
   display: block;
   text-align: center;
-  margin: 0 16px 12px;
+  margin:0 var(--space-7) var(--space-6);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   color: var(--accent-color);
@@ -297,7 +297,7 @@ watch(visible, (v) => {
 }
 
 .ug-progress-area {
-  padding: 20px 16px;
+  padding: var(--space-8) var(--space-7);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -308,14 +308,14 @@ watch(visible, (v) => {
   width: 100%;
   height: 6px;
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
 .ug-progress-fill {
   height: 100%;
   background: var(--accent-color);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease;
 }
 
@@ -326,12 +326,12 @@ watch(visible, (v) => {
 }
 
 .ug-completed, .ug-failed {
-  padding: 16px;
+  padding: var(--space-7);
   text-align: center;
 }
 
 .ug-success {
-  margin: 0 0 8px;
+  margin:0 0 var(--space-4);
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
@@ -345,7 +345,7 @@ watch(visible, (v) => {
 }
 
 .ug-no-upgrade {
-  padding: 16px;
+  padding: var(--space-7);
   text-align: center;
 }
 
@@ -356,7 +356,7 @@ watch(visible, (v) => {
 }
 
 .ug-error {
-  margin: 8px 0 0;
+  margin: var(--space-4) 0 0;
   font-size: var(--font-size-sm);
   color: var(--text-danger, #e53e3e);
   word-break: break-word;
@@ -364,23 +364,23 @@ watch(visible, (v) => {
 
 /* Pre-flight install-directory warning (amber, non-fatal) */
 .ug-warn {
-  margin: 0 16px 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--text-warning, #d69e2e) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--text-warning, #d69e2e) 35%, transparent);
   text-align: left;
 }
 
 .ug-warn-title {
-  margin: 0 0 6px;
+  margin:0 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-warning, #d69e2e);
 }
 
 .ug-warn-body {
-  margin: 0 0 6px;
+  margin:0 0 var(--space-3);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
@@ -394,23 +394,23 @@ watch(visible, (v) => {
 
 /* Docker advisory (informational, non-fatal) */
 .ug-hint {
-  margin: 0 16px 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  margin:0 var(--space-7) var(--space-6);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
   text-align: left;
 }
 
 .ug-hint-title {
-  margin: 0 0 6px;
+  margin:0 0 var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--accent-color);
 }
 
 .ug-hint-body {
-  margin: 0 0 8px;
+  margin:0 0 var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   word-break: break-word;
@@ -418,8 +418,8 @@ watch(visible, (v) => {
 
 .ug-hint-cmd {
   display: block;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-xs);
@@ -429,7 +429,7 @@ watch(visible, (v) => {
 }
 
 .ug-hint-warn {
-  margin: 8px 0 0;
+  margin: var(--space-4) 0 0;
   font-size: var(--font-size-xs);
   color: var(--text-warning, #d69e2e);
   line-height: var(--line-height-normal);
@@ -443,15 +443,15 @@ watch(visible, (v) => {
 }
 
 .ug-error-hint {
-  margin: 6px 0 0;
+  margin: var(--space-3) 0 0;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 
 .ug-footer {
-  padding: 8px 16px 14px;
+  padding: var(--space-4) var(--space-7) 14px;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Layout only — visual styles come from the shared .fbtn pills. */
@@ -459,7 +459,7 @@ watch(visible, (v) => {
   flex: 1;
 }
 
-.ug-fade-enter-active { transition: opacity 0.2s ease; }
-.ug-fade-leave-active { transition: opacity 0.15s ease; }
+.ug-fade-enter-active { transition: opacity var(--duration-slow) ease; }
+.ug-fade-leave-active { transition: opacity var(--duration-base) ease; }
 .ug-fade-enter-from, .ug-fade-leave-to { opacity: 0; }
 </style>

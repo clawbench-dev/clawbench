@@ -478,7 +478,7 @@ defineExpose({
 .pdf-pages-scroll {
   flex: 1;
   overflow: auto;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
   background: #525659;
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
@@ -489,20 +489,20 @@ defineExpose({
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .pdf-page-wrapper {
   position: relative;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
 
 .pdf-page-canvas {
   display: block;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 /* Global loading overlay */
@@ -515,7 +515,7 @@ defineExpose({
   justify-content: center;
   background: #525659;
   color: rgba(255, 255, 255, 0.7);
-  gap: 12px;
+  gap: var(--space-6);
   z-index: 10;
 }
 
@@ -542,19 +542,19 @@ defineExpose({
 .pdf-error > svg {
   width: 48px;
   height: 48px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .pdf-error-title {
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .pdf-error-desc {
   font-size: var(--font-size-lg);
-  margin-bottom: 20px;
+  margin-bottom: var(--space-8);
   max-width: 400px;
   word-break: break-word;
 }
@@ -563,17 +563,17 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 16px;
+  padding: var(--space-3) var(--space-7);
   background: var(--accent-color);
   color: #fff;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   text-decoration: none;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  gap: 6px;
-  transition: filter 0.15s;
+  gap: var(--space-3);
+  transition: filter var(--duration-base);
 }
 
 @media (hover: hover) {

@@ -194,8 +194,8 @@ onUnmounted(() => {
   color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color) 22%, transparent);
-  border-radius: 10px;
-  padding: 1px 8px;
+  border-radius: var(--radius-md);
+  padding:1px var(--space-4);
   line-height: var(--line-height-normal);
 }
 
@@ -203,8 +203,8 @@ onUnmounted(() => {
 .msg-index-search-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px 4px;
+  gap: var(--space-3);
+  padding: var(--space-4) 14px var(--space-2);
   flex-shrink: 0;
 }
 
@@ -223,7 +223,7 @@ onUnmounted(() => {
 
 .panel-list {
   overflow-y: auto;
-  padding: 10px 0 14px 0;
+  padding: var(--space-5) 0 14px 0;
   flex: 1;
   min-height: 0;
 }
@@ -233,7 +233,7 @@ onUnmounted(() => {
 }
 .panel-list::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, #c1c1c1);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .panel-list::-webkit-scrollbar-track {
   background: transparent;
@@ -245,7 +245,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-3);
   min-height: 36vh;
   padding: 24px 28px;
   text-align: center;
@@ -254,12 +254,12 @@ onUnmounted(() => {
 .panel-empty-icon-wrap {
   width: 52px;
   height: 52px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--text-muted) 10%, transparent);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 .panel-empty-icon {
@@ -285,11 +285,11 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 9px 8px 9px 14px;
-  border-radius: 12px;
+  gap: var(--space-5);
+  padding:9px var(--space-4) 9px 14px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -360,7 +360,7 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border: 1.5px solid var(--border-color);
   box-shadow: 0 0 0 3px var(--bg-secondary);
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background var(--duration-base), border-color var(--duration-base), color var(--duration-base);
 }
 
 .msg-item.active .msg-node {
@@ -374,7 +374,7 @@ onUnmounted(() => {
   font-weight: var(--font-weight-bold);
   color: var(--text-secondary);
   line-height: 1;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 .msg-item.active .msg-index {
@@ -389,7 +389,7 @@ onUnmounted(() => {
 .msg-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
 }
@@ -405,7 +405,7 @@ onUnmounted(() => {
 .msg-text :deep(mark) {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   padding: 0 1px;
 }
 
@@ -433,17 +433,17 @@ onUnmounted(() => {
   min-width: 24px;
   height: 24px;
   margin-top: 1px;
-  padding: 0 4px;
+  padding:0 var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0.4;
-  transition: opacity 0.2s, background 0.2s, color 0.2s;
+  transition: opacity var(--duration-slow), background var(--duration-slow), color var(--duration-slow);
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -469,8 +469,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   border-top: 1px solid var(--border-color);

@@ -86,7 +86,7 @@ function onDiffClick(event: MouseEvent) {
 
 .git-diff-scroll {
   padding: 0;
-  margin-top: 8px;
+  margin-top: var(--space-4);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -94,7 +94,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-unified-view) {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .git-diff-scroll :deep(.diff-hunk) {
@@ -108,10 +108,10 @@ function onDiffClick(event: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   font-family: var(--font-mono);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 3px 8px;
+  padding:3px var(--space-4);
   user-select: none;
   min-height: 24px;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
@@ -131,7 +131,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-hunk-actions-row) {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -142,13 +142,13 @@ function onDiffClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
   opacity: 0.5;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
 }
@@ -160,7 +160,7 @@ function onDiffClick(event: MouseEvent) {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
@@ -169,7 +169,7 @@ function onDiffClick(event: MouseEvent) {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
   font-family: var(--font-mono);
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), color var(--duration-base), background var(--duration-base);
   outline: none;
   box-shadow: none;
 }
@@ -242,7 +242,7 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-linum) {
   width: 1%;
   min-width: 30px;
-  padding: 0 4px;
+  padding:0 var(--space-2);
   text-align: right;
   color: var(--text-muted, #999);
   font-size: var(--font-size-xs);
@@ -265,7 +265,7 @@ function onDiffClick(event: MouseEvent) {
 }
 
 .git-diff-scroll :deep(.diff-content) {
-  padding: 0 6px;
+  padding:0 var(--space-3);
   white-space: pre;
   min-width: 0;
 }

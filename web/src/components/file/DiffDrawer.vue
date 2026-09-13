@@ -217,14 +217,14 @@ const segments = computed<Segment[]>(() => {
 .diff-drawer-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
 .diff-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
@@ -232,7 +232,7 @@ const segments = computed<Segment[]>(() => {
   border: none;
   cursor: pointer;
   padding: 0;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -247,7 +247,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-drawer-empty {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -261,7 +261,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-content {
-  padding: 0 12px;
+  padding:0 var(--space-6);
   white-space: pre-wrap;
   word-break: break-all;
   overflow-wrap: break-word;
@@ -300,7 +300,7 @@ const segments = computed<Segment[]>(() => {
 .diff-line-ellipsis .diff-content {
   color: var(--text-muted);
   text-align: center;
-  padding: 2px 12px;
+  padding: var(--space-1) var(--space-6);
   letter-spacing: 2px;
 }
 
@@ -308,18 +308,18 @@ const segments = computed<Segment[]>(() => {
 
 .diff-char-del {
   background: rgba(239, 68, 68, 0.35);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .diff-char-add {
   background: rgba(34, 197, 94, 0.35);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 /* ─── Inline char diff (legacy fallback) ─── */
 
 .diff-inline-view {
-  padding: 12px 16px;
+  padding: var(--space-6) var(--space-7);
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -333,13 +333,13 @@ const segments = computed<Segment[]>(() => {
   color: var(--text-primary);
   text-decoration: line-through;
   text-decoration-color: rgba(255, 80, 80, 0.6);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 
 .diff-seg-add {
   background: rgba(100, 200, 255, 0.2);
   color: var(--text-primary);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 </style>
 

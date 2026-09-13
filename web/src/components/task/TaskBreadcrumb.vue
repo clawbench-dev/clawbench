@@ -82,11 +82,11 @@ function navigate(target) {
 
 /* ── Crumb item ── */
 .crumb {
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding:3px var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
   cursor: default;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 /* ── Clickable crumb ── */

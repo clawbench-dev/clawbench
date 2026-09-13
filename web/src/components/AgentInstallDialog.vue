@@ -83,15 +83,15 @@ function copyCmd() {
   align-items: center;
   justify-content: center;
   z-index: 3000;
-  padding: 0 20px;
+  padding:0 var(--space-8);
   animation: overlay-in 0.15s ease;
   outline: none;
 }
 
 .install-box {
   background: var(--bg-secondary, #fff);
-  border-radius: 14px;
-  padding: 18px 16px 14px;
+  border-radius: var(--radius-lg);
+  padding:18px var(--space-7) 14px;
   max-width: 420px;
   width: 100%;
   display: flex;
@@ -103,18 +103,18 @@ function copyCmd() {
 .install-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-lg);
   color: var(--text-primary, #1a1a1a);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 
 .install-title-icon {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   display: inline-flex;
@@ -125,17 +125,17 @@ function copyCmd() {
 .install-hint {
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #555);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .install-cmd-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   background: var(--bg-tertiary, #f0f0f0);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
   margin-bottom: 14px;
 }
 
@@ -156,11 +156,11 @@ function copyCmd() {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary, #fff);
   color: var(--text-secondary, #555);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -175,13 +175,13 @@ function copyCmd() {
 }
 
 .dlg-btn {
-  padding: 6px 16px;
-  border-radius: 8px;
+  padding: var(--space-3) var(--space-7);
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   border: none;
   cursor: pointer;
-  transition: opacity 0.12s;
+  transition: opacity var(--duration-base);
 }
 
 .dlg-btn:active { opacity: 0.7; }

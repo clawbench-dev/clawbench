@@ -1401,8 +1401,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 10px 20px 8px;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-8) var(--space-4);
   background: var(--bg-primary);
   color: var(--text-primary);
   border-radius: 24px;
@@ -1439,14 +1439,14 @@ onUnmounted(() => {
 .session-indicator-position {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Dots bar (<=15 sessions) */
 .session-dots {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .session-dot {
@@ -1454,7 +1454,7 @@ onUnmounted(() => {
   height: 4px;
   border-radius: 50%;
   background: var(--text-tertiary, rgba(128, 128, 128, 0.4));
-  transition: all 0.15s ease-out;
+  transition: all var(--duration-base) ease-out;
 }
 
 .session-dot.active {
@@ -1472,7 +1472,7 @@ onUnmounted(() => {
 .session-capsule-track {
   width: 80px;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--text-tertiary, rgba(128, 128, 128, 0.3));
   position: relative;
 }
@@ -1481,9 +1481,9 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--accent-color);
-  transition: left 0.2s ease-out;
+  transition: left var(--duration-slow) ease-out;
 }
 
 /* Numeric label */
@@ -1526,11 +1526,11 @@ onUnmounted(() => {
 }
 
 .session-indicator-enter-active {
-  transition: opacity 0.15s ease-out;
+  transition: opacity var(--duration-base) ease-out;
 }
 
 .session-indicator-leave-active {
-  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--duration-slow) ease-in, transform var(--duration-slow) ease-in;
 }
 
 .session-indicator-enter-from {
@@ -1566,8 +1566,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 20px 12px;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6);
   color: var(--text-muted, #9ca3af);
 }
 .tool-call-empty-msg {
@@ -1576,13 +1576,13 @@ onUnmounted(() => {
 }
 .tool-call-retry-btn {
   font-size: var(--font-size-sm);
-  padding: 4px 12px;
-  border-radius: 6px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-color, #e5e7eb);
   background: var(--bg-secondary, #f3f4f6);
   color: var(--text-secondary, #6b7280);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-base);
 }
 @media (hover: hover) {
   .tool-call-retry-btn:hover {

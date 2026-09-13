@@ -22,6 +22,6 @@ defineProps<{
 
 .async-component-loader.minimal {
   min-height: 0;
-  padding: 16px;
+  padding: var(--space-7);
 }
 </style>

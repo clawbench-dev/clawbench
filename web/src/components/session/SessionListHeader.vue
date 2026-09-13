@@ -88,7 +88,7 @@ const sessionBarColor = computed(() => {
   justify-content: center;
   min-width: 42px;
   height: 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   overflow: hidden;
 }
@@ -97,7 +97,7 @@ const sessionBarColor = computed(() => {
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   transition: width 0.3s ease, background 0.3s ease;
 }
 .session-counter-text {
@@ -123,7 +123,7 @@ const sessionBarColor = computed(() => {
    sidebar's unpin/close buttons and the drawer's pin button), which are
    rendered by the parent component, not by this one. */
 .header-action-btn {
-  margin-left: 6px;
+  margin-left: var(--space-3);
   width: 24px;
   height: 24px;
   border: none;
@@ -133,8 +133,8 @@ const sessionBarColor = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: background 0.15s;
+  border-radius: var(--radius-xs);
+  transition: background var(--duration-base);
 }
 @media (hover: hover) {
   .header-action-btn:hover {

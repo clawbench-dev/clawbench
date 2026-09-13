@@ -79,7 +79,7 @@ function formatDate(dateStr) {
 
 <style scoped>
 .diff-meta-panel {
-  padding: 12px 14px;
+  padding: var(--space-6) 14px;
   border-bottom: 1px solid var(--border-color, #dee2e6);
   background: var(--bg-secondary, #f8f9fa);
   display: flex;
@@ -91,7 +91,7 @@ function formatDate(dateStr) {
 .diff-meta-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-5);
   font-size: var(--font-size-md);
 }
 
@@ -112,9 +112,9 @@ function formatDate(dateStr) {
   font-size: var(--font-size-sm);
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
-  border-radius: 3px;
-  padding: 1px 4px;
-  transition: background 0.15s;
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-2);
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {

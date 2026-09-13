@@ -618,8 +618,8 @@ onUnmounted(() => {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  padding: 8px 16px;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-7);
   min-height: 0;
   background: transparent;
   position: relative;
@@ -648,7 +648,7 @@ onUnmounted(() => {
 .settings-item__left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 1;
   min-width: 0;
 }
@@ -656,7 +656,7 @@ onUnmounted(() => {
 .settings-item__text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -685,7 +685,7 @@ onUnmounted(() => {
 .settings-item__right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -717,7 +717,7 @@ onUnmounted(() => {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   line-height: 1;
 }
 .settings-item__slider-reset:active {
@@ -728,12 +728,12 @@ onUnmounted(() => {
 .wallpaper-mode {
   display: inline-flex;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .wallpaper-mode__btn {
-  padding: 6px 14px;
+  padding: var(--space-3) 14px;
   border: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -769,13 +769,13 @@ onUnmounted(() => {
 .wallpaper-gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(var(--wallpaper-thumb-w), 1fr));
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
 }
 
 .wallpaper-gallery__item {
   position: relative;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   aspect-ratio: 4 / 3;
   /* The selection ring is drawn with an inset shadow rather than a border so it
@@ -822,8 +822,8 @@ onUnmounted(() => {
   position: absolute;
   bottom: 2px;
   left: 2px;
-  padding: 0 4px;
-  border-radius: 6px;
+  padding:0 var(--space-2);
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-xs);
@@ -832,7 +832,7 @@ onUnmounted(() => {
 
 .wallpaper-gallery-empty {
   width: 100%;
-  padding: 12px 0;
+  padding: var(--space-6) 0;
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
@@ -849,21 +849,21 @@ onUnmounted(() => {
 .wallpaper-thumb {
   width: var(--wallpaper-thumb-w);
   height: var(--wallpaper-thumb-h);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   border: 1px solid var(--border-color);
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 .settings-item__action {
   padding: 7px 14px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-tertiary);
   color: var(--text-primary);
   font-size: var(--font-size-md);
   cursor: pointer;
-  margin-left: 4px;
+  margin-left: var(--space-2);
   white-space: nowrap;
 }
 
@@ -912,9 +912,9 @@ onUnmounted(() => {
 .settings-item__switch-track {
   position: absolute;
   inset: 0;
-  border-radius: 15.5px;
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary);
-  transition: background 0.2s ease;
+  transition: background var(--duration-slow) ease;
 }
 .settings-item__switch-track::after {
   content: '';
@@ -925,7 +925,7 @@ onUnmounted(() => {
   height: 27px;
   border-radius: 50%;
   background: var(--bg-primary);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-slow) ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 .settings-item__switch-input:checked + .settings-item__switch-track {

@@ -376,10 +376,10 @@ onMounted(() => {
 .git-body {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   min-height: 0;
 }
 
@@ -389,15 +389,15 @@ onMounted(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm, 6px);
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .stats-card-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -413,7 +413,7 @@ onMounted(() => {
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
   background: var(--bg-tertiary);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 1px 7px;
   line-height: 16px;
 }
@@ -421,7 +421,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 .stats-chip {
@@ -429,12 +429,12 @@ onMounted(() => {
   border: 1px solid var(--border-color);
   background: var(--bg-elevated, var(--bg-primary));
   color: var(--text-secondary);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 3px 11px;
   font-size: var(--font-size-sm);
   line-height: 18px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 .stats-chip.active {
@@ -448,7 +448,7 @@ onMounted(() => {
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm, 6px);
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   font-size: var(--font-size-sm);
 }
 .stats-date-sep {
@@ -460,17 +460,17 @@ onMounted(() => {
 .git-totals {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
 }
 .stats-total {
   background: var(--bg-elevated, var(--bg-primary));
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm, 6px);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .stats-total-label {
@@ -496,7 +496,7 @@ onMounted(() => {
 
 /* ── Error / loading / empty ── */
 .stats-error {
-  padding: 9px 12px;
+  padding:9px var(--space-6);
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-red, #ef4444) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-red, #ef4444) 30%, transparent);
@@ -509,7 +509,7 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 48px 0;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
@@ -522,7 +522,7 @@ onMounted(() => {
 .stats-table-wrap {
   overflow-x: auto;
   margin: 0 -10px;
-  padding: 0 10px;
+  padding:0 var(--space-5);
 }
 .stats-table {
   width: 100%;
@@ -531,7 +531,7 @@ onMounted(() => {
 }
 .stats-table th,
 .stats-table td {
-  padding: 7px 8px;
+  padding:7px var(--space-4);
   border-bottom: 1px solid var(--border-color);
   text-align: right;
   white-space: nowrap;

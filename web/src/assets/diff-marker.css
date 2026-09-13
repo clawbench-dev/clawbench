@@ -8,10 +8,10 @@
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 3px 0 0 3px;
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
   cursor: pointer;
   opacity: 0.45;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
   user-select: none;

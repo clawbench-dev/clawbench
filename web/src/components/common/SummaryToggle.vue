@@ -48,7 +48,7 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
   display: flex;
   align-items: stretch;
   height: 34px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
@@ -60,7 +60,7 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);

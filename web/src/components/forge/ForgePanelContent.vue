@@ -426,16 +426,16 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   flex-shrink: 0;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
-  gap: 6px;
+  gap: var(--space-3);
 }
 .forge-header-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-md);
@@ -448,7 +448,7 @@ function formatTime(iso: string): string {
 .forge-repo-badge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
   padding: 3px 7px;
   border: none;
@@ -473,9 +473,9 @@ function formatTime(iso: string): string {
 .forge-repo-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -496,7 +496,7 @@ function formatTime(iso: string): string {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -504,7 +504,7 @@ function formatTime(iso: string): string {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
 }
 @media (hover: hover) {
   .forge-header-btn:hover:not(:disabled) {
@@ -518,7 +518,7 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px 20px;
+  padding:40px var(--space-8);
   flex: 1;
 }
 .forge-card {
@@ -528,12 +528,12 @@ function formatTime(iso: string): string {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .forge-card-icon {
   color: var(--text-muted);
   opacity: 0.6;
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 .forge-card-header {
   font-size: var(--font-size-xl);
@@ -548,8 +548,8 @@ function formatTime(iso: string): string {
 .forge-card-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
   width: 100%;
   align-items: center;
 }
@@ -571,7 +571,7 @@ function formatTime(iso: string): string {
   gap: 5px;
   flex: 1;
   min-width: 0;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -604,20 +604,20 @@ function formatTime(iso: string): string {
 
 /* Filter rows sit under the tab bar. */
 .forge-toolbar {
-  padding: 8px 12px 0;
+  padding: var(--space-4) var(--space-6) 0;
   flex-shrink: 0;
 }
 
 /* ── Filter chips ── */
 .forge-chips {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   align-items: center;
 }
 .forge-chips-scroll {
   overflow-x: auto;
   scrollbar-width: none;
-  padding-bottom: 2px;
+  padding-bottom: var(--space-1);
 }
 .forge-chips-scroll::-webkit-scrollbar { display: none; }
 /* Separates the state group from the mine group without a second row. */
@@ -626,11 +626,11 @@ function formatTime(iso: string): string {
   height: 14px;
   background: var(--border-color);
   flex-shrink: 0;
-  margin: 0 2px;
+  margin:0 var(--space-1);
 }
 .forge-chip {
-  padding: 4px 12px;
-  border-radius: 999px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-full);
   border: 1px solid var(--border-color);
   background: transparent;
   color: var(--text-secondary);
@@ -639,7 +639,7 @@ function formatTime(iso: string): string {
   white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background var(--duration-base) ease, border-color var(--duration-base) ease, color var(--duration-base) ease;
 }
 @media (hover: hover) {
   .forge-chip:not(.active):hover {
@@ -655,17 +655,17 @@ function formatTime(iso: string): string {
 
 /* ── Search ── */
 .forge-search {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   flex-shrink: 0;
 }
 
 /* ── Error card ── */
 .forge-error-card {
-  margin: 8px 12px;
-  padding: 12px;
+  margin: var(--space-4) var(--space-6);
+  padding: var(--space-6);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
@@ -679,7 +679,7 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 .forge-error-body {
   color: var(--text-secondary);
@@ -697,7 +697,7 @@ function formatTime(iso: string): string {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 32px 24px;
 }
 .forge-empty-icon {
@@ -718,11 +718,11 @@ function formatTime(iso: string): string {
 .forge-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: var(--space-5);
+  padding:11px var(--space-6);
   border-bottom: 1px solid var(--border-color);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
 }
 @media (hover: hover) {
   .forge-row:hover {
@@ -739,7 +739,7 @@ function formatTime(iso: string): string {
 .forge-row-title {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-3);
   min-width: 0;
 }
 .forge-row-number {
@@ -761,8 +761,8 @@ function formatTime(iso: string): string {
 .forge-row-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 4px;
+  gap: var(--space-5);
+  margin-top: var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -783,13 +783,13 @@ function formatTime(iso: string): string {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 .forge-state-dot.state-open { background: var(--color-success); }
 .forge-state-dot.state-closed { background: var(--color-red); }
 .forge-state-dot.state-merged { background: var(--color-purple); }
 .forge-loading-more {
-  padding: 12px;
+  padding: var(--space-6);
   display: flex;
   justify-content: center;
 }
@@ -801,7 +801,7 @@ function formatTime(iso: string): string {
   gap: 14px;
   /* ModalDialog's .modal-body ships with no padding of its own, so the content
      supplies it — without this the form sits flush against the card edges. */
-  padding: 14px 16px 16px;
+  padding:14px var(--space-7) var(--space-7);
 }
 .forge-bind-section {
   display: flex;
@@ -811,27 +811,27 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-muted);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 .forge-bind-remotes {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 /* A remote row reads as one tappable object: brand mark, a two-line
    name/url stack, and a chevron signalling it commits a choice. */
 .forge-remote-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
-  padding: 9px 12px;
+  padding:9px var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--duration-base) ease, background var(--duration-base) ease;
   text-align: left;
 }
 @media (hover: hover) {
@@ -877,7 +877,7 @@ function formatTime(iso: string): string {
 .forge-remote-chevron {
   flex-shrink: 0;
   color: var(--text-muted);
-  transition: color 0.15s ease;
+  transition: color var(--duration-base) ease;
 }
 /* Separates the "pick a remote" shortcut from the manual URL fallback without
    another full-weight heading. */
@@ -889,7 +889,7 @@ function formatTime(iso: string): string {
 .forge-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 9px 12px;
+  padding:9px var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -907,8 +907,8 @@ function formatTime(iso: string): string {
 .forge-bind-error {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-red) 8%, transparent);
   color: var(--color-red);

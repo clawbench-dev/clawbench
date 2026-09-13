@@ -50,7 +50,7 @@ function handleJumpPage(pageNum) {
 .toc-header-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     flex: 1;
 }
 </style>

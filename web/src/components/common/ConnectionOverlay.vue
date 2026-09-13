@@ -46,9 +46,9 @@ const overlayText = computed(() =>
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: var(--space-8);
   padding: 40px 48px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--bg-primary);
   box-shadow: var(--shadow-md);
 }
@@ -67,7 +67,7 @@ const overlayText = computed(() =>
 /* Fade transition (teleported to body) */
 .overlay-fade-enter-active,
 .overlay-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 .overlay-fade-enter-from,
 .overlay-fade-leave-to {

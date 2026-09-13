@@ -127,7 +127,7 @@ function onRefresh() {
 .stats-tab {
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding:0 var(--space-7);
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -161,14 +161,14 @@ function onRefresh() {
 .stats-tab-actions {
   display: flex;
   align-items: center;
-  padding: 0 6px;
+  padding:0 var(--space-3);
   flex-shrink: 0;
 }
 .stats-tab-refresh {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;

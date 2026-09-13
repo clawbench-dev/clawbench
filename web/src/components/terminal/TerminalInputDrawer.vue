@@ -82,7 +82,7 @@ function doInput() {
 
 <style>
 .ti-content {
-  padding: 4px 14px 14px;
+  padding: var(--space-2) 14px 14px;
 }
 
 .ti-textarea {
@@ -97,7 +97,7 @@ function doInput() {
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
   line-height: var(--line-height-relaxed);
-  padding: 8px 0;
+  padding: var(--space-4) 0;
   outline: none;
 }
 
@@ -107,17 +107,17 @@ function doInput() {
 
 /* Icon-only buttons: no shape, no background — just the icon */
 .ti-btn {
-  margin-left: 2px;
+  margin-left: var(--space-1);
   border: none;
   background: none;
-  padding: 4px;
+  padding: var(--space-2);
   color: var(--text-muted, #999);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   line-height: 0;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
 }
 
 @media (hover: hover) {

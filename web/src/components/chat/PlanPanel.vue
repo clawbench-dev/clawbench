@@ -138,16 +138,16 @@ watch(
 <style scoped>
 .plan-panel {
   width: auto;
-  margin: 0 10px 8px;
+  margin:0 var(--space-5) var(--space-4);
 }
 
 /* ── Collapsed chip ── */
 .plan-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 16px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-lg);
   background: var(--bg-tertiary, #e9ecef);
   border: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
@@ -201,15 +201,15 @@ watch(
 .plan-expanded {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 8px;
-  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-6);
 }
 
 .plan-expanded__header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
   cursor: pointer;
 }
 
@@ -244,9 +244,9 @@ watch(
   display: flex;
   align-items: flex-start;
   position: relative;
-  padding-left: 20px;
+  padding-left: var(--space-8);
   min-height: 28px;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* Vertical line segment */
@@ -343,7 +343,7 @@ watch(
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #495057);
   line-height: var(--line-height-snug);
-  padding-top: 2px;
+  padding-top: var(--space-1);
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;

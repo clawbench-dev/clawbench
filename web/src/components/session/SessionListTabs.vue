@@ -71,9 +71,9 @@ watch(total, (n) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   /* Compact vertical rhythm — the bar is a secondary control, not content. */
-  padding: 6px 6px;
+  padding: var(--space-3) var(--space-3);
   border: none;
   background: transparent;
   color: var(--text-muted, #999);
@@ -81,7 +81,7 @@ watch(total, (n) => {
   font-weight: var(--font-weight-medium);
   line-height: var(--line-height-snug);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 .session-tab + .session-tab {
@@ -95,8 +95,8 @@ watch(total, (n) => {
 
 .session-tab-badge {
   min-width: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
+  padding:0 var(--space-2);
+  border-radius: var(--radius-sm);
   background: var(--accent-color, #0066cc);
   color: #fff;
   font-size: var(--font-size-2xs);

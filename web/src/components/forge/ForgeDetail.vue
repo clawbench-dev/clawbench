@@ -324,30 +324,30 @@ function formatTime(iso: string): string {
   align-items: center;
   justify-content: space-between;
   height: var(--header-height);
-  padding: 0 4px 0 6px;
+  padding:0 var(--space-2) 0 var(--space-3);
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-primary);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .forge-back {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   background: transparent;
   border: none;
   color: var(--accent-color);
   cursor: pointer;
   font-size: var(--font-size-md);
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
-  transition: background 0.15s ease;
+  transition: background var(--duration-base) ease;
 }
 @media (hover: hover) {
   .forge-back:hover { background: var(--bg-secondary); }
 }
 .forge-back:active { background: var(--bg-tertiary); }
-.forge-detail-actions { display: flex; align-items: center; gap: 4px; }
+.forge-detail-actions { display: flex; align-items: center; gap: var(--space-2); }
 /* Round icon button, styled after the per-component .header-btn used across the
    app (there is no shared global class — each panel defines its own).
    `border: none` is required: this class is used by BOTH <a> and <button>, and
@@ -357,7 +357,7 @@ function formatTime(iso: string): string {
 .forge-icon-btn {
   width: 28px;
   height: 28px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   border: none;
   background: var(--bg-secondary);
   color: var(--text-secondary);
@@ -367,7 +367,7 @@ function formatTime(iso: string): string {
   flex-shrink: 0;
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
 }
 @media (hover: hover) {
   .forge-icon-btn:hover {
@@ -385,18 +385,18 @@ function formatTime(iso: string): string {
 
 /* ── Error ── */
 .forge-error-card {
-  margin: 12px;
-  padding: 12px;
+  margin: var(--space-6);
+  padding: var(--space-6);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
 }
 .forge-error-icon { color: var(--color-red); flex-shrink: 0; }
 .forge-error-text { flex: 1; min-width: 0; }
-.forge-error-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin-bottom: 2px; }
+.forge-error-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-1); }
 .forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
 
 /* ── Body ── */
@@ -408,7 +408,7 @@ function formatTime(iso: string): string {
 .forge-detail-title-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .forge-detail-title-main { flex: 1; min-width: 0; }
 .forge-detail-title {
@@ -422,8 +422,8 @@ function formatTime(iso: string): string {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }
@@ -436,8 +436,8 @@ function formatTime(iso: string): string {
 .forge-state-badge {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding:1px var(--space-4);
+  border-radius: var(--radius-full);
   border: 1px solid transparent;
 }
 .forge-state-badge.state-open {
@@ -466,7 +466,7 @@ function formatTime(iso: string): string {
   margin-top: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .forge-comments-title {
   display: flex;
@@ -480,12 +480,12 @@ function formatTime(iso: string): string {
   align-self: center;
   padding: 5px 14px;
   border: 1px solid var(--border-color);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--accent-color);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--duration-base) ease, background var(--duration-base) ease;
 }
 @media (hover: hover) {
   .forge-load-more-comments:hover:not(:disabled) {
@@ -503,15 +503,15 @@ function formatTime(iso: string): string {
 .forge-comment-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: var(--space-4);
+  padding:7px var(--space-6);
   border-bottom: 1px solid var(--border-color);
   font-size: var(--font-size-sm);
   color: var(--text-muted);
 }
 .forge-comment-author { font-weight: var(--font-weight-semibold); color: var(--text-primary); }
 .forge-comment-body {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-primary);
 }
 
@@ -522,7 +522,7 @@ function formatTime(iso: string): string {
   border-radius: 50%;
   flex-shrink: 0;
   display: inline-block;
-  margin-top: 6px;
+  margin-top: var(--space-3);
 }
 .forge-state-dot.state-open { background: var(--color-success); }
 .forge-state-dot.state-closed { background: var(--color-red); }

@@ -27,11 +27,11 @@ defineProps({
     margin: 0 auto;
     background: color-mix(in srgb, var(--accent-color) 85%, var(--bg-tertiary));
     color: #fff;
-    border-radius: 16px;
-    padding: 6px 14px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-3) 14px;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     font-size: var(--font-size-md);
     font-weight: var(--font-weight-medium);
     box-shadow: var(--shadow-md);
@@ -45,7 +45,7 @@ defineProps({
     line-height: var(--line-height-snug);
     -webkit-tap-highlight-color: transparent;
     user-select: none;
-    transition: opacity 0.1s, transform 0.1s;
+    transition: opacity var(--duration-fast), transform var(--duration-fast);
 }
 
 .toast-error {

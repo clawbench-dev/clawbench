@@ -103,14 +103,14 @@ const codeMirrorTheme = EditorView.theme({
         color: 'var(--text-muted)',
         opacity: '0.5',
         minWidth: '1.2em',
-        padding: '0 6px 0 8px',
+        padding:'0 var(--space-3) 0 var(--space-4)',
     },
     '.cm-lineNumbers .cm-gutterElement:hover': {
         opacity: '1',
         color: 'var(--accent-color)',
     },
     '.cm-diff-gutter .cm-gutterElement': {
-        padding: '0 2px',
+        padding:'0 var(--space-1)',
         minWidth: '18px',
     },
     '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent-color) 7%, transparent)' },
@@ -750,9 +750,9 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .code-editor-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     justify-content: flex-end;
-    padding: 6px 12px;
+    padding: var(--space-3) var(--space-6);
     border-top: 1px solid var(--border-color);
     background: var(--bg-secondary);
     flex-shrink: 0;
@@ -768,19 +768,19 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     border-radius: 50%;
     background: var(--accent-color);
     flex-shrink: 0;
-    transition: opacity 0.2s;
+    transition: opacity var(--duration-slow);
 }
 .editor-btn.icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 8px;
+    padding:5px var(--space-4);
     line-height: 1;
 }
 .editor-btn {
     padding: 5px 14px;
     border: 1px solid var(--border-color);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     background: transparent;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
@@ -848,8 +848,8 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     line-height: var(--line-height-relaxed);
     cursor: pointer;
     user-select: none;
-    border-radius: 3px;
-    padding: 0 2px;
+    border-radius: var(--radius-xs);
+    padding:0 var(--space-1);
 }
 @media (hover: hover) {
     .cm-diff-gutter-marker:hover {
@@ -933,7 +933,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
 .cm-viewer .cm-tooltip {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .cm-viewer .cm-tooltip-autocomplete {
@@ -942,7 +942,7 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
   max-height: 200px;
 }
 .cm-viewer .cm-tooltip-autocomplete ul li {
-  padding: 2px 8px 2px 4px;
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
 }
 .cm-viewer .cm-completionIcon {
   width: 16px;

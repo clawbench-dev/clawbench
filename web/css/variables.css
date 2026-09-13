@@ -23,9 +23,38 @@
     /* ── Static layout values (never change with theme) ──────────── */
     --header-height: 36px;
     --header-safe-area-top: env(safe-area-inset-top, 0px);
-    --radius-sm: 6px;
-    --radius-md: 10px;
     --dock-height: calc(47px + env(safe-area-inset-bottom, 0));
+
+    /* ── Corner radii. `full` is the pill/circle form; `0` (square) is
+       written literally where a shape is deliberately sharp, since a token
+       would only obscure that it is a decision. ── */
+    --radius-xs: 3px;      /* tags, tiny chips */
+    --radius-sm: 6px;      /* buttons, inputs, menu rows */
+    --radius-md: 10px;     /* cards, panels, popovers */
+    --radius-lg: 14px;     /* dialogs, large surfaces */
+    --radius-full: 999px;  /* pills, avatars, icon buttons */
+
+    /* ── Spacing scale. Numbers are step names, not sizes: the same step can
+       mean "inset of a dense row" or "gap between cards" depending on where
+       it lands, so semantic names would mislead more than they help. The
+       scale is 4px-based with 2px/6px/10px kept because they are already
+       load-bearing in dense UI (badges, icon padding). ── */
+    --space-1: 2px;
+    --space-2: 4px;
+    --space-3: 6px;
+    --space-4: 8px;
+    --space-5: 10px;
+    --space-6: 12px;
+    --space-7: 16px;
+    --space-8: 20px;
+
+    /* ── Transition durations for colour / opacity / small state changes.
+       Longer durations are deliberately NOT tokenized: the 0.25s+ values
+       drive transforms, widths and max-height, where the extra time is the
+       point (a panel sliding in reads as broken at 0.15s). ── */
+    --duration-fast: 0.1s;   /* hover / active feedback */
+    --duration-base: 0.15s;  /* the default for colour and background */
+    --duration-slow: 0.2s;   /* larger surfaces fading */
 
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.

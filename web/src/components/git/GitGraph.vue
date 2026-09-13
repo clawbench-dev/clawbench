@@ -294,15 +294,15 @@ const tooltipStyle = computed(() => {
   position: fixed;
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #dee2e6);
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-5);
   white-space: nowrap;
   pointer-events: none;
   z-index: 9999;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   animation: tooltipFadeIn 0.15s ease;
 }
 

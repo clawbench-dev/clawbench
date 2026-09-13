@@ -115,8 +115,8 @@ watch(() => props.files.length, (len) => {
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  margin: 4px 0;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -129,15 +129,15 @@ watch(() => props.files.length, (len) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
   height: 40px;
-  padding: 0 10px;
+  padding:0 var(--space-5);
   max-width: 150px;
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   flex-shrink: 0;
   box-sizing: border-box;
 }
@@ -161,7 +161,7 @@ watch(() => props.files.length, (len) => {
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .attachment-thumb-img {

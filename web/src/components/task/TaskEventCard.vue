@@ -212,15 +212,15 @@ const sampleEventType = computed(() => {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm, 6px);
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -233,8 +233,8 @@ const sampleEventType = computed(() => {
 .event-paused-note {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm, 6px);
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
@@ -246,12 +246,12 @@ const sampleEventType = computed(() => {
 .event-chips {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .event-chip-group {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .event-chip-kind {
@@ -264,12 +264,12 @@ const sampleEventType = computed(() => {
 .event-chips-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 .event-chip {
   font-size: var(--font-size-xs);
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding:1px var(--space-4);
+  border-radius: var(--radius-full);
   border: 1px solid transparent;
   white-space: nowrap;
 }
@@ -294,13 +294,13 @@ const sampleEventType = computed(() => {
 .overview-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .overview-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .overview-label {
   font-size: var(--font-size-sm);
@@ -319,8 +319,8 @@ const sampleEventType = computed(() => {
 .sample-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-medium);
-  padding: 1px 6px;
-  border-radius: 999px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-full);
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f3f4f6);
   border: 1px solid var(--border-color, #e5e5e5);
@@ -330,7 +330,7 @@ const sampleEventType = computed(() => {
   border: 1px dashed var(--border-color, #d1d5db);
   border-radius: var(--radius-sm, 6px);
   background: var(--bg-primary, #fff);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -339,11 +339,11 @@ const sampleEventType = computed(() => {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary, #4b5563);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 .event-context-row {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }

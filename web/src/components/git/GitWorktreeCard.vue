@@ -50,12 +50,12 @@ defineEmits(['switch', 'delete'])
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-4);
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -89,7 +89,7 @@ defineEmits(['switch', 'delete'])
 .wt-row-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
 }
@@ -119,14 +119,14 @@ defineEmits(['switch', 'delete'])
 .wt-row-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .wt-row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -141,8 +141,8 @@ defineEmits(['switch', 'delete'])
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -163,8 +163,8 @@ defineEmits(['switch', 'delete'])
 .wt-badge {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding: 1px 6px;
-  border-radius: 4px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 

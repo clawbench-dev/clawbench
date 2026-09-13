@@ -168,14 +168,14 @@ watch(() => props.open, async (val) => {
 .agent-option {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: none;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   border-radius: 0;
   background: none;
   cursor: pointer;
-  transition: background 0.12s;
+  transition: background var(--duration-base);
   text-align: left;
 }
 
@@ -222,7 +222,7 @@ watch(() => props.open, async (val) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -240,12 +240,12 @@ watch(() => props.open, async (val) => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
   opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 .agent-default-badge-pill {
@@ -255,7 +255,7 @@ watch(() => props.open, async (val) => {
   color: #fff;
   background: var(--accent-color, #0066cc);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 
@@ -267,12 +267,12 @@ watch(() => props.open, async (val) => {
   width: 28px;
   height: 28px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-secondary, #666);
   cursor: pointer;
   opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -303,13 +303,13 @@ watch(() => props.open, async (val) => {
 
 .agent-option-tags {
   display: flex;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .agent-tag {
   font-size: var(--font-size-2xs);
-  padding: 1px 4px;
+  padding:1px var(--space-2);
   border-radius: 0;
   font-weight: var(--font-weight-medium);
   flex-shrink: 0;

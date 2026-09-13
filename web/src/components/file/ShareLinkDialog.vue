@@ -210,10 +210,10 @@ async function revokeLink() {
 
 <style scoped>
 .share-dialog-body {
-  padding: 12px 16px 14px;
+  padding: var(--space-6) var(--space-7) 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 .share-dialog-hint {
   font-size: var(--font-size-md);
@@ -230,9 +230,9 @@ async function revokeLink() {
 .share-dialog-file-block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
-  padding-bottom: 2px;
+  padding-bottom: var(--space-1);
 }
 .share-dialog-file-name {
   font-size: var(--font-size-xl);
@@ -257,9 +257,9 @@ async function revokeLink() {
 .share-notice {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 9px 11px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   font-size: 12.5px;
   line-height: 1.55;
 }
@@ -281,7 +281,7 @@ async function revokeLink() {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .share-notice-text {
   color: var(--text-secondary, #57606a);
@@ -304,7 +304,7 @@ async function revokeLink() {
 .share-dialog-link-bar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .share-dialog-link-input-wrap {
   position: relative;
@@ -315,7 +315,7 @@ async function revokeLink() {
   flex: 1;
   min-width: 0;
   width: 100%;
-  padding: 7px 84px 7px 10px; /* right padding clears the two embedded buttons */
+  padding:7px 84px 7px var(--space-5); /* right padding clears the two embedded buttons */
   border: 1px solid var(--border-color, #dee2e6);
   border-radius: var(--radius-sm, 6px);
   font-size: var(--font-size-md);
@@ -338,7 +338,7 @@ async function revokeLink() {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary, #666);
   cursor: pointer;

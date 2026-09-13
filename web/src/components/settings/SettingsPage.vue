@@ -173,11 +173,11 @@ watch(() => props.active, (val) => {
   display: flex;
   align-items: center;
   height: var(--header-height);
-  padding: 0 4px 0 12px;
+  padding:0 var(--space-2) 0 var(--space-6);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   background: var(--bg-primary);
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .settings-page__back {
@@ -187,7 +187,7 @@ watch(() => props.active, (val) => {
   width: 36px;
   height: 36px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
@@ -225,8 +225,8 @@ watch(() => props.active, (val) => {
   font-weight: var(--font-weight-medium);
   color: var(--text-muted);
   background: var(--bg-tertiary);
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
@@ -241,10 +241,10 @@ watch(() => props.active, (val) => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
   padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
 }
 

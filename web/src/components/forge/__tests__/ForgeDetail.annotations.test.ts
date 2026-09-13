@@ -419,7 +419,7 @@ describe('ForgeDetail icon button styling', () => {
   it('keeps the round shape the border would otherwise distort', () => {
     const src = readComponent()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)![1]
-    expect(rule).toContain('border-radius: 14px')
+    expect(rule).toContain('border-radius: var(--radius-lg)')
     expect(rule).toContain('width: 28px')
     expect(rule).toContain('height: 28px')
   })

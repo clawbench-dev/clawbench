@@ -106,16 +106,16 @@ async function saveItem() {
 
 <style>
 .qse-edit-content {
-  padding: 12px;
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .form-label {
@@ -129,14 +129,14 @@ async function saveItem() {
 }
 
 .form-input {
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   background: var(--bg-primary, #fff);
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-base);
 }
 
 .form-input:focus {
@@ -158,7 +158,7 @@ async function saveItem() {
 .form-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;

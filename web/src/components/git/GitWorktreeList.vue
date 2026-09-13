@@ -90,9 +90,9 @@ function toggleCollapse() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -104,7 +104,7 @@ function toggleCollapse() {
 .section-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .section-title {
@@ -118,8 +118,8 @@ function toggleCollapse() {
   font-weight: var(--font-weight-bold);
   background: var(--bg-tertiary, #e9ecef);
   color: var(--text-muted, #999);
-  padding: 1px 6px;
-  border-radius: 10px;
+  padding:1px var(--space-3);
+  border-radius: var(--radius-md);
 }
 
 .section-chevron {
@@ -130,23 +130,23 @@ function toggleCollapse() {
 .section-loading {
   display: flex;
   justify-content: center;
-  padding: 16px 0;
+  padding: var(--space-7) 0;
 }
 
 .section-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
   font-size: var(--font-size-md);
   color: var(--danger-color, #dc3545);
 }
 
 .retry-btn {
   font-size: var(--font-size-sm);
-  padding: 3px 10px;
+  padding:3px var(--space-5);
   border: 1px solid var(--accent-color, #4a90d9);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--accent-color, #4a90d9);
   cursor: pointer;
@@ -155,7 +155,7 @@ function toggleCollapse() {
 .section-empty {
   font-size: var(--font-size-md);
   color: var(--text-muted, #999);
-  padding: 8px 0;
+  padding: var(--space-4) 0;
 }
 
 .wt-list-body {

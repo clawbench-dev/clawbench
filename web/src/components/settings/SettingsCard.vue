@@ -15,7 +15,7 @@ defineProps<{
 
 <style scoped>
 .settings-card {
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 /* Compact iOS-style card: white rounded body on the grey page background */
@@ -29,7 +29,7 @@ defineProps<{
 .settings-card__header {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
-  padding: 5px 16px;
+  padding:5px var(--space-7);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: var(--font-weight-medium);
@@ -40,7 +40,7 @@ defineProps<{
 /* Inside the card, items become transparent rows with an inset divider */
 .settings-card__body :deep(.settings-item) {
   background: transparent;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
 }
 .settings-card__body :deep(.settings-item::after) {
   left: 16px;

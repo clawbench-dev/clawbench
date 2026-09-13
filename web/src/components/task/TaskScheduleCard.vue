@@ -49,15 +49,15 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
   border-radius: var(--radius-sm, 6px);
-  padding: 10px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 .card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #1a1a1a);
@@ -67,17 +67,17 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
 .overview-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 2px 0;
+  margin: var(--space-1) 0;
 }
 .overview-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
 }
 .overview-row.highlight {
   background: rgba(0, 102, 204, 0.05);
-  padding: 6px;
+  padding: var(--space-3);
   border-radius: var(--radius-sm, 6px);
   margin: -2px -6px;
 }
@@ -99,8 +99,8 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
 .overview-value.font-mono {
   font-family: var(--font-mono);
   background: var(--bg-primary, #fff);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-color, #e5e5e5);
   font-size: var(--font-size-sm);
 }

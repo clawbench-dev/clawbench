@@ -33,7 +33,7 @@ html, body {
     line-height: var(--line-height-relaxed);
     background: var(--bg-primary);
     color: var(--text-primary);
-    transition: background 0.2s, color 0.2s;
+    transition: background var(--duration-slow), color var(--duration-slow);
 }
 
 /* ── Custom wallpaper layer ──────────────────────────────────────────
@@ -356,7 +356,7 @@ html.wallpaper-active .drilldown-item:active {
 }
 ::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
-    border-radius: 4px;
+    border-radius: var(--radius-xs);
 }
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);

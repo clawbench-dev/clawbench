@@ -1766,8 +1766,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  margin: 0 0 8px;
-  padding: 8px 8px 0;
+  margin:0 0 var(--space-4);
+  padding: var(--space-4) var(--space-4) 0;
   box-shadow: inset 0 1px 0 var(--border-color, #e5e5e5);
 }
 
@@ -1776,8 +1776,8 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 4px;
-  padding: 4px 8px 0;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) 0;
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
   color: var(--text-muted, #999);
@@ -1796,7 +1796,7 @@ defineExpose({
   text-overflow: ellipsis;
   min-width: 14px;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color var(--duration-base);
   user-select: none;
   -webkit-user-select: none;
 }
@@ -1844,7 +1844,7 @@ defineExpose({
   position: relative;
   width: 28px;
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 18%, transparent);
   overflow: hidden;
   flex-shrink: 0;
@@ -1855,7 +1855,7 @@ defineExpose({
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease, background 0.3s ease;
 }
 
@@ -1863,8 +1863,8 @@ defineExpose({
 .chat-top-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
   /* When labels are briefly rendered during measurement (or when the chat pane
      is too narrow), allow horizontal scroll with a hidden scrollbar instead of
      clipping the trailing buttons. */
@@ -1920,7 +1920,7 @@ defineExpose({
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 5px 6px;
+    padding:5px var(--space-3);
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f0f0f0);
     pointer-events: none;
@@ -1931,7 +1931,7 @@ defineExpose({
 }
 
 .chat-action-group .chat-action-btn:last-child {
-    border-radius: 0 999px 999px 0;
+    border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .chat-action-btn {
@@ -1942,11 +1942,11 @@ defineExpose({
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: 5px 8px;
-  border-radius: 4px;
+  padding:5px var(--space-4);
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-xs);
   line-height: 1;
-  transition: color 0.15s, background 0.15s, transform 0.1s;
+  transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
@@ -2079,7 +2079,7 @@ defineExpose({
   border-radius: 20px;
   overflow: hidden;
   position: relative;
-  transition: background 0.2s, box-shadow 0.2s;
+  transition: background var(--duration-slow), box-shadow var(--duration-slow);
 }
 
 .chat-input-container:focus-within {
@@ -2094,7 +2094,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--space-4);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, var(--bg-primary, #fff));
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-md);
@@ -2129,12 +2129,12 @@ defineExpose({
   border: none;
   cursor: pointer;
   color: var(--text-muted, #999);
-  padding: 4px;
+  padding: var(--space-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  border-radius: var(--radius-xs);
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2154,8 +2154,8 @@ defineExpose({
   display: flex;
   flex-wrap: nowrap;
   overflow-x: auto;
-  gap: 6px;
-  padding: 4px 6px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -2208,10 +2208,10 @@ defineExpose({
 .recommendation-chip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 6px;
-  padding: 6px 10px;
-  border-radius: 10px;
+  gap: var(--space-4);
+  margin:0 0 var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   font-size: var(--font-size-sm);
@@ -2242,8 +2242,8 @@ defineExpose({
   border: none;
   background: var(--accent-color, #0066cc);
   color: #fff;
-  border-radius: 8px;
-  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  padding:3px var(--space-5);
   font-size: var(--font-size-sm);
   cursor: pointer;
 }
@@ -2252,10 +2252,10 @@ defineExpose({
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 12px;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
   height: 40px;
-  padding: 0 8px;
+  padding:0 var(--space-4);
   padding-right: 24px;
   flex-shrink: 0;
   max-width: 150px;
@@ -2263,7 +2263,7 @@ defineExpose({
   font-size: var(--font-size-sm);
   text-decoration: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity var(--duration-base);
   box-sizing: border-box;
 }
 
@@ -2294,7 +2294,7 @@ defineExpose({
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 
 .attachment-thumb-img {
@@ -2326,7 +2326,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
   z-index: 1;
 }
 
@@ -2373,13 +2373,13 @@ defineExpose({
 .chat-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  padding: 4px 6px 6px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
 .chat-textarea {
   flex: 1;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -2413,7 +2413,7 @@ defineExpose({
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s, transform 0.15s;
+  transition: background var(--duration-base), opacity var(--duration-base), transform var(--duration-base);
   flex-shrink: 0;
 }
 @media (hover: hover) {
@@ -2512,7 +2512,7 @@ defineExpose({
 .voice-wave {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   height: 14px;
 }
 .voice-wave i {
@@ -2540,7 +2540,7 @@ defineExpose({
 <style>
 /* Quick-send menu content styles */
 .quick-send-title {
-  padding: 6px 14px 2px;
+  padding: var(--space-3) 14px var(--space-1);
   font-size: var(--font-size-xs);
   color: var(--text-muted, #999);
   font-weight: var(--font-weight-medium);
@@ -2550,16 +2550,16 @@ defineExpose({
 .quick-send-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
-  padding: 4px 14px;
+  padding: var(--space-2) 14px;
   border: none;
   background: none;
   color: var(--text-primary);
   font-size: var(--font-size-md);
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
   position: relative;
   overflow: hidden;
   /* Clicking the row sends directly; the trailing icon injects into the input box. */
@@ -2604,10 +2604,10 @@ defineExpose({
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted, #999);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -2620,7 +2620,7 @@ defineExpose({
 .quick-send-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
-  margin: 3px 6px;
+  margin:3px var(--space-3);
 }
 
 /* Unified command autocomplete menu styles moved to
@@ -2628,48 +2628,48 @@ defineExpose({
 
 /* Context usage detail popup */
 .usage-popup {
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   min-width: 180px;
 }
 
 .usage-popup-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .usage-popup-section-title {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
-  margin-top: 8px;
-  margin-bottom: 4px;
-  padding-top: 6px;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border-color);
 }
 
 .usage-popup-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .usage-popup-bar-track {
   flex: 1;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--text-primary) 15%, transparent);
   overflow: hidden;
 }
 
 .usage-popup-bar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease, background 0.3s ease;
 }
 
@@ -2700,8 +2700,8 @@ defineExpose({
 }
 
 .usage-popup-compact {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
   display: flex;
   justify-content: center;
@@ -2713,13 +2713,13 @@ defineExpose({
   gap: 5px;
   background: none;
   border: 1px solid color-mix(in srgb, var(--text-primary) 18%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  padding: 5px 12px;
+  padding:5px var(--space-6);
   color: var(--text-secondary, #6c757d);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-snug);
-  transition: color 0.15s, border-color 0.15s;
+  transition: color var(--duration-base), border-color var(--duration-base);
   user-select: none;
   -webkit-user-select: none;
 }

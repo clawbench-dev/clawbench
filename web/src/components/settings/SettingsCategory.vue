@@ -467,7 +467,7 @@ function handleDiscard() {
 
 <style scoped>
 .settings-category {
-  padding: 8px;
+  padding: var(--space-4);
   background: var(--bg-secondary);
 }
 </style>

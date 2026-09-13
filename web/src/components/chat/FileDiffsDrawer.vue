@@ -223,7 +223,7 @@ function handleBodyInput(event) {
 
 <style scoped>
 .fd-body {
-  padding: 4px 8px 8px;
+  padding: var(--space-2) var(--space-4) var(--space-4);
   overflow-y: auto;
   overflow-x: clip;
   font-size: var(--font-size-sm);
@@ -235,17 +235,17 @@ function handleBodyInput(event) {
 .fd-diffs {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 /* Content-area top bar: full path + jump + badge + change count */
 .fd-file-info {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0 8px;
+  gap: var(--space-3);
+  padding: var(--space-1) 0 var(--space-4);
   border-bottom: 1px solid var(--border-color);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .fd-file-info-path {
@@ -267,12 +267,12 @@ function handleBodyInput(event) {
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted, #999);
   cursor: pointer;
   padding: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -288,12 +288,12 @@ function handleBodyInput(event) {
 
 .fd-diff-item {
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
 }
 
 .fd-empty {
-  padding: 16px 8px;
+  padding: var(--space-7) var(--space-4);
   text-align: center;
   font-size: var(--font-size-sm);
   color: var(--text-muted, #999);
@@ -302,19 +302,19 @@ function handleBodyInput(event) {
 .fd-error {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-secondary, #888);
 }
 
 .fd-retry-btn {
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-primary);
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-sm);
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-5);
   cursor: pointer;
 }
 
@@ -331,14 +331,14 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   width: 28px;
   height: 28px;
-  margin-right: 2px;
+  margin-right: var(--space-1);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-secondary, #555);
   cursor: pointer;
   padding: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -367,7 +367,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
   color: var(--accent-color);
   font-weight: var(--font-weight-semibold);
@@ -378,7 +378,7 @@ function handleBodyInput(event) {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   color: var(--text-muted);
   font-weight: var(--font-weight-semibold);

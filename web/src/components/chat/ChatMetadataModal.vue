@@ -277,7 +277,7 @@ function copyValue(value, event) {
 
 <style scoped>
 .metadata-content {
-    padding: 12px 14px;
+    padding: var(--space-6) 14px;
     overflow-y: auto;
     flex: 1;
 }
@@ -285,8 +285,8 @@ function copyValue(value, event) {
 .metadata-item {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
-    padding: 10px 0;
+    gap: var(--space-6);
+    padding: var(--space-5) 0;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -311,22 +311,22 @@ function copyValue(value, event) {
 .metadata-relative-time {
     font-size: var(--font-size-sm);
     color: var(--text-muted, #9ca3af);
-    margin-left: 6px;
+    margin-left: var(--space-3);
 }
 
 .metadata-session-id {
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
     background: var(--bg-tertiary);
-    padding: 2px 6px;
-    border-radius: 3px;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-xs);
 }
 
 .metadata-value-wrap {
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-3);
     min-width: 0;
 }
 
@@ -365,9 +365,9 @@ function copyValue(value, event) {
     border: none;
     cursor: pointer;
     color: var(--text-muted, #999);
-    padding: 2px;
-    border-radius: 3px;
-    transition: color 0.15s, background 0.15s;
+    padding: var(--space-1);
+    border-radius: var(--radius-xs);
+    transition: color var(--duration-base), background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -392,10 +392,10 @@ function copyValue(value, event) {
 .metadata-cat-chip {
     display: inline-block;
     background: var(--bg-tertiary, #f0f0f0);
-    border-radius: 3px;
-    padding: 1px 6px;
-    margin-right: 6px;
-    margin-bottom: 2px;
+    border-radius: var(--radius-xs);
+    padding:1px var(--space-3);
+    margin-right: var(--space-3);
+    margin-bottom: var(--space-1);
     font-size: var(--font-size-sm);
 }
 </style>

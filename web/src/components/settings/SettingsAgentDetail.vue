@@ -417,15 +417,15 @@ async function handleDelete() {
 
 <style scoped>
 .settings-agent-detail {
-  padding: 8px;
+  padding: var(--space-4);
   background: var(--bg-secondary);
   min-height: 100%;
 }
 
 .settings-agent-detail__actions {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .settings-agent-detail__action-btn,

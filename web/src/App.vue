@@ -2825,7 +2825,7 @@ onUnmounted(() => {
     text-decoration: underline;
 }
 .app-container {
-    transition: opacity 0.15s ease;
+    transition: opacity var(--duration-base) ease;
 }
 .app-container.project-switching {
     opacity: 0;
@@ -2860,8 +2860,8 @@ onUnmounted(() => {
 .view-panel-empty.has-recent {
   align-items: stretch;
   justify-content: flex-start;
-  gap: 12px;
-  padding: 16px 20px 20px;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-8) var(--space-8);
   text-align: left;
 }
 
@@ -2869,7 +2869,7 @@ onUnmounted(() => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -2878,7 +2878,7 @@ onUnmounted(() => {
 .view-panel-empty.has-recent .view-empty-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -2892,8 +2892,8 @@ onUnmounted(() => {
 .view-panel-empty.no-recent {
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 32px 16px;
+  gap: var(--space-7);
+  padding:32px var(--space-7);
   text-align: center;
 }
 
@@ -2919,12 +2919,12 @@ onUnmounted(() => {
 .view-empty-recent-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .view-empty-recent-text {
@@ -2932,7 +2932,7 @@ onUnmounted(() => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .view-empty-recent-item:hover {
   background: var(--bg-hover, rgba(128, 128, 128, 0.1));
@@ -2960,11 +2960,11 @@ onUnmounted(() => {
   height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  transition: color var(--duration-base), background var(--duration-base);
 }
 
 .view-empty-recent-item:hover .view-empty-recent-remove {
@@ -2994,15 +2994,15 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 9px 16px;
+  gap: var(--space-4);
+  padding:9px var(--space-7);
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   font-size: var(--font-size-lg);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 .view-empty-manager-btn:hover {
@@ -3032,8 +3032,8 @@ onUnmounted(() => {
     flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 2px 8px;
+    gap: var(--space-4);
+    padding: var(--space-1) var(--space-4);
     height: var(--header-height);
     background: var(--bg-secondary, #fff);
     border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.12));
@@ -3087,9 +3087,9 @@ onUnmounted(() => {
     transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 10px 18px;
-    border-radius: 999px;
+    gap: var(--space-3);
+    padding: var(--space-5) 18px;
+    border-radius: var(--radius-full);
     background: var(--bg-primary);
     border: 1px solid var(--accent-color, #0066cc);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
@@ -3142,7 +3142,7 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-6);
     /* Keep in sync with the JS constant WIDE_DOCK_PAD_TOP — the absolute
        active indicator offsets by the same value to stay centered. */
     padding-top: v-bind(WIDE_DOCK_PAD_TOP + 'px');
@@ -3160,7 +3160,7 @@ onUnmounted(() => {
 .wide-dock-bottom {
     flex-shrink: 0;
     margin-top: auto;
-    padding-bottom: 8px;
+    padding-bottom: var(--space-4);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3181,7 +3181,7 @@ onUnmounted(() => {
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     /* Base uses a springy overshoot (for the bottom-dock water-drop); a smooth
        ease-out reads better on a full-width highlight. */
-    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform var(--duration-slow) cubic-bezier(0.16, 1, 0.3, 1);
 }
 .wide-dock .wide-dock-active-indicator::before {
     content: '';
@@ -3205,7 +3205,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px 8px;
+    padding: var(--space-3) var(--space-4);
     background: var(--bg-primary);
     border-top: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
     border-bottom: 1px solid color-mix(in srgb, var(--border-color) 40%, transparent);
@@ -3218,7 +3218,7 @@ onUnmounted(() => {
 .dock-center {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-6);
     position: relative;
     /* Use margin:auto instead of justify-content:center so absolute-positioned
        indicator at left:0 aligns exactly with the first button */
@@ -3251,7 +3251,7 @@ onUnmounted(() => {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: color 0.25s, transform 0.15s;
+    transition: color 0.25s, transform var(--duration-base);
     z-index: 1;
 }
 
@@ -3307,8 +3307,8 @@ onUnmounted(() => {
     width: auto;
     height: auto;
     min-width: 16px;
-    padding: 0 4px;
-    border-radius: 8px;
+    padding:0 var(--space-2);
+    border-radius: var(--radius-sm);
     font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-bold);
     line-height: 16px;
@@ -3407,8 +3407,8 @@ onUnmounted(() => {
 .dock-overflow-popup {
     background: var(--bg-elevated, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
-    border-radius: 12px;
-    padding: 4px;
+    border-radius: var(--radius-lg);
+    padding: var(--space-2);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     z-index: 9999;
     min-width: 140px;
@@ -3430,16 +3430,16 @@ onUnmounted(() => {
 .dock-overflow-item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-5);
     width: 100%;
-    padding: 8px 12px;
+    padding: var(--space-4) var(--space-6);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
     font-size: var(--font-size-md);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--duration-base), color var(--duration-base);
     white-space: nowrap;
 }
 
@@ -3464,7 +3464,7 @@ onUnmounted(() => {
     margin-left: auto;
     min-width: 18px;
     padding: 0 5px;
-    border-radius: 9px;
+    border-radius: var(--radius-md);
     background: var(--accent-color);
     color: #fff;
     font-size: var(--font-size-xs);
@@ -3477,10 +3477,10 @@ onUnmounted(() => {
 
 /* Popup transition */
 .dock-popup-enter-active {
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    transition: opacity var(--duration-base) ease, transform var(--duration-base) ease;
 }
 .dock-popup-leave-active {
-    transition: opacity 0.1s ease, transform 0.1s ease;
+    transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
 }
 .dock-popup-enter-from,
 .dock-popup-leave-to {

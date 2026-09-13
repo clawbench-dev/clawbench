@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
- * Drift guard for the typography tokens in `css/variables.css`.
+ * Drift guard for the design tokens in `css/variables.css`.
  *
- * Why this exists: component tests that assert a font declaration run under
- * jsdom, which does NOT resolve `var()`. `getComputedStyle(el).fontSize` hands
- * back the literal string `var(--font-size-2xl)`, so those assertions only
- * prove *which token name* was written — not that the token means 16px. The
- * invariant they are really protecting ("the textarea stays 16px so mobile
+ * Why this exists: component tests that assert a tokenised declaration run
+ * under jsdom, which does NOT resolve `var()`. `getComputedStyle(el).fontSize`
+ * hands back the literal string `var(--font-size-2xl)`, so those assertions
+ * only prove *which token name* was written — not that the token means 16px.
+ * The invariant they are really protecting ("the textarea stays 16px so mobile
  * Safari does not zoom on focus") would silently break if someone retuned the
  * token, and every component test would still pass.
  *
@@ -74,8 +74,58 @@ describe('typography tokens (variables.css)', () => {
     expect(token('--line-height-normal')).toBe('1.5')
     expect(token('--line-height-relaxed')).toBe('1.6')
   })
+})
 
-  it('does not redeclare typography tokens per theme', () => {
+describe('spacing tokens (variables.css)', () => {
+  it('defines the eight steps at their documented px values', () => {
+    expect(token('--space-1')).toBe('2px')
+    expect(token('--space-2')).toBe('4px')
+    expect(token('--space-3')).toBe('6px')
+    expect(token('--space-4')).toBe('8px')
+    expect(token('--space-5')).toBe('10px')
+    expect(token('--space-6')).toBe('12px')
+    expect(token('--space-7')).toBe('16px')
+    expect(token('--space-8')).toBe('20px')
+  })
+
+  it('keeps the steps strictly increasing', () => {
+    // A spacing scale that goes backwards (or repeats) makes "one step up"
+    // meaningless and invites arbitrary values back in.
+    const px = [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+      parseFloat(token(`--space-${n}`)),
+    )
+    for (let i = 1; i < px.length; i++) {
+      expect(px[i], `--space-${i + 1} should be larger than --space-${i}`).toBeGreaterThan(px[i - 1])
+    }
+  })
+})
+
+describe('radius tokens (variables.css)', () => {
+  it('defines the five steps at their documented values', () => {
+    expect(token('--radius-xs')).toBe('3px')
+    expect(token('--radius-sm')).toBe('6px')
+    expect(token('--radius-md')).toBe('10px')
+    expect(token('--radius-lg')).toBe('14px')
+    expect(token('--radius-full')).toBe('999px')
+  })
+
+  it('keeps --radius-full large enough to always render as a pill', () => {
+    // The pill form relies on the radius exceeding half the element height;
+    // a smaller value would silently turn pills into rounded rectangles.
+    expect(parseFloat(token('--radius-full'))).toBeGreaterThan(100)
+  })
+})
+
+describe('duration tokens (variables.css)', () => {
+  it('defines the three steps at their documented values', () => {
+    expect(token('--duration-fast')).toBe('0.1s')
+    expect(token('--duration-base')).toBe('0.15s')
+    expect(token('--duration-slow')).toBe('0.2s')
+  })
+})
+
+describe('token hygiene (variables.css)', () => {
+  it('does not redeclare static tokens per theme', () => {
     // These are layout/typography values, not colours: they live once in
     // :root. A theme block redefining them would be a copy-paste slip that
     // makes one theme render at a different scale.
@@ -83,9 +133,23 @@ describe('typography tokens (variables.css)', () => {
       '--font-size-md',
       '--font-weight-semibold',
       '--line-height-normal',
+      '--space-4',
+      '--radius-sm',
+      '--duration-base',
     ]) {
       const occurrences = css.split('\n').filter((l) => l.trim().startsWith(`${name}:`))
       expect(occurrences, `${name} should be declared exactly once`).toHaveLength(1)
     }
+  })
+
+  it('has no token referencing an undefined token', () => {
+    // A `var(--typo)` with no fallback resolves to nothing, so the declaration
+    // is dropped silently. Catch the typo at test time instead of in the UI.
+    const defined = new Set(
+      [...css.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]),
+    )
+    const referenced = [...css.matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((m) => m[1])
+    const missing = [...new Set(referenced)].filter((n) => !defined.has(n))
+    expect(missing, `undefined tokens referenced: ${missing.join(', ')}`).toEqual([])
   })
 })

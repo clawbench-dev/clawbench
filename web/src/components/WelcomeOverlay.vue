@@ -243,13 +243,13 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--bg-primary) 80%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  padding: 16px;
+  padding: var(--space-7);
 }
 
 .welcome-panel {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 420px;
   max-height: 80vh;
@@ -263,7 +263,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
+  padding:14px var(--space-7) var(--space-5);
 }
 
 .welcome-header h3 {
@@ -284,7 +284,7 @@ onUnmounted(() => {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -294,7 +294,7 @@ onUnmounted(() => {
 }
 
 .welcome-desc {
-  margin: 0 16px 10px;
+  margin:0 var(--space-7) var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   line-height: var(--line-height-normal);
@@ -309,18 +309,18 @@ onUnmounted(() => {
   flex: 1;
   max-height: 40vh;
   overflow-y: auto;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .backend-item {
   position: relative;
   display: flex;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   text-align: left;
@@ -364,7 +364,7 @@ onUnmounted(() => {
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
   padding: 1px 5px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 
@@ -384,13 +384,13 @@ onUnmounted(() => {
   top: 4px;
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-semibold);
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow);
 }
 
 @media (hover: hover) {
@@ -406,25 +406,25 @@ onUnmounted(() => {
 
 /* Install section */
 .welcome-install {
-  padding: 8px 12px 4px;
+  padding: var(--space-4) var(--space-6) var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .welcome-install-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary));
   border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
   color: var(--accent-color);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -447,45 +447,45 @@ onUnmounted(() => {
 }
 
 .welcome-footer {
-  padding: 10px 16px 14px;
+  padding: var(--space-5) var(--space-7) 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: center;
 }
 
 .footer-secondary {
   display: flex;
-  gap: 12px;
+  gap: var(--space-6);
   align-items: center;
 }
 
 .btn-ok {
   width: 100%;
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-7);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--accent-color);
   color: #fff;
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity var(--duration-slow);
 }
 
 .btn-rescan {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   background: none;
   border: 1px solid var(--border-color);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  padding: 4px 10px;
-  border-radius: 6px;
-  transition: all 0.2s;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  transition: all var(--duration-slow);
 }
 
 .btn-rescan:disabled {
@@ -501,17 +501,17 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   cursor: pointer;
-  padding: 4px 8px;
-  transition: color 0.2s;
+  padding: var(--space-2) var(--space-4);
+  transition: color var(--duration-slow);
 }
 
 /* ── Transition ── */
 
 .welcome-fade-enter-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-slow) ease;
 }
 .welcome-fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity var(--duration-base) ease;
 }
 .welcome-fade-enter-from,
 .welcome-fade-leave-to {

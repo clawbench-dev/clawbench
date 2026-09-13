@@ -33,13 +33,13 @@
 .search-bar .cm-search {
   width: 100%;
   box-sizing: border-box;
-  padding: 5px 8px 6px;
+  padding:5px var(--space-4) var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--font-size-md);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   color-scheme: light;
 }
 [data-theme-base="dark"] .search-bar .cm-search {
@@ -56,7 +56,7 @@
 .search-bar .cm-search .cm-button[name='next'] { order: 3; }
 .search-bar .cm-search .cm-search-match-info {
   order: 4;
-  margin: 0 4px;
+  margin:0 var(--space-2);
   align-self: center;
 }
 .search-bar .cm-search button[name='close'] {
@@ -68,7 +68,7 @@
   flex-basis: 100%;
 }
 .search-bar .cm-search .cm-search-replace {
-  padding: 4px 0 5px;
+  padding: var(--space-2) 0 5px;
 }
 .search-bar .cm-search .cm-search-replace > * {
   flex-shrink: 0;
@@ -80,7 +80,7 @@
   border: 1px solid var(--border-color);
   border-radius: 0;
   color: var(--text-primary);
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   outline: none;
   font-family: inherit;
   font-size: var(--font-size-lg);
@@ -131,14 +131,14 @@
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
   line-height: 1;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--duration-base), color var(--duration-base);
 }
 .search-bar .search-input-actions .search-opt-btn:hover {
   background: var(--bg-quaternary, var(--bg-tertiary));
@@ -163,7 +163,7 @@
   border: 1px solid var(--border-color);
   border-radius: 0;
   color: var(--text-primary);
-  padding: 4px 12px;
+  padding: var(--space-2) var(--space-6);
   cursor: pointer;
   font-size: var(--font-size-md);
   min-height: var(--search-ctrl-h);
@@ -195,7 +195,7 @@
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--duration-base), color var(--duration-base);
 }
 .cm-search button[name='close']:hover {
   background: var(--bg-quaternary, var(--bg-tertiary));
@@ -243,7 +243,7 @@
 .cm-search .cm-search-replace {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* ── Match highlighting + active-match flash ─────────────────────────────────
@@ -267,7 +267,7 @@
 }
 .cm-editor.cm-editor .cm-searchMatch {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 28%, transparent);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 .cm-editor.cm-editor .cm-searchMatch-selected {
   background: color-mix(in srgb, var(--accent-color, #4a90d9) 55%, transparent);

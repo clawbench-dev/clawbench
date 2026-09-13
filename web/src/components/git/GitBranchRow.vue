@@ -57,12 +57,12 @@ function handleClick() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: var(--space-2) var(--space-4);
   min-height: 44px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background var(--duration-base);
 }
 
 @media (hover: hover) {
@@ -93,7 +93,7 @@ function handleClick() {
 .branch-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1;
   min-width: 0;
 }
@@ -115,9 +115,9 @@ function handleClick() {
 .branch-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
-  margin-left: 8px;
+  margin-left: var(--space-4);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
 }
@@ -128,7 +128,7 @@ function handleClick() {
   background: var(--accent-color, #4a90d9);
   color: #fff;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
 
@@ -141,7 +141,7 @@ function handleClick() {
 }
 
 .branch-spinner {
-  margin-left: 6px;
+  margin-left: var(--space-3);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -158,8 +158,8 @@ function handleClick() {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
 
 @media (hover: hover) {

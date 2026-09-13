@@ -12,13 +12,13 @@
   min-height: 0;
   background: var(--bg-primary, #ffffff);
   border: 1px solid var(--border-color, #e0e0e0);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
   color: var(--text-primary, #202124);
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
   overflow: hidden;
-  transition: box-shadow 0.15s ease;
+  transition: box-shadow var(--duration-base) ease;
 }
 
 body.code-preview-dragging {
@@ -34,14 +34,14 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   background: var(--bg-primary, #ffffff);
   border-bottom: 1px solid var(--border-color, #ebebeb);
   cursor: grab;
   user-select: none;
   touch-action: none;
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .code-preview-header:active {
@@ -51,7 +51,7 @@ body.code-preview-dragging * {
 .code-preview-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -72,7 +72,7 @@ body.code-preview-dragging * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 4px;
+  gap: var(--space-1) var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   line-height: 1.35;
@@ -102,7 +102,7 @@ body.code-preview-dragging * {
 .code-preview-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -110,16 +110,16 @@ body.code-preview-dragging * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 3px 6px;
+  padding:3px var(--space-3);
   height: 24px;
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s, color 0.15s;
+  transition: background-color var(--duration-base), color var(--duration-base);
 }
 
 .code-preview-btn:hover {
@@ -145,7 +145,7 @@ body.code-preview-dragging * {
 
 .code-preview-btn.is-pinned svg {
   transform: rotate(-30deg);
-  transition: transform 0.15s ease;
+  transition: transform var(--duration-base) ease;
 }
 
 .code-preview-notices {
@@ -153,7 +153,7 @@ body.code-preview-dragging * {
 }
 
 .code-preview-notice {
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-snug);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
@@ -184,8 +184,8 @@ body.code-preview-dragging * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
-  gap: 12px;
+  padding:24px var(--space-7);
+  gap: var(--space-6);
   color: var(--text-secondary, #888);
   text-align: center;
   background: var(--bg-primary, #fff);
@@ -224,7 +224,7 @@ body.code-preview-dragging * {
   flex-direction: column;
   min-width: max-content;
   width: 100%;
-  padding: 8px 0;
+  padding: var(--space-4) 0;
 }
 
 .code-preview-scroll.is-word-wrap .code-preview-lines {
@@ -256,7 +256,7 @@ body.code-preview-dragging * {
      so short line ranges (e.g. 10–99) do not waste horizontal space. */
   width: calc(var(--gutter-digits, 2) * 1ch + 20px);
   min-width: 0;
-  padding: 0 8px 0 6px;
+  padding:0 var(--space-4) 0 var(--space-3);
   text-align: right;
   user-select: none;
   font-variant-numeric: tabular-nums;
@@ -280,7 +280,7 @@ body.code-preview-dragging * {
 .code-preview-line-code {
   flex: 1;
   min-width: 0;
-  padding: 0 12px;
+  padding:0 var(--space-6);
   line-height: 20px;
 }
 
@@ -315,14 +315,14 @@ body.code-preview-dragging * {
   width: 100%;
   min-width: 100%;
   box-sizing: border-box;
-  padding: 4px 10px;
+  padding: var(--space-2) var(--space-5);
   background: var(--bg-secondary, #f8f9fa);
   border-top: 1px dashed var(--border-color, #e0e0e0);
   border-bottom: 1px dashed var(--border-color, #e0e0e0);
   font-size: var(--font-size-xs);
   color: var(--text-secondary, #5f6368);
   user-select: none;
-  gap: 8px;
+  gap: var(--space-4);
   flex-shrink: 0;
 }
 
@@ -337,16 +337,16 @@ body.code-preview-dragging * {
 .code-preview-expand-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
+  gap: var(--space-3);
+  padding:3px var(--space-4);
   font-size: var(--font-size-xs);
   font-family: var(--font-ui);
   color: var(--primary-color, #1a73e8);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color var(--duration-base) ease, border-color var(--duration-base) ease;
 }
 
 .code-preview-expand-btn:hover {
@@ -370,7 +370,7 @@ body.code-preview-dragging * {
 .code-preview-expand-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
@@ -385,10 +385,10 @@ body.code-preview-dragging * {
 
 .code-preview-title.is-clickable {
   cursor: pointer;
-  border-radius: 4px;
-  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  padding:1px var(--space-2);
   margin: -1px -4px;
-  transition: background-color 0.15s ease;
+  transition: background-color var(--duration-base) ease;
 }
 
 .code-preview-title.is-clickable:hover {
@@ -399,8 +399,8 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 3px 6px 3px 12px;
+  gap: var(--space-4);
+  padding:3px var(--space-3) 3px var(--space-6);
   min-height: 28px;
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
@@ -436,8 +436,8 @@ body.code-preview-dragging * {
 .code-preview-search-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   background: var(--bg-secondary, #f8f9fa);
   border-bottom: 1px solid var(--border-color, #e0e0e0);
   font-size: var(--font-size-sm);
@@ -448,10 +448,10 @@ body.code-preview-dragging * {
   flex: 1;
   min-width: 0;
   height: 24px;
-  padding: 2px 6px;
+  padding: var(--space-1) var(--space-3);
   font-size: var(--font-size-sm);
   border: 1px solid var(--border-color, #ccc);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #202124);
   outline: none;
@@ -555,7 +555,7 @@ body.code-preview-dragging * {
 .bs-header .code-preview-sheet-title .code-preview-line-ref {
   font-size: var(--font-size-sm);
   font-weight: 400;
-  margin-left: 4px;
+  margin-left: var(--space-2);
 }
 
 .code-preview-sheet-dir-marquee {
@@ -568,10 +568,10 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   min-height: 32px;
-  padding: 2px 10px;
+  padding: var(--space-1) var(--space-5);
   box-sizing: border-box;
   border-bottom: 1px solid var(--border-color, #e5e5e5);
   flex-shrink: 0;
@@ -590,7 +590,7 @@ body.code-preview-dragging * {
 .code-preview-sheet-tools {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
@@ -610,8 +610,8 @@ body.code-preview-dragging * {
 .code-preview-sheet-footer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   /* Natural content width; when wider than the footer row it overflows and
      the .bs-footer above scrolls horizontally. */
   width: 100%;
@@ -658,7 +658,7 @@ body.code-preview-dragging * {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .code-preview-btn.icon-only.close {
@@ -682,7 +682,7 @@ body.code-preview-dragging * {
   position: absolute;
   z-index: 1300;
   pointer-events: none;
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-xs);
   line-height: 14px;
   font-family: var(--font-ui);
@@ -691,7 +691,7 @@ body.code-preview-dragging * {
   color: #ffffff;
   background: rgba(32, 33, 36, 0.94);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   white-space: nowrap;
   max-width: min(380px, calc(100% - 16px));
@@ -702,7 +702,7 @@ body.code-preview-dragging * {
 
 .code-preview-tooltip-fade-enter-active,
 .code-preview-tooltip-fade-leave-active {
-  transition: opacity 0.1s ease;
+  transition: opacity var(--duration-fast) ease;
 }
 
 .code-preview-tooltip-fade-enter-from,
@@ -757,8 +757,8 @@ body.code-preview-dragging * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 24px 20px;
+  gap: var(--space-6);
+  padding:24px var(--space-8);
   width: 100%;
   min-height: 0;
   color: var(--text-secondary, #666);
@@ -802,7 +802,7 @@ body.code-preview-dragging * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 24px;
   text-align: center;
   color: var(--text-secondary, #666);
@@ -874,9 +874,9 @@ body.code-preview-dragging * {
      row with 28px buttons — the same weight as the 31px desktop meta row, not
      a thicker bar. The tight paddings/gaps are what let a 10-tool code file
      fit beside the file name on a 390px screen without the name collapsing. */
-  gap: 6px;
+  gap: var(--space-3);
   min-height: 32px;
-  padding: 2px 8px;
+  padding: var(--space-1) var(--space-4);
 }
 .code-link-preview-floating.is-compact .code-preview-meta-info {
   /* The file name is the only thing on the left. A code file shows up to 10
@@ -884,7 +884,7 @@ body.code-preview-dragging * {
      keeps a floor and the tool row scrolls instead. */
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex: 1 1 auto;
   min-width: 84px;
   font-size: var(--font-size-xs);
@@ -903,7 +903,7 @@ body.code-preview-dragging * {
   /* Scrolls rather than shrinking the name away. */
   flex: 0 1 auto;
   min-width: 0;
-  gap: 4px;
+  gap: var(--space-2);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
@@ -915,7 +915,7 @@ body.code-preview-dragging * {
   min-width: 28px;
   height: 28px;
   padding: 0;
-  margin-left: 2px;
+  margin-left: var(--space-1);
   color: var(--text-secondary, #5f6368);
 }
 .code-link-preview-floating.is-compact .code-preview-actions::-webkit-scrollbar {

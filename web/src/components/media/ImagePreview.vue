@@ -162,7 +162,7 @@ watch(() => props.file, () => {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: background 0.15s, transform 0.15s;
+    transition: background var(--duration-base), transform var(--duration-base);
     z-index: 2;
     backdrop-filter: blur(4px);
 }
@@ -196,8 +196,8 @@ watch(() => props.file, () => {
     background: rgba(0, 0, 0, 0.5);
     color: rgba(255, 255, 255, 0.85);
     font-size: var(--font-size-sm);
-    padding: 2px 10px;
-    border-radius: 10px;
+    padding: var(--space-1) var(--space-5);
+    border-radius: var(--radius-md);
     backdrop-filter: blur(4px);
     pointer-events: none;
     user-select: none;

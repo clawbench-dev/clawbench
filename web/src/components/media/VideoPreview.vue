@@ -59,7 +59,7 @@ function onLoaded() {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: var(--space-7);
     background: #000;
     overflow: hidden;
 }
