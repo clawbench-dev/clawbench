@@ -48,7 +48,7 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
 .overview-card {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   padding: var(--space-5);
   display: flex;
   flex-direction: column;

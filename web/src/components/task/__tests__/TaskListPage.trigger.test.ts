@@ -59,10 +59,6 @@ vi.mock('@/utils/format', () => ({
   formatDateTimeWithYear: (t: string) => `year:${t}`,
 }))
 
-vi.mock('@/utils/forgeEventLabels', () => ({
-  eventTypesSummary: () => 'issue · opened',
-}))
-
 vi.mock('@/components/task/TaskBreadcrumb.vue', () => ({
   default: { name: 'TaskBreadcrumb', template: '<div />' },
 }))
@@ -198,5 +194,45 @@ describe('TaskListPage — trigger-type distinction', () => {
     const summary = wrapper.find('.task-item-next')
     expect(summary.findComponent({ name: 'Clock' }).exists()).toBe(true)
     expect(summary.findComponent({ name: 'Zap' }).exists()).toBe(false)
+  })
+
+  // The schedule/repeat line is cron-only. An event task has no schedule, and
+  // its repeat mode is inert (the backend never exhausts it), so rendering
+  // "不限次数" for one states something that is not true.
+  it('omits the schedule and repeat line on an event task', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+
+    expect(wrapper.find('.task-item-meta').exists()).toBe(false)
+    expect(wrapper.find('.meta-item.repeat').exists()).toBe(false)
+  })
+
+  it('keeps the schedule and repeat line on a cron task', async () => {
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'cron', cronExpr: '0 2 * * *' })])
+
+    const meta = wrapper.find('.task-item-meta')
+    expect(meta.exists()).toBe(true)
+    expect(meta.text()).toContain('cron:0 2 * * *')
+    expect(meta.text()).toContain('repeat')
+  })
+
+  // The regression this guards: the subscription list was rendered into the
+  // shared meta line, where .cron span's max-width truncated a long
+  // subscription mid-word and pushed the neighbouring repeat label far to the
+  // right — so event rows never lined up with cron rows. The detail now lives
+  // in the task overview, and nothing subscription-related may return here.
+  it('does not render the event subscription in the list row', async () => {
+    const wrapper = await mountWith([
+      makeTask({
+        id: 1,
+        triggerMode: 'event',
+        eventTypes: 'pr.opened,issue.opened,issue.closed,pr.merged',
+      }),
+    ])
+
+    const row = wrapper.find('.task-item')
+    expect(row.text()).not.toContain('issue')
+    expect(row.text()).not.toContain('opened')
+    // The repository is the only trigger-related detail the row carries.
+    expect(row.find('.task-item-repo').exists()).toBe(true)
   })
 })

@@ -764,7 +764,7 @@ onMounted(() => {
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: var(--bg-secondary, #f8f9fa);
   color: var(--text-primary, #1a1a1a);
   font-size: var(--font-size-sm);
@@ -781,7 +781,7 @@ onMounted(() => {
   gap: var(--space-3);
   margin-top: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
   color: var(--color-yellow, #a16207);
@@ -844,7 +844,7 @@ onMounted(() => {
   padding: var(--space-5) var(--space-6);
   background: var(--bg-secondary, #f9fafb);
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   color: var(--text-secondary, #4b5563);

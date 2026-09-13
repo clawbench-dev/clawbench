@@ -31,10 +31,9 @@
           <div class="task-item-main">
             <div class="task-item-header">
               <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :size="16" />
-              <!-- Trigger-type badge. The two modes differ in *what* starts a
-                   run (a clock vs. a repository event), which the rest of the
-                   row cannot convey on its own: the meta line below is shared
-                   and the row would otherwise read identically at a glance. -->
+              <!-- Trigger-type badge. This is the only element that names *what*
+                   starts the task: the meta line below is cron-only, and the
+                   summary line only ever shows a schedule or a repository. -->
               <span
                 class="task-trigger-badge"
                 :class="task.triggerMode === 'event' ? 'is-event' : 'is-cron'"
@@ -43,12 +42,17 @@
               <span v-if="task.runningCount > 0" class="task-item-running-dot" :title="t('task.exec.running')"></span>
               <span v-if="task.unreadCount > 0" class="task-item-unread">{{ task.unreadCount }}</span>
             </div>
-            <div class="task-item-meta">
-              <div v-if="task.triggerMode === 'event'" class="meta-item cron" :title="task.eventTypes">
-                <Zap class="meta-icon" :size="12" />
-                <span>{{ eventTriggerLabel(task) }}</span>
-              </div>
-              <div v-else class="meta-item cron" :title="task.cronExpr">
+            <!-- Schedule + repeat. Cron-only, for two reasons:
+                 - An event task has no schedule, and its repeat mode is inert —
+                   the backend never exhausts it (scheduler.go's event-task
+                   branch), so "不限次数" would be fabricated.
+                 - Its subscription list can run to dozens of characters, which
+                   the .cron span's max-width then truncated mid-word while
+                   shoving the neighbouring repeat label far to the right, so
+                   event rows never lined up with cron rows.
+                 The subscription detail lives in the task overview. -->
+            <div v-if="task.triggerMode !== 'event'" class="task-item-meta">
+              <div class="meta-item cron" :title="task.cronExpr">
                 <Clock class="meta-icon" :size="12" />
                 <span>{{ humanizeCron(task.cronExpr) }}</span>
               </div>
@@ -91,13 +95,12 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, GitBranch } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, GitBranch } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
-import { eventTypesSummary } from '@/utils/forgeEventLabels'
 import { fetchForgeBinding } from '@/utils/forgeApi'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
@@ -123,13 +126,6 @@ interface TaskItem {
   nextRunAt?: string
   // Trigger mode: 'cron' (default/absent) or 'event'.
   triggerMode?: string
-  eventTypes?: string
-}
-
-// eventTriggerLabel renders the subscribed event types as a compact list.
-// Shared with the task overview so the two never drift.
-function eventTriggerLabel(task: TaskItem): string {
-  return eventTypesSummary(task.eventTypes) || t('task.form.triggerEvent')
 }
 
 // Every event task watches its project's bound repository, so one binding
@@ -487,12 +483,10 @@ onMounted(refresh)
   color: var(--text-muted, #999);
 }
 
-.cron span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 140px;
-}
+/* The cron label is either "Daily HH:MM" or a raw 5-field expression — at most
+   ~12 characters, so it never needs truncating. The max-width cap that used to
+   live here only ever clipped the event subscription line, which the row no
+   longer renders. */
 
 .task-progress {
   color: var(--accent-color, #0066cc);

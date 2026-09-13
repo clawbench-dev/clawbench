@@ -691,24 +691,34 @@ onUnmounted(() => {
 }
 
 /* Trigger source for event-triggered runs: a source link plus the collapsible
-   context block the backend prepended to the prompt. */
+   context block the backend prepended to the prompt.
+
+   Rendered as a full-bleed band — no outer margin, no radius — so it reads as
+   the run's header strip rather than a floating card. Two details make it hold
+   together:
+   - Horizontal padding matches the chat content below (--space-6), so the
+     source pill, the toggle and the message text share one left edge. At
+     padding:0 all three sat flush against the viewport edge.
+   - A bottom border delimits the band. Without it the band's own background
+     ran straight into the summary tab bar's identical --bg-secondary, and the
+     two merged into one featureless grey block. */
 .exec-event-card {
-  margin:0 var(--space-6) var(--space-5);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: var(--radius-sm, 6px);
+  margin: 0;
+  padding: var(--space-5) var(--space-6);
   background: var(--bg-secondary, #f3f4f6);
+  border-bottom: 1px solid var(--border-color, #e5e7eb);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .exec-event-source {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-2);
   align-self: flex-start;
-  padding: 3px 9px;
+  padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-full);
   background: var(--bg-primary, #fff);
   border: 1px solid var(--border-color, #e5e7eb);
@@ -716,9 +726,22 @@ onUnmounted(() => {
   font-size: var(--font-size-sm);
   text-decoration: none;
   max-width: 100%;
+}
+
+/* The owner/repo slug can outrun the viewport, so the text truncates rather
+   than widening the pill. ellipsis needs all three of these on the *text*
+   item — the container's own text-overflow is inert here because the label is
+   a flex item, not inline text. The icons are pinned so they survive the
+   squeeze instead of collapsing to nothing. */
+.exec-event-source span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.exec-event-source > svg {
+  flex-shrink: 0;
 }
 
 .exec-event-source:hover {
@@ -733,7 +756,7 @@ onUnmounted(() => {
   align-self: flex-start;
   border: none;
   background: transparent;
-  padding: 0;
+  padding: var(--space-1) 0;
   color: var(--text-muted, #6b7280);
   font-size: var(--font-size-xs);
   cursor: pointer;
@@ -755,7 +778,7 @@ onUnmounted(() => {
   margin: 0;
   padding: var(--space-4) var(--space-5);
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: var(--bg-primary, #fff);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-relaxed);

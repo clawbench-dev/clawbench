@@ -153,4 +153,22 @@ describe('TaskExecDetail event trigger context', () => {
     const wrapper = mount(TaskExecDetail, { props: { execDetail: { ...baseExec }, taskId: 2 } })
     expect(wrapper.find('.exec-event-card').exists()).toBe(false)
   })
+
+  // The owner/repo slug can outrun the viewport. Truncation is applied to a
+  // dedicated <span> rather than the pill itself, because `text-overflow:
+  // ellipsis` on the flex container is inert — the label is a flex item, not
+  // inline text. Collapsing the label back to a bare text node would silently
+  // reintroduce overflow, so pin the structure the CSS depends on.
+  it('keeps the source label in its own span so it can truncate', () => {
+    const exec = {
+      ...baseExec,
+      eventUrl: 'https://github.com/some-very-long-org-name/an-extremely-long-repository-name/pull/12345',
+    }
+    const wrapper = mount(TaskExecDetail, { props: { execDetail: exec, taskId: 2 } })
+
+    const link = wrapper.find('.exec-event-source')
+    const label = link.find('span')
+    expect(label.exists()).toBe(true)
+    expect(label.text()).toContain('some-very-long-org-name/an-extremely-long-repository-name PR #12345')
+  })
 })

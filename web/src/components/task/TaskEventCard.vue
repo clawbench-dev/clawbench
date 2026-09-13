@@ -199,7 +199,7 @@ const sampleEventType = computed(() => {
 .overview-card {
   background: var(--bg-secondary, #f8f9fa);
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -223,7 +223,7 @@ const sampleEventType = computed(() => {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
   color: var(--color-yellow, #a16207);
@@ -316,7 +316,7 @@ const sampleEventType = computed(() => {
 }
 .event-context-preview {
   border: 1px dashed var(--border-color, #d1d5db);
-  border-radius: var(--radius-sm, 6px);
+  border-radius: 0;
   background: var(--bg-primary, #fff);
   padding: var(--space-4) var(--space-5);
   display: flex;
