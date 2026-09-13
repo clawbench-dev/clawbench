@@ -528,3 +528,139 @@ func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond,
 		"a different event type must not be debounced away by the previous one")
 }
+
+// --- One event, many matching tasks ---
+//
+// matchingTasks accumulates every match and HandleChange enqueues each one
+// independently, so a single event fans out to all subscribed tasks. That
+// behaviour is load-bearing (a user may register several tasks for the same
+// event) but was previously untested: the only fan-out case covered multiple
+// *sinks*, not multiple tasks. A `break` in matchingTasks or a taskRunning key
+// change would have gone unnoticed.
+
+func TestForgeTaskTrigger_FiresAllMatchingTasks(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	var fired []int64
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(0)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{
+			forgeTriggerTask(1, "commented", triggerRepo().Key()),
+			forgeTriggerTask(2, "commented", triggerRepo().Key()),
+			forgeTriggerTask(3, "commented", triggerRepo().Key()),
+		}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 3
+	}, 3*time.Second, 10*time.Millisecond,
+		"every subscribed task must fire")
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Order is not guaranteed: each task drains on its own goroutine.
+	assert.ElementsMatch(t, []int64{1, 2, 3}, fired)
+}
+
+// TestForgeTaskTrigger_OneEventFiresEachTaskOnce asserts the fan-out does not
+// multiply. The debounce key is repo+kind+eventType with no task component, so
+// one event produces exactly one fire per task — not one per (task, task) pair
+// and not a re-fire for each subsequent task examined.
+func TestForgeTaskTrigger_OneEventFiresEachTaskOnce(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	var fired []int64
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(0)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{
+			forgeTriggerTask(1, "commented", triggerRepo().Key()),
+			forgeTriggerTask(2, "commented", triggerRepo().Key()),
+			forgeTriggerTask(3, "commented", triggerRepo().Key()),
+		}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) >= 3
+	}, 3*time.Second, 10*time.Millisecond)
+
+	// Give any spurious extra fires a chance to appear before asserting.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Len(t, fired, 3, "each task fires exactly once for one event")
+	counts := map[int64]int{}
+	for _, id := range fired {
+		counts[id]++
+	}
+	for id, n := range counts {
+		assert.Equalf(t, 1, n, "task %d fired %d times", id, n)
+	}
+}
+
+// TestForgeTaskTrigger_MixedSubscriptionsFireOnlySubscribed asserts the fan-out
+// stays precise: a task subscribed to a different event must not fire. Guards
+// against the matching predicate loosening into "fire everything".
+func TestForgeTaskTrigger_MixedSubscriptionsFireOnlySubscribed(t *testing.T) {
+	cfg := fullNotifyConfig()
+	var mu sync.Mutex
+	var fired []int64
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(0)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{
+			forgeTriggerTask(1, "commented", triggerRepo().Key()),
+			forgeTriggerTask(2, "commented", triggerRepo().Key()),
+			forgeTriggerTask(3, "opened", triggerRepo().Key()), // not subscribed
+		}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) >= 2
+	}, 3*time.Second, 10*time.Millisecond)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, []int64{1, 2}, fired, "only subscribed tasks fire")
+	assert.NotContains(t, fired, int64(3), "a task subscribed to another event must not fire")
+}
