@@ -265,19 +265,20 @@ describe('useTaskForm', () => {
       form.form.value.prompt = 'Review it'
       form.form.value.triggerMode = 'event'
       form.form.value.eventTypes = 'opened,commented'
-      form.form.value.eventRepo = 'github|github.com|acme/widgets'
       // A leftover cron value must NOT be sent for an event task.
       form.form.value.cronExpr = '0 9 * * *'
 
       mockApiPost.mockResolvedValue({ task: { id: 'task-9' } })
       await form.submit()
 
+      // No repository is sent: the task always watches its project's binding.
       expect(mockApiPost).toHaveBeenCalledWith('/api/tasks', expect.objectContaining({
         trigger_mode: 'event',
         event_types: 'opened,commented',
-        event_repo: 'github|github.com|acme/widgets',
         cron_expr: '',
       }))
+      const payload = mockApiPost.mock.calls[0][1] as Record<string, unknown>
+      expect(payload).not.toHaveProperty('event_repo')
     })
 
     it('cron task omits event fields and keeps its cron expression', async () => {
@@ -296,7 +297,6 @@ describe('useTaskForm', () => {
         trigger_mode: 'cron',
         cron_expr: '0 9 * * *',
         event_types: '',
-        event_repo: '',
       }))
     })
 
@@ -312,12 +312,10 @@ describe('useTaskForm', () => {
         maxRuns: 0,
         triggerMode: 'event',
         eventTypes: 'merged',
-        eventRepo: 'github|github.com|a/b',
       })
 
       expect(form.form.value.triggerMode).toBe('event')
       expect(form.form.value.eventTypes).toBe('merged')
-      expect(form.form.value.eventRepo).toBe('github|github.com|a/b')
     })
 
     it('defaults triggerMode to cron when task data omits it', () => {

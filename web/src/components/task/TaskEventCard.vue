@@ -90,7 +90,6 @@ const props = defineProps<{
 }>()
 
 const eventTypes = computed(() => (props.task.eventTypes as string) || '')
-const eventRepo = computed(() => (props.task.eventRepo as string) || '')
 const runCount = computed(() => (props.task.runCount as number) || 0)
 const lastRunAt = computed(() => props.task.lastRunAt as string | undefined)
 const paused = computed(() => (props.task.status as string) === 'paused')
@@ -116,12 +115,12 @@ const groupedChips = computed(() => {
     }))
 })
 
-// ── Repository scope ──
-// An explicit eventRepo is authoritative. When empty the backend matches any
-// repo bound to the project, so resolve the binding to show the concrete repo.
+// ── Repository ──
+// Every event task watches its project's bound repository, so the binding is
+// resolved for display. An unbound project shows the "no repository" label —
+// the task can never fire, which the form warns about at creation time.
 const boundRepoLabel = ref('')
 onMounted(async () => {
-    if (eventRepo.value) return
     try {
         const res = await fetchForgeBinding()
         const b = res?.binding
@@ -131,18 +130,7 @@ onMounted(async () => {
     }
 })
 
-const repoLabel = computed(() => {
-    if (eventRepo.value) return explicitRepo.value || eventRepo.value
-    return boundRepoLabel.value || t('task.form.eventRepoAny')
-})
-
-/** The bare owner/repo from an explicit scope, or '' when unset. Stored as
- *  "platform|host|owner/repo"; the owner/repo tail is what identifies it. */
-const explicitRepo = computed(() => {
-    if (!eventRepo.value) return ''
-    const parts = eventRepo.value.split('|')
-    return parts[parts.length - 1] || ''
-})
+const repoLabel = computed(() => boundRepoLabel.value || t('task.form.eventRepoUnbound'))
 
 // ── Event context preview ──
 // Mirrors the backend's EventPromptTemplate ordering, but substitutes sample
@@ -175,7 +163,7 @@ interface ContextRow {
 
 // Only a real repository identity may appear in a sample URL — the generic
 // "any bound repo" label is prose, not a host.
-const sampleRepo = computed(() => boundRepoLabel.value || explicitRepo.value || 'owner/repo')
+const sampleRepo = computed(() => boundRepoLabel.value || 'owner/repo')
 
 const contextRows = computed<ContextRow[]>(() => {
     const subscribed = subscribedTransitions.value

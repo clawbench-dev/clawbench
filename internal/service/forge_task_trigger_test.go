@@ -25,8 +25,24 @@ func triggerItem(number int) forge.Item {
 	}
 }
 
-// eventTask builds an active event-triggered task scoped to a repo slug.
-func forgeTriggerTask(id int64, eventTypes, repoSlug string) model.ScheduledTask {
+// bindProjectRepo binds a project to a repository so an event task rooted at
+// that project can match events. Matching is driven entirely by this binding —
+// there is no per-task repository scope.
+func bindProjectRepo(t *testing.T, repo service.ForgeRepoRef) {
+	t.Helper()
+	setupTestDBForForgeSync(t)
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: "/proj",
+		Platform:    repo.Platform,
+		Host:        repo.Host,
+		Owner:       repo.Owner,
+		Repo:        repo.Repo,
+	}))
+}
+
+// eventTask builds an active event-triggered task. It carries no repository
+// scope: it always watches its own project's binding.
+func forgeTriggerTask(id int64, eventTypes string) model.ScheduledTask {
 	return model.ScheduledTask{
 		ID:          id,
 		ProjectPath: "/proj",
@@ -34,20 +50,20 @@ func forgeTriggerTask(id int64, eventTypes, repoSlug string) model.ScheduledTask
 		Status:      "active",
 		TriggerMode: "event",
 		EventTypes:  eventTypes,
-		EventRepo:   repoSlug,
 	}
 }
 
 func TestForgeTaskTrigger_FiresMatchingTask(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired []int64
 	var mu sync.Mutex
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{
-			forgeTriggerTask(1, "commented", triggerRepo().Key()),
-			forgeTriggerTask(2, "opened", triggerRepo().Key()), // not subscribed to commented
+			forgeTriggerTask(1, "commented"),
+			forgeTriggerTask(2, "opened"), // not subscribed to commented
 		}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
@@ -95,6 +111,7 @@ func TestForgeRetiredEventTypesNotOffered(t *testing.T) {
 // PR, and vice versa. Before the split both collapsed onto the same "opened".
 func TestForgeTaskTrigger_SplitsIssueAndPR(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 
 	prItem := triggerItem(2)
 	prItem.Type = forge.ItemTypeChangeRequest
@@ -117,7 +134,7 @@ func TestForgeTaskTrigger_SplitsIssueAndPR(t *testing.T) {
 			var mu sync.Mutex
 			tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 			tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-				return []model.ScheduledTask{forgeTriggerTask(1, tc.subscribed, triggerRepo().Key())}, nil
+				return []model.ScheduledTask{forgeTriggerTask(1, tc.subscribed)}, nil
 			})
 			tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
 				mu.Lock()
@@ -151,6 +168,7 @@ func TestForgeTaskTrigger_SplitsIssueAndPR(t *testing.T) {
 // which must keep matching both issues and PRs without a migration.
 func TestForgeTaskTrigger_BareLegacyKeyMatchesBothKinds(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	prItem := triggerItem(2)
 	prItem.Type = forge.ItemTypeChangeRequest
 
@@ -166,7 +184,7 @@ func TestForgeTaskTrigger_BareLegacyKeyMatchesBothKinds(t *testing.T) {
 			var mu sync.Mutex
 			tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 			tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-				return []model.ScheduledTask{forgeTriggerTask(1, "opened", triggerRepo().Key())}, nil
+				return []model.ScheduledTask{forgeTriggerTask(1, "opened")}, nil
 			})
 			tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
 				mu.Lock()
@@ -192,6 +210,7 @@ func TestForgeTaskTrigger_BareLegacyKeyMatchesBothKinds(t *testing.T) {
 // the PR's debounce window.
 func TestForgeTaskTrigger_DebounceIsPerKind(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	prItem := triggerItem(2)
 	prItem.Type = forge.ItemTypeChangeRequest
 
@@ -200,7 +219,7 @@ func TestForgeTaskTrigger_DebounceIsPerKind(t *testing.T) {
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetDebounceWindowForTest(10 * time.Minute) // long, so only key separation can let the 2nd through
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "issue.opened,pr.opened", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "issue.opened,pr.opened")}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
 		mu.Lock()
@@ -248,12 +267,13 @@ func TestValidateEventSubscription_KindScopedKeys(t *testing.T) {
 
 func TestForgeTaskTrigger_KillSwitchSuppresses(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	cfg.Forge.PauseEventTasks = true
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -266,12 +286,13 @@ func TestForgeTaskTrigger_KillSwitchSuppresses(t *testing.T) {
 
 func TestForgeTaskTrigger_SelfAuthoredSuppressed(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
 		func(service.ForgeRepoRef) string { return "alice" })
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -289,12 +310,13 @@ func TestForgeTaskTrigger_SelfAuthoredSuppressed(t *testing.T) {
 // item creator (the old behavior) would miss exactly this loop.
 func TestForgeTaskTrigger_SelfAuthoredCommentOnOthersItemSuppressed(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
 		func(service.ForgeRepoRef) string { return "ai-bot" })
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -309,12 +331,13 @@ func TestForgeTaskTrigger_SelfAuthoredCommentOnOthersItemSuppressed(t *testing.T
 
 func TestForgeTaskTrigger_ExternalAuthorFires(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
 		func(service.ForgeRepoRef) string { return "bot-account" })
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -328,12 +351,13 @@ func TestForgeTaskTrigger_ExternalAuthorFires(t *testing.T) {
 
 func TestForgeTaskTrigger_UnknownIdentityDoesNotSuppress(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
 		func(service.ForgeRepoRef) string { return "" })
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -345,12 +369,13 @@ func TestForgeTaskTrigger_UnknownIdentityDoesNotSuppress(t *testing.T) {
 
 func TestForgeTaskTrigger_DebounceCollapsesBurst(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetDebounceWindowForTest(time.Hour) // effectively "only the first fires"
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -365,6 +390,7 @@ func TestForgeTaskTrigger_DebounceCollapsesBurst(t *testing.T) {
 
 func TestForgeTaskTrigger_QueueDropsNothingWhileRunning(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	var fired []int64
 	gate := make(chan struct{})
@@ -372,7 +398,7 @@ func TestForgeTaskTrigger_QueueDropsNothingWhileRunning(t *testing.T) {
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetDebounceWindowForTest(0) // disable debounce so every event is offered
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
 		mu.Lock()
@@ -417,13 +443,21 @@ func TestForgeTaskTrigger_QueueDropsNothingWhileRunning(t *testing.T) {
 	assert.Equal(t, 0, tr.PendingCount(1), "queue must be empty after draining")
 }
 
-func TestForgeTaskTrigger_RepoScopedTaskIgnoresOtherRepos(t *testing.T) {
+// TestForgeTaskTrigger_ProjectBoundToOtherRepoIgnoresEvent verifies the
+// project binding is the sole gate: a task whose project is bound to a
+// different repository must not fire for this event.
+func TestForgeTaskTrigger_ProjectBoundToOtherRepoIgnoresEvent(t *testing.T) {
 	cfg := fullNotifyConfig()
+	// The project is bound to another repo, so events from triggerRepo() are
+	// not its own.
+	bindProjectRepo(t, service.ForgeRepoRef{
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "repo",
+	})
 	var fired int
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", "github|github.com|other/repo")}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
 
@@ -431,7 +465,28 @@ func TestForgeTaskTrigger_RepoScopedTaskIgnoresOtherRepos(t *testing.T) {
 		forge.Change{Type: forge.EventCommented, Number: 1})
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, 0, fired, "a task scoped to another repo must not fire")
+	assert.Equal(t, 0, fired, "a task whose project binds another repo must not fire")
+}
+
+// TestForgeTaskTrigger_UnboundProjectNeverFires pins the "no binding, no
+// trigger" behavior: an event task on a project with no repository binding is
+// silently inert. This is the case the task form warns about.
+func TestForgeTaskTrigger_UnboundProjectNeverFires(t *testing.T) {
+	cfg := fullNotifyConfig()
+	setupTestDBForForgeSync(t) // DB present, but no binding row for /proj
+	var fired int
+
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool { fired++; return true })
+
+	tr.HandleChange(context.Background(), triggerRepo(), triggerItem(1),
+		forge.Change{Type: forge.EventCommented, Number: 1})
+
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 0, fired, "a task on an unbound project must not fire")
 }
 
 func TestForgeCompositeSink_FansOut(t *testing.T) {
@@ -458,13 +513,14 @@ func (f sinkFunc) HandleChange(ctx context.Context, r service.ForgeRepoRef, i fo
 // flag), the event must be retried rather than dropped.
 func TestForgeTaskTrigger_RetriesWhileTaskBusy(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	attempts := 0
 	succeeded := 0
 
 	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
-		return []model.ScheduledTask{forgeTriggerTask(1, "commented", triggerRepo().Key())}, nil
+		return []model.ScheduledTask{forgeTriggerTask(1, "commented")}, nil
 	})
 	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
 		mu.Lock()
@@ -498,6 +554,7 @@ func TestForgeTaskTrigger_RetriesWhileTaskBusy(t *testing.T) {
 // be swallowed by the close's debounce window.
 func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	var firedTypes []string
 
@@ -505,8 +562,8 @@ func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
 	tr.SetDebounceWindowForTest(time.Hour) // only the first of each type fires
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{
-			forgeTriggerTask(1, "closed", triggerRepo().Key()),
-			forgeTriggerTask(2, "commented", triggerRepo().Key()),
+			forgeTriggerTask(1, "closed"),
+			forgeTriggerTask(2, "commented"),
 		}, nil
 	})
 	tr.SetFireForTest(func(_ int64, ev service.ForgeQueuedEvent) bool {
@@ -540,6 +597,7 @@ func TestForgeTaskTrigger_DebounceIsPerEventType(t *testing.T) {
 
 func TestForgeTaskTrigger_FiresAllMatchingTasks(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	var fired []int64
 
@@ -547,9 +605,9 @@ func TestForgeTaskTrigger_FiresAllMatchingTasks(t *testing.T) {
 	tr.SetDebounceWindowForTest(0)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{
-			forgeTriggerTask(1, "commented", triggerRepo().Key()),
-			forgeTriggerTask(2, "commented", triggerRepo().Key()),
-			forgeTriggerTask(3, "commented", triggerRepo().Key()),
+			forgeTriggerTask(1, "commented"),
+			forgeTriggerTask(2, "commented"),
+			forgeTriggerTask(3, "commented"),
 		}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
@@ -581,6 +639,7 @@ func TestForgeTaskTrigger_FiresAllMatchingTasks(t *testing.T) {
 // and not a re-fire for each subsequent task examined.
 func TestForgeTaskTrigger_OneEventFiresEachTaskOnce(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	var fired []int64
 
@@ -588,9 +647,9 @@ func TestForgeTaskTrigger_OneEventFiresEachTaskOnce(t *testing.T) {
 	tr.SetDebounceWindowForTest(0)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{
-			forgeTriggerTask(1, "commented", triggerRepo().Key()),
-			forgeTriggerTask(2, "commented", triggerRepo().Key()),
-			forgeTriggerTask(3, "commented", triggerRepo().Key()),
+			forgeTriggerTask(1, "commented"),
+			forgeTriggerTask(2, "commented"),
+			forgeTriggerTask(3, "commented"),
 		}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
@@ -629,6 +688,7 @@ func TestForgeTaskTrigger_OneEventFiresEachTaskOnce(t *testing.T) {
 // against the matching predicate loosening into "fire everything".
 func TestForgeTaskTrigger_MixedSubscriptionsFireOnlySubscribed(t *testing.T) {
 	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
 	var mu sync.Mutex
 	var fired []int64
 
@@ -636,9 +696,9 @@ func TestForgeTaskTrigger_MixedSubscriptionsFireOnlySubscribed(t *testing.T) {
 	tr.SetDebounceWindowForTest(0)
 	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
 		return []model.ScheduledTask{
-			forgeTriggerTask(1, "commented", triggerRepo().Key()),
-			forgeTriggerTask(2, "commented", triggerRepo().Key()),
-			forgeTriggerTask(3, "opened", triggerRepo().Key()), // not subscribed
+			forgeTriggerTask(1, "commented"),
+			forgeTriggerTask(2, "commented"),
+			forgeTriggerTask(3, "opened"), // not subscribed
 		}, nil
 	})
 	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {

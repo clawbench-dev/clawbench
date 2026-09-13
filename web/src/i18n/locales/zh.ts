@@ -935,7 +935,6 @@ export default {
     confirmDelete: '确定删除此任务？',
     nextRun: '下次执行: {time}',
     nextRunNone: '下次执行: 无',
-    eventTriggered: '事件触发',
     pause: '禁用',
     resume: '启用',
     run: '执行',
@@ -1003,9 +1002,12 @@ export default {
       eventReopened: '重新打开',
       eventCommented: '评论',
       eventPipeline: '流水线完成',
-      eventRepo: '限定仓库',
-      eventRepoAny: '本项目绑定的仓库',
-      eventRepoHint: '留空则监听本项目绑定仓库的事件',
+      eventRepo: '监听仓库',
+      eventRepoHint: '事件任务始终监听本项目绑定的仓库',
+      // Shown in the task form when the project has no repository binding.
+      // Saving is allowed, but the task can never fire, so say so plainly.
+      eventRepoUnbound: '本项目未绑定仓库',
+      eventRepoUnboundWarn: '本项目尚未绑定仓库，事件任务不会触发。请先在 Forge 面板绑定仓库。',
       eventContext: '事件上下文（自动注入，不可编辑）',
       eventContextHint: '触发时这些变量会替换为实际值，固定注入在提示词之前。',
       eventContextHeader: 'Forge 事件',

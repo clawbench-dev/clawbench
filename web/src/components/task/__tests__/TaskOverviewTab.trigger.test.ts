@@ -127,7 +127,6 @@ const eventTask = {
   triggerMode: 'event',
   cronExpr: '',
   eventTypes: 'pr.merged,issue.opened',
-  eventRepo: '',
   repeatMode: 'unlimited',
   maxRuns: 0,
   runCount: 5,
@@ -207,14 +206,14 @@ describe('TaskOverviewTab trigger card branching', () => {
     expect(preview).toContain('/pull/123')
   })
 
-  it('never leaks the generic "any repo" label into the sample URL', async () => {
+  it('never leaks the unbound label into the sample URL', async () => {
     mockFetchBinding.mockResolvedValue({ binding: null })
     const wrapper = mount(TaskOverviewTab, { props: { task: { ...eventTask } } })
     await vi.waitFor(() => {
       expect(wrapper.find('.event-context-preview').text()).toContain('owner/repo')
     })
     // The URL row must use the placeholder repo, not the translated prose label.
-    expect(wrapper.find('.event-context-preview').text()).not.toContain('task.form.eventRepoAny/pull')
+    expect(wrapper.find('.event-context-preview').text()).not.toContain('task.form.eventRepoUnbound/pull')
   })
 
   it('warns when a paused event task will never fire', () => {
@@ -228,25 +227,24 @@ describe('TaskOverviewTab trigger card branching', () => {
     expect(wrapper.find('.event-paused-note').exists()).toBe(false)
   })
 
-  it('resolves the bound repository when no explicit scope is set', async () => {
+  // Every event task watches its project's binding, so the card resolves it.
+  it('shows the project-bound repository', async () => {
     mockFetchBinding.mockResolvedValue({
       binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
     })
     const wrapper = mount(TaskOverviewTab, { props: { task: { ...eventTask } } })
-    // Wait for the onMounted binding lookup to settle.
     await vi.waitFor(() => {
       expect(wrapper.text()).toContain('acme/widgets')
     })
   })
 
-  it('shows the explicit repo scope instead of the binding when set', async () => {
-    mockFetchBinding.mockResolvedValue({
-      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' },
+  // An unbound project can host an event task but it will never fire; the card
+  // states that rather than showing a fabricated repository.
+  it('shows the unbound label when the project has no binding', async () => {
+    mockFetchBinding.mockResolvedValue({ binding: null })
+    const wrapper = mount(TaskOverviewTab, { props: { task: { ...eventTask } } })
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('task.form.eventRepoUnbound')
     })
-    const task = { ...eventTask, eventRepo: 'github|github.com|other/repo' }
-    const wrapper = mount(TaskOverviewTab, { props: { task } })
-    expect(wrapper.text()).toContain('other/repo')
-    // An explicit scope means the binding lookup is skipped entirely.
-    expect(mockFetchBinding).not.toHaveBeenCalled()
   })
 })

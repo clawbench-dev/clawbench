@@ -40,10 +40,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
     maxRuns: 0,
     // Trigger mode: 'cron' (default) or 'event'.
     triggerMode: 'cron',
-    // Comma-separated forge event subscription (event mode).
+    // Comma-separated forge event subscription (event mode). The watched
+    // repository is always the project's binding, so it is not form state.
     eventTypes: '',
-    // Optional repo scope for an event task (platform|host|owner/repo).
-    eventRepo: '',
   })
 
   const errors = ref<Record<string, string>>({})
@@ -64,7 +63,6 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: (taskData.maxRuns as number) || 0,
         triggerMode: (taskData.triggerMode as string) || 'cron',
         eventTypes: (taskData.eventTypes as string) || '',
-        eventRepo: (taskData.eventRepo as string) || '',
       }
     } else {
       form.value = {
@@ -77,7 +75,6 @@ export function useTaskForm(options: UseTaskFormOptions) {
         maxRuns: 0,
         triggerMode: 'cron',
         eventTypes: '',
-        eventRepo: '',
       }
     }
   }
@@ -109,7 +106,6 @@ export function useTaskForm(options: UseTaskFormOptions) {
       max_runs: form.value.maxRuns,
       trigger_mode: form.value.triggerMode,
       event_types: isEvent ? form.value.eventTypes : '',
-      event_repo: isEvent ? form.value.eventRepo : '',
     }
 
     try {

@@ -57,9 +57,9 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			// TriggerMode is "cron" (default) or "event".
 			TriggerMode string `json:"trigger_mode"`
 			// EventTypes is the comma-separated event subscription (event mode).
+			// An event task always watches its project's bound repository, so
+			// there is no repository parameter.
 			EventTypes string `json:"event_types"`
-			// EventRepo scopes an event task to one repository (platform|host|owner/repo).
-			EventRepo string `json:"event_repo"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -100,7 +100,6 @@ func ServeTasks(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 			SessionID:   req.SessionID,
 			TriggerMode: req.TriggerMode,
 			EventTypes:  req.EventTypes,
-			EventRepo:   req.EventRepo,
 		}
 
 		if err := service.GlobalScheduler.AddTask(task); err != nil {
@@ -230,10 +229,10 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			MaxRuns     *int   `json:"max_runs"` // pointer to distinguish "not provided" (nil) from "set to 0" (ISS-043)
 			// TriggerMode is "cron" or "event"; empty means "leave unchanged".
 			TriggerMode string `json:"trigger_mode"`
-			// EventTypes / EventRepo configure an event-triggered task. EventRepo
-			// is a pointer so an explicit "" can clear the repo scope.
-			EventTypes string  `json:"event_types"`
-			EventRepo  *string `json:"event_repo"`
+			// EventTypes configures an event-triggered task. The watched
+			// repository is always the project's binding, so it is not a
+			// per-task parameter.
+			EventTypes string `json:"event_types"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -376,11 +375,6 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		if req.EventTypes != "" {
 			task.EventTypes = req.EventTypes
-		}
-		// EventRepo: a pointer distinguishes "absent" (leave unchanged) from an
-		// explicit empty string (clear the scope back to "any repo").
-		if req.EventRepo != nil {
-			task.EventRepo = *req.EventRepo
 		}
 		// Only update MaxRuns if explicitly provided in the request (ISS-043).
 		// Go's JSON decoder leaves pointer fields nil when the key is absent,

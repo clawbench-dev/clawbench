@@ -220,14 +220,17 @@ func (t *ForgeTaskTrigger) identityFor(repo ForgeRepoRef) string {
 }
 
 // matchingTasks returns the active event tasks that subscribe to this event and
-// whose repo scope covers it.
+// whose project is bound to its repository.
+//
+// An event task always watches the repository its project is bound to. There is
+// no per-task repo scope: the binding is the single source of truth, so a task
+// cannot be pointed at a repository the project does not own.
 func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, item forge.Item, change forge.Change) []model.ScheduledTask {
 	tasks, err := t.listTasks()
 	if err != nil {
 		slog.Warn("forge task trigger: list tasks failed", slog.String("err", err.Error()))
 		return nil
 	}
-	repoSlug := repo.Key()
 	var out []model.ScheduledTask
 	for i := range tasks {
 		task := &tasks[i]
@@ -237,13 +240,7 @@ func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, item forge.Item, cha
 		if !eventTypeSubscribed(task, item.Type, change.Type) {
 			continue
 		}
-		// EventRepo, when set, scopes the task to one repository. Empty means
-		// "any repository bound to the task's project".
-		if task.EventRepo != "" {
-			if task.EventRepo != repoSlug {
-				continue
-			}
-		} else if !t.projectBindsRepo(task.ProjectPath, repo) {
+		if !t.projectBindsRepo(task.ProjectPath, repo) {
 			continue
 		}
 		out = append(out, *task)

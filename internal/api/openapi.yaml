@@ -2633,8 +2633,9 @@ paths:
 
         - `repeat_mode` 与 `max_runs` 被忽略：按事件触发时不参与 cron 完成语义，
           每次匹配到事件都会执行，也不会因次数耗尽而停止。停止需 `pause` 或删除。
-        - 任务只在**其项目已绑定仓库**（见 `GET /api/forge/binding`）时才会触发；
-          未绑定则事件不匹配，任务静默不执行。
+        - 任务**始终监听其项目绑定的仓库**（见 `GET /api/forge/binding`），
+          没有按任务指定仓库的参数。项目未绑定仓库时事件不匹配，任务静默不执行
+          （创建时前端会给出警告，但仍允许保存）。
         - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
           以防 AI 的写入自我触发形成循环。因此按事件触发时不会被自己创建的内容触发。
         - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
@@ -2676,9 +2677,6 @@ paths:
                 event_types:
                   type: string
                   description: 逗号分隔的事件订阅，`trigger_mode=event` 时必填。
-                event_repo:
-                  type: string
-                  description: 将 `trigger_mode=event` 的任务限定到单个仓库（`platform|host|owner/repo`）。空表示不限仓库。
       responses:
         "200":
           description: 新任务

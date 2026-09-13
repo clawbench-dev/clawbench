@@ -85,7 +85,6 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	session_id TEXT DEFAULT '',
 	trigger_mode TEXT NOT NULL DEFAULT 'cron',
 	event_types TEXT NOT NULL DEFAULT '',
-	event_repo TEXT NOT NULL DEFAULT '',
 	status TEXT DEFAULT 'active',
 	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 	max_runs INTEGER DEFAULT 0,

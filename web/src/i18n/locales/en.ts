@@ -935,7 +935,6 @@ export default {
     confirmDelete: 'Delete this task?',
     nextRun: 'Next run: {time}',
     nextRunNone: 'Next run: none',
-    eventTriggered: 'Event-triggered',
     pause: 'Disable',
     resume: 'Enable',
     run: 'Run',
@@ -1003,9 +1002,12 @@ export default {
       eventReopened: 'Reopened',
       eventCommented: 'Commented',
       eventPipeline: 'Pipeline finished',
-      eventRepo: 'Repository scope',
-      eventRepoAny: "This project's bound repository",
-      eventRepoHint: 'Leave empty to watch events from this project’s bound repository',
+      eventRepo: 'Watched repository',
+      eventRepoHint: "Event tasks always watch this project's bound repository",
+      // Shown in the task form when the project has no repository binding.
+      // Saving is allowed, but the task can never fire, so say so plainly.
+      eventRepoUnbound: 'No repository bound',
+      eventRepoUnboundWarn: 'This project has no repository bound, so the event task will never fire. Bind one in the Forge panel first.',
       eventContext: 'Event context (auto-injected, read-only)',
       eventContextHint: 'These variables are replaced with real values at trigger time and injected before your prompt.',
       eventContextHeader: 'Forge event',

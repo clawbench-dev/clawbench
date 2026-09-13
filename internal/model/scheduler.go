@@ -18,10 +18,11 @@ type ScheduledTask struct {
 	TriggerMode string `json:"triggerMode,omitempty"`
 	// EventTypes lists the forge event types that trigger an event task
 	// (comma-separated: opened,closed,merged,reopened,commented,pipeline_done).
-	EventTypes string `json:"eventTypes,omitempty"`
-	// EventRepo scopes an event task to a repository (platform|host|owner/repo).
-	// Empty means "any bound repository in the task's project".
-	EventRepo         string                 `json:"eventRepo,omitempty"`
+	//
+	// An event task always watches its own project's bound repository, so there
+	// is deliberately no repository field: the binding is the single source of
+	// truth and cannot drift from the task configuration.
+	EventTypes        string                 `json:"eventTypes,omitempty"`
 	SessionID         string                 `json:"sessionId,omitempty"`
 	Status            string                 `json:"status"`     // active / paused / completed
 	RepeatMode        string                 `json:"repeatMode"` // once / limited / unlimited

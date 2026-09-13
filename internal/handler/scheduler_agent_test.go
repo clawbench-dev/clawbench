@@ -119,7 +119,6 @@ func TestServeTasks_PostEventTask(t *testing.T) {
 		"prompt":       "Review it",
 		"trigger_mode": "event",
 		"event_types":  "opened,commented",
-		"event_repo":   "github|github.com|acme/widgets",
 		// Deliberately no cron_expr.
 	})
 	req = withProjectCookie(req, env.ProjectDir)
@@ -132,7 +131,9 @@ func TestServeTasks_PostEventTask(t *testing.T) {
 	require.NotNil(t, task)
 	assert.Equal(t, "event", task["triggerMode"])
 	assert.Equal(t, "opened,commented", task["eventTypes"])
-	assert.Equal(t, "github|github.com|acme/widgets", task["eventRepo"])
+	// An event task has no repository field: it always watches the project's
+	// binding, so a client-supplied scope must not be echoed back.
+	assert.NotContains(t, task, "eventRepo")
 }
 
 // TestServeTasks_PostEventTaskNeedsEventTypes guards the validation: an event

@@ -134,7 +134,6 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			session_id TEXT,
 			trigger_mode TEXT NOT NULL DEFAULT 'cron',
 			event_types TEXT NOT NULL DEFAULT '',
-			event_repo TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'active',
 			repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 			max_runs INTEGER DEFAULT 0,

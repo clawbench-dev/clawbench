@@ -48,7 +48,6 @@ const eventTask = {
   status: 'active',
   triggerMode: 'event',
   eventTypes: 'pr.opened',
-  eventRepo: '',
   runCount: 0,
   unreadCount: 0,
   prompt: 'Review the PR.',

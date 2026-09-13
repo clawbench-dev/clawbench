@@ -78,13 +78,22 @@
             <div v-if="errors.eventTypes" class="form-error">{{ errors.eventTypes }}</div>
           </div>
 
+          <!-- The watched repository is not configurable: an event task always
+               watches the project's bound repository. Show the resolved binding
+               so the user can confirm what it will watch. -->
           <div class="form-group">
             <label class="form-label">{{ t('task.form.eventRepo') }}</label>
-            <select class="form-select" v-model="form.eventRepo">
-              <option value="">{{ t('task.form.eventRepoAny') }}</option>
-              <option v-for="repo in boundRepos" :key="repo.value" :value="repo.value">{{ repo.label }}</option>
-            </select>
-            <div class="form-hint">{{ t('task.form.eventRepoHint') }}</div>
+            <div class="event-repo-readonly" :class="{ unbound: !boundRepoLabel }">
+              <GitBranch :size="14" />
+              <span>{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
+            </div>
+            <div v-if="boundRepoLabel" class="form-hint">{{ t('task.form.eventRepoHint') }}</div>
+            <!-- Unbound is a soft warning, not a validation error: the task can
+                 still be saved, but it can never fire. -->
+            <div v-else class="form-warning">
+              <AlertTriangle :size="13" />
+              <span>{{ t('task.form.eventRepoUnboundWarn') }}</span>
+            </div>
           </div>
 
           <!-- Read-only event context block: shows exactly what will be injected.
@@ -271,7 +280,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Save } from 'lucide-vue-next'
+import { AlertTriangle, ChevronDown, GitBranch, Save } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
@@ -359,23 +368,18 @@ const selectedEventTypes = computed({
   },
 })
 
-// The project has at most one binding (1:1), so the repo scope is a two-way
-// choice: any bound repo of the project, or an explicit one. We offer the
-// project's binding when it exists.
-const boundRepos = ref([])
+// The watched repository is the project's binding, so there is nothing to
+// choose — the form only displays it. An empty label means the project has no
+// binding, which is what drives the warning below.
+const boundRepoLabel = ref('')
 
-async function loadBoundRepos() {
+async function loadBoundRepo() {
   try {
     const res = await fetchForgeBinding()
     const b = res.binding
-    if (b) {
-      const key = `${b.platform}|${b.host}|${b.owner}/${b.repo}`
-      boundRepos.value = [{ value: key, label: `${b.owner}/${b.repo}` }]
-    } else {
-      boundRepos.value = []
-    }
+    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
   } catch {
-    boundRepos.value = []
+    boundRepoLabel.value = ''
   }
 }
 
@@ -530,7 +534,7 @@ onMounted(() => {
   }
   // Only needed when the user switches to event mode, but loading it eagerly
   // avoids a visible delay on that switch.
-  void loadBoundRepos()
+  void loadBoundRepo()
 })
 </script>
 
@@ -799,6 +803,37 @@ onMounted(() => {
 
 .form-hint.warning {
   color: #ca8a04;
+}
+
+/* Read-only display of the project's bound repository. */
+.event-repo-readonly {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-secondary, #f8f9fa);
+  color: var(--text-primary, #1a1a1a);
+  font-size: var(--font-size-sm);
+}
+.event-repo-readonly.unbound {
+  color: var(--text-muted, #999);
+  font-style: italic;
+}
+
+/* Soft warning: saving is allowed, but the task can never fire. */
+.form-warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
+  color: var(--color-yellow, #a16207);
+  font-size: var(--font-size-xs);
 }
 
 .form-error {

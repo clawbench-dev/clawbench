@@ -23,8 +23,17 @@ vi.mock('lucide-vue-next', () => {
     Repeat: stub('Repeat'),
     CheckCheck: stub('CheckCheck'),
     Zap: stub('Zap'),
+    GitBranch: stub('GitBranch'),
   }
 })
+
+// The list resolves the project's forge binding once to label every event row.
+const { mockFetchForgeBinding } = vi.hoisted(() => ({
+  mockFetchForgeBinding: vi.fn(),
+}))
+vi.mock('@/utils/forgeApi', () => ({
+  fetchForgeBinding: mockFetchForgeBinding,
+}))
 
 vi.mock('@/composables/useTaskTab', () => ({
   useTaskTab: () => ({ loadTasks: vi.fn(), markAllTasksRead: vi.fn() }),
@@ -93,6 +102,10 @@ describe('TaskListPage — trigger-type distinction', () => {
   beforeEach(() => {
     mockStore.state.tasks = []
     mockStore.state.taskUnreadCount = 0
+    mockFetchForgeBinding.mockReset()
+    mockFetchForgeBinding.mockResolvedValue({
+      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
+    })
   })
 
   it('badges a cron task and an event task differently', () => {
@@ -124,8 +137,30 @@ describe('TaskListPage — trigger-type distinction', () => {
     const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
 
     const summary = wrapper.find('.task-item-next')
-    expect(summary.findComponent({ name: 'Zap' }).exists()).toBe(true)
+    expect(summary.findComponent({ name: 'GitBranch' }).exists()).toBe(true)
     expect(summary.findComponent({ name: 'Clock' }).exists()).toBe(false)
+  })
+
+  // Every event task watches its project's binding, so the row names that
+  // repository instead of repeating the trigger type already shown by the badge.
+  it('shows the project-bound repository on an event task', async () => {
+    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('.task-item-repo').text()).toBe('acme/widgets')
+    })
+  })
+
+  // An unbound project can still host an event task (creation is allowed with a
+  // warning), but it will never fire. The row must say so rather than showing a
+  // stale or fabricated repository.
+  it('shows the unbound label when the project has no binding', async () => {
+    mockFetchForgeBinding.mockResolvedValue({ binding: null })
+    const wrapper = mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('.task-item-repo').text()).toBe('task.form.eventRepoUnbound')
+    })
   })
 
   it('shows the next-run time, with a clock, on a cron task', () => {

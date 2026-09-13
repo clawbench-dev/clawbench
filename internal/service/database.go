@@ -657,12 +657,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Schema migrations: add columns that may not exist in older databases.
 	// NOTE: Migration reads use db (write pool) directly, NOT dbRead, because
 	// dbRead is not initialized until after all migrations complete.
-	// Forge event-triggered tasks: trigger_mode selects cron vs event, and the
-	// event columns scope which forge events fire the task.
+	// Forge event-triggered tasks: trigger_mode selects cron vs event, and
+	// event_types scopes which forge events fire the task. The watched
+	// repository is always the task project's binding, so no repo column exists.
 	for _, col := range []struct{ name, ddl string }{
 		{"trigger_mode", "ALTER TABLE scheduled_tasks ADD COLUMN trigger_mode TEXT NOT NULL DEFAULT 'cron'"},
 		{"event_types", "ALTER TABLE scheduled_tasks ADD COLUMN event_types TEXT NOT NULL DEFAULT ''"},
-		{"event_repo", "ALTER TABLE scheduled_tasks ADD COLUMN event_repo TEXT NOT NULL DEFAULT ''"},
 	} {
 		var exists int
 		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)

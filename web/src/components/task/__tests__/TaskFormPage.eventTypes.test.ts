@@ -11,7 +11,7 @@ import TaskFormPage from '../TaskFormPage.vue'
 // task) before mounting.
 const formRef = ref({
   name: 't', prompt: 'p', agentId: '', cronExpr: '',
-  triggerMode: 'event', eventTypes: '', eventRepo: '',
+  triggerMode: 'event', eventTypes: '',
   repeatMode: 'unlimited', maxRuns: 0,
 })
 
@@ -26,9 +26,14 @@ vi.mock('@/composables/useTaskForm', () => ({
   }),
 }))
 
+// The form resolves the project's forge binding to display the watched
+// repository. Defaults to unbound; individual tests override it.
+const { mockFetchForgeBinding } = vi.hoisted(() => ({
+  mockFetchForgeBinding: vi.fn(),
+}))
 vi.mock('@/utils/forgeApi', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('@/utils/forgeApi')
-  return { ...actual, fetchForgeBinding: vi.fn(async () => ({ binding: null })) }
+  return { ...actual, fetchForgeBinding: mockFetchForgeBinding }
 })
 
 const i18n = createI18n({
@@ -45,7 +50,9 @@ const i18n = createI18n({
           eventKindIssue: 'Issues', eventKindPr: 'Pull requests',
           eventOpened: 'Opened', eventClosed: 'Closed', eventMerged: 'Merged',
           eventReopened: 'Reopened', eventCommented: 'Commented', eventPipeline: 'Pipeline finished',
-          eventRepo: 'Repo', eventRepoAny: 'Any', eventRepoHint: '',
+          eventRepo: 'Repo', eventRepoHint: 'Watched repo',
+          eventRepoUnbound: 'No repository bound',
+          eventRepoUnboundWarn: 'Bind a repository or this task will never fire',
           eventContextHeader: 'Context', varEventType: 'event', varRepo: 'repo',
           varItem: 'item', varTitle: 'title', varUrl: 'url', varAuthor: 'author',
           varState: 'state', varCommentBody: 'comment', varPipelineStatus: 'ps', varPipelineUrl: 'pu',
@@ -64,7 +71,11 @@ function mountForm() {
 }
 
 describe('TaskFormPage event type grouping', () => {
-  beforeEach(() => { formRef.value.eventTypes = '' })
+  beforeEach(() => {
+    formRef.value.eventTypes = ''
+    mockFetchForgeBinding.mockReset()
+    mockFetchForgeBinding.mockResolvedValue({ binding: null })
+  })
 
   it('groups events under Issues and Pull requests', () => {
     const wrapper = mountForm()
@@ -161,5 +172,42 @@ describe('TaskFormPage event type grouping', () => {
     const commented = boxes.find(i => (i.element as HTMLInputElement).value === 'issue.commented')!
     await commented.setValue(true)
     expect(formRef.value.eventTypes).toContain('some_future_event')
+  })
+})
+
+// The watched repository is not configurable — an event task always watches the
+// project's binding. The form therefore shows it rather than offering a choice.
+describe('TaskFormPage watched repository', () => {
+  beforeEach(() => {
+    formRef.value.eventTypes = ''
+    mockFetchForgeBinding.mockReset()
+  })
+
+  it('shows the project-bound repository as read-only text, with no selector', async () => {
+    mockFetchForgeBinding.mockResolvedValue({
+      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
+    })
+    const wrapper = mountForm()
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('.event-repo-readonly').text()).toContain('acme/widgets')
+    })
+    // There is nothing to pick: no dropdown for the repo scope.
+    expect(wrapper.find('.event-repo-readonly select').exists()).toBe(false)
+    expect(wrapper.find('.form-warning').exists()).toBe(false)
+  })
+
+  it('warns when the project has no binding, without blocking the save', async () => {
+    mockFetchForgeBinding.mockResolvedValue({ binding: null })
+    const wrapper = mountForm()
+
+    await vi.waitFor(() => {
+      expect(wrapper.find('.event-repo-readonly').text()).toContain('No repository bound')
+    })
+    // Soft warning only: the save button stays enabled so the task can still be
+    // created (the user may bind a repository afterwards).
+    expect(wrapper.find('.form-warning').text()).toContain('never fire')
+    const save = wrapper.find('button.primary-btn, button[type=submit]')
+    if (save.exists()) expect(save.attributes('disabled')).toBeUndefined()
   })
 })

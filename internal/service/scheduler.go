@@ -1170,7 +1170,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 
 	if projectPath == "" {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
-			s.trigger_mode, s.event_types, s.event_repo,
+			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -1179,7 +1179,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			FROM scheduled_tasks s ORDER BY s.created_at DESC`
 	} else {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
-			s.trigger_mode, s.event_types, s.event_repo,
+			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
@@ -1198,7 +1198,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	for rows.Next() {
 		var t model.ScheduledTask
 		var lastRun, nextRun, lastRead sql.NullTime
-		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.EventRepo, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {
@@ -1221,7 +1221,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var lastRun, nextRun, lastRead sql.NullTime
 	err := dbRead.QueryRow(
 		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
-		s.trigger_mode, s.event_types, s.event_repo,
+		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
@@ -1229,7 +1229,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 		 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
 		FROM scheduled_tasks s WHERE s.id = ?`,
 		id,
-	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.EventRepo, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
+	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1248,9 +1248,9 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
 	result, err := WriteExec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, trigger_mode, event_types, event_repo, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.EventRepo, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1266,8 +1266,8 @@ func insertTask(task *model.ScheduledTask) error {
 // updateTask updates an existing task in the database.
 func updateTask(task *model.ScheduledTask) error {
 	_, err := WriteExec(
-		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, session_id=?, trigger_mode=?, event_types=?, event_repo=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.EventRepo, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
+		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
 	)
 	return err
 }

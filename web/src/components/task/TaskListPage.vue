@@ -61,12 +61,19 @@
             <!-- Trigger summary line. The icon sits inside each branch because
                  the two modes mean different things: a cron task is defined by
                  *when* it runs (a clock), an event task by *what* it watches.
-                 An unconditional Clock told an event task's user it has a
-                 schedule, which it never does — the backend leaves nextRunAt
-                 null for event tasks (scheduler.go's event-task branch). -->
+
+                 The event branch names the project's bound repository: every
+                 event task in a project watches that one binding, so the row
+                 states what will actually fire the task rather than repeating
+                 "event-triggered", which the badge above already says.
+
+                 The icon stays inside each branch because an unconditional
+                 Clock told an event task's user it has a schedule, which it
+                 never does — the backend leaves nextRunAt null for event tasks
+                 (scheduler.go's event-task branch). -->
             <div v-if="task.triggerMode === 'event'" class="task-item-next">
-              <Zap class="meta-icon" :size="12" />
-              <span>{{ t('task.eventTriggered') }}</span>
+              <GitBranch class="meta-icon" :size="12" />
+              <span class="task-item-repo" :title="boundRepoLabel">{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
             </div>
             <div v-else class="task-item-next">
               <Clock class="meta-icon" :size="12" />
@@ -84,13 +91,14 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap } from 'lucide-vue-next'
+import { Plus, CalendarX, Clock, Repeat, CheckCheck, Zap, GitBranch } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
 import { useAgents } from '@/composables/useAgents'
 import { humanizeCron, repeatLabel, statusLabel, formatDateTimeWithYear } from '@/utils/format'
 import { eventTypesSummary } from '@/utils/forgeEventLabels'
+import { fetchForgeBinding } from '@/utils/forgeApi'
 import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -124,6 +132,21 @@ function eventTriggerLabel(task: TaskItem): string {
   return eventTypesSummary(task.eventTypes) || t('task.form.triggerEvent')
 }
 
+// Every event task watches its project's bound repository, so one binding
+// lookup covers the whole list — the repository is a property of the project,
+// not of each row.
+const boundRepoLabel = ref('')
+
+async function loadBoundRepo() {
+  try {
+    const res = await fetchForgeBinding()
+    const b = res.binding
+    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
+  } catch {
+    boundRepoLabel.value = ''
+  }
+}
+
 const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
@@ -140,7 +163,7 @@ async function refresh() {
     // Minimum spin duration so the refresh animation is always visible,
     // even when the API responds almost instantly.
     await Promise.all([
-      Promise.all([loadTasks(), loadAgents()]),
+      Promise.all([loadTasks(), loadAgents(), loadBoundRepo()]),
       new Promise(resolve => setTimeout(resolve, 600)),
     ])
   } finally {
