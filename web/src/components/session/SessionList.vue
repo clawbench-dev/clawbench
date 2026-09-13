@@ -704,11 +704,21 @@ onUnmounted(() => {
 }
 
 .session-row.session-row-active {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border-radius: 0;
 }
 
+/* Selected-row tint. Declared on the row (not on .session-item) so it fills the
+   34px archive-button cell as well — when it lived on .session-item the archive
+   cell kept showing the row's own background (green for a running session) and
+   the selection looked cut short. Painted as a background-image rather than a
+   background-color so a running row's green fill still shows through beneath
+   the translucent tint instead of being replaced. */
 .session-row.active {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent),
+    color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent)
+  );
   border-left: 4px solid var(--accent-color, #0066cc);
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
@@ -717,7 +727,7 @@ onUnmounted(() => {
 }
 
 .session-row.running {
-  background: rgba(34, 197, 94, 0.05);
+  background-color: rgba(34, 197, 94, 0.05);
   overflow: hidden;
 }
 
@@ -758,16 +768,18 @@ onUnmounted(() => {
   animation: scan-bg 2s ease-in-out infinite;
 }
 
+/* Running + selected: keep the green fill in the background-color slot so the
+   active tint (background-image) stays layered on top. */
 .session-row.active.running {
-  background: rgba(34, 197, 94, 0.05);
+  background-color: rgba(34, 197, 94, 0.05);
 }
 
 @media (hover: hover) {
   .session-row:hover {
-    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
   }
   .session-row.active.running:hover {
-    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    background-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
   }
 }
 
@@ -919,10 +931,6 @@ onUnmounted(() => {
    variant keeps its own accent border-top and therefore outranks this. */
 .session-row.pinned:not(.active) {
   border-top-color: color-mix(in srgb, #f59e0b 15%, var(--border-color, #dee2e6));
-}
-
-.session-row.pinned.active .session-item {
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
 }
 
 /* Section groups */
