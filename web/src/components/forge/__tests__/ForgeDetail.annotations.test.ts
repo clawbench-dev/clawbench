@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
@@ -284,5 +286,39 @@ describe('ForgeDetail quote action (header)', () => {
     // key off; setting it would add "add to chat" buttons to every code block.
     const wrapper = mountDetail()
     expect(wrapper.find('.forge-detail-body').attributes('data-file-path')).toBeUndefined()
+  })
+})
+
+// jsdom has no CSS engine and does not apply the UA stylesheet, so a bare
+// <button>'s default border cannot be observed by mounting. Sniff the source
+// instead — the same pattern the repo's other CSS guard tests use.
+describe('ForgeDetail icon button styling', () => {
+  function readComponent(): string {
+    for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+      try {
+        return readFileSync(join(base, 'src/components/forge/ForgeDetail.vue'), 'utf8')
+      } catch {
+        // try the next candidate
+      }
+    }
+    throw new Error('ForgeDetail.vue not found from cwd: ' + process.cwd())
+  }
+
+  it('clears the UA border on .forge-icon-btn', () => {
+    // The class is used by BOTH <a> and <button>. A bare <button> keeps the
+    // UA's default border, which renders as a stray ring around the round icon
+    // — visible only after a <button> started using this class.
+    const src = readComponent()
+    const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)
+    expect(rule, '.forge-icon-btn rule must exist').toBeTruthy()
+    expect(rule![1]).toMatch(/^\s*border:\s*none\s*;?\s*$/m)
+  })
+
+  it('keeps the round shape the border would otherwise distort', () => {
+    const src = readComponent()
+    const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)![1]
+    expect(rule).toContain('border-radius: 14px')
+    expect(rule).toContain('width: 28px')
+    expect(rule).toContain('height: 28px')
   })
 })

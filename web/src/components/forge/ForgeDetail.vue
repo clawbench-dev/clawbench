@@ -311,17 +311,24 @@ function formatTime(iso: string): string {
 }
 .forge-back:active { background: var(--bg-tertiary); }
 .forge-detail-actions { display: flex; align-items: center; gap: 4px; }
-/* Round icon button matching .header-btn used across the app. */
+/* Round icon button, styled after the per-component .header-btn used across the
+   app (there is no shared global class — each panel defines its own).
+   `border: none` is required: this class is used by BOTH <a> and <button>, and
+   a bare <button> keeps the UA's default border, which shows up as a stray ring
+   around the round icon. (<a> has no default border, which is why the gap only
+   appeared once a <button> used this class.) */
 .forge-icon-btn {
   width: 28px;
   height: 28px;
   border-radius: 14px;
+  border: none;
   background: var(--bg-secondary);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  cursor: pointer;
   text-decoration: none;
   transition: background 0.2s ease, color 0.2s ease;
 }
