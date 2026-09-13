@@ -239,19 +239,34 @@ describe('parseAtQuery', () => {
 
 describe('parseSlashQuery', () => {
   it('parses a bare slash command', () => {
-    expect(parseSlashQuery('/cb')).toEqual({ start: 0, end: 3, query: 'cb' })
+    expect(parseSlashQuery('/cb', 3)).toEqual({ start: 0, end: 3, query: 'cb' })
   })
 
   it('parses an empty query right after the slash', () => {
-    expect(parseSlashQuery('/')).toEqual({ start: 0, end: 1, query: '' })
+    expect(parseSlashQuery('/', 1)).toEqual({ start: 0, end: 1, query: '' })
   })
 
-  it('returns null once a space appears', () => {
-    expect(parseSlashQuery('/cb ')).toBeNull()
+  it('returns null once a space appears inside the query', () => {
+    expect(parseSlashQuery('/cb ', 4)).toBeNull()
   })
 
-  it('returns null when the input does not start with a slash', () => {
-    expect(parseSlashQuery('hi /cb')).toBeNull()
+  it('returns null when the slash is not the first token', () => {
+    expect(parseSlashQuery('hi /cb', 6)).toBeNull()
+  })
+
+  it('allows the slash at the start even when text follows the caret', () => {
+    // Insert a slash at the head of pre-existing text: the menu must open and
+    // the query runs from the slash to the caret only.
+    expect(parseSlashQuery('/hello', 1)).toEqual({ start: 0, end: 1, query: '' })
+    expect(parseSlashQuery('/hello', 3)).toEqual({ start: 0, end: 3, query: 'he' })
+  })
+
+  it('ignores leading whitespace before the slash', () => {
+    expect(parseSlashQuery('  /cb', 5)).toEqual({ start: 2, end: 5, query: 'cb' })
+  })
+
+  it('returns null when the caret sits before the slash', () => {
+    expect(parseSlashQuery('/cb', 0)).toBeNull()
   })
 })
 

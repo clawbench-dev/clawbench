@@ -31,6 +31,13 @@ export interface UseCompletionMenuOptions {
   getText?: () => string
   /** Apply the trigger-stripped text back to the input (and restore the caret). */
   applyText?: (value: string, caret: number) => void
+  /**
+   * Text substituted for the trigger range on select. Defaults to '' — i.e. the
+   * trigger is removed (the @ file menu, whose selection is handled entirely by
+   * `onSelect`). The slash menu returns "/command " so the typed token is
+   * replaced in place, preserving any surrounding text.
+   */
+  buildReplacement?: (item: CompletionItem) => string
 }
 
 export interface UseCompletionMenu {
@@ -133,7 +140,11 @@ export function useCompletionMenu(options: UseCompletionMenuOptions): UseComplet
       const text = options.getText()
       const before = text.slice(0, trigger.start)
       const after = text.slice(trigger.end)
-      options.applyText(before + after, before.length)
+      // Replace the trigger range with the menu's replacement text ('' = plain
+      // removal). Everything outside the range is preserved, so a trigger typed
+      // into pre-existing text leaves the rest of the message intact.
+      const replacement = options.buildReplacement ? options.buildReplacement(item) : ''
+      options.applyText(before + replacement + after, before.length + replacement.length)
     }
 
     if (options.closeOnSelect) {

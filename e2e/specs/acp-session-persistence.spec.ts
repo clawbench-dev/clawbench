@@ -103,7 +103,7 @@ test.describe.serial('ACP Session State Persistence', () => {
     await chat.textarea.fill('/')
 
     // Slash command menu should appear with ACP commands (loaded from acpStates)
-    const slashItems = page.locator('.at-menu-label.agent-label')
+    const slashItems = page.locator('.completion-item--agent .completion-label')
     await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
 
     const count = await slashItems.count()

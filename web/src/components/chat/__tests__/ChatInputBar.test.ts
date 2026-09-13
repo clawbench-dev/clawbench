@@ -40,6 +40,7 @@ const i18n = createI18n({
         input: {
           placeholder: 'Type a message...',
           placeholderCommand: 'Command',
+          placeholderFileRef: 'File ref',
           placeholderQuickSend: 'Quick send',
           placeholderSwipeHistory: 'Swipe history',
           placeholderQueue: 'Queue',
@@ -1512,8 +1513,53 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showCommandMenu).toBe(false)
   })
 
+  it('opens the command menu when a slash is typed at the head of existing text', async () => {
+    // Mirrors the @ interaction: with text already present, moving the caret to
+    // the start and typing "/" must still offer commands, and the query runs
+    // from the slash to the caret.
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.inputText = '/hello world'
+    await wrapper.vm.$nextTick()
+
+    // Caret right after the slash (the user inserted it at position 0).
+    await wrapper.find('.chat-textarea').trigger('focus')
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    ta.setSelectionRange(1, 1)
+    document.dispatchEvent(new Event('selectionchange'))
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.showCommandMenu).toBe(true)
+    // Only "/hello" is the query — the trailing text stays out of the filter,
+    // so the built-in commands are still listed.
+    const labels = wrapper.findAll('.completion-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/cb-chatsearch'))).toBe(true)
+  })
+
+  it('selecting a command mid-text replaces only the typed token', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    wrapper.vm.inputText = '/hello world'
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.chat-textarea').trigger('focus')
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    ta.setSelectionRange(1, 1)
+    document.dispatchEvent(new Event('selectionchange'))
+    await wrapper.vm.$nextTick()
+
+    await wrapper.findAll('.completion-item')[0].trigger('mousedown')
+    await flushPromises()
+    await wrapper.vm.$nextTick()
+    // "/" → "/cb-chatsearch ", the trailing "hello world" preserved.
+    expect(wrapper.vm.inputText).toBe('/cb-chatsearch hello world')
+    expect(wrapper.vm.showCommandMenu).toBe(false)
+  })
+
   // ── @ file reference menu ──
-  it('@ opens the file menu listing current-dir files', async () => {
+  it('@ opens the file menu listing current-dir entries', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.currentDir = 'src'
     store.state.dirEntries = [
@@ -2365,6 +2411,13 @@ describe('ChatInputBar', () => {
       _setIsPCForTest(false)
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
+      wrapper.unmount()
+    })
+
+    it('always includes the @ file-reference hint in the rotating placeholder hints', async () => {
+      _setIsPCForTest(true)
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      expect(wrapper.vm.placeholderHints).toContain('File ref')
       wrapper.unmount()
     })
 

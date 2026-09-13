@@ -166,6 +166,31 @@ describe('useCompletionMenu', () => {
     expect(text.value).toBe('hello ')
   })
 
+  it('replaces the trigger range with buildReplacement, preserving surrounding text', async () => {
+    // A slash typed at the head of pre-existing text must substitute only the
+    // typed token, leaving the rest of the message intact.
+    const text = ref('/helworld')
+    const caret = ref(4)
+    const items = ref<CompletionItem[]>([{ key: '/help', label: '/help', description: '', source: 'agent' }])
+    const onSelect = vi.fn()
+    const menu = useCompletionMenu({
+      items,
+      getTrigger: () => ({ start: 0, end: caret.value, query: 'hel' }),
+      onSelect,
+      closeOnSelect: true,
+      getText: () => text.value,
+      buildReplacement: (i) => i.key + ' ',
+      applyText: (v) => { text.value = v },
+    })
+    menu.refresh()
+    await nextTick()
+
+    menu.handleKeydown(keyEvent('Enter'))
+    expect(onSelect).toHaveBeenCalled()
+    // "/hel" replaced by "/help ", the trailing "world" preserved.
+    expect(text.value).toBe('/help world')
+  })
+
   it('closes after select when closeOnSelect is true', async () => {
     const { menu } = setup({ closeOnSelect: true })
     menu.refresh()

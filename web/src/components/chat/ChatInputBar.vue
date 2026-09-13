@@ -512,6 +512,7 @@ const placeholderHints = computed(() => {
     hints.push(t('chat.input.placeholderQuickSend'))
   }
   hints.push(t('chat.input.placeholderCommand'))
+  hints.push(t('chat.input.placeholderFileRef'))
   return hints
 })
 
@@ -838,7 +839,9 @@ const slashCandidates = computed(() => {
 })
 
 const commandMenuItems = computed(() => {
-  const trigger = parseSlashQuery(inputText.value)
+  // Establish the reactive dependency on the caret position.
+  void caretVersion.value
+  const trigger = parseSlashQuery(inputText.value, currentCaret())
   const all = slashCandidates.value
   if (!trigger) return []
   if (!trigger.query) return all
@@ -854,12 +857,24 @@ const commandMenuItems = computed(() => {
 
 const commandMenu = useCompletionMenu({
   items: commandMenuItems,
-  getTrigger: () => parseSlashQuery(inputText.value),
+  getTrigger: () => parseSlashQuery(inputText.value, currentCaret()),
   getText: () => inputText.value,
   closeOnSelect: true,
-  onSelect: (cmd) => {
-    inputText.value = cmd.key + ' '
+  onSelect: () => {
     nextTick(() => textareaRef.value?.focus())
+  },
+  // Replace the typed "/query" token in place with "/command " so any text the
+  // user already typed around the slash survives (mirrors the @ menu's
+  // range-based edit; only the replacement differs).
+  buildReplacement: (item) => item.key + ' ',
+  applyText: (value, caret) => {
+    inputText.value = value
+    nextTick(() => {
+      const el = textareaRef.value
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+    })
   },
 })
 
@@ -1002,7 +1017,8 @@ watch(inputText, () => {
 })
 
 // Selection/caret moves (arrow keys inside the textarea, clicks) can enter or
-// leave an @ trigger without changing the text — re-evaluate on those events.
+// leave a trigger without changing the text — re-evaluate both menus on those
+// events (both are caret-aware now).
 // The counter is only bumped when the caret actually moved: applyText() calls
 // setSelectionRange(), which synchronously fires selectionchange again, and an
 // unconditional bump would loop forever.
@@ -1022,6 +1038,7 @@ function onTextareaSelectionChange() {
     caretVersion.value++
   }
   if (parseAtQuery(inputText.value, caret)) ensureFileSourcesLoaded()
+  commandMenu.refresh()
   fileMenu.refresh()
 }
 

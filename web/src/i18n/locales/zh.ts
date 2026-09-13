@@ -356,6 +356,7 @@ export default {
       placeholderOptional: '添加描述（可选）...',
       placeholderQuickSend: '点击⚡快捷发送消息 →',
       placeholderCommand: "输入 {'/'} 执行命令",
+      placeholderFileRef: "输入 {'@'} 引用文件",
       placeholderSwipeHistory: '左右滑动切换历史输入',
       send: '发送',
       enqueue: '加入队列',

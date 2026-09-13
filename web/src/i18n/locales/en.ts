@@ -356,6 +356,7 @@ export default {
       placeholderOptional: 'Add description (optional)...',
       placeholderQuickSend: 'Tap ⚡ to quick send message →',
       placeholderCommand: "Type {'/'} for commands",
+      placeholderFileRef: "Type {'@'} to reference a file",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
       send: 'Send',
       enqueue: 'Enqueue',

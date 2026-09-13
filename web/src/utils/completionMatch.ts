@@ -234,6 +234,31 @@ export interface TriggerRange {
 }
 
 /**
+ * Shared trigger parser: locate `char` at/left of the caret, verify it sits on
+ * a valid boundary, then take the query from the char up to the caret. A query
+ * containing whitespace ends the trigger.
+ *
+ * `isValidBoundary` receives the text left of the caret plus the trigger index,
+ * so each trigger expresses its own anchoring rule (see the two wrappers).
+ * Only the text left of the caret is inspected, so text AFTER the caret never
+ * suppresses an active trigger.
+ */
+function parseTrigger(
+  text: string,
+  caret: number,
+  char: string,
+  isValidBoundary: (left: string, at: number) => boolean,
+): TriggerRange | null {
+  const left = text.slice(0, caret)
+  const at = left.lastIndexOf(char)
+  if (at === -1) return null
+  if (!isValidBoundary(left, at)) return null
+  const query = left.slice(at + 1)
+  if (/\s/.test(query)) return null
+  return { start: at, end: caret, query }
+}
+
+/**
  * Parse an `@` file-reference trigger from the text left of the caret.
  *
  * The `@` must sit at the start of a line or right after whitespace (so an
@@ -241,22 +266,27 @@ export interface TriggerRange {
  * must not contain whitespace. Returns null when there is no active trigger.
  */
 export function parseAtQuery(text: string, caret: number): TriggerRange | null {
-  const left = text.slice(0, caret)
-  const at = left.lastIndexOf('@')
-  if (at === -1) return null
-  if (at > 0 && !/\s/.test(left[at - 1])) return null
-  const query = left.slice(at + 1)
-  if (/\s/.test(query)) return null
-  return { start: at, end: caret, query }
+  return parseTrigger(text, caret, '@', (left, at) =>
+    at === 0 || /\s/.test(left[at - 1]))
 }
 
 /**
- * Parse a slash-command trigger. Preserved semantics: the input must start
- * with `/` and contain no space, in which case the whole text is the query.
+ * Parse a slash-command trigger from the text left of the caret.
+ *
+ * A slash command is only meaningful as the first token of the message — the
+ * backend routes `/xxx` purely by its leading slash — so, unlike `@` which may
+ * sit anywhere on a whitespace boundary, the slash must be the first
+ * non-whitespace character. Triggering mid-text would offer commands the
+ * server then treats as plain text (and would false-positive on paths such as
+ * `cd /test`).
+ *
+ * Everything else mirrors `@`: the query runs from the slash to the caret and
+ * must not contain whitespace, so text already present after the slash (or
+ * after the caret) no longer suppresses the menu.
  */
-export function parseSlashQuery(text: string): TriggerRange | null {
-  if (!text.startsWith('/') || text.includes(' ')) return null
-  return { start: 0, end: text.length, query: text.slice(1) }
+export function parseSlashQuery(text: string, caret: number): TriggerRange | null {
+  return parseTrigger(text, caret, '/', (left, at) =>
+    left.slice(0, at).trim() === '')
 }
 
 // ── Display helpers ────────────────────────────────────────
