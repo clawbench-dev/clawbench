@@ -194,7 +194,7 @@ function onEntryClick(entry: DirPreviewEntry) {
 }
 
 .dir-preview-btn:focus-visible {
-  outline: 2px solid var(--primary-color, #1a73e8);
+  outline: 2px solid var(--accent-color);
   outline-offset: -1px;
 }
 
@@ -211,7 +211,7 @@ function onEntryClick(entry: DirPreviewEntry) {
 }
 
 .dir-preview-error {
-  color: var(--danger-color, #e05252);
+  color: var(--color-red);
 }
 
 /* `auto-fill` + a min track width lets the browser derive the column count
@@ -238,7 +238,7 @@ function onEntryClick(entry: DirPreviewEntry) {
 }
 
 .dir-preview-item:hover {
-  background: var(--hover-bg, rgba(128, 128, 128, 0.12));
+  background: var(--bg-hover);
 }
 
 .dir-preview-icon {

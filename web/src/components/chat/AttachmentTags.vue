@@ -211,7 +211,7 @@ watch(() => props.files, (files) => {
 
 @media (hover: hover) {
   .attachment-close-btn:hover {
-    background: var(--danger-color, #dc3545);
+    background: var(--color-red);
   }
 }
 

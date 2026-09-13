@@ -154,7 +154,7 @@ watch(visible, (v) => {
 .up-docker-restart {
   display: block;
   margin-top: var(--space-2);
-  color: var(--text-warning, #d69e2e);
+  color: var(--color-orange);
 }
 
 .up-release-link:hover {

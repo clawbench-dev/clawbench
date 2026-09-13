@@ -1380,8 +1380,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .ht-dirty-force {
-    border-color: var(--danger-color, #dc3545);
-    color: var(--danger-color, #dc3545);
+    border-color: var(--color-red);
+    color: var(--color-red);
 }
 
 .ht-dirty-cancel {

@@ -1453,7 +1453,7 @@ onUnmounted(() => {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--text-tertiary, rgba(128, 128, 128, 0.4));
+  background: var(--text-hint);
   transition: all var(--duration-base) ease-out;
 }
 
@@ -1473,7 +1473,7 @@ onUnmounted(() => {
   width: 80px;
   height: 3px;
   border-radius: var(--radius-xs);
-  background: var(--text-tertiary, rgba(128, 128, 128, 0.3));
+  background: var(--text-hint);
   position: relative;
 }
 
@@ -1489,7 +1489,7 @@ onUnmounted(() => {
 /* Numeric label */
 .session-position-count {
   font-size: var(--font-size-2xs);
-  color: var(--text-tertiary, rgba(128, 128, 128, 0.6));
+  color: var(--text-hint);
   white-space: nowrap;
   min-width: 24px;
   text-align: center;
