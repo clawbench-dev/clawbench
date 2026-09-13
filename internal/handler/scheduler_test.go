@@ -837,3 +837,182 @@ func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 	returnedTask, _ := result["task"].(map[string]interface{})
 	assert.Equal(t, "active", returnedTask["status"], "editing a completed task should reactivate it")
 }
+
+// ========== ServeTaskByID — sub-path dispatch isolation ==========
+//
+// A request carrying a sub-resource suffix must never fall through to the
+// task-level CRUD switch. Before this was enforced, an unrecognized suffix
+// aliased onto the parent task — most dangerously, DELETE on
+// /api/tasks/{id}/executions deleted the entire task instead of being
+// rejected.
+
+// setupTaskForSubRoute creates a scheduler, a task owned by env.ProjectDir,
+// and returns the task ID. Callers that need executions add them afterwards.
+func setupTaskForSubRoute(t *testing.T, env *testEnv, name string) int64 {
+	t.Helper()
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        name,
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, service.GlobalScheduler.AddTask(task))
+	return task.ID
+}
+
+// requireTaskExists asserts the task row is still present in the DB.
+func requireTaskExists(t *testing.T, taskID int64, msg string) {
+	t.Helper()
+	task, err := service.GetTaskByID(taskID)
+	require.NoError(t, err, msg)
+	require.NotNil(t, task, msg)
+}
+
+func TestServeTaskByID_DeleteOnExecutions_RejectedNotDeletingTask(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "DeleteOnExecutions")
+
+	// Seed one execution so we can prove it survives too.
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Exec", "coder", "", "default", "scheduled")
+	require.NoError(t, err)
+	_, err = service.AddTaskExecution(taskID, sessionID, "auto")
+	require.NoError(t, err)
+	_ = service.UpdateExecutionStatus(sessionID, "completed")
+
+	// DELETE on the executions collection is not part of the API surface.
+	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d/executions", taskID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+
+	// The critical regression guard: the task must NOT have been deleted.
+	requireTaskExists(t, taskID, "DELETE on /executions must not delete the parent task")
+
+	var execCount int
+	_ = service.UnsafeDBForTest().
+		QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).
+		Scan(&execCount)
+	assert.Equal(t, 1, execCount, "DELETE on /executions must not touch execution rows either")
+}
+
+func TestServeTaskByID_PutOnExecutions_MethodNotAllowed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "PutOnExecutions")
+
+	// PUT with a task-update payload must not be applied to the parent task.
+	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d/executions", taskID), map[string]any{
+		"prompt": "hijacked",
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusMethodNotAllowed)
+
+	task, err := service.GetTaskByID(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "Test", task.Prompt, "PUT on /executions must not update the parent task")
+}
+
+func TestServeTaskByID_UnknownSubPath_NotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	// Every verb on an unknown sub-path must 404 rather than alias to the task.
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			taskID := setupTaskForSubRoute(t, env, "UnknownSubPath"+method)
+
+			req := newRequest(t, method, fmt.Sprintf("/api/tasks/%d/bogus", taskID), nil)
+			req = withProjectCookie(req, env.ProjectDir)
+			w := callHandler(ServeTaskByID, req)
+
+			assertStatus(t, w, http.StatusNotFound)
+			requireTaskExists(t, taskID, method+" on an unknown sub-path must not touch the task")
+		})
+	}
+}
+
+func TestServeTaskByID_ExecutionWithoutContinueSuffix_NotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "ExecNoContinue")
+
+	// `executions/{id}` alone is not a route — only `executions/{id}/continue` is.
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/5", taskID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestServeTaskByID_UnknownTrailingSegmentOnContinue_NotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "ExecBadTrailing")
+
+	// A trailing segment that is not `continue` must not silently degrade
+	// into a different sub-resource.
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions/5/resume", taskID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestServeTaskByID_DeleteOnUnknownSubPath_DoesNotDeleteTask(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	taskID := setupTaskForSubRoute(t, env, "DeleteUnknownSub")
+
+	req := newRequest(t, http.MethodDelete, fmt.Sprintf("/api/tasks/%d/executions/9", taskID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+	requireTaskExists(t, taskID, "DELETE on a sub-path must never delete the parent task")
+}

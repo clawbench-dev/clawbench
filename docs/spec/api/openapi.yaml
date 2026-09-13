@@ -2624,8 +2624,8 @@ paths:
         `read`、`trigger`、`cancel`、`deleteExecution`、`deleteAllExecutions`。
         删除执行记录走 `action: "deleteExecution"` + `executionId`（字符串）删除单条，
         或 `action: "deleteAllExecutions"` 清空该任务执行历史。
-        **注意**：对 `/api/tasks/{id}/executions` 直接发 DELETE 不会删除执行记录，
-        而是删除整个任务。
+        **注意**：子路径不会被父资源兜底。对 `/api/tasks/{id}/executions` 发 PUT
+        返回 405，未知子路径（如 `/api/tasks/{id}/bogus`）返回 404，均不会更新任务。
       operationId: taskUpdate
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -2648,7 +2648,10 @@ paths:
     delete:
       tags: [Tasks]
       summary: 删除任务
-      description: 删除整个任务（含其执行历史）。子路径 `/executions` 上的 DELETE 也会落到此分支。
+      description: |
+        删除整个任务（含其执行历史）。仅作用于 `/api/tasks/{id}` 本身；
+        子路径不会被兜底——对 `/api/tasks/{id}/executions` 发 DELETE 返回 405，
+        对未知子路径返回 404，都不会删除任务。
       operationId: taskDelete
       parameters:
         - $ref: "#/components/parameters/Id"
@@ -2660,6 +2663,10 @@ paths:
     get:
       tags: [Tasks]
       summary: 任务执行历史
+      description: |
+        该路径仅支持 GET。其他方法一律 405，不会落到父任务操作上。
+        删除执行记录请用 `PUT /api/tasks/{id}` 的 `action: "deleteExecution"` 或
+        `action: "deleteAllExecutions"`。
       operationId: taskExecutions
       parameters:
         - $ref: "#/components/parameters/Id"
