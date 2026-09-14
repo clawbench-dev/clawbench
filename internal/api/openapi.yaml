@@ -3077,9 +3077,11 @@ paths:
         返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
         响应字段：`current_version`、`latest_version`、`has_upgrade`、
         `install_writable`、`install_dir`、`is_docker`、`verification_warning`。
-        `verification_warning` 非空表示本次升级有校验无法完成，可能同时包含
-        多个原因（发布签名未验证、registry 未提供完整性哈希）。前端须在
-        **开始升级前**据此向用户展示并取得确认。
+        `verification_warning` 是给人看的展示文本，非空表示本次升级有校验无法
+        完成，可能同时包含多个原因（发布签名未验证、registry 未提供完整性哈希）。
+        `verification_issues` 是同一批问题的稳定标识（排序后的原因码），用于回传
+        比对——文本内嵌 registry 地址与错误细节，两次请求可能不同，故不可用于
+        比对。前端须在**开始升级前**据此向用户展示并取得确认。
         唯一会中止升级的校验是「下载内容与已知哈希不符」——那是文件损坏或
         下载错误，而非仅仅无法校验。
       operationId: upgradeCheck
@@ -3092,10 +3094,12 @@ paths:
       tags: [Upgrade]
       summary: 开始升级
       description: |
-        请求体可选，字段 `verification_warning`：客户端向用户展示并取得确认的
-        警告原文（无警告时省略或留空）。服务端会与本次 registry 查询得到的警告
-        比对，不一致则以 `unverified_not_confirmed` 拒绝，避免未经确认就安装
-        未校验的版本。
+        请求体可选，字段 `verification_issues`：客户端展示并取得确认的原因码
+        指纹（无问题时省略或留空），取自 `/api/upgrade/check` 的同名字段。服务端
+        与本次 registry 查询算出的指纹比对，不一致则以 `unverified_not_confirmed`
+        拒绝，避免未经确认就安装未校验的版本。
+        比对的是原因码而非展示文本：文本内嵌 registry 地址与错误细节，同一情形
+        在两次请求间可能渲染不同。
         请求体为空是合法的（表示本次升级无需确认）；请求体非法则返回 400。
       operationId: upgradeStart
       responses:
