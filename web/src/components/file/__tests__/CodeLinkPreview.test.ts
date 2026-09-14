@@ -2546,3 +2546,45 @@ describe('code-link-preview.css — docked row metrics are platform-independent'
     expect(code).not.toContain('.is-compact')
   })
 })
+
+describe('code-link-preview.css — compact floating header', () => {
+  // The floating card's title row was 37px because of 24px buttons plus 6px
+  // paddings (the text is only ~16px). These assertions pin the three
+  // declarations that hold it at 27px; measured in headless Chrome against the
+  // real stylesheet, all of short / long / very-long paths render 27px.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const decls = (selector: string): string => {
+    const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+    const m = code.match(re)
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('slims the header paddings and its own buttons', () => {
+    expect(decls('.code-preview-header')).toMatch(/padding:\s*var\(--space-1\)/)
+    // Scoped to the header — the meta row keeps its 24px controls.
+    const btn = decls('.code-preview-header .code-preview-btn')
+    expect(btn).toMatch(/height:\s*22px/)
+    expect(btn).toMatch(/min-width:\s*22px/)
+  })
+
+  it('keeps the path on one line so a long path cannot re-inflate the row', () => {
+    const path = decls('.code-preview-title-path')
+    expect(path).toMatch(/flex-wrap:\s*nowrap/)
+    // A max-height would be redundant and would hide the wrap regression.
+    expect(path).not.toMatch(/max-height/)
+  })
+
+  it('clamps the file name to one line', () => {
+    // A 2-line clamp measured 34.7px for a very long name, undoing the
+    // compaction. Ellipsis + nowrap keeps the row at 27px.
+    const name = decls('.code-preview-filename')
+    expect(name).toMatch(/white-space:\s*nowrap/)
+    expect(name).toMatch(/text-overflow:\s*ellipsis/)
+    expect(name).not.toMatch(/-webkit-line-clamp/)
+  })
+})
