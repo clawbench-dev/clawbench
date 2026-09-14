@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"github.com/stretchr/testify/assert"
@@ -93,4 +95,121 @@ func TestAppendClientLog_RenameFailureFallsThrough(t *testing.T) {
 	fi, err := os.Stat(rotated)
 	require.NoError(t, err)
 	assert.True(t, fi.IsDir())
+}
+
+// --- Hardening: field sanitization ---
+
+// Every field lands in the log line, so a newline in ANY of them forges a
+// record. Escaping only Msg (the previous behavior) left Tag/Level/Source free
+// to inject whole lines.
+func TestSanitizeLogField_EscapesLineBreaksInEveryField(t *testing.T) {
+	forged := "Legit\n2026-01-01T00:00:00.000 [js] I/Real: FORGED"
+
+	for _, field := range []string{"Msg", "Tag", "Level", "Source"} {
+		t.Run(field, func(t *testing.T) {
+			got := sanitizeLogField(forged, 4096)
+			assert.NotContains(t, got, "\n", "%s must not carry a raw newline", field)
+			assert.NotContains(t, got, "\r")
+			// Escaped rather than dropped, so the log still shows a break existed.
+			assert.Contains(t, got, "\\n")
+			assert.Contains(t, got, "FORGED")
+		})
+	}
+}
+
+func TestSanitizeLogField_EscapesNul(t *testing.T) {
+	// A NUL makes many tools treat the log as binary and truncate display.
+	got := sanitizeLogField("a\x00b", 100)
+	assert.NotContains(t, got, "\x00")
+	assert.Contains(t, got, "\\0")
+}
+
+func TestSanitizeLogField_Truncates(t *testing.T) {
+	got := sanitizeLogField(strings.Repeat("x", 100), 10)
+	assert.Contains(t, got, "[truncated]")
+	assert.Less(t, len(got), 100)
+}
+
+func TestSanitizeLogField_TruncatesOnRuneBoundary(t *testing.T) {
+	// Cutting mid-rune would emit invalid UTF-8; the result must stay valid.
+	got := sanitizeLogField(strings.Repeat("中", 20), 7)
+	assert.True(t, utf8.ValidString(got), "truncation must not split a rune")
+}
+
+// The end-to-end guarantee: a hostile entry cannot produce more than one line.
+func TestClientLogEntryLine_HostileFieldsProduceOneLine(t *testing.T) {
+	hostile := "x\n2026-01-01T00:00:00.000 [js] I/Fake: INJECTED"
+	e := ClientLogEntry{
+		Level:  sanitizeLogField(hostile, clientLogMaxLevelLen),
+		Tag:    sanitizeLogField(hostile, clientLogMaxTagLen),
+		Msg:    sanitizeLogField(hostile, clientLogMaxMsgLen),
+		Source: sanitizeLogField(hostile, clientLogMaxLevelLen),
+		Ts:     1700000000000,
+	}
+	line := clientLogEntryLine(e)
+	assert.Equal(t, 1, strings.Count(line, "\n"),
+		"exactly one terminator: the entry must not split into extra records")
+	assert.True(t, strings.HasSuffix(line, "\n"))
+}
+
+// --- Hardening: request body bound ---
+
+// A single request must not be able to append more than clientLogMaxBodyBytes,
+// regardless of how the entries are distributed.
+func TestClientLogBodyCap_BoundsOneRequest(t *testing.T) {
+	entries := make([]ClientLogEntry, 0, 200)
+	for range 200 {
+		entries = append(entries, ClientLogEntry{
+			Level: "I", Tag: "T", Msg: strings.Repeat("x", clientLogMaxMsgLen), Ts: 1700000000000,
+		})
+	}
+
+	var total int
+	for _, e := range entries {
+		e.Msg = sanitizeLogField(e.Msg, clientLogMaxMsgLen)
+		e.Tag = sanitizeLogField(e.Tag, clientLogMaxTagLen)
+		e.Level = sanitizeLogField(e.Level, clientLogMaxLevelLen)
+		e.Source = sanitizeLogField(e.Source, clientLogMaxLevelLen)
+		line := clientLogEntryLine(e)
+		if total+len(line) > clientLogMaxBodyBytes {
+			break
+		}
+		total += len(line)
+	}
+
+	assert.LessOrEqual(t, total, clientLogMaxBodyBytes)
+	assert.Greater(t, total, 0, "the cap must still admit some entries")
+}
+
+// The endpoint is an append-only write into a server file, so an anonymous
+// caller must not be able to reach it. Without this, anyone who can connect
+// could forge log lines or rotate the file to destroy the previous generation.
+func TestServeClientLog_RequiresAuth(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.SessionToken = hashPassword("testpass")
+	model.CookieToken = "instance-key"
+
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+	model.ConfigInstance.LogDir = t.TempDir()
+
+	body := map[string]any{"entries": []ClientLogEntry{
+		{Level: "I", Tag: "T", Msg: "anonymous write", Ts: 1700000000000},
+	}}
+
+	t.Run("no credential is rejected", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/client-log", body)
+		req.RemoteAddr = "203.0.113.9:12345" // remote, unauthenticated
+		w := callHandlerWithAuth(ServeClientLog, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("valid session cookie is accepted", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/client-log", body)
+		req.RemoteAddr = "203.0.113.9:12345"
+		withAuthCookie(req, "instance-key")
+		w := callHandlerWithAuth(ServeClientLog, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }

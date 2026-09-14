@@ -64,7 +64,6 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 		"/api/me",
 		"/api/share/",
 		"/share/",
-		"/api/client-log",
 		"/api/apk",
 		"/api/ssh/info",
 		"/api/frp/status",
@@ -87,7 +86,7 @@ func TestRegisteredRoutes_AuthFlagMatchesSpec(t *testing.T) {
 func isPublicPattern(p string) bool {
 	switch p {
 	case "/", "/login", "/api/health", "/api/me", "/api/share/", "/share/",
-		"/api/client-log", "/api/apk", "/api/ssh/info", "/api/frp/status":
+		"/api/apk", "/api/ssh/info", "/api/frp/status":
 		return true
 	}
 	return false

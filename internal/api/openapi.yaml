@@ -3159,15 +3159,30 @@ paths:
   /api/ssh/info:
     get:
       tags: [SSH/FRP]
-      summary: SSH 隧道信息
+      summary: SSH 隧道最小信息（端口发现）
       description: |
         免鉴权：Android 原生在无 WebView Cookie 时需先发现 SSH 端口，否则回退到
-        错误端口导致隧道静默失败。仅暴露端口、用户名与指纹。
+        错误端口导致隧道静默失败。
+        仅返回 `enabled` 与 `port`。指纹、用户名、`ssh -L` 命令与连接统计
+        已移至需鉴权的 `/api/ssh/info/full`——其中命令会枚举全部转发端口及其
+        内网目标主机，等同于内网拓扑，不应提供给匿名调用方。
       operationId: sshInfo
       security: []
       responses:
         "200":
-          description: SSH 信息
+          description: 最小 SSH 信息（enabled、port）
+
+  /api/ssh/info/full:
+    get:
+      tags: [SSH/FRP]
+      summary: SSH 隧道完整信息
+      description: |
+        需鉴权。供 Web UI 展示隧道命令、指纹与连接统计。
+        返回 host、port、username、fingerprint、command、connectionStats。
+      operationId: sshInfoFull
+      responses:
+        "200":
+          description: 完整 SSH 信息
 
   /api/frp/info:
     get:
@@ -3299,11 +3314,14 @@ paths:
       tags: [ClientLogs]
       summary: 回传客户端日志
       description: |
-        免鉴权：Android 原生用 HttpURLConnection（无 WebView Cookie），JS 用 fetch。
+        需鉴权：这是向服务端文件追加写入的原语，匿名调用者可伪造日志行或反复触发轮转
+        以销毁上一代日志。两个客户端上报时均已登录——JS 中继受「调试日志捕获」开关门控
+        且仅在已认证的应用内启用，Android 的 `AppLog.startCapture` 由登录后的 WebView
+        桥触发，且 WebView Cookie 与它同进程。
         仅写日志（不可读），汇入 `{LogDir}/logs/client.log`，行内带 `[js]`/`[android]`
-        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条。
+        来源标记；50MiB 轮转到 `.1`。单请求上限 200 条，且所有字段均被清洗
+        （转义换行/CR/NUL 并截断）。磁盘由字节上限与文件上限封死，故不限流。
       operationId: clientLog
-      security: []
       requestBody:
         required: true
         content:

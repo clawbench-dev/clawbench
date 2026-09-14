@@ -112,7 +112,7 @@ describe('usePortForward', () => {
 
             await loadSSHInfo()
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/ssh/info')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/ssh/info/full')
             expect(sshInfo.value).toEqual(sshInfoResponse)
         })
 
@@ -215,7 +215,7 @@ describe('usePortForward', () => {
         it('returns early when SSH is disabled', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
                 return {}
             })
 
@@ -230,7 +230,7 @@ describe('usePortForward', () => {
         it('sets disconnected when SSH is enabled but not connected', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return {
+                if (url === '/api/ssh/info/full') return {
                     enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
                     connectionStats: { connected: false, clientCount: 0, activeChannels: 0 },
                 }
@@ -249,7 +249,7 @@ describe('usePortForward', () => {
         it('sets ok when SSH is connected with active ports', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
-                if (url === '/api/ssh/info') return {
+                if (url === '/api/ssh/info/full') return {
                     enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
                     connectionStats: { connected: true, clientCount: 1, activeChannels: 1 },
                 }
@@ -268,7 +268,7 @@ describe('usePortForward', () => {
         it('sets ok when SSH reports disconnected but ports are active', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, enabled: true }] }
-                if (url === '/api/ssh/info') return {
+                if (url === '/api/ssh/info/full') return {
                     enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
                     connectionStats: { connected: false, clientCount: 0, activeChannels: 0 },
                 }
@@ -286,7 +286,7 @@ describe('usePortForward', () => {
         it('resets tunnel state before checking', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
+                if (url === '/api/ssh/info/full') return { enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null }
                 return {}
             })
 
@@ -1301,7 +1301,7 @@ describe('usePortForward', () => {
             mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
                 return {}
             })
             ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
@@ -1323,7 +1323,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
                 return {}
             })
             ;(window as any).ClawBenchNative = { isTunnelConnected: async () => true }
@@ -1344,7 +1344,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = {
@@ -1373,7 +1373,7 @@ describe('usePortForward', () => {
             // Native has no isTunnelConnected — getNativeTunnelStatus returns null.
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, enabled: true }] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = {}
@@ -1393,7 +1393,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = { isTunnelConnected: async () => { throw new Error('bridge') } }
@@ -1413,7 +1413,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = { isTunnelConnected: async () => 'yes' as any }
@@ -1433,7 +1433,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = {
@@ -1458,7 +1458,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 0, activeChannels: 0 } }
                 return {}
             })
             ;(window as any).ClawBenchNative = {
@@ -1484,7 +1484,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: null }
                 return {}
             })
 
@@ -1504,7 +1504,7 @@ describe('usePortForward', () => {
             mockTunnelStatusFromPorts.mockImplementation(() => 'degraded')
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: false, enabled: true }] }
-                if (url === '/api/ssh/info') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+                if (url === '/api/ssh/info/full') return { enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
                 return {}
             })
 

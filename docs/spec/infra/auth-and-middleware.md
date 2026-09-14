@@ -58,6 +58,38 @@ flowchart TD
 - **API 密钥加密与密码联动**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，Pi 后端不再运行时注入 API 密钥，模型刷新不再按 provider 过滤
 - **全局链与路由认证分层**：`Chain(A, B, C)` 的执行顺序是 A→B→C→handler→C→B→A；RecoverPanic 位于最外层，NoCache 在全局链最内层（WithLocalizer 之后）。Auth 不在全局链中，由具体路由单独包裹——避免为了少数公开接口在 Auth 内维护例外清单
 
+### 刻意免鉴权的端点清单
+
+`registerPublic` 是例外而非默认，每个都必须在调用点写明理由。当前共 9 个，按风险分为三类：
+
+**必须免鉴权（鉴权前不可达的客户端依赖它）**
+
+| 端点 | 理由 |
+|---|---|
+| `/` | 前端 SPA 入口 |
+| `/login` | 登录本身；有限流与常量时间比较 |
+| `/api/health` | Android 在 WebView 加载**前**做身份探测（`app` 字段）并读取 `version` 驱动版本不匹配对话框——登录需要 WebView，故不能等登录。仅返回 `{app, version}` |
+| `/api/apk` | 登录页安装横幅与原生版本不匹配对话框都需在登录前下载。仅 GET/HEAD；版本号本可从公开 APK 推断 |
+
+**凭证即权限（token 本身是授权）**
+
+| 端点 | 理由 |
+|---|---|
+| `/api/share/{token}` | 分享链接的凭证就是 token；未知/已撤销 token 统一 404，不泄露记录是否存在 |
+| `/share/{token}` | 同上（分享 SPA 外壳） |
+
+**最小状态（无敏感信息）**
+
+| 端点 | 理由 |
+|---|---|
+| `/api/me` | 仅回 200/401；与 `Auth` 的 AI 令牌判据保持一致 |
+| `/api/ssh/info` | 仅 `{enabled, port}`。Android 原生需在连接前发现端口；完整信息（含枚举内网拓扑的 `ssh -L` 命令与指纹）在需鉴权的 `/api/ssh/info/full` |
+| `/api/frp/status` | 仅 `{enabled, running, state}`；完整状态（含公网 IP）在需鉴权的 `/api/frp/info` |
+
+**判据**：一个端点若要免鉴权，必须满足「鉴权前客户端确实需要」或「请求本身携带等价的授权凭证」，且响应体不包含可被匿名者利用的信息。`/api/ssh/info` 与 `/api/frp/status` 都是「同一份数据按受众拆分」的实例——公开版只留最小字段，其余移入需鉴权的 `/full` 或 `/info`。
+
+新增 `registerPublic` 时必须同步：调用点注释说明理由、`internal/api/openapi.yaml` 标注 `security: []`、以及 `internal/handler/handler_routes_test.go` 的 `publicPatterns` 列表（`TestRegisteredRoutes_AuthFlagMatchesSpec` 会校验三者一致）。
+
 ### 已知限制：隧道场景下的信任边界
 
 `IsLocalhost` 仅依据 `r.RemoteAddr` 判定，不检查任何代理头（代码中无 `X-Forwarded-For` 处理）。引入 AI 令牌后，剩余风险如下：
