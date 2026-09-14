@@ -169,20 +169,51 @@ func TestListPipelineRuns_DurationDerivedFromTimestamps(t *testing.T) {
 	assert.Zero(t, res.Runs[1].Duration, "an inverted span must yield unknown, not a negative")
 }
 
-// TestListPipelineRuns_FallsBackToDisplayTitle: a workflow with no name must
-// still render something.
-func TestListPipelineRuns_FallsBackToDisplayTitle(t *testing.T) {
+// TestListPipelineRuns_PrefersDisplayTitle: the run title must distinguish one
+// run from another.
+//
+// `name` is the WORKFLOW's name ("CI", "PR Lint", "Auto Merge"), constant for
+// every run of that workflow, so a list built from it showed the same title on
+// every row and the user could not tell the runs apart. `display_title` carries
+// the head commit's subject, which is what actually identifies the run.
+func TestListPipelineRuns_PrefersDisplayTitle(t *testing.T) {
 	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"workflow_runs":[
-			{"id":1,"display_title":"fix the thing","status":"completed","conclusion":"failure",
+			{"id":1,"name":"CI","display_title":"fix(web): make the row readable",
+			 "status":"completed","conclusion":"failure",
+			 "created_at":"2026-09-14T10:00:00Z","updated_at":"2026-09-14T10:05:00Z"},
+			{"id":2,"name":"CI","display_title":"feat(api): add a thing",
+			 "status":"completed","conclusion":"success",
+			 "created_at":"2026-09-14T09:00:00Z","updated_at":"2026-09-14T09:05:00Z"}
+		]}`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 2)
+
+	assert.Equal(t, "fix(web): make the row readable", res.Runs[0].Name)
+	assert.Equal(t, "feat(api): add a thing", res.Runs[1].Name)
+	// The whole point: two runs of the same workflow must not render the same.
+	assert.NotEqual(t, res.Runs[0].Name, res.Runs[1].Name,
+		"two runs of one workflow must have distinct titles")
+}
+
+// TestListPipelineRuns_FallsBackToWorkflowName: an older payload with no
+// display_title must still render something.
+func TestListPipelineRuns_FallsBackToWorkflowName(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":1,"name":"CI","status":"completed","conclusion":"failure",
 			 "created_at":"2026-09-14T10:00:00Z","updated_at":"2026-09-14T10:05:00Z"}
 		]}`))
 	}))
 
 	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
 	require.NoError(t, err)
-	assert.Equal(t, "fix the thing", res.Runs[0].Name)
+	assert.Equal(t, "CI", res.Runs[0].Name)
 }
 
 // TestListPipelineJobs checks job normalization, including the absence of a

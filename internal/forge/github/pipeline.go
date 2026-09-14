@@ -118,13 +118,20 @@ func convertWorkflowRun(r *gogithub.WorkflowRun) forge.PipelineRun {
 	}
 }
 
-// runName prefers the workflow name, falling back to the display title (which
-// GitHub always populates) so a run never renders nameless.
+// runName prefers the display title, falling back to the workflow name.
+//
+// `name` is the WORKFLOW's name ("CI", "PR Lint", "Auto Merge"), which is
+// constant for every run of that workflow — so a run list built from it shows
+// the same title on every row and the user cannot tell one run from another.
+// `display_title` is what distinguishes them: the head commit's subject for a
+// push/PR run, or the workflow's own name for a manually dispatched one.
+//
+// The fallback matters for older payloads that omit display_title.
 func runName(r *gogithub.WorkflowRun) string {
-	if n := r.GetName(); n != "" {
-		return n
+	if t := r.GetDisplayTitle(); t != "" {
+		return t
 	}
-	return r.GetDisplayTitle()
+	return r.GetName()
 }
 
 // actorLogin returns the user who triggered the run. TriggeringActor is the

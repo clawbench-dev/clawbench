@@ -139,13 +139,21 @@ const subscribedTransitions = computed(() => new Set(eventChips(eventTypes.value
 
 // The sample item is whichever kind the task actually subscribes to, so an
 // issue-only task does not show a "pr #123" sample it will never receive.
-const sampleKind = computed<'issue' | 'pr'>(() => {
+//
+// A repository-targeted subscription (a pipeline) has no item kind at all: its
+// chips carry the "repo" pseudo-kind. Defaulting to 'pr' there made every
+// pipeline task advertise a "pr #123" sample it can never receive, so the
+// absence of a real kind is represented explicitly rather than folded into 'pr'.
+const sampleKind = computed<'issue' | 'pr' | ''>(() => {
     const kinds = eventChips(eventTypes.value).map(c => c.kind)
-    if (kinds.includes('issue') && !kinds.includes('pr')) return 'issue'
-    return 'pr'
+    if (kinds.includes('issue')) return 'issue'
+    if (kinds.includes('pr')) return 'pr'
+    return ''
 })
 
-const sampleItemPath = computed(() => (sampleKind.value === 'pr' ? 'pull' : 'issues'))
+// Only meaningful for an issue/PR subscription; a pipeline has no item URL, so
+// the sample falls back to the repository's own URL.
+const sampleItemPath = computed(() => (sampleKind.value === 'issue' ? 'issues' : 'pull'))
 
 /**
  * True when every subscribed transition is repository-targeted (a pipeline).
@@ -189,7 +197,15 @@ const contextRows = computed<ContextRow[]>(() => {
     }
     rows.push(
         { label: t('task.form.varTitle'), placeholder: 'TITLE', value: t('task.overview.eventSampleTitle') },
-        { label: t('task.form.varUrl'), placeholder: 'URL', value: `https://${sampleRepo.value}/${sampleItemPath.value}/123` },
+        {
+            label: t('task.form.varUrl'),
+            placeholder: 'URL',
+            // A pipeline task has no item to point at, so the sample is the
+            // repository root rather than a fabricated issue/PR link.
+            value: sampleKind.value === ''
+                ? `https://${sampleRepo.value}`
+                : `https://${sampleRepo.value}/${sampleItemPath.value}/123`,
+        },
         { label: t('task.form.varAuthor'), placeholder: 'AUTHOR', value: 'octocat' },
         { label: t('task.form.varState'), placeholder: 'STATE', value: sampleState.value },
     )

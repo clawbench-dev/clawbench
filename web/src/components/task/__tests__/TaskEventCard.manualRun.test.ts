@@ -128,3 +128,43 @@ describe('TaskEventCard watched repository', () => {
     expect(wrapper.text()).not.toContain('task.form.eventRepoUnbound')
   })
 })
+
+describe('TaskEventCard event-context sample rows', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetForgeBindingState()
+    mockFetchBinding.mockResolvedValue({ binding: null })
+  })
+
+  // A pipeline subscription carries the "repo" pseudo-kind, which is neither
+  // "issue" nor "pr". sampleKind used to fall through to 'pr', so every pipeline
+  // task advertised a "pr #123" sample — a payload it can never receive.
+  it('does not show a pr item sample for a pipeline-only subscription', () => {
+    const text = mountCard({ eventTypes: 'pipeline_done' }).text()
+    expect(text).not.toContain('pr #123')
+    // And the fabricated issue/PR link must be gone too.
+    expect(text).not.toContain('/pull/123')
+    expect(text).not.toContain('/issues/123')
+    // The pipeline-specific rows are still there.
+    expect(text).toContain('task.form.varPipelineStatus')
+  })
+
+  it('still shows the issue sample for an issue-only subscription', () => {
+    const text = mountCard({ eventTypes: 'issue.opened' }).text()
+    expect(text).toContain('issue #123')
+    expect(text).toContain('/issues/123')
+  })
+
+  it('still shows the pr sample for a pr-only subscription', () => {
+    const text = mountCard({ eventTypes: 'pr.opened' }).text()
+    expect(text).toContain('pr #123')
+    expect(text).toContain('/pull/123')
+  })
+
+  // A mixed subscription does have a real item, so it keeps the item sample.
+  it('shows the item sample when a pipeline is combined with a PR', () => {
+    const text = mountCard({ eventTypes: 'pr.opened,pipeline_done' }).text()
+    expect(text).toContain('pr #123')
+    expect(text).toContain('task.form.varPipelineStatus')
+  })
+})
