@@ -206,12 +206,20 @@
       <div class="dir-upload-progress-count">{{ dirUploadDone }}/{{ dirUploadTotal }}</div>
     </div>
 
-    <!-- File list + (optional) docked preview pane, stacked as a plain flex
-         column. The pane is NOT a draggable split: it sizes to its content and
-         is capped, so a directory with a few entries does not reserve a large
-         empty block (see .fm-preview-pane). The list keeps the remaining height
-         via flex:1. -->
-    <div class="fm-split">
+    <!-- File list + (optional) docked preview pane. When preview mode is on
+         and a file is open, this becomes a draggable top/bottom split; when
+         off, the wrappers are display:contents so the list fills as before. -->
+    <SplitView
+      class="fm-split"
+      orientation="vertical"
+      :enabled="previewPaneEnabled"
+      :ratio="previewSplitRatio"
+      :min-left="previewPaneMinTop"
+      :min-right="previewPaneMinBottom"
+      :title="t('file.previewPaneResize')"
+      @update:ratio="onPreviewRatioChange"
+    >
+      <template #top>
     <!-- File list / grid area wrapper — non-scrolling, so overlays (loading,
          paste) stay fixed over the visible viewport instead of scrolling away
          with the list content -->
@@ -367,29 +375,31 @@
       {{ t('file.search.truncated') }}
     </div>
     </div>
+      </template>
 
-      <!-- Docked preview pane: content-sized, capped, and NOT resizable. -->
-      <div v-if="previewPaneVisible" class="fm-preview-pane">
-        <!-- Directory target: list its contents instead of previewing a file. -->
-        <DirPreviewBody
-          v-if="previewShowsDir"
-          :entries="dirPreview.entries.value"
-          :loading="dirPreview.loading.value"
-          :error="dirPreview.error.value"
-          :visible="dirPreview.visible"
-          :dir-name="dirPreviewName"
-          @open-file="onDirPreviewOpenFile"
-          @open-dir="onDirPreviewOpenDir"
-          @closed="collapsePreviewPane"
-        />
-        <CodeLinkPreview
-          v-else
-          :docked="true"
-          :preview="codeLinkPreview"
-          @closed="collapsePreviewPane"
-        />
-      </div>
-    </div>
+      <template #bottom>
+        <div v-if="previewPaneVisible" class="fm-preview-pane">
+          <!-- Directory target: list its contents instead of previewing a file. -->
+          <DirPreviewBody
+            v-if="previewShowsDir"
+            :entries="dirPreview.entries.value"
+            :loading="dirPreview.loading.value"
+            :error="dirPreview.error.value"
+            :visible="dirPreview.visible"
+            :dir-name="dirPreviewName"
+            @open-file="onDirPreviewOpenFile"
+            @open-dir="onDirPreviewOpenDir"
+            @closed="collapsePreviewPane"
+          />
+          <CodeLinkPreview
+            v-else
+            :docked="true"
+            :preview="codeLinkPreview"
+            @closed="collapsePreviewPane"
+          />
+        </div>
+      </template>
+    </SplitView>
 
     <!-- Bottom dock: resident search bar -->
     <div class="fs-nav-bottom" @keydown.esc.stop="onSearchDockEscape">
@@ -543,6 +553,7 @@ import { setAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDrag
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
+import SplitView from '@/components/common/SplitView.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -866,20 +877,33 @@ const codeLinkPreview = useCodeLinkPreview({
     source: 'browse',
 })
 
-// ── Docked preview pane (below the file list) ───────────────────────────────
+// ── Docked preview pane (bottom of a top/bottom split) ──────────────────────
 // The pane is visible while preview mode is on AND a file is open; the close
 // button collapses it without turning preview mode off, so the list fills the
 // panel until the next single-click re-opens it.
-//
-// The pane is content-sized (see .fm-preview-pane), NOT a draggable split. It
-// used to be a fixed ratio of the panel (~40%): a directory with a handful of
-// entries then reserved hundreds of pixels of empty space and squeezed the
-// list. It now grows with its content up to a cap.
+const PREVIEW_PANE_RATIO_KEY = 'clawbench-fm-preview-split-ratio'
+const DEFAULT_PREVIEW_PANE_RATIO = 0.6
+const previewSplitRatio = ref(readStoredPreviewRatio())
 /** Set false by the pane's close button; reset true on every new preview. */
 const previewPaneOpen = ref(false)
 
-/** Pane only when preview mode is on, something is previewed, and it isn't
- *  collapsed. A directory target counts (its listing is the preview). */
+function readStoredPreviewRatio() {
+    try {
+        const raw = Number(localStorage.getItem(PREVIEW_PANE_RATIO_KEY))
+        if (Number.isFinite(raw) && raw > 0 && raw < 1) return raw
+    } catch { /* ignore */ }
+    return DEFAULT_PREVIEW_PANE_RATIO
+}
+
+function onPreviewRatioChange(ratio) {
+    previewSplitRatio.value = ratio
+    try {
+        localStorage.setItem(PREVIEW_PANE_RATIO_KEY, String(ratio))
+    } catch { /* ignore */ }
+}
+
+/** Split only when preview mode is on and something is previewed, and the pane
+ *  isn't collapsed. A directory target counts (its listing is the preview). */
 const previewPaneEnabled = computed(() =>
     filePreviewMode.value && previewPaneOpen.value && previewTargetActive.value,
 )
@@ -913,6 +937,12 @@ const dirPreviewName = computed(() => {
     const base = p.replace(/\/+$/, '').split('/').pop()
     return base || p
 })
+
+// Minimum pane heights. Mobile viewports are short (a phone leaves ~500px for
+// the panel), so the desktop minimums would leave almost no room to drag; use
+// tighter floors there and keep the roomier desktop values on a PC.
+const previewPaneMinTop = computed(() => (isPC.value ? 160 : 120))
+const previewPaneMinBottom = computed(() => (isPC.value ? 200 : 140))
 
 function collapsePreviewPane() {
     previewPaneOpen.value = false
@@ -2434,13 +2464,16 @@ function scrollSelectedIntoView(path) {
   position: relative;
 }
 
-/* Column hosting the file list and the docked preview pane. It must grow with
-   the panel and be the flex child that carries the remaining height, so the
-   list's own flex:1 still resolves against a bounded parent.
+/* Top/bottom split hosting the file list and the docked preview pane. It must
+   grow with the panel and be the flex child that carries the remaining height,
+   so the list's own flex:1 still resolves against a bounded parent.
 
-   `display: flex` is set here UNCONDITIONALLY. Without it the list's
-   `flex: 1; min-height: 0` is inert, its height grows to the content height, and
-   it overflows the panel — painting over the resident search bar below. */
+   `display: flex` is set here UNCONDITIONALLY, not left to SplitView's active
+   state: when the split is disabled (preview closed) SplitView's pane wrappers
+   become `display: contents`, so the slot content's layout parent is this root.
+   Without flex here the list's `flex: 1; min-height: 0` is inert, its height
+   grows to the content height, and it overflows the panel — painting over the
+   resident search bar below. */
 .fm-split {
   display: flex;
   flex-direction: column;
@@ -2449,45 +2482,17 @@ function scrollSelectedIntoView(path) {
   overflow: hidden;
 }
 
-/* The docked preview pane is CONTENT-SIZED, not a fixed share of the panel.
-
-   It used to be a fixed ratio (~40%) of the split, so a directory with a
-   handful of entries reserved hundreds of pixels of empty space and squeezed
-   the list — on a 390x844 phone, 10 entries needing ~175px got a 272px pane.
-   Now it takes its content's height and the list absorbs the rest.
-
-   `flex: 0 1 auto` gives it an auto basis (its content height) that it may
-   shrink from when the panel is short. `max-height` caps how much a large
-   directory or a long file may take, so the list always keeps a usable share;
-   past the cap the body's own scroll container takes over. */
+/* The docked preview pane fills its half of the split. No top border: the
+   SplitView divider directly above already draws the 1px separator, and both
+   are shown/hidden by the same `previewPaneEnabled` — a border here stacked a
+   second line right under the divider's. */
 .fm-preview-pane {
-  flex: 0 1 auto;
   width: 100%;
-  max-height: 65%;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* The pane is no longer separated by a SplitView divider, so it draws its own
-     separator from the list above. */
-  border-top: 1px solid var(--border-color, #e0e0e0);
-}
-
-/* The bodies size themselves with `flex: 1; min-height: 0`, whose `flex-basis`
-   is 0 — in an auto-height column that collapses the body to zero, because a
-   flex container with an indefinite height sums hypothetical sizes and the
-   basis is what feeds them. Switching the basis to `auto` lets each body's own
-   content (the directory grid / the code line rows) become the basis, which is
-   what makes the pane's content height real. The cap above then bounds it. */
-.fm-preview-pane :deep(.dir-preview-body),
-.fm-preview-pane :deep(.code-link-preview-floating.is-docked) {
-  flex: 0 1 auto;
-  min-height: 0;
-}
-.fm-preview-pane :deep(.dir-preview-scroll),
-.fm-preview-pane :deep(.code-preview-content) {
-  flex: 0 1 auto;
-  min-height: 0;
 }
 
 /* ── File manager specific ── */

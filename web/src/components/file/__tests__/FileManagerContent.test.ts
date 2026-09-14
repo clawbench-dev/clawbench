@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
+import SplitView from '@/components/common/SplitView.vue'
 // jsdom does not implement CSS.escape (used by scrollToEntryAndSelect). Polyfill it.
 const cssGlobal = globalThis as unknown as { CSS?: { escape?: (v: string) => string } }
 if (typeof cssGlobal.CSS === 'undefined') {
@@ -4006,18 +4007,18 @@ describe('FileManagerContent — jump to dir', () => {
 // ── Docked preview pane (top/bottom split) ──
 
 describe('FileManagerContent — docked preview pane', () => {
-  it('renders no pane until a preview is open', async () => {
+  it('renders no split divider until a preview is open', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = false
     const wrapper = mountContent()
 
     // Preview mode on but nothing opened yet → list fills the panel.
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
     expect(wrapper.find('.code-link-preview-stub').exists()).toBe(false)
   })
 
-  it('renders the docked pane when a file is previewed', async () => {
+  it('opens a vertical split with the docked pane when a file is previewed', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = false
@@ -4029,25 +4030,26 @@ describe('FileManagerContent — docked preview pane', () => {
     mockPreviewRefs.mode!.value = 'docked'
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.split-view--vertical').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
     const stub = wrapper.find('.code-link-preview-stub')
     expect(stub.exists()).toBe(true)
     expect(stub.attributes('data-docked')).toBe('true')
   })
 
-  it('collapses the pane when it reports closed', async () => {
+  it('collapses the split when the pane reports closed', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     mockPreviewRefs.visible!.value = true
     await nextTick()
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
 
     await wrapper.findComponent(CodeLinkPreviewStub).vm.$emit('closed')
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
     expect(wrapper.find('.code-link-preview-stub').exists()).toBe(false)
   })
 
@@ -4060,68 +4062,67 @@ describe('FileManagerContent — docked preview pane', () => {
     await nextTick()
     await wrapper.findComponent(CodeLinkPreviewStub).vm.$emit('closed')
     await nextTick()
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
 
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     mockPreviewRefs.visible!.value = true
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
   })
 
-  it('drops the pane when preview mode is turned off', async () => {
+  it('drops the split when preview mode is turned off', async () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     mockPreviewRefs.visible!.value = true
     await nextTick()
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
 
     mockLocalConfigProxy.current!.filePreviewMode = false
     await nextTick()
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(false)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
   })
 
-  it('opens the pane on touch too (no isPC gate)', async () => {
+  it('never splits on touch even with preview mode on', async () => {
     mockIsPC.value = false
     mockLocalConfig.filePreviewMode = true
+    mockPreviewRefs.visible!.value = true
     const wrapper = mountContent()
 
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(false)
+  })
+
+  it('persists the dragged ratio to localStorage', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    localStorage.removeItem('clawbench-fm-preview-split-ratio')
+    const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
     mockPreviewRefs.visible!.value = true
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    await wrapper.findComponent(SplitView).vm.$emit('update:ratio', 0.42)
+    await nextTick()
+
+    expect(localStorage.getItem('clawbench-fm-preview-split-ratio')).toBe('0.42')
   })
 
-  it('sizes the pane to its content instead of a fixed share of the panel', () => {
-    // The pane used to be a fixed ratio (~40%) of the split, so a directory with
-    // a handful of entries reserved hundreds of empty pixels and squeezed the
-    // list. It is now content-sized with a cap, and NOT draggable. jsdom does not
-    // load SFC <style>, so assert against the source.
-    const src = readSource()
-    const m = src.match(/\.fm-preview-pane\s*\{([^}]*)\}/)
-    expect(m).toBeTruthy()
-    const body = m![1]
-    // Auto basis = content height; may shrink but never grow beyond it.
-    expect(body).toMatch(/flex:\s*0 1 auto/)
-    // Capped so a huge directory cannot eat the whole panel.
-    expect(body).toMatch(/max-height:\s*65%/)
-    // No fixed height and no fill-the-pane sizing.
-    expect(body).not.toMatch(/height:\s*100%/)
-  })
+  it('restores the persisted ratio on mount', async () => {
+    localStorage.setItem('clawbench-fm-preview-split-ratio', '0.35')
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
 
-  it('has no split ratio or drag state left', () => {
-    // The ratio/drag machinery is gone; its localStorage key must not linger, or
-    // a stale value would silently be read back by a future change.
-    const src = readSource()
-    expect(src).not.toContain('clawbench-fm-preview-split-ratio')
-    expect(src).not.toContain('previewSplitRatio')
-    expect(src).not.toContain('onPreviewRatioChange')
-    expect(src).not.toMatch(/import SplitView from/)
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('ratio')).toBeCloseTo(0.35, 5)
+    localStorage.removeItem('clawbench-fm-preview-split-ratio')
   })
 
   it('scrolls the clicked file back into view after the pane opens', async () => {
@@ -4171,8 +4172,10 @@ describe('FileManagerContent — docked preview pane', () => {
 })
 
 describe('FileManagerContent — panel layout (search bar is its own region)', () => {
-  it('keeps the column a bounded flex box when preview mode is off', () => {
-    // Regression: without `display:flex` on this root the list's `flex:1;
+  it('keeps the split a bounded flex column when preview mode is off', () => {
+    // Regression: with the split disabled, SplitView's pane wrappers become
+    // `display: contents`, so the slot content's layout parent is the split
+    // root. Without `display:flex` on that root the list's `flex:1;
     // min-height:0` is inert, its height grows to the content height, and it
     // overflows the panel — painting over the resident search bar below.
     // jsdom does not load SFC <style>, so assert against the source.
@@ -4185,34 +4188,34 @@ describe('FileManagerContent — panel layout (search bar is its own region)', (
     expect(body).toMatch(/min-height:\s*0/)
   })
 
-  it('renders the search dock as a sibling after the column, not inside it', () => {
+  it('renders the search dock as a sibling after the split, not inside it', () => {
     const wrapper = mountContent()
     const split = wrapper.find('.fm-split')
     const searchDock = wrapper.find('.fs-nav-bottom')
 
     expect(split.exists()).toBe(true)
     expect(searchDock.exists()).toBe(true)
-    // The search bar must NOT live inside the column: it owns a dedicated band
-    // of the panel, so the list/pane can never cover it.
+    // The search bar must NOT live inside the split: it owns a dedicated band
+    // of the panel, so the split can never cover it.
     expect(split.element.contains(searchDock.element)).toBe(false)
-    // And the column must come before the dock in document order.
+    // And the split must come before the dock in document order.
     const order = split.element.compareDocumentPosition(searchDock.element)
     expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('mounts the search dock outside the list and pane', () => {
+  it('mounts the search dock outside the top/bottom panes', () => {
     mockIsPC.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
-    const list = wrapper.find('.fm-split > .file-list-area')
+    const top = wrapper.find('.fm-split > .split-view__left')
     const dock = wrapper.find('.fs-nav-bottom')
-    // Even with the docked pane open, the dock stays out of the column's panes.
-    if (list.exists()) expect(list.element.contains(dock.element)).toBe(false)
+    // Even with the docked pane open, the dock stays out of the panes.
+    if (top.exists()) expect(top.element.contains(dock.element)).toBe(false)
   })
 })
 
 describe('FileManagerContent — mobile docked preview', () => {
-  it('opens the docked pane on mobile (no isPC gate)', async () => {
+  it('opens the docked split on mobile (no isPC gate)', async () => {
     mockIsPC.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
@@ -4221,17 +4224,35 @@ describe('FileManagerContent — mobile docked preview', () => {
     mockPreviewRefs.visible!.value = true
     await nextTick()
 
-    expect(wrapper.find('.fm-preview-pane').exists()).toBe(true)
+    expect(wrapper.find('.split-view--vertical').exists()).toBe(true)
+    expect(wrapper.find('.split-view__divider--vertical').exists()).toBe(true)
     expect(wrapper.find('.code-link-preview-stub').attributes('data-docked')).toBe('true')
   })
 
-  it('uses one content-sized pane on every platform (no per-platform sizing)', () => {
-    // The pane used to take per-platform minimum heights (mobile 120/140 vs
-    // desktop 160/200) because it was a draggable split. Sizing is now driven by
-    // content alone, so there must be no isPC-dependent pane metrics left.
-    const src = readSource()
-    expect(src).not.toContain('previewPaneMinTop')
-    expect(src).not.toContain('previewPaneMinBottom')
+  it('uses smaller pane minimums on mobile so a short viewport can still be dragged', async () => {
+    mockIsPC.value = false
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('minLeft')).toBe(120)
+    expect(split.props('minRight')).toBe(140)
+  })
+
+  it('keeps the roomier pane minimums on desktop', async () => {
+    mockIsPC.value = true
+    mockLocalConfig.filePreviewMode = true
+    const wrapper = mountContent()
+    await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
+    mockPreviewRefs.visible!.value = true
+    await nextTick()
+
+    const split = wrapper.findComponent(SplitView)
+    expect(split.props('minLeft')).toBe(160)
+    expect(split.props('minRight')).toBe(200)
   })
 
   it('previews a directory tap on mobile via the listing pane', async () => {
