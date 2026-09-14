@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1569,9 +1570,11 @@ func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
 	pkg, err := getPlatformPkg()
 	require.NoError(t, err)
 
+	var tarballHits int32
 	tarball, integrity := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
 	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
+			atomic.AddInt32(&tarballHits, 1)
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
 			_, _ = w.Write(tarball)
 			return
@@ -1616,6 +1619,11 @@ func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
 	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
+	// The download happening is the real signal that the gate let this through.
+	// Asserting only on the error code would pass for any later failure — the
+	// fake binary cannot be exec'd, so a downstream error is the likely outcome.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tarballHits),
+		"a verified release must reach the download without an acknowledgment")
 	assert.NotEqual(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode,
 		"a verified release must not be refused for a missing acknowledgment")
 }
@@ -1650,10 +1658,26 @@ func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
 }
 
+// captureLogs redirects the default slog logger into a buffer for the duration
+// of the test and returns the accumulated text. Needed because the behavior
+// under test is which log line is emitted, which no return value exposes.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return buf.String
+}
+
 // An unverified digest must not be reported as a successful verification. The
 // regression this guards: verify() returns nil for an unverified digest, so a
 // shared code path would log "integrity verified" alongside a hardcoded
 // algorithm that was never applied.
+//
+// This asserts on the log because that is the entire observable effect of the
+// fix — the return value and the extracted bytes are identical either way, so a
+// test that checked only those would pass with the fix reverted.
 func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
@@ -1672,13 +1696,22 @@ func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, digest.unverified, "precondition: no hash means unverified")
 
+	logs := captureLogs(t)
+
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, digest, destPath),
 		"an unverified install must still complete")
 
-	got, readErr := os.ReadFile(destPath)
+	got := logs()
+	assert.NotContains(t, got, "integrity verified",
+		"an unverified install must never be logged as verified")
+	assert.Contains(t, got, "without integrity verification",
+		"the install must be logged as unverified, not silently accepted")
+
+	// The bytes still land, since an unverified digest is not a failure.
+	installed, readErr := os.ReadFile(destPath)
 	require.NoError(t, readErr)
-	assert.Equal(t, binContent, got)
+	assert.Equal(t, binContent, installed)
 }
 
 // A decompression bomb must not be able to fill the disk. The archive here is

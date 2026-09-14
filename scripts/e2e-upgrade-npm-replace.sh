@@ -219,7 +219,32 @@ grep -q "clawbench_session" "$COOKIE_JAR" 2>/dev/null && check "obtained session
 
 # ------------------------------------------------------- trigger upgrade
 echo "[6/8] requesting upgrade via API (what the UI calls)"
-curl -s --max-time 10 -X POST -b "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/upgrade/start" > "$ROOT/start.json" || true
+
+# The service refuses an unverified install unless the request carries the
+# warning the user was shown, so the script has to do what the UI does: read
+# the warning from /api/upgrade/check and echo it back on start.
+#
+# This mock registry serves dist.integrity but no dist.signatures, and is not
+# an official npm base, so the release is legitimately unverifiable here and the
+# warning is non-empty. That is the expected shape of this scenario — the point
+# of the acknowledgment is that the caller saw the warning, not that the warning
+# is absent.
+CHECK_JSON="$(curl -s --max-time 10 -b "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/upgrade/check" || true)"
+WARNING="$(printf '%s' "$CHECK_JSON" | python3 -c \
+  'import sys,json;print(json.load(sys.stdin).get("verification_warning",""))' 2>/dev/null || echo '')"
+if [ -n "$WARNING" ]; then
+  echo "      registry reports an unverifiable release; acknowledging to proceed"
+  echo "      warning: $WARNING"
+else
+  echo "      release fully verified (no warning to acknowledge)"
+fi
+
+START_BODY="$(python3 -c \
+  'import json,sys;print(json.dumps({"verification_warning":sys.argv[1]}))' "$WARNING")"
+curl -s --max-time 10 -X POST -b "$COOKIE_JAR" \
+  -H 'Content-Type: application/json' \
+  -d "$START_BODY" \
+  "http://127.0.0.1:$PORT/api/upgrade/start" > "$ROOT/start.json" || true
 head -c 200 "$ROOT/start.json" 2>/dev/null; echo
 
 # Poll status until terminal. The service may restart mid-poll (that is the

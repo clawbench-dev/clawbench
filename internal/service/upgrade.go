@@ -135,10 +135,11 @@ type UpgradeInfo struct {
 	Integrity      string // SRI string, e.g. "sha512-abcdef..."
 	Shasum         string // legacy hex-encoded sha1, used when Integrity is absent
 	HasUpgrade     bool
-	// VerificationWarning is non-empty when the release signature could not be
-	// verified and the upgrade was downgraded to the integrity check alone. It
-	// is surfaced to the user, since an unauthenticated install is materially
-	// weaker than a verified one.
+	// VerificationWarning is non-empty when this release cannot be fully
+	// verified, listing every reason (an uncheckable signature, a missing
+	// integrity hash). It is surfaced to the user, who decides whether to
+	// proceed; the same value is echoed back on start and compared, so it must
+	// depend only on the metadata and be byte-stable between two fetches.
 	VerificationWarning string
 }
 
@@ -245,9 +246,9 @@ func CheckForUpgrade() (string, string, error) {
 }
 
 // CheckForUpgradeInfo queries the registry and returns the full result,
-// including VerificationWarning when the release signature could not be verified.
-// The warning lets the UI tell the user before they start an upgrade that the
-// download will only be checked against its integrity hash.
+// including VerificationWarning when this release cannot be fully verified.
+// The warning lets the UI ask the user before they start, and is the same value
+// the start request must echo back.
 func CheckForUpgradeInfo() (*UpgradeInfo, error) {
 	return fetchUpgradeInfo()
 }
@@ -434,6 +435,15 @@ func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:
 		SetUpgradeVerificationWarning(info.VerificationWarning)
 	}
 
+	// "Nothing to upgrade" is checked before the acknowledgment: when there is
+	// no upgrade to install, that is the accurate answer, and reporting a
+	// verification mismatch instead would be confusing and untrue.
+	if !info.HasUpgrade {
+		SetUpgradeError("Already on the latest version")
+		broadcastUpgradeUpdate()
+		return
+	}
+
 	// Refuse an unverified install the user was not asked about for *this*
 	// metadata. The client sends back the warning it displayed; recomputing it
 	// here from the same single fetch means the two can only disagree when the
@@ -445,12 +455,6 @@ func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:
 		SetUpgradeErrorCode(UpgradeErrUnverifiedNotConfirmed,
 			"This release cannot be fully verified, and the confirmation did not match what "+
 				"the registry currently reports. Re-run the check and confirm again.")
-		broadcastUpgradeUpdate()
-		return
-	}
-
-	if !info.HasUpgrade {
-		SetUpgradeError("Already on the latest version")
 		broadcastUpgradeUpdate()
 		return
 	}
@@ -755,6 +759,7 @@ func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedD
 			//nolint:gosec // G110: bounded by maxBinarySize below
 			if _, copyErr := io.Copy(outFile, io.LimitReader(tarReader, maxBinarySize+1)); copyErr != nil {
 				_ = outFile.Close()
+				_ = os.Remove(destPath)
 				return fmt.Errorf("failed to write binary: %w", copyErr)
 			}
 			if info, statErr := outFile.Stat(); statErr == nil && info.Size() > maxBinarySize {

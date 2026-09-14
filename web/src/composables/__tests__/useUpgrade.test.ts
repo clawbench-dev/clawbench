@@ -418,6 +418,32 @@ describe('useUpgrade', () => {
       expect(mockApiGet).toHaveBeenCalledWith('/api/upgrade/check')
     })
 
+    it('starts nothing when the re-check itself fails', async () => {
+      // Without the warning we cannot ask the user anything, so an upgrade must
+      // not start. Proceeding on an empty warning would install unverified.
+      mockApiGet.mockRejectedValue(new Error('network down'))
+
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(mockApiPost).not.toHaveBeenCalled()
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+    })
+
+    it('keeps the retry affordance when the re-check fails', async () => {
+      // A failed check says nothing about whether an upgrade exists. Clearing
+      // hasUpgrade would hide the Retry button, and the dialog does not re-check
+      // while phase is "failed", so the user would be stuck with only Close.
+      mockApiGet.mockRejectedValue(new Error('network down'))
+
+      const upgrade = useUpgrade()
+      upgrade.state.latest_version = 'v1.1.0'
+      await upgrade.startUpgrade()
+
+      expect(upgrade.hasUpgrade.value).toBe(true)
+      expect(upgrade.state.error).toBe('upgrade.checkFailedRetry')
+    })
+
     it('asks about the newly reported warning when it changed since the last attempt', async () => {
       // The server's answer changes between attempts; the user must be asked
       // about the new one.
@@ -431,7 +457,27 @@ describe('useUpgrade', () => {
       expect(mockDialogConfirm.mock.calls[0][0]).toBe('a different problem')
     })
 
-    it('treats a whitespace-only warning as verified', async () => {
+    it('echoes the warning byte-for-byte so the server comparison can match', async () => {
+      // The server compares the echoed value against its own, so any client-side
+      // normalization (trimming, collapsing spaces) would turn every confirmation
+      // into a refusal. The real warning contains multiple sentences, an
+      // apostrophe and an em dash, which is exactly the shape that a sloppy
+      // transform would mangle.
+      const REAL =
+        "The official registry https://registry.npmjs.org returned no signature for this release. " +
+        "npm signs every published version, so this is unexpected — the release could not be authenticated."
+      mockCheckWithWarning(REAL)
+      mockApiPost.mockResolvedValue({})
+
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', { verification_warning: REAL })
+    })
+
+    it('treats a whitespace-only warning as nothing to confirm', async () => {
+      // Defensive: the server trims via joinWarnings so it never emits this, but
+      // the client must not show an empty dialog if it ever did.
       mockCheckWithWarning('   ')
       mockApiPost.mockResolvedValue({})
 
@@ -439,7 +485,7 @@ describe('useUpgrade', () => {
       await upgrade.startUpgrade()
 
       expect(mockDialogConfirm).not.toHaveBeenCalled()
-      expect(mockApiPost).toHaveBeenCalled()
+      expect(upgrade.showProgressDialog.value).toBe(true)
     })
   })
 
@@ -447,6 +493,14 @@ describe('useUpgrade', () => {
 
   describe('clearShowProgressDialog', () => {
     it('clears the show progress dialog flag', async () => {
+      // startUpgrade re-checks first, so the check must succeed for the dialog
+      // to open at all.
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        verification_warning: '',
+      })
       mockApiPost.mockResolvedValue({})
       const upgrade = useUpgrade()
       await upgrade.startUpgrade()

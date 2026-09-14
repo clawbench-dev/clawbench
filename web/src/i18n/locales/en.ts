@@ -2645,6 +2645,7 @@ export default {
     unverifiedNotConfirmedTitle: 'Upgrade cancelled: verification risk not confirmed',
     unverifiedNotConfirmedBody: 'This release cannot be fully verified, and what the registry now reports does not match what was confirmed, so the upgrade did not proceed. This usually means the metadata changed after the check.',
     unverifiedNotConfirmedHint: 'Try again: the check will re-run and you will be asked to confirm the current situation.',
+    checkFailedRetry: 'Could not fetch version information, so the upgrade did not start. Check your connection and try again.',
   },
   share: {
     loading: 'Loading...',

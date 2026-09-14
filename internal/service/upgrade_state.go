@@ -34,9 +34,9 @@ type UpgradeState struct {
 	// survive a retry and mislabel an unrelated failure.
 	ErrorCode string `json:"error_code"`
 	Error     string `json:"error,omitempty"`
-	// VerificationWarning is non-empty when the release signature could not be
-	// verified and the upgrade was downgraded to the integrity check alone.
-	// Surfaced to the user because an unauthenticated install is weaker.
+	// VerificationWarning is non-empty when this release cannot be fully
+	// verified, listing every reason (an uncheckable signature, a missing
+	// integrity hash). Surfaced to the user, who decides whether to proceed.
 	VerificationWarning string `json:"verification_warning"`
 }
 

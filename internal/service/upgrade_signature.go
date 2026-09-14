@@ -128,8 +128,14 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 	if err != nil {
 		slog.Warn("upgrade: cannot reach npm signing keys — signature not verified",
 			"error", err, "package", pkg, "version", version)
-		return fmt.Sprintf("The release signature could not be verified because npm's signing keys were "+
-			"unreachable (%v), so the release could not be authenticated.", err)
+		// Deliberately excludes the underlying error text. The caller compares
+		// this warning verbatim against the one the client confirmed, so it must
+		// depend only on the metadata, not on *how* the request failed — a
+		// transport error's message varies between attempts (timeout, refused,
+		// DNS), which would make the confirmation impossible to satisfy for the
+		// very users this downgrade exists to serve. The detail is in the log.
+		return "The release signature could not be verified because npm's signing keys were " +
+			"unreachable, so the release could not be authenticated."
 	}
 
 	payload := fmt.Sprintf("%s@%s:%s", pkg, version, integrity)

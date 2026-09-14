@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -276,6 +277,51 @@ func TestVerifyRegistrySignature_KeysEndpointUnreachableWarns(t *testing.T) {
 	// The wording must state the consequence (unauthenticated) rather than
 	// promising an integrity check that may not happen.
 	assert.Contains(t, warning, "could not be authenticated")
+}
+
+// The warning must not vary with *how* the keys request failed. The caller
+// compares it verbatim against the text the user confirmed, and the two come
+// from separate requests, so a failure-mode-dependent message would make the
+// confirmation impossible to satisfy for exactly the users this downgrade
+// exists to serve.
+func TestVerifyRegistrySignature_KeysWarningIsStableAcrossFailureModes(t *testing.T) {
+	keys := newTestSigningKeys(t)
+	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
+
+	// Three different transport-level failures, each producing a different
+	// *url.Error message.
+	modes := []struct {
+		name string
+		err  error
+	}{
+		{"timeout", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: context.DeadlineExceeded}},
+		{"connection", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: errors.New("connection refused")}},
+		{"dns", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: errors.New("no such host")}},
+	}
+
+	var warnings []string
+	for _, mode := range modes {
+		t.Run(mode.name, func(t *testing.T) {
+			origClient := upgradeHTTPClient
+			defer func() { upgradeHTTPClient = origClient }()
+			upgradeHTTPClient = &http.Client{Transport: errorTransport{err: mode.err}}
+
+			warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+				[]npmSignature{sig}, npmjsRegistryBase)
+			require.NotEmpty(t, warning)
+			// The transport detail must not leak into the compared text.
+			assert.NotContains(t, warning, "connection refused")
+			assert.NotContains(t, warning, "no such host")
+			assert.NotContains(t, warning, "deadline exceeded")
+			warnings = append(warnings, warning)
+		})
+	}
+
+	// Every mode must yield byte-identical text.
+	for i := 1; i < len(warnings); i++ {
+		assert.Equal(t, warnings[0], warnings[i],
+			"the warning must not depend on the transport failure mode")
+	}
 }
 
 func TestVerifyRegistrySignature_EmptyKeyListWarns(t *testing.T) {

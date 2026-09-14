@@ -251,8 +251,14 @@ export function useUpgrade() {
   ensureWsWatch()
   ensureCompletionWatch()
 
-  /** Check for available upgrade */
-  async function checkUpgrade(): Promise<void> {
+  /**
+   * Check for available upgrade.
+   *
+   * Returns false when the check itself failed, which the caller must not
+   * treat as "nothing to upgrade" — it means the verification warning is
+   * unknown, so no upgrade may start.
+   */
+  async function checkUpgrade(): Promise<boolean> {
     checking.value = true
     try {
       const data = await apiGet<{
@@ -274,9 +280,11 @@ export function useUpgrade() {
       isDocker.value = data.is_docker === true
       // Absent on older servers — default to empty (no warning).
       verificationWarning.value = data.verification_warning ?? ''
+      return true
     } catch (e) {
       appLog.w(TAG, 'Check failed', e)
       hasUpgrade.value = false
+      return false
     } finally {
       checking.value = false
     }
@@ -304,7 +312,17 @@ export function useUpgrade() {
     // reuse whatever warning the previous attempt happened to leave behind —
     // possibly none, from the reset broadcast at the start of that attempt.
     // Re-checking means the user is always asked about the metadata in play.
-    await checkUpgrade()
+    if (!(await checkUpgrade())) {
+      // The warning is unknown, so there is nothing to confirm against and the
+      // upgrade must not start. checkUpgrade sets hasUpgrade=false on failure,
+      // which hides the retry button — but a failed check says nothing about
+      // whether an upgrade exists, so restore what we last knew. Otherwise a
+      // transient blip during Retry leaves the user with only "Close".
+      if (state.latest_version) hasUpgrade.value = true
+      state.error = gt('upgrade.checkFailedRetry')
+      state.error_code = ''
+      return
+    }
 
     if (!(await confirmUnverifiedUpgrade())) return
 
