@@ -777,30 +777,45 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
             continue
         }
 
-        // pathType === 'none' — try fallback swap before removing
-        // Only swap to file fallbacks — directory fallbacks are excluded because
-        // external directory annotations are unwanted and internal directories
-        // are already handled by the pathType === 'dir' branch above.
+        // pathType === 'none' — try fallback swap before removing.
+        //
+        // Swap when the fallback exists as a file, or as a project-INTERNAL
+        // directory. The directory case matters because it is the normal shape
+        // for a directory written in a doc: the primary candidate is resolved
+        // relative to the FILE's own directory (which usually does not contain
+        // that directory), while the real target is the project-root fallback.
+        // e.g. `web/src/composables` in test/path-annotation/README.md →
+        // primary `test/path-annotation/web/src/composables` (none) + fallback
+        // `web/src/composables` (dir). Skipping dir fallbacks stripped the
+        // annotation even though the directory exists.
+        //
+        // Project-EXTERNAL directories stay excluded: they are not valid
+        // navigation targets, and the `pathType === 'dir'` branch above strips
+        // them for the same reason.
         const els = containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`)
         let swapped = false
         for (const el of els) {
             const fallback = el.getAttribute('data-fallback-path')
-            if (fallback && results.get(fallback) === 'file') {
-                // Swap data-file-path to fallback
-                el.setAttribute('data-file-path', fallback)
-                el.removeAttribute('data-fallback-path')
-                el.setAttribute('data-path-type', 'file')
-                // Update external status
-                const isNowExternal = isAbsolutePath(fallback)
-                if (isNowExternal) {
-                    el.setAttribute('data-external', 'true')
-                    el.classList.add('external')
-                } else {
-                    el.removeAttribute('data-external')
-                    el.classList.remove('external')
-                }
-                swapped = true
+            if (!fallback) continue
+            const fallbackType = results.get(fallback)
+            const isNowExternal = isAbsolutePath(fallback)
+            const canSwap = fallbackType === 'file'
+                || (fallbackType === 'dir' && !isNowExternal)
+            if (!canSwap) continue
+
+            // Swap data-file-path to fallback
+            el.setAttribute('data-file-path', fallback)
+            el.removeAttribute('data-fallback-path')
+            el.setAttribute('data-path-type', fallbackType!)
+            // Update external status
+            if (isNowExternal) {
+                el.setAttribute('data-external', 'true')
+                el.classList.add('external')
+            } else {
+                el.removeAttribute('data-external')
+                el.classList.remove('external')
             }
+            swapped = true
         }
         if (swapped) continue
 

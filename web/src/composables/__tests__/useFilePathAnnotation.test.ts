@@ -1794,6 +1794,67 @@ describe('verifyFilePaths', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('swaps to an internal directory fallback when the primary does not exist', async () => {
+    // The common shape for a directory written in a doc: the primary candidate is
+    // resolved relative to the FILE's own directory (which usually does not hold
+    // such a directory), and the real target is the project-root fallback.
+    // e.g. in test/path-annotation/README.md, `web/src/composables` → primary
+    // `test/path-annotation/web/src/composables` (none) + fallback
+    // `web/src/composables` (dir). Directory fallbacks used to be skipped, so the
+    // annotation was stripped even though the directory exists.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        results: { 'test/path-annotation/web/src/composables': 'none', 'web/src/composables': 'dir' },
+      }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="test/path-annotation/web/src/composables" data-fallback-path="web/src/composables">web/src/composables</span><button class="chat-file-open-btn" data-file-path="test/path-annotation/web/src/composables" data-fallback-path="web/src/composables">open</button>'
+
+    await verifyFilePaths(
+      ['test/path-annotation/web/src/composables', 'web/src/composables'],
+      container,
+    )
+
+    // Swapped to the real directory and marked as a directory.
+    const span = container.querySelector('.chat-file-path[data-file-path="web/src/composables"]')
+    const btn = container.querySelector('.chat-file-open-btn[data-file-path="web/src/composables"]')
+    expect(span).not.toBeNull()
+    expect(btn).not.toBeNull()
+    expect(span!.getAttribute('data-path-type')).toBe('dir')
+    expect(btn!.getAttribute('data-path-type')).toBe('dir')
+    expect(span!.hasAttribute('data-fallback-path')).toBe(false)
+    // The dead primary must be gone.
+    expect(container.querySelector('[data-file-path="test/path-annotation/web/src/composables"]')).toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not swap to a project-EXTERNAL directory fallback (still stripped)', async () => {
+    // The original intent of skipping directory fallbacks: an external directory
+    // must not become a navigation target. Only the *internal* case is reopened.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        results: { 'missing-dir': 'none', '/home/user/other-project': 'dir' },
+      }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="missing-dir" data-fallback-path="/home/user/other-project">other</span><button class="chat-file-open-btn" data-file-path="missing-dir" data-fallback-path="/home/user/other-project">open</button>'
+
+    await verifyFilePaths(['missing-dir', '/home/user/other-project'], container)
+
+    // No annotation survives — the external directory is not a valid target.
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    expect(container.querySelector('.chat-file-path')).toBeNull()
+
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('openFilePath', () => {
