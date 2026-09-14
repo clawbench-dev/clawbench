@@ -180,3 +180,39 @@ func TestGrokSource_Registered(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, model.SourceKindCLI, src.Kind())
 }
+
+// An end-to-end transcript: the parser is only useful if a real `grok models`
+// output yields exactly the models, names and default the CLI reports. Section
+// headers and prose must not leak in.
+func TestParseGrokModels_RealTranscript(t *testing.T) {
+	output := `Model 'grok' is using its own API key.
+
+Default model: grok-4.5
+
+Available models:
+  * grok-4.5 (default)
+  - grok-build
+  - grok-code
+`
+	models := parseGrokModels(output)
+
+	require.Len(t, models, 3, "only the three real entries; no headers or prose")
+	assert.Equal(t, "grok-4.5", models[0].ID)
+	assert.Equal(t, "Grok 4.5", models[0].Name)
+	assert.True(t, models[0].Default)
+	assert.Equal(t, "grok-build", models[1].ID)
+	assert.Equal(t, "Grok Build", models[1].Name)
+	assert.False(t, models[1].Default)
+	assert.Equal(t, "grok-code", models[2].ID)
+	assert.Equal(t, "Grok Code", models[2].Name)
+}
+
+// A transcript whose only prose line is a single word must not yield a phantom
+// model (this is the shape that exposed the unbulleted-line regression).
+func TestParseGrokModels_SingleWordHeaderIsNotAModel(t *testing.T) {
+	output := "authenticated\n  * grok-4.5\n"
+	models := parseGrokModels(output)
+
+	require.Len(t, models, 1)
+	assert.Equal(t, "grok-4.5", models[0].ID)
+}

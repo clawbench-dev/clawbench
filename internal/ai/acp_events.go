@@ -909,7 +909,13 @@ func enrichModelList(conn *ACPConn, modelList *ModelListState) *ModelListState {
 	if conn == nil || modelList == nil {
 		return modelList
 	}
-	agent := conn.Agent()
+	// Resolve through the registry rather than conn.Agent(): a refresh replaces
+	// the whole Agents map with fresh pointers, so the pointer captured at
+	// connection creation goes stale and would ship an outdated CLI list.
+	agent := model.GetAgent(conn.AgentID())
+	if agent == nil {
+		agent = conn.Agent()
+	}
 	if agent == nil || len(agent.Models) == 0 {
 		return modelList
 	}

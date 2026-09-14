@@ -430,16 +430,23 @@ func (st *bulletParseState) finalizeDefault() {
 // bulletEntryID extracts a model ID from one line, skipping section headers,
 // prose and caller-supplied exclusions. It reports false when the line is not a
 // usable entry.
+//
+// A line must look like a model entry: either it carries a bullet marker, or it
+// contains a "-"/"*" as part of a model ID. Without this gate a single-token
+// section header ("Options:", "Usage:", "authenticated") would be read as a model
+// — and, being first, would even become the default.
+//
+// The "contains" arm mirrors the bespoke grok parser this replaced, which accepted
+// a bare hyphenated ID on its own line. Requiring a leading bullet instead would
+// have dropped those.
 func bulletEntryID(trimmed string, opts BulletOptions) (string, bool) {
+	if !hasBulletMarker(trimmed) && !strings.ContainsAny(trimmed, "-*") {
+		return "", false
+	}
 	if opts.Skip != nil && opts.Skip(trimmed) {
 		return "", false
 	}
 	if _, header := headerWords[strings.ToLower(trimmed)]; header {
-		return "", false
-	}
-
-	// A line with no bullet marker is only usable when it is a bare token.
-	if !strings.ContainsAny(trimmed, "-*+") && !isModelToken(trimmed) {
 		return "", false
 	}
 
@@ -452,6 +459,20 @@ func bulletEntryID(trimmed string, opts BulletOptions) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+// hasBulletMarker reports whether a line begins with a list bullet, allowing
+// leading whitespace.
+func hasBulletMarker(line string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	if trimmed == "" {
+		return false
+	}
+	switch trimmed[0] {
+	case '-', '*', '+':
+		return true
+	}
+	return false
 }
 
 // captureDefaultLine recognizes an explicit "Default model: X" line.
@@ -467,12 +488,6 @@ func captureDefaultLine(trimmed string) (string, bool) {
 		return "", true
 	}
 	return "", false
-}
-
-// isModelToken reports whether a bare (unbulleted) line looks like a model ID
-// rather than prose: a single token, no spaces.
-func isModelToken(line string) bool {
-	return !strings.ContainsAny(line, " \t")
 }
 
 // ---------------------------------------------------------------------------

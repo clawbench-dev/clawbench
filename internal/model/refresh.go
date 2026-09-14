@@ -53,8 +53,10 @@ type RefreshResult struct {
 	DiscoveredModels map[string][]AgentModel
 	// InsertedAgents lists agent IDs created by this refresh.
 	InsertedAgents []string
-	// UpdatedAgents lists agent IDs whose persisted fields changed.
-	UpdatedAgents []string
+	// ModelRefreshedBackends lists the backends whose discovered model list was
+	// written to at least one agent row. Named for backends, not agent IDs,
+	// because one probe covers every agent of that backend.
+	ModelRefreshedBackends []string
 	// LoadedAgents is the number of agents now in memory.
 	LoadedAgents int
 }
@@ -97,8 +99,15 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 	if !opts.SkipDiscovery {
 		discovered, updated := discoverAndPersistModels(db)
 		result.DiscoveredModels = discovered
-		result.UpdatedAgents = updated
+		result.ModelRefreshedBackends = updated
 	}
+
+	// Step 3b: spec-derived thinking effort levels. These are not user-editable
+	// (AgentPatch has no field for them), so the column should always mirror the
+	// backend spec. Without this write a spec that gains a level would keep the
+	// stale value in the DB, and the in-memory fallback below only fills an EMPTY
+	// list — so the new level would never appear.
+	syncThinkingEffortLevels(db)
 
 	// Step 4: reload memory from the database.
 	if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
@@ -109,9 +118,44 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 	slog.Info("agents refreshed",
 		"present", len(result.PresentCLIs),
 		"inserted", len(result.InsertedAgents),
-		"models_updated", len(result.UpdatedAgents),
+		"models_updated", len(result.ModelRefreshedBackends),
 		"total", result.LoadedAgents)
 	return result, nil
+}
+
+// syncThinkingEffortLevels writes each agent's spec-declared thinking effort
+// levels to the database. The values are derived, never user-set, so overwriting
+// is safe.
+func syncThinkingEffortLevels(db dbutil.Writer) {
+	rows, err := db.Query("SELECT id, backend FROM agents")
+	if err != nil {
+		slog.Warn("failed to query agents for thinking effort levels", "error", err)
+		return
+	}
+	type ref struct{ id, backend string }
+	var refs []ref
+	for rows.Next() {
+		var r ref
+		if err := rows.Scan(&r.id, &r.backend); err == nil {
+			refs = append(refs, r)
+		}
+	}
+	_ = rows.Close()
+
+	for _, r := range refs {
+		spec := FindSpecByBackend(r.backend)
+		if spec == nil || len(spec.ThinkingEffortLevels) == 0 {
+			continue
+		}
+		levelsJSON, err := json.Marshal(spec.ThinkingEffortLevels)
+		if err != nil {
+			continue
+		}
+		if _, err := db.Exec("UPDATE agents SET thinking_effort_levels = ? WHERE id = ?",
+			string(levelsJSON), r.id); err != nil {
+			slog.Warn("failed to update thinking_effort_levels", "id", r.id, "error", err)
+		}
+	}
 }
 
 // detectAndInsertAgents probes PATH for every registered backend, inserts an

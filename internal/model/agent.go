@@ -128,6 +128,19 @@ var (
 	AgentList []*Agent          // ordered list for API responses
 )
 
+// GetAgent returns the current in-memory agent for an ID, or nil.
+//
+// RefreshAgents replaces the whole Agents map with freshly loaded pointers, so a
+// long-lived holder (an ACP connection, for example) that captured an *Agent at
+// creation time would keep reading a stale model list after a refresh. Resolve
+// through this accessor at use time instead of caching the pointer.
+func GetAgent(id string) *Agent {
+	if id == "" {
+		return nil
+	}
+	return Agents[id]
+}
+
 // GetDefaultAgentID returns the default agent ID for new sessions.
 // Priority: configured DefaultAgentID > first agent in AgentList > empty string.
 func GetDefaultAgentID() string {

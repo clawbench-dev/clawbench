@@ -459,6 +459,12 @@ func resolveACPOnlyEntry(
 		if _, used := usedAliases[alias]; used {
 			return AgentModel{}, false
 		}
+		// A nameless alias would render as a blank picker entry. splitTierAliases
+		// already ignores these, so skip it here too rather than emitting an
+		// unlabeled row.
+		if strings.TrimSpace(acpByID[id].Name) == "" {
+			return AgentModel{}, false
+		}
 	}
 	seen[id] = struct{}{}
 	return AgentModel{ID: id, Name: acpByID[id].Name}, true
@@ -523,36 +529,40 @@ func splitTierAliases(acpByID map[string]AgentModel) (map[string]string, map[str
 // aliasForCLIModel finds the tier alias a concrete CLI model ID belongs to, by
 // looking for the alias as a token of the ID. "claude-sonnet-4-6" matches
 // "sonnet"; "claude-opus-4-5" matches "opus".
+//
+// When an ID contains more than one tier token (e.g. "claude-sonnet-haiku"), the
+// EARLIEST token wins. Iterating the alias map directly would make the choice
+// depend on map order, so the same input could name the entry differently — and
+// change the list length — between two refreshes.
 func aliasForCLIModel(cliID string, aliasNames map[string]string) (string, bool) {
 	if len(aliasNames) == 0 {
 		return "", false
 	}
-	tokens := tokenizeModelID(cliID)
-	for alias := range aliasNames {
-		if _, ok := tokens[alias]; ok {
-			return alias, true
+	for _, token := range tokenizeModelID(cliID) {
+		if _, ok := aliasNames[token]; ok {
+			return token, true
 		}
 	}
 	return "", false
 }
 
-// tokenizeModelID splits a model ID into lowercase alphabetic tokens.
-func tokenizeModelID(id string) map[string]struct{} {
-	tokens := make(map[string]struct{})
+// tokenizeModelID splits a model ID into lowercase alphabetic tokens, in the
+// order they appear so callers can prefer the earliest match.
+func tokenizeModelID(id string) []string {
+	var tokens []string
 	var b strings.Builder
 	for _, r := range strings.ToLower(id) {
-		switch {
-		case r >= 'a' && r <= 'z':
+		if r >= 'a' && r <= 'z' {
 			b.WriteRune(r)
-		default:
-			if b.Len() > 0 {
-				tokens[b.String()] = struct{}{}
-				b.Reset()
-			}
+			continue
+		}
+		if b.Len() > 0 {
+			tokens = append(tokens, b.String())
+			b.Reset()
 		}
 	}
 	if b.Len() > 0 {
-		tokens[b.String()] = struct{}{}
+		tokens = append(tokens, b.String())
 	}
 	return tokens
 }

@@ -369,14 +369,6 @@ func TestParseBulletList_SkipCallback(t *testing.T) {
 	assert.Equal(t, "keep", got[0].ID)
 }
 
-func TestParseBulletList_BareModelTokens(t *testing.T) {
-	// Lines without bullets are accepted only when they are a single token.
-	got := ParseBulletList("alpha\nsome prose here\n", BulletOptions{})
-
-	require.Len(t, got, 1)
-	assert.Equal(t, "alpha", got[0].ID)
-}
-
 func TestParseBulletList_PlusBullet(t *testing.T) {
 	got := ParseBulletList("+ plus-model\n", BulletOptions{})
 
@@ -392,4 +384,49 @@ func TestParsePlainLines_SkipPrefixAndContains(t *testing.T) {
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "real-model", got[0].ID)
+}
+
+// ---------------------------------------------------------------------------
+// Bullet requirement (grok regression)
+// ---------------------------------------------------------------------------
+
+// A single-token line with no bullet marker is prose ("Options:", "Usage:"), not
+// a model. The bespoke grok parser required a "-" or "*" marker; the declarative
+// one must too, or section headers leak into the model list.
+func TestParseBulletList_RejectsUnbulletedSingleTokenProse(t *testing.T) {
+	out := "Options:\n  * grok-4.5\n  * grok-build\n"
+
+	got := ParseBulletList(out, BulletOptions{})
+
+	require.Len(t, got, 2, "the section header must not become a model")
+	assert.Equal(t, "grok-4.5", got[0].ID)
+	assert.Equal(t, "grok-build", got[1].ID)
+}
+
+func TestParseBulletList_RejectsVariousHeaders(t *testing.T) {
+	for _, header := range []string{"Options:", "Usage:", "Tips:", "authenticated"} {
+		got := ParseBulletList(header+"\n  * real-model\n", BulletOptions{})
+		require.Len(t, got, 1, "header %q must not become a model", header)
+		assert.Equal(t, "real-model", got[0].ID)
+	}
+}
+
+// Every recognized bullet marker still works.
+func TestParseBulletList_AllBulletMarkers(t *testing.T) {
+	got := ParseBulletList("- dash\n* star\n+ plus\n", BulletOptions{})
+
+	require.Len(t, got, 3)
+	assert.Equal(t, "dash", got[0].ID)
+	assert.Equal(t, "star", got[1].ID)
+	assert.Equal(t, "plus", got[2].ID)
+}
+
+// A bare hyphenated ID on its own line is still accepted (the bespoke grok parser
+// did), while single-token prose without a hyphen or bullet is not.
+func TestParseBulletList_BareHyphenatedIDStillAccepted(t *testing.T) {
+	got := ParseBulletList("grok-4.5\ngrok-build\n", BulletOptions{})
+
+	require.Len(t, got, 2)
+	assert.Equal(t, "grok-4.5", got[0].ID)
+	assert.Equal(t, "grok-build", got[1].ID)
 }

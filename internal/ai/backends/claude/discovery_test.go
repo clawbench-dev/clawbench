@@ -210,3 +210,43 @@ func TestClaudeSource_FallsBackWhenCLIAbsent(t *testing.T) {
 	require.Len(t, models, len(model.ClaudeCatalog))
 	assert.Contains(t, detail, "not found", "the reason must say the CLI is missing")
 }
+
+// With no overrides configured, every model passes through with its scanned name.
+func TestApplyClaudeOverrides_NoOverridesKeepsAllModels(t *testing.T) {
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return "/nonexistent/path" }
+
+	models := []model.AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
+		{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5"},
+	}
+
+	got := applyClaudeOverrides(models)
+
+	require.Len(t, got, 3, "no overrides means no dedup and no drops")
+	assert.Equal(t, "Claude Sonnet 4.6", got[0].Name)
+	assert.Equal(t, "Claude Haiku 3.5", got[2].Name)
+}
+
+func TestApplyClaudeOverrides_EmptyInput(t *testing.T) {
+	assert.Empty(t, applyClaudeOverrides(nil))
+}
+
+// An override for an ID that is not present must not affect the others.
+func TestApplyClaudeOverrides_UnrelatedOverrideIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"modelOverrides":{"some-other-model":"Whatever"}}`), 0o644))
+
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return dir }
+
+	models := []model.AgentModel{{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"}}
+	got := applyClaudeOverrides(models)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "Claude Sonnet 4.6", got[0].Name, "an unrelated override must not rename this model")
+}

@@ -789,3 +789,67 @@ func TestDiscoveryCache_ProbeResultIsCopied(t *testing.T) {
 	assert.Equal(t, "M", second[0].Name)
 	assert.Equal(t, "M", shared[0].Name, "the probe's slice must not be reachable from the caller")
 }
+
+// An ID containing two tier tokens must resolve the same way on every call.
+// Iterating the alias map directly would make the choice depend on map order, so
+// the display name (and the list length, since the unused alias is appended)
+// could flap between refreshes.
+func TestResolveModels_AliasChoiceIsDeterministic(t *testing.T) {
+	cli := []AgentModel{{ID: "claude-sonnet-haiku", Name: "weird"}}
+	acp := []AgentModel{
+		{ID: "sonnet", Name: "NAME-SONNET"},
+		{ID: "haiku", Name: "NAME-HAIKU"},
+	}
+
+	first := ResolveModels(cli, acp, "")
+	require.Len(t, first, 2)
+	// The earliest token in the ID wins: "sonnet" precedes "haiku".
+	assert.Equal(t, "NAME-SONNET", first[0].Name)
+	assert.Equal(t, "haiku", first[1].ID)
+
+	for i := range 30 {
+		got := ResolveModels(cli, acp, "")
+		require.Equal(t, first, got, "iteration %d produced a different result", i)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetAgent — live lookup
+// ---------------------------------------------------------------------------
+
+func TestGetAgent_ResolvesThroughTheLiveMap(t *testing.T) {
+	origAgents := Agents
+	t.Cleanup(func() { Agents = origAgents })
+
+	stale := &Agent{ID: "a", Models: []AgentModel{{ID: "old", Name: "Old"}}}
+	Agents = map[string]*Agent{"a": stale}
+	require.Equal(t, "old", GetAgent("a").Models[0].ID)
+
+	// A refresh swaps the map; a holder of the old pointer must see the new one
+	// when it looks up by ID.
+	fresh := &Agent{ID: "a", Models: []AgentModel{{ID: "new", Name: "New"}}}
+	Agents = map[string]*Agent{"a": fresh}
+
+	assert.Equal(t, "new", GetAgent("a").Models[0].ID)
+	assert.Equal(t, "old", stale.Models[0].ID, "the captured pointer is untouched, which is why lookup must go through GetAgent")
+}
+
+func TestGetAgent_UnknownOrEmptyID(t *testing.T) {
+	assert.Nil(t, GetAgent(""))
+	assert.Nil(t, GetAgent("nonexistent-agent-xyz"))
+}
+
+// A nameless alias would render as a blank picker entry, so it is skipped rather
+// than appended unlabeled.
+func TestResolveModels_NamelessAliasIsSkipped(t *testing.T) {
+	cli := []AgentModel{{ID: "claude-opus-4-5", Name: "Opus", Default: true}}
+	acp := []AgentModel{{ID: "sonnet", Name: "  "}}
+
+	got := ResolveModels(cli, acp, "")
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "claude-opus-4-5", got[0].ID)
+	for _, m := range got {
+		assert.NotEmpty(t, m.Name, "no entry may render with a blank label")
+	}
+}

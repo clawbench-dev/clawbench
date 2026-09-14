@@ -209,7 +209,7 @@ func TestRefreshAgents_PersistsDiscoveredModelsForAutoManagedAgents(t *testing.T
 	result, err := RefreshAgents(db, RefreshOptions{})
 	require.NoError(t, err)
 
-	assert.Contains(t, result.UpdatedAgents, "disc")
+	assert.Contains(t, result.ModelRefreshedBackends, "disc")
 
 	var modelsJSON string
 	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'auto'").Scan(&modelsJSON))
@@ -576,8 +576,10 @@ func TestRefreshAgents_FreshInsertReceivesDiscoveredModels(t *testing.T) {
 	assert.NotEmpty(t, Agents[backendID].Models, "the in-memory agent must expose the discovered models")
 }
 
-// A user-chosen list must survive: it is non-empty and flagged user-managed.
-func TestRefreshAgents_EmptyUserListIsNotTreatedAsUserChosen(t *testing.T) {
+// An empty list with flag 0 carries no user intent, so discovery may fill it.
+// This is the same row shape as a freshly inserted agent; kept separate because
+// it documents the predicate's other arm explicitly.
+func TestRefreshAgents_EmptyListWithFlagZeroIsFilled(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 	isolateAgentGlobals(t)
 
@@ -597,4 +599,50 @@ func TestRefreshAgents_EmptyUserListIsNotTreatedAsUserChosen(t *testing.T) {
 	var modelsJSON string
 	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'empty-flag0'").Scan(&modelsJSON))
 	assert.Contains(t, modelsJSON, "found")
+}
+
+// Thinking effort levels are spec-derived and not user-editable, so a spec that
+// gains a level must reach the database. The in-memory fallback only fills an
+// EMPTY list, so without the write the new level would never appear.
+func TestRefreshAgents_SyncsThinkingEffortLevels(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	// An agent with a stale, non-empty level list.
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, thinking_effort_levels)
+		VALUES ('levels', 'Levels', 'levels-backend', '["low"]')`)
+	require.NoError(t, err)
+
+	withBackendSpec(t, BackendSpec{
+		ID: "levels", Backend: "levels-backend", DefaultCmd: "definitely-not-a-real-cli-xyz",
+		Name: "Levels", NoCLI: true,
+		ThinkingEffortLevels: []string{"low", "medium", "high"},
+	})
+
+	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
+	require.NoError(t, err)
+
+	var levelsJSON string
+	require.NoError(t, db.QueryRow("SELECT thinking_effort_levels FROM agents WHERE id = 'levels'").Scan(&levelsJSON))
+	assert.Contains(t, levelsJSON, "high", "the spec's new level must reach the DB")
+
+	require.Contains(t, Agents, "levels")
+	assert.Equal(t, []string{"low", "medium", "high"}, Agents["levels"].ThinkingEffortLevels)
+}
+
+// A backend with no spec-declared levels must not have its column clobbered.
+func TestRefreshAgents_DoesNotClearLevelsWithoutSpec(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, thinking_effort_levels)
+		VALUES ('keep', 'Keep', 'no-spec-backend', '["xhigh"]')`)
+	require.NoError(t, err)
+
+	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
+	require.NoError(t, err)
+
+	var levelsJSON string
+	require.NoError(t, db.QueryRow("SELECT thinking_effort_levels FROM agents WHERE id = 'keep'").Scan(&levelsJSON))
+	assert.Contains(t, levelsJSON, "xhigh", "an absent spec must not wipe the stored levels")
 }
