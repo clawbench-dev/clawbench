@@ -56,7 +56,8 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -299,6 +300,88 @@ func TestSchema_TitleSourceMigration_Idempotent(t *testing.T) {
 
 	columns := getTableColumns(t, UnsafeDBForTest(), "chat_sessions")
 	assert.Contains(t, columns, "title_source")
+}
+
+// TestSchema_CompletedAtMigration verifies chat_history.completed_at is added
+// to a database created before the column existed, that the migration is
+// idempotent, and that legacy rows (completed_at NULL) keep the old created_at
+// unread semantics.
+func TestSchema_CompletedAtMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the current schema, then drop completed_at to simulate a
+	// database created before the column existed. Building via InitDB guarantees
+	// every other table/index is present, so the second InitDB below exercises
+	// ONLY the completed_at migration.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_history DROP COLUMN completed_at")
+	require.NoError(t, err)
+	// A finalized legacy reply plus a session that has never been read.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('legacy-at', '/p', 'claude', 'Legacy')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id, streaming, created_at) VALUES ('/p', 'assistant', 'old reply', 'legacy-at', 0, '2025-01-01 10:00:00')")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	assert.Contains(t, getTableColumns(t, UnsafeDBForTest(), "chat_history"), "completed_at")
+
+	// The legacy row must keep the old semantics: completed_at is NULL, so the
+	// unread query falls back to created_at and the reply reads as unread.
+	var completed sql.NullTime
+	require.NoError(t, db.QueryRow(
+		"SELECT completed_at FROM chat_history WHERE session_id = 'legacy-at'").Scan(&completed))
+	assert.False(t, completed.Valid, "a legacy row must have completed_at NULL")
+
+	sessions, err := GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, 1, sessions[0].UnreadCount,
+		"a legacy finalized reply must fall back to created_at and count as unread")
+
+	// Reading it must clear the badge via the COALESCE anchor.
+	UpdateLastRead("legacy-at")
+	sessions, err = GetSessions("/p", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, sessions[0].UnreadCount, "reading a legacy row must clear it")
+}
+
+// TestSchema_CompletedAtMigration_Idempotent verifies running InitDB twice does
+// not fail on the already-present completed_at column.
+func TestSchema_CompletedAtMigration_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
+	assert.True(t, columns["completed_at"], "completed_at must survive repeated migrations")
 }
 
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
@@ -1528,7 +1611,8 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1917,7 +2001,8 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, deleted, created_at);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -2081,7 +2166,8 @@ func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS ai_raw_responses (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2760,7 +2846,8 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3116,7 +3203,8 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_quick_send (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

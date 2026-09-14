@@ -1187,7 +1187,7 @@ func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
 			JOIN chat_sessions s2 ON s2.id = h.session_id
 			WHERE h.project_path = ?
 			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
@@ -1236,7 +1236,7 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 			FROM chat_history h
 			JOIN chat_sessions s2 ON s2.id = h.session_id AND s2.project_path = h.project_path
 			WHERE h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id, h.project_path
 		) unread ON unread.session_id = s.id AND unread.project_path = s.project_path
 		WHERE s.archived = 0 AND s.session_type = 'chat'
@@ -1311,7 +1311,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 			JOIN chat_sessions s2 ON s2.id = h.session_id
 			WHERE h.project_path = ?
 			  AND h.role = 'assistant' AND h.streaming = 0
-			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
+			  AND (s2.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s2.last_read_at)
 			GROUP BY h.session_id
 		) unread ON unread.session_id = s.id
 		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
@@ -1475,12 +1475,14 @@ func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
 // list still showed unread messages after the user opened the session.
 func UpdateLastRead(sessionID string) {
 	// Set last_read_at to at least the newest finalized assistant message's
-	// created_at, but never below now. The unread query compares
-	// h.created_at > s2.last_read_at with second-precision SQLite DATETIME — if
-	// a message finalized in the same second as the mark-read call,
-	// CURRENT_TIMESTAMP would still leave it "unread". Anchoring last_read_at to
-	// the newest message created_at makes the comparison robust
-	// (last_read_at >= created_at ⇒ not unread).
+	// timestamp, but never below now. The unread query compares
+	// COALESCE(h.completed_at, h.created_at) > s2.last_read_at with
+	// second-precision SQLite DATETIME — if a message finalized in the same
+	// second as the mark-read call, CURRENT_TIMESTAMP would still leave it
+	// "unread". Anchoring last_read_at to the newest message timestamp makes the
+	// comparison robust (last_read_at >= that timestamp ⇒ not unread). The
+	// subquery MUST use the same COALESCE expression as the unread queries, or
+	// the two sides disagree about which replies have been seen.
 	//
 	// MAX(CURRENT_TIMESTAMP, ...) is essential: on the cancel path the frontend
 	// marks the session read when the "cancelled" session_update arrives, which
@@ -1491,12 +1493,17 @@ func UpdateLastRead(sessionID string) {
 	// to unread as soon as it is finalized, even though the user is looking at
 	// it. Taking the max with CURRENT_TIMESTAMP keeps the anchor monotonic.
 	// Falls back to CURRENT_TIMESTAMP when no finalized assistant message exists.
+	//
+	// Note this anchors at most to "now": a reply still streaming when the read
+	// happens is excluded (streaming = 0), so it will legitimately register as
+	// unread once it lands. That is intended — the frontend re-marks the session
+	// read on the completion event when the user is actually looking at it.
 	WriteExec(`
 		UPDATE chat_sessions
 		SET last_read_at = MAX(
 			CURRENT_TIMESTAMP,
 			COALESCE(
-				(SELECT MAX(created_at) FROM chat_history
+				(SELECT MAX(COALESCE(completed_at, created_at)) FROM chat_history
 				 WHERE session_id = ? AND role = 'assistant' AND streaming = 0),
 				CURRENT_TIMESTAMP
 			)
@@ -2557,9 +2564,52 @@ func CreateStreamingMessage(projectPath, backend, sessionID, queueID string) (in
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
 // preventing accidental finalization of stale streaming rows left by previous failed finalizations.
 // Returns the message ID of the finalized message (0 if not found).
+//
+// Stamps completed_at with CURRENT_TIMESTAMP — the moment the reply actually
+// landed. created_at cannot serve that purpose: it is written when the turn
+// starts, so a session read mid-turn would have last_read_at past created_at
+// and the finished reply would never register as unread. See the column's
+// comment in database.go.
+//
+// A user-cancelled turn must NOT take this path — see
+// FinalizeCancelledStreamingMessage.
 func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
+	return finalizeStreamingMessage(projectPath, backend, sessionID, content, true)
+}
+
+// FinalizeCancelledStreamingMessage finalizes a reply the user cancelled while
+// watching it. Identical to FinalizeStreamingMessage except that it leaves
+// completed_at NULL.
+//
+// Why the distinction: the cancel action lives in the session the user is
+// looking at, so the frontend marks that session read as soon as the
+// "cancelled" event arrives — BEFORE the executor finalizes the interrupted
+// reply (the agent process has to tear down first, which can take seconds).
+// Stamping completed_at at finalize time would move the reply's timestamp past
+// that read and flip the session back to unread even though the user is staring
+// at it — reintroducing exactly the bug e76a6d960 fixed. Leaving completed_at
+// NULL lets the unread query fall back to created_at (the turn start, which
+// precedes the cancel-time read), so the session stays read.
+//
+// A normal completion must not take this path: there the user may well have
+// switched away before the reply landed, so the landing time is what decides
+// whether it is unread.
+func FinalizeCancelledStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
+	return finalizeStreamingMessage(projectPath, backend, sessionID, content, false)
+}
+
+// finalizeStreamingMessage performs the shared finalize write. stampCompletedAt
+// selects whether the row records the moment it landed (normal completion) or
+// stays NULL (user cancel, so the unread query falls back to created_at).
+func finalizeStreamingMessage(projectPath, backend, sessionID, content string, stampCompletedAt bool) (int64, error) {
+	// Both values are compile-time constants chosen by the branch below, never
+	// caller input, so building the SET clause by concatenation is safe.
+	completedAtSet := "completed_at = CURRENT_TIMESTAMP"
+	if !stampCompletedAt {
+		completedAtSet = "completed_at = NULL"
+	}
 	result, err := WriteExec(
-		`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE id = (
+		`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0, `+completedAtSet+` WHERE id = (
 			SELECT id FROM chat_history
 			WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
 			ORDER BY id DESC LIMIT 1
