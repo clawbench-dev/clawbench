@@ -390,10 +390,17 @@ func rewriteTarballURL(tarball, base string) string {
 }
 
 // PerformUpgrade executes the full upgrade flow in a background goroutine.
-func PerformUpgrade() {
+//
+// acknowledgedWarning is the verification warning the client showed the user
+// and received consent for, or "" when the client saw none. performUpgrade
+// recomputes the warning from the registry and refuses the upgrade when it
+// differs, so an unverified install cannot proceed without a decision that
+// matches the metadata actually being installed. Pass the warning verbatim;
+// it is compared by exact value.
+func PerformUpgrade(acknowledgedWarning string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	upgradeCancel = cancel
-	go performUpgrade(ctx)
+	go performUpgrade(ctx, acknowledgedWarning)
 }
 
 // CancelUpgrade cancels the current upgrade process.
@@ -403,7 +410,7 @@ func CancelUpgrade() {
 	}
 }
 
-func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is inherently multi-step
+func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:gocyclo // upgrade flow is inherently multi-step
 	ResetUpgradeState()
 
 	// 1. Check for upgrade (single registry query)
@@ -425,6 +432,21 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	// unverified: an uncheckable signature and a missing hash.
 	if info.VerificationWarning != "" {
 		SetUpgradeVerificationWarning(info.VerificationWarning)
+	}
+
+	// Refuse an unverified install the user was not asked about for *this*
+	// metadata. The client sends back the warning it displayed; recomputing it
+	// here from the same single fetch means the two can only disagree when the
+	// registry changed in between, in which case the decision no longer applies.
+	// Comparing against a fresh second query instead would just move the race.
+	if info.VerificationWarning != acknowledgedWarning {
+		slog.Warn("upgrade: refusing unverified upgrade without matching acknowledgment",
+			"registry_warning", info.VerificationWarning, "acknowledged", acknowledgedWarning)
+		SetUpgradeErrorCode(UpgradeErrUnverifiedNotConfirmed,
+			"This release cannot be fully verified, and the confirmation did not match what "+
+				"the registry currently reports. Re-run the check and confirm again.")
+		broadcastUpgradeUpdate()
+		return
 	}
 
 	if !info.HasUpgrade {

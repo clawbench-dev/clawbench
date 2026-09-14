@@ -3080,10 +3080,20 @@ paths:
     post:
       tags: [Upgrade]
       summary: 开始升级
+      description: |
+        请求体可选，字段 `verification_warning`：客户端向用户展示并取得确认的
+        警告原文（无警告时省略或留空）。服务端会与本次 registry 查询得到的警告
+        比对，不一致则以 `unverified_not_confirmed` 拒绝，避免未经确认就安装
+        未校验的版本。
+        请求体为空是合法的（表示本次升级无需确认）；请求体非法则返回 400。
       operationId: upgradeStart
       responses:
         "200":
           description: 已开始
+        "400":
+          description: 请求体非法
+        "409":
+          description: 已有升级在进行中
 
   /api/upgrade/status:
     get:

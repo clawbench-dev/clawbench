@@ -2642,6 +2642,9 @@ export default {
     verificationConfirmTitle: '本次升级未能完全验证',
     verificationConfirmProceed: '仍然继续',
     verificationConfirmCancel: '取消',
+    unverifiedNotConfirmedTitle: '升级已取消：未能确认校验风险',
+    unverifiedNotConfirmedBody: '本次升级无法完全校验，而 registry 当前报告的情况与确认时不一致，因此没有继续。通常是元数据在检查之后发生了变化。',
+    unverifiedNotConfirmedHint: '请重试：界面会重新检查并让你确认最新的情况。',
   },
   share: {
     loading: '加载中...',

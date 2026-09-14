@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"clawbench/internal/service"
@@ -70,6 +72,11 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 // Initiates the upgrade process. Returns error if already in progress.
 // Note: version verification is done inside PerformUpgrade(), so we don't
 // re-query the registry here (avoids TOCTOU race and redundant latency).
+//
+// The body carries verification_warning: the warning text the client displayed
+// and got consent for, or omitted/empty when the client saw none. The service
+// compares it against what the registry reports and refuses a mismatch, so an
+// unverified install cannot happen without a decision that matches the metadata.
 func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -80,7 +87,19 @@ func ServeUpgradeStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upgradePerformUpgrade()
+	// The body is optional: callers that saw no warning send none. An empty
+	// body is therefore valid, not a malformed request.
+	var req struct {
+		VerificationWarning string `json:"verification_warning"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+			return
+		}
+	}
+
+	upgradePerformUpgrade(req.VerificationWarning)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		jsonKeyStatus: upgradeStatusStarted,

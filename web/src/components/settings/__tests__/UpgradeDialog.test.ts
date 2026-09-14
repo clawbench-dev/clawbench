@@ -40,6 +40,9 @@ const i18n = createI18n({
         dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
         verificationWarningTitle: '本次升级未能完全验证',
         verificationWarningHint: '上面的内容说明了哪些校验无法完成。',
+        unverifiedNotConfirmedTitle: '升级已取消：未能确认校验风险',
+        unverifiedNotConfirmedBody: '本次升级无法完全校验，而 registry 当前报告的情况与确认时不一致。',
+        unverifiedNotConfirmedHint: '请重试：界面会重新检查并让你确认最新的情况。',
       },
     },
   },
@@ -80,6 +83,7 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
     ERR_INSTALL_DIR_NOT_WRITABLE: actual.ERR_INSTALL_DIR_NOT_WRITABLE,
     ERR_SELF_PATH_UNRESOLVED: actual.ERR_SELF_PATH_UNRESOLVED,
     ERR_RESTART_FAILED: actual.ERR_RESTART_FAILED,
+    ERR_UNVERIFIED_NOT_CONFIRMED: actual.ERR_UNVERIFIED_NOT_CONFIRMED,
     useUpgrade: () => ({
       state: mockState,
       checking: mockChecking,
@@ -426,6 +430,23 @@ describe('UpgradeDialog', () => {
       expect(document.body.textContent).toContain('服务未能重启')
       // Raw backend error must not leak through.
       expect(document.body.textContent).not.toContain('fork/exec')
+    })
+
+    // The service refuses an unverified install whose confirmation does not
+    // match the registry. The user needs to know a retry will re-ask, not that
+    // something is broken.
+    it('shows an actionable message when the confirmation did not match', async () => {
+      mockIsFailed.value = true
+      mockState.error_code = 'unverified_not_confirmed'
+      mockState.error = 'This release cannot be fully verified, and the confirmation did not match'
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-failed')).toBeTruthy()
+      expect(document.body.textContent).toContain('未能确认校验风险')
+      expect(document.body.textContent).toContain('请重试')
+      // The raw backend sentence must not be what the user reads.
+      expect(document.body.textContent).not.toContain('did not match')
     })
   })
 

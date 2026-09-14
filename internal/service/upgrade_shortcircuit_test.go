@@ -120,7 +120,7 @@ func TestPerformUpgrade_ShortCircuitsWhenDiskAtTarget(t *testing.T) {
 	h := &shortCircuitHarness{targetVersion: "0.99.0"}
 	h.setup(t, "0.99.0")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	assert.Equal(t, 0, h.tarballHits, "tarball must not be downloaded when disk is already at target")
@@ -134,7 +134,7 @@ func TestPerformUpgrade_DownloadsWhenDiskBehind(t *testing.T) {
 	h := &shortCircuitHarness{targetVersion: "0.99.0"}
 	h.setup(t, "0.10.0")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 1, h.tarballHits, "an older disk binary must be downloaded")
 	assert.Equal(t, 0, h.restartCalls, "no restart before the download completes")
@@ -150,7 +150,7 @@ func TestPerformUpgrade_ShortCircuitSkipsWhenVersionProbeFails(t *testing.T) {
 	// Override the probe installed by setup to fail.
 	selfBinaryVersion = func(string) (string, error) { return "", fmt.Errorf("probe failed") }
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 1, h.tarballHits, "a failed probe must fall back to downloading")
 }
@@ -166,7 +166,7 @@ func TestPerformUpgrade_ShortCircuitSkippedWithoutRestartFunc(t *testing.T) {
 
 	upgradeRestartFunc = nil // not wired
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	assert.Equal(t, 0, h.restartCalls, "no restart func → no restart call")
 	assert.Equal(t, 1, h.tarballHits, "must fall through to the normal download path")
@@ -182,7 +182,7 @@ func TestPerformUpgrade_ShortCircuitRestartFailureReportsError(t *testing.T) {
 	h.setup(t, "0.99.0")
 	h.restartErr = fmt.Errorf("sentinel launch failed")
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	require.Equal(t, UpgradePhaseFailed, s.Phase, "a failed restart must not leave the phase at restarting")
@@ -232,7 +232,7 @@ func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 	ResetUpgradeState()
 	t.Cleanup(ResetUpgradeState)
 
-	performUpgrade(context.Background())
+	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
 	require.Equal(t, UpgradePhaseFailed, s.Phase)
