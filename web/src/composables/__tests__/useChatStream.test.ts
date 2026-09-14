@@ -1706,7 +1706,13 @@ describe('useChatStream', () => {
         pending: true, seq: 12,
       } })
 
-      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456' })
+      // `queued: true` is what the backend actually sends for a message that is
+      // still waiting for the drain loop — both emitters that pair a
+      // senderClientId with a queued bubble set it (chat.go "enqueued" path and
+      // queue.go's explicit enqueue). Without the flag the client reads the
+      // message as having joined the running turn and adopts it, which is
+      // correct for that case but not this one.
+      simulateWsEvent('user_message', { messageId: 99, content: '2', queueId: 'pending-2', senderClientId: 'my-device-456', queued: true })
 
       const msg2 = options.messages.value.find((m: any) => m.role === 'user')
       expect(msg2.id).toBe('pending-2')
