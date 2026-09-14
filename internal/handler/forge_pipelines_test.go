@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -123,6 +124,198 @@ func TestServeForgePipelines_RejectsNonGet(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeForgePipelines, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeForgePipelines_PagesDoNotOverlap is the regression for a real bug:
+// the status filter is applied locally, so the caller's page indexes the
+// FILTERED result while the provider pages the unfiltered one. Walking the
+// provider from the caller's page therefore re-served already-shown runs.
+func TestServeForgePipelines_PagesDoNotOverlap(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// 220 runs, every 10th failing: 22 failures spread across BOTH provider
+	// pages (runs 0..99 are page 1, 100..199 are page 2). The density matters —
+	// with failures clustered at the start of each provider page the two
+	// implementations happen to agree, so the fixture would not discriminate.
+	// With perPage=3, page 2 must be runs 1030/1040/1050; an implementation that
+	// starts its walk at provider page 2 returns 1100/1110/1120 instead.
+	all := make([]string, 0, 220)
+	for i := 1000; i < 1220; i++ {
+		status := "success"
+		if i%10 == 0 {
+			status = "failed"
+		}
+		all = append(all, fmt.Sprintf(`{"id":%d,"iid":%d,"name":"CI","status":"%s","ref":"main",`+
+			`"sha":"abc","source":"push","created_at":"2026-09-14T10:00:00.000Z",`+
+			`"updated_at":"2026-09-14T10:05:00.000Z"}`, i, i, status))
+	}
+	body := "[" + strings.Join(all, ",") + "]"
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Emulate the provider's own 100-per-page paging.
+		page := atoiDefault(r.URL.Query().Get("page"), 1)
+		per := 100
+		start := (page - 1) * per
+		if start >= len(all) {
+			_, _ = w.Write([]byte("[]"))
+			return
+		}
+		end := start + per
+		if end > len(all) {
+			end = len(all)
+		}
+		next := ""
+		if end < len(all) {
+			next = fmt.Sprintf("%d", page+1)
+		}
+		w.Header().Set("X-Next-Page", next)
+		_, _ = w.Write([]byte("[" + strings.Join(all[start:end], ",") + "]"))
+	}))
+	_ = body
+
+	get := func(page string) []any {
+		t.Helper()
+		req := newRequest(t, http.MethodGet, "/api/forge/pipelines?status=failure&perPage=3&page="+page, nil)
+		withProjectCookie(req, env.ProjectDir)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeForgePipelines, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp["pipelines"].([]any)
+	}
+
+	seen := map[float64]bool{}
+	for _, page := range []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"} {
+		runs := get(page)
+		for _, r := range runs {
+			id := r.(map[string]any)["id"].(float64)
+			assert.Falsef(t, seen[id], "run %v was served on an earlier page (pages overlap)", id)
+			seen[id] = true
+		}
+	}
+	// No run may be served twice — that is the bug. Also assert the walk reaches
+	// BOTH provider pages: 1050 lives on provider page 1, 1100 on page 2.
+	assert.True(t, seen[1050], "a failure from provider page 1 must be served")
+	assert.True(t, seen[1100], "a failure from provider page 2 must be served")
+}
+
+// TestServeForgePipelines_ClampsPerPage covers the panic/empty-page guard.
+func TestServeForgePipelines_ClampsPerPage(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(pipelineListBody))
+	}))
+
+	// A non-positive perPage used to panic (negative) or return an empty page
+	// that still claimed more pages (zero).
+	for _, perPage := range []string{"0", "-5", "-1"} {
+		req := newRequest(t, http.MethodGet, "/api/forge/pipelines?perPage="+perPage, nil)
+		withProjectCookie(req, env.ProjectDir)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeForgePipelines, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "perPage=%s must not fail", perPage)
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.NotEmpty(t, resp["pipelines"], "perPage=%s must still return the default page", perPage)
+	}
+}
+
+// TestServeForgePipelines_ClampsPage: a non-positive page must not produce a
+// negative slice offset.
+func TestServeForgePipelines_ClampsPage(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(pipelineListBody))
+	}))
+
+	for _, page := range []string{"0", "-3"} {
+		req := newRequest(t, http.MethodGet, "/api/forge/pipelines?page="+page, nil)
+		withProjectCookie(req, env.ProjectDir)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeForgePipelines, req)
+		require.Equal(t, http.StatusOK, w.Code, "page=%s must not fail", page)
+	}
+}
+
+// TestServeForgePipelines_SparseFilterIsBounded: a filter that matches nothing
+// must terminate, not walk the entire history. The walk is capped, so the
+// response is an empty page with no more pages — which ends the caller's
+// infinite scroll instead of looping it.
+func TestServeForgePipelines_SparseFilterIsBounded(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	var providerCalls int
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerCalls++
+		w.Header().Set("Content-Type", "application/json")
+		// Always advertise another page: without a scan cap this would never end.
+		w.Header().Set("X-Next-Page", "2")
+		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"name":"CI","status":"success","ref":"main",
+			"sha":"abc","source":"push","created_at":"2026-09-14T10:00:00.000Z",
+			"updated_at":"2026-09-14T10:05:00.000Z"}]`))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipelines?status=running&perPage=10", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipelines, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp["pipelines"])
+	assert.LessOrEqual(t, providerCalls, 20, "the provider walk must be bounded")
+}
+
+// TestServeForgePipelines_HasMoreAndNextPage pins the paging contract the
+// frontend's infinite scroll depends on.
+func TestServeForgePipelines_HasMoreAndNextPage(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	// 5 failing runs; perPage=2 means three pages then no more.
+	all := make([]string, 0, 5)
+	for i := range 5 {
+		all = append(all, fmt.Sprintf(`{"id":%d,"iid":%d,"name":"CI","status":"failed","ref":"main",`+
+			`"sha":"abc","source":"push","created_at":"2026-09-14T10:00:00.000Z",`+
+			`"updated_at":"2026-09-14T10:05:00.000Z"}`, i, i))
+	}
+	mockPipelineGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("[" + strings.Join(all, ",") + "]"))
+	}))
+
+	req := newRequest(t, http.MethodGet, "/api/forge/pipelines?status=failure&perPage=2&page=1", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgePipelines, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp["pipelines"], 2)
+	assert.Equal(t, true, resp["hasMore"])
+	assert.Equal(t, float64(2), resp["nextPage"])
+
+	// The last page is short and reports no more.
+	req = newRequest(t, http.MethodGet, "/api/forge/pipelines?status=failure&perPage=2&page=3", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeForgePipelines, req)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Len(t, resp["pipelines"], 1)
+	assert.Equal(t, false, resp["hasMore"])
 }
 
 // TestServeForgePipeline_ReturnsRunAndJobs covers the detail endpoint, which is

@@ -2058,12 +2058,14 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // default — the user selects the part they care about, then types their message.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
-function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number } } | null) {
+function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
   quoteQuestion.openComposer({
     url: it.url,
-    label: `${it.slug}#${it.number}`,
+    // A pipeline run has no issue/PR number, so its caller supplies a label
+    // that names the run; otherwise `slug#number` would read like a PR number.
+    label: it.label ?? `${it.slug}#${it.number}`,
     onAdd: () => switchTab('chat'),
   })
 }

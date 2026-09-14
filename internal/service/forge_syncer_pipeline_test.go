@@ -251,6 +251,34 @@ func TestSyncPipelines_SkippedWhenNotRequested(t *testing.T) {
 	assert.Empty(t, sink.events)
 }
 
+// TestSyncPipelines_ThreadsTheWatermarkThrough: the item watermark (minus the
+// overlap window) must reach the adapter as the lower bound, or every pass would
+// re-read the full history.
+func TestSyncPipelines_ThreadsTheWatermarkThrough(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+
+	// An established repo with a known watermark.
+	watermark := now.Add(-time.Hour)
+	require.NoError(t, service.SetForgeSyncWatermark(service.ForgeRepoKey{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+	}, watermark))
+
+	provider := &pipelineProvider{runs: []forge.PipelineRun{
+		pipelineRun(100, forge.PipelineSuccess, now),
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+
+	assert.False(t, provider.lastSince.IsZero(), "the watermark must be threaded through as `since`")
+	// The syncer subtracts an overlap window, so the bound is at or just before
+	// the stored watermark.
+	assert.WithinDuration(t, watermark, provider.lastSince, 5*time.Second,
+		"since must be the watermark minus the overlap window")
+}
+
 // TestSyncPipelines_ProviderWithoutCapabilityIsNotAnError: a platform with no
 // CI surface must be a silent no-op, not a sync failure.
 func TestSyncPipelines_ProviderWithoutCapabilityIsNotAnError(t *testing.T) {
@@ -266,28 +294,75 @@ func TestSyncPipelines_ProviderWithoutCapabilityIsNotAnError(t *testing.T) {
 	assert.Empty(t, sink.events)
 }
 
-// TestSyncPipelines_FirstSyncDetectionUsesWatermark: the baseline decision must
-// come from the repo watermark, so an established repo does not silently treat
-// a later pass as "first" and swallow the event.
-func TestSyncPipelines_FirstSyncDetectionUsesWatermark(t *testing.T) {
+// TestSyncPipelines_BaselineComesFromLedgerNotWatermark is the regression for a
+// real bug: the CI baseline used to be derived from the ITEM watermark.
+//
+// A repository can be polled for months with no pipeline subscriber, so its item
+// watermark is set while its CI ledger is empty. Keying "is this the first CI
+// pass?" off that watermark answered "no", so every historical run newer than the
+// watermark was dispatched — the exact flood the baseline exists to prevent.
+func TestSyncPipelines_BaselineComesFromLedgerNotWatermark(t *testing.T) {
 	setupTestDBForForgeSync(t)
 	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 
-	// Seed a watermark so this is NOT a first sync, then present a run that was
-	// never recorded. It must fire immediately.
+	// The repo has been polled before (watermark set), but CI has never run.
 	require.NoError(t, service.SetForgeSyncWatermark(service.ForgeRepoKey{
 		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
 	}, now.Add(-time.Hour)))
 
 	provider := &pipelineProvider{runs: []forge.PipelineRun{
 		pipelineRun(100, forge.PipelineFailure, now),
+		pipelineRun(101, forge.PipelineSuccess, now.Add(time.Minute)),
 	}}
 	sink := &fakeSink{}
 	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
 
 	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
-	require.Len(t, sink.events, 1, "on a non-first sync a new run fires without a baseline pass")
-	assert.Equal(t, int64(100), sink.events[0].PipelineRunID)
+
+	// The first CI pass must baseline, not replay: an empty ledger wins over a
+	// set item watermark.
+	assert.Empty(t, sink.events, "an empty CI ledger means baseline, whatever the item watermark says")
+
+	recorded, err := service.ListForgePipelineRuns(service.ForgeRepoKey{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+	})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []int64{100, 101}, recorded, "the historical runs must still be recorded")
+
+	// A genuinely new run after the baseline does fire.
+	provider.runs = append(provider.runs, pipelineRun(102, forge.PipelineFailure, now.Add(2*time.Minute)))
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+	require.Len(t, sink.events, 1)
+	assert.Equal(t, int64(102), sink.events[0].PipelineRunID)
+}
+
+// TestSyncPipelines_PartialBaselineDoesNotLeakHistory: a mid-walk failure leaves
+// the ledger partly populated. The runs that were never seen are then treated as
+// new, which is correct — they were never baselined, so they are genuinely
+// unreported rather than a leak of already-known history.
+func TestSyncPipelines_PartialBaselineDoesNotLeakHistory(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+
+	// Pre-seed the ledger with one run, simulating a baseline that completed for
+	// page 1 before failing on page 2.
+	repo := service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets"}
+	fresh, err := service.RecordPipelineRun(repo, 100)
+	require.NoError(t, err)
+	require.True(t, fresh)
+
+	// A run that was never baselined arrives: it must fire, because the user was
+	// never told about it.
+	provider := &pipelineProvider{runs: []forge.PipelineRun{
+		pipelineRun(100, forge.PipelineSuccess, now),
+		pipelineRun(101, forge.PipelineFailure, now.Add(time.Minute)),
+	}}
+	sink := &fakeSink{}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, sink)
+
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+	require.Len(t, sink.events, 1, "the unbaselined run must fire")
+	assert.Equal(t, int64(101), sink.events[0].PipelineRunID)
 }
 
 // TestAnyTaskSubscribesPipeline covers the quota gate: CI polling costs an extra

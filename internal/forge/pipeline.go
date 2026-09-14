@@ -34,6 +34,12 @@ const (
 )
 
 // PipelineRun is one CI run, normalized across platforms.
+//
+// Known limitation (GitHub): re-running a workflow keeps the same run ID and
+// increments an attempt counter, so the second outcome is indistinguishable from
+// the first by ID alone. The ledger therefore treats a re-run as already
+// handled and its new result does not fire an event. Fixing this would require
+// carrying the attempt number through the dedupe key.
 type PipelineRun struct {
 	// ID is the platform's run identity (GitHub run id / GitLab pipeline id).
 	// It is the dedupe discriminator, so it must be stable and unique per repo.
@@ -83,6 +89,12 @@ type PipelineRunPage struct {
 type PipelineLister interface {
 	// ListPipelineRuns returns runs updated at or after since, newest first.
 	// A zero since means "no lower bound".
+	//
+	// HasMore must be false once the walk has reached the `since` boundary, even
+	// if the platform still has older pages. A platform that filters `since`
+	// locally (GitHub has no such parameter) would otherwise return an empty
+	// page that still advertises more, and the caller would page through the
+	// repository's entire history on every poll.
 	ListPipelineRuns(ctx context.Context, since time.Time, page, perPage int) (PipelineRunPage, error)
 }
 

@@ -17,7 +17,14 @@ import (
 // ListPipelineRuns returns workflow runs for this repository, newest first.
 //
 // GitHub has no server-side "updated after" filter on this endpoint, so `since`
-// is applied locally. The caller pages until HasMore is false.
+// is applied locally. Because the results are ordered newest-first, the first
+// page whose runs are ALL older than `since` is the end of the interesting
+// range: everything after it is older still. That page therefore reports
+// HasMore=false, which is what stops the caller's walk.
+//
+// Reporting the raw NextPage instead would be a real bug: the filtered page
+// comes back empty while still advertising more pages, so the caller walks the
+// repository's entire run history on every poll.
 func (p *Provider) ListPipelineRuns(ctx context.Context, since time.Time, page, perPage int) (forge.PipelineRunPage, error) {
 	runs, resp, err := p.client.Actions.ListRepositoryWorkflowRuns(ctx, p.owner, p.repo, &gogithub.ListWorkflowRunsOptions{
 		ListOptions: gogithub.ListOptions{
@@ -29,23 +36,30 @@ func (p *Provider) ListPipelineRuns(ctx context.Context, since time.Time, page, 
 		return forge.PipelineRunPage{}, wrapErr(err)
 	}
 
-	out := make([]forge.PipelineRun, 0, len(runs.WorkflowRuns))
+	total := len(runs.WorkflowRuns)
+	out := make([]forge.PipelineRun, 0, total)
+	filteredOut := 0
 	for _, r := range runs.WorkflowRuns {
 		run := convertWorkflowRun(r)
-		// Apply the lower bound locally. The endpoint returns runs ordered by
-		// creation descending, so once a run is older than `since` every
-		// remaining one is too and paging can stop — but the caller owns that
-		// decision, so this only filters.
 		if !since.IsZero() && run.UpdatedAt.Before(since) {
+			filteredOut++
 			continue
 		}
 		out = append(out, run)
 	}
 
+	// The whole page was older than the watermark: this is the boundary.
+	atBoundary := total > 0 && filteredOut == total
+	hasMore := !atBoundary && resp != nil && resp.NextPage > 0
+
+	next := 0
+	if hasMore {
+		next = nextPageOf(resp)
+	}
 	return forge.PipelineRunPage{
 		Runs:     out,
-		HasMore:  resp != nil && resp.NextPage > 0,
-		NextPage: nextPageOf(resp),
+		HasMore:  hasMore,
+		NextPage: next,
 	}, nil
 }
 

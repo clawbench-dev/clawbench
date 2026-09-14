@@ -283,29 +283,15 @@ CREATE INDEX IF NOT EXISTS idx_forge_pipeline_runs_seen ON forge_pipeline_runs(p
 // this is the first sighting. A false return means the run was already recorded
 // and must not be dispatched again.
 //
-// Freshness is determined by an explicit existence check rather than by
-// RowsAffected: the insert is a no-op on conflict, so an affected-row count
-// would be indistinguishable from a silent conflict.
+// Freshness comes from RowsAffected on the INSERT itself, which is a single
+// atomic statement: `ON CONFLICT DO NOTHING` reports 1 row for an insert and 0
+// for a conflict, so the answer cannot go stale between a check and a write. A
+// separate existence query followed by an insert would leave that window open.
 func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
 	if db == nil {
 		return false, nil
 	}
-	seen, err := HasPipelineRun(repo, runID)
-	if err != nil {
-		return false, err
-	}
-	if seen {
-		// Re-seeing a run refreshes seen_at so a run still inside the overlap
-		// window is not pruned while it is still current.
-		_, err = WriteExec(
-			`UPDATE forge_pipeline_runs SET seen_at = CURRENT_TIMESTAMP
-			 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
-			repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
-		)
-		return false, err
-	}
-
-	_, err = WriteExec(
+	res, err := WriteExec(
 		`INSERT INTO forge_pipeline_runs
 		   (platform, host, owner, repo, run_id, seen_at)
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -315,19 +301,41 @@ func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return true, nil
+	}
+
+	// Already recorded. Refresh seen_at so a run still inside the overlap window
+	// is not pruned while it is still current.
+	_, err = WriteExec(
+		`UPDATE forge_pipeline_runs SET seen_at = CURRENT_TIMESTAMP
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
+	)
+	return false, err
 }
 
-// HasPipelineRun reports whether a run has already been recorded.
-func HasPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
+// HasAnyPipelineRun reports whether ANY run has been recorded for a repository,
+// i.e. whether the CI baseline has been established.
+//
+// This is deliberately separate from the item watermark: a repository can have
+// been polled for months with no pipeline subscriber, so its item watermark is
+// set while its CI ledger is empty. Deciding "is this the CI baseline?" from the
+// item watermark would then answer "no" and dispatch every historical run whose
+// timestamp happens to be newer than that watermark.
+func HasAnyPipelineRun(repo ForgeRepoKey) (bool, error) {
 	if dbRead == nil {
 		return false, nil
 	}
 	var n int
 	err := dbRead.QueryRow(
 		`SELECT COUNT(*) FROM forge_pipeline_runs
-		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
-		repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
 	).Scan(&n)
 	return n > 0, err
 }

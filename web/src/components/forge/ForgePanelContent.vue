@@ -343,7 +343,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'request-project'): void
-  (e: 'quote', payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }): void
+  (e: 'quote', payload: { item: { type: 'issue' | 'pr' | 'pipeline'; number: number; title: string; url: string; slug: string; label?: string } }): void
 }>()
 
 const { t } = useI18n()
@@ -532,18 +532,19 @@ function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title:
 /**
  * Quote a whole CI run into the chat.
  *
- * The payload reuses the item quote shape (`url` + a `slug#number` label) so
- * App.vue's single handler needs no pipeline branch. A run has no PR number, so
- * the label carries the run counter, which is what the user sees on the row.
+ * The payload carries an explicit `label`, because the generic fallback
+ * (`slug#number`) renders a run as `owner/repo#42` — indistinguishable from a
+ * pull request number. The label names the run instead.
  */
 function onPipelineQuote(run: ForgePipelineRun) {
   emit('quote', {
     item: {
-      type: 'pr',
+      type: 'pipeline',
       number: run.number,
       title: run.name,
       url: run.url,
       slug: run.slug,
+      label: `${run.slug} ${t('forge.type.pipelines')} #${run.number}`,
     },
   })
 }
@@ -813,40 +814,17 @@ function formatTime(iso: string): string {
   flex-shrink: 0;
 }
 
-/* ── Error card ── */
+/* ── Error card ──
+   The card/loading chrome is shared (web/css/components.css). Only the margin
+   differs here: the list card sits directly under the toolbar, so it wants less
+   vertical breathing room than the detail page. */
 .forge-error-card {
   margin: var(--space-4) var(--space-6);
-  padding: var(--space-6);
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
 }
-.forge-error-icon {
-  color: var(--color-red);
-  flex-shrink: 0;
-}
-.forge-error-text { flex: 1; min-width: 0; }
 .forge-error-title {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
-  margin-bottom: var(--space-1);
-}
-.forge-error-body {
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
 }
 
-/* ── Loading / empty ── */
-.forge-loading {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .forge-empty-card {
   display: flex;
   flex-direction: column;
@@ -929,36 +907,6 @@ function formatTime(iso: string): string {
   color: var(--text-hint);
   flex-shrink: 0;
   align-self: center;
-}
-/* Status dot sits on the title's first-line baseline, not the row's vertical
-   centre (the row is two lines tall). */
-.forge-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  margin-top: var(--space-3);
-}
-.forge-state-dot.state-open { background: var(--color-success); }
-.forge-state-dot.state-closed { background: var(--color-red); }
-.forge-state-dot.state-merged { background: var(--color-purple); }
-/* CI run / job status. Distinct from the issue states above: a run's status is
-   an outcome, not a lifecycle state. */
-.forge-state-dot.pipeline-success { background: var(--color-success); }
-.forge-state-dot.pipeline-failure { background: var(--color-red); }
-.forge-state-dot.pipeline-running { background: var(--color-yellow); }
-.forge-state-dot.pipeline-cancelled,
-.forge-state-dot.pipeline-skipped { background: var(--text-secondary, #8b949e); }
-.forge-state-dot.pipeline-unknown { background: var(--border-color, #6e7681); }
-/* Pipeline row metadata: the ref is the most useful field, so it is emphasised
-   over the secondary run details. */
-.forge-pipeline-ref {
-  font-weight: var(--font-weight-medium);
-}
-.forge-pipeline-sha,
-.forge-pipeline-event {
-  font-family: var(--font-mono, monospace);
-  opacity: 0.85;
 }
 .forge-loading-more {
   padding: var(--space-6);

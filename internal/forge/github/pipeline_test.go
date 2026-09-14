@@ -12,6 +12,73 @@ import (
 	"clawbench/internal/forge"
 )
 
+// TestListPipelineRuns_StopsAtTheSinceBoundary is the regression for a real
+// bug: `since` is filtered locally on this platform, so a page whose runs are
+// ALL older than the watermark came back empty while still advertising the next
+// page. The caller walked the repository's entire run history on every poll.
+func TestListPipelineRuns_StopsAtTheSinceBoundary(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// GitHub advertises more pages...
+		w.Header().Set("Link", `<https://api.github.com/repos/acme/widgets/actions/runs?page=2>; rel="next"`)
+		// ...and returns only runs older than the watermark.
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":1,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-01T10:05:00Z"}
+		]}`))
+	}))
+
+	since := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	res, err := p.ListPipelineRuns(context.Background(), since, 1, 30)
+	require.NoError(t, err)
+
+	assert.Empty(t, res.Runs, "everything on this page is older than the watermark")
+	assert.False(t, res.HasMore, "the since boundary ends the walk even though the platform has more pages")
+	assert.Zero(t, res.NextPage, "no next page once the boundary is reached")
+}
+
+// TestListPipelineRuns_KeepsPagingBeforeTheBoundary: a page with at least one
+// run inside the window must still advertise the next page, or a busy repo
+// would truncate its results.
+func TestListPipelineRuns_KeepsPagingBeforeTheBoundary(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<https://api.github.com/repos/acme/widgets/actions/runs?page=2>; rel="next"`)
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":2,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-14T12:00:00Z","updated_at":"2026-09-14T12:05:00Z"},
+			{"id":1,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-01T10:05:00Z"}
+		]}`))
+	}))
+
+	since := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	res, err := p.ListPipelineRuns(context.Background(), since, 1, 30)
+	require.NoError(t, err)
+
+	require.Len(t, res.Runs, 1, "only the in-window run is returned")
+	assert.Equal(t, int64(2), res.Runs[0].ID)
+	assert.True(t, res.HasMore, "one in-window run means there may be more to read")
+}
+
+// TestListPipelineRuns_UnboundedKeepsPaging: with no watermark every page is in
+// scope, so paging must follow the platform.
+func TestListPipelineRuns_UnboundedKeepsPaging(t *testing.T) {
+	p := newTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Link", `<https://api.github.com/repos/acme/widgets/actions/runs?page=2>; rel="next"`)
+		_, _ = w.Write([]byte(`{"workflow_runs":[
+			{"id":1,"name":"CI","status":"completed","conclusion":"success",
+			 "created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-01T10:05:00Z"}
+		]}`))
+	}))
+
+	res, err := p.ListPipelineRuns(context.Background(), time.Time{}, 1, 30)
+	require.NoError(t, err)
+	require.Len(t, res.Runs, 1)
+	assert.True(t, res.HasMore, "a zero since means no lower bound")
+}
+
 // TestListPipelineRuns_NormalizesStatus covers the GitHub status/conclusion
 // split, which is the part most likely to be got wrong: a run that is still
 // going has an EMPTY conclusion, and reading that as a terminal state would

@@ -282,6 +282,10 @@ export function useForgePipelines(getProjectPath: () => string) {
 
         loading.value = true
         error.value = null
+        // A reload supersedes any in-flight append: that append will bail on the
+        // seq check without clearing its flag, so clear it here or the spinner
+        // would stay on and loadMore would refuse to run again.
+        loadingMore.value = false
         try {
             const res = await fetchForgePipelines({
                 status: statusParam(),
@@ -309,19 +313,29 @@ export function useForgePipelines(getProjectPath: () => string) {
     async function loadMore() {
         if (!hasMore.value || loadingMore.value || loading.value) return
         if (!getProjectPath()) return
+
+        // Capture the sequence BEFORE awaiting. A filter change (or any reload)
+        // bumps requestSeq, and an in-flight append must not then land in the
+        // new list — it was fetched for the previous filter, so its rows belong
+        // to a result set the user has already navigated away from.
+        const seq = requestSeq
         loadingMore.value = true
         try {
             const res = await fetchForgePipelines({
                 status: statusParam(),
                 page: nextPage.value,
             })
+            if (seq !== requestSeq) return
             pipelines.value = [...pipelines.value, ...res.pipelines]
             hasMore.value = res.hasMore
             nextPage.value = res.nextPage
         } catch (err) {
+            if (seq !== requestSeq) return
             appLog.w(TAG, 'loadMore pipelines failed', err)
         } finally {
-            loadingMore.value = false
+            // Only clear the flag for the request that still owns the list;
+            // otherwise a stale response would clear a newer request's spinner.
+            if (seq === requestSeq) loadingMore.value = false
         }
     }
 
@@ -331,16 +345,9 @@ export function useForgePipelines(getProjectPath: () => string) {
         void load()
     }
 
-    function reset() {
-        pipelines.value = []
-        error.value = null
-        hasMore.value = false
-        nextPage.value = 1
-    }
-
     return {
         pipelines, loading, loadingMore, error, filter, hasMore, nextPage,
-        load, loadMore, setFilter, reset,
+        load, loadMore, setFilter,
     }
 }
 

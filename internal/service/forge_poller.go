@@ -221,19 +221,21 @@ const forgeSnapshotRetention = 30 * 24 * time.Hour
 func (p *ForgePoller) pruneRepo(pf ProjectForge, key string) {
 	repoKey := ForgeRepoKey{Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo}
 	cutoff := p.now().Add(-forgeSnapshotRetention)
+
+	// The two ledgers are pruned independently: a failure to prune one must not
+	// skip the other, or a persistent item-prune error would let the CI ledger
+	// grow without bound.
 	removed, err := PruneForgeItems(repoKey, cutoff)
 	if err != nil {
 		slog.Warn("forge poller: prune snapshots failed",
 			slog.String("repo", key), slog.String("err", err.Error()))
-		return
-	}
-	if removed > 0 {
+	} else if removed > 0 {
 		slog.Info("forge poller: pruned stale snapshots",
 			slog.String("repo", key), slog.Int64("removed", removed))
 	}
 
-	// The CI run ledger needs the same treatment: nothing else deletes from it,
-	// so without this it would grow for the lifetime of the install.
+	// Nothing else deletes from the CI ledger, so without this it would grow for
+	// the lifetime of the install.
 	pipelineRemoved, err := PruneForgePipelineRuns(repoKey, cutoff)
 	if err != nil {
 		slog.Warn("forge poller: prune pipeline runs failed",

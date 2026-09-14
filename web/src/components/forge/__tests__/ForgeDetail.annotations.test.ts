@@ -395,29 +395,44 @@ describe('ForgeDetail double-click copy → quote', () => {
 // <button>'s default border cannot be observed by mounting. Sniff the source
 // instead — the same pattern the repo's other CSS guard tests use.
 describe('ForgeDetail icon button styling', () => {
-  function readComponent(): string {
+  /**
+   * Read the source that declares `.forge-icon-btn`.
+   *
+   * The rule is shared chrome: ForgePipelineDetail renders the same round icon
+   * buttons, so the declaration moved to the shared stylesheet. This still
+   * asserts the same behavior (the UA border must be cleared) — it just no
+   * longer pins which file happens to hold it.
+   */
+  function readIconBtnSource(): string {
+    const candidates = [
+      'src/components/forge/ForgeDetail.vue',
+      'css/components.css',
+    ]
     for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
-      try {
-        return readFileSync(join(base, 'src/components/forge/ForgeDetail.vue'), 'utf8')
-      } catch {
-        // try the next candidate
+      for (const rel of candidates) {
+        try {
+          const src = readFileSync(join(base, rel), 'utf8')
+          if (/\.forge-icon-btn\s*\{/.test(src)) return src
+        } catch {
+          // try the next candidate
+        }
       }
     }
-    throw new Error('ForgeDetail.vue not found from cwd: ' + process.cwd())
+    throw new Error('.forge-icon-btn declaration not found from cwd: ' + process.cwd())
   }
 
   it('clears the UA border on .forge-icon-btn', () => {
     // The class is used by BOTH <a> and <button>. A bare <button> keeps the
     // UA's default border, which renders as a stray ring around the round icon
     // — visible only after a <button> started using this class.
-    const src = readComponent()
+    const src = readIconBtnSource()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)
     expect(rule, '.forge-icon-btn rule must exist').toBeTruthy()
     expect(rule![1]).toMatch(/^\s*border:\s*none\s*;?\s*$/m)
   })
 
   it('keeps the round shape the border would otherwise distort', () => {
-    const src = readComponent()
+    const src = readIconBtnSource()
     const rule = src.match(/\.forge-icon-btn\s*\{([\s\S]*?)\}/)![1]
     expect(rule).toContain('border-radius: var(--radius-lg)')
     expect(rule).toContain('width: 28px')

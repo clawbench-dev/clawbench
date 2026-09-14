@@ -21,6 +21,24 @@ import (
 // jsonPipelines is the response key for a run list.
 const jsonPipelines = "pipelines"
 
+// Paging bounds for the run list.
+//
+// The caller's page indexes the FILTERED result, so serving page N requires
+// walking the provider from its first page and skipping (N-1)*perPage matches.
+// Both bounds exist to keep that walk finite:
+//
+//   - pipelineProviderPageSize is the page size requested from the provider
+//     (the platforms cap at 100).
+//   - pipelineScanPageLimit caps how many provider pages one request may read,
+//     so a sparse filter cannot scan the whole history. A short or empty page is
+//     the natural end of an infinite scroll.
+const (
+	pipelineProviderPageSize = 100
+	pipelineScanPageLimit    = 20
+	pipelineDefaultPerPage   = 30
+	pipelineMaxPerPage       = 100
+)
+
 // forgePipelineRunView is the frontend-facing shape of one CI run.
 type forgePipelineRunView struct {
 	Platform  string `json:"platform"`
@@ -150,8 +168,8 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	page := atoiDefault(q.Get("page"), 1)
-	perPage := atoiDefault(q.Get("perPage"), 30)
+	page := clampPipelinePage(atoiDefault(q.Get("page"), 1))
+	perPage := clampPipelinePerPage(atoiDefault(q.Get("perPage"), pipelineDefaultPerPage))
 	statusFilter := normalizePipelineStatusFilter(q.Get("status"))
 
 	runs, hasMore, err := collectPipelineRuns(forgeContext(r), lister, page, perPage, statusFilter)
@@ -173,24 +191,38 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// collectPipelineRuns gathers up to perPage runs matching an optional status
-// filter, starting at page.
+// collectPipelineRuns returns one page of runs matching an optional status
+// filter, plus whether further pages may exist.
 //
-// The provider pages over runs, so this keeps requesting pages until the filter
-// has yielded a full page or the provider runs out. The filter is applied here
-// rather than server-side because GitHub's runs endpoint has no conclusion
-// filter and GitLab's status values do not map one-to-one onto the normalized
-// vocabulary — asking the provider to filter would mean two different
-// definitions of "failed".
+// The status filter is applied here rather than server-side because GitHub's
+// runs endpoint has no conclusion filter and GitLab's status values do not map
+// one-to-one onto the normalized vocabulary — asking the provider to filter
+// would mean two different definitions of "failed".
+//
+// That local filter is what forces the walk to restart from provider page 1:
+// the caller's `page` indexes the FILTERED result, while the provider pages the
+// unfiltered one, so there is no provider page that corresponds to "the Nth page
+// of failures". Slicing a walk that started at the caller's page would re-serve
+// already-shown runs (and skip others) — which is exactly what it used to do.
+//
+// The walk is bounded so a sparse filter (e.g. `status=running` on a repo with
+// no running runs) cannot scan the entire history on every request. When the
+// bound is reached the page is short or empty, which ends the caller's infinite
+// scroll: later pages re-walk and slice a deeper window, so scrolling still
+// terminates rather than looping.
 func collectPipelineRuns(
 	ctx context.Context,
 	lister forge.PipelineLister,
 	page, perPage int,
 	statusFilter string,
 ) ([]forge.PipelineRun, bool, error) {
-	var runs []forge.PipelineRun
-	for p := page; ; p++ {
-		res, err := lister.ListPipelineRuns(ctx, time.Time{}, p, 100)
+	skip := (page - 1) * perPage
+	// One extra so "is there another page" is answerable without a second walk.
+	want := skip + perPage + 1
+
+	collected := make([]forge.PipelineRun, 0, want)
+	for p := 1; p <= pipelineScanPageLimit; p++ {
+		res, err := lister.ListPipelineRuns(ctx, time.Time{}, p, pipelineProviderPageSize)
 		if err != nil {
 			return nil, false, err
 		}
@@ -199,18 +231,24 @@ func collectPipelineRuns(
 			if statusFilter != "" && string(run.Status) != statusFilter {
 				continue
 			}
-			runs = append(runs, run)
+			collected = append(collected, run)
 		}
-		if !res.HasMore || len(runs) >= perPage || res.NextPage <= 0 {
+		if len(collected) >= want {
+			break
+		}
+		if !res.HasMore || res.NextPage <= 0 {
 			break
 		}
 	}
 
-	hasMore := len(runs) > perPage
-	if hasMore {
-		runs = runs[:perPage]
+	if skip >= len(collected) {
+		return nil, false, nil
 	}
-	return runs, hasMore, nil
+	end := skip + perPage
+	if end > len(collected) {
+		end = len(collected)
+	}
+	return collected[skip:end], len(collected) > end, nil
 }
 
 // ServeForgePipeline returns one run plus its jobs.
@@ -319,6 +357,34 @@ func findPipelineRun(ctx context.Context, lister forge.PipelineLister, runID int
 		}
 	}
 	return forge.PipelineRun{}, false, nil
+}
+
+// clampPipelinePage coerces the page number into a usable range.
+//
+// A negative or zero page would make the skip offset negative, which would
+// slice the result backwards (or panic). Treating it as page 1 is the least
+// surprising recovery and matches how a bad `state` is handled.
+func clampPipelinePage(page int) int {
+	if page < 1 {
+		return 1
+	}
+	return page
+}
+
+// clampPipelinePerPage bounds the page size.
+//
+// A non-positive value is the dangerous case: the caller's slice end would be
+// <= the start, so the page comes back empty while still reporting more pages —
+// an infinite scroll that never fills. Clamping to the default keeps the
+// contract "you always get a usable page".
+func clampPipelinePerPage(n int) int {
+	if n <= 0 {
+		return pipelineDefaultPerPage
+	}
+	if n > pipelineMaxPerPage {
+		return pipelineMaxPerPage
+	}
+	return n
 }
 
 // normalizePipelineStatusFilter validates the status query parameter. An

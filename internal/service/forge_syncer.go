@@ -117,11 +117,13 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 		return err
 	}
 
-	// CI runs are fetched after the items and independently of the watermark.
+	// CI runs are fetched after the items and independently of the watermark:
+	// they derive their own baseline from their own ledger, and a pipeline
+	// failure must not roll back the item watermark (or vice versa).
 	// A platform without CI support simply does not implement PipelineLister.
 	pipelinesSeen := 0
 	if opts.IncludePipelines {
-		pipelinesSeen, err = s.syncPipelines(ctx, provider, repoKey, repoRef, remote, since, firstSync)
+		pipelinesSeen, err = s.syncPipelines(ctx, provider, repoKey, repoRef, remote, since)
 		if err != nil {
 			return err
 		}
@@ -140,13 +142,19 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 // syncPipelines fetches CI runs, records terminal ones, and dispatches the
 // genuinely new ones.
 //
-// Two rules make this correct:
+// Three rules make this correct:
 //
 //   - Non-terminal runs are NOT recorded. If they were, the run would look
 //     already-handled and its eventual completion would be lost forever.
-//   - On a repository's first sync, terminal runs are recorded but NOT
-//     dispatched. Otherwise a fresh install would fire the task once for every
-//     run in the repository's history.
+//   - The baseline is derived from the CI LEDGER, not the item watermark. A
+//     repository polled for months with no pipeline subscriber has a set item
+//     watermark but an empty ledger; treating that as "not the first sync" would
+//     dispatch every historical run newer than the watermark.
+//   - On the first pass (empty ledger) terminal runs are recorded but NOT
+//     dispatched, so a fresh install does not fire the task once per historical
+//     run. A mid-walk failure leaves the ledger partially populated, and the
+//     remaining runs are then correctly treated as new — they were never
+//     baselined, so dispatching them is the right outcome rather than a leak.
 func (s *ForgeSyncer) syncPipelines(
 	ctx context.Context,
 	provider forge.Provider,
@@ -154,13 +162,19 @@ func (s *ForgeSyncer) syncPipelines(
 	repoRef ForgeRepoRef,
 	remote forge.Remote,
 	since time.Time,
-	firstSync bool,
 ) (int, error) {
 	lister, ok := provider.(forge.PipelineLister)
 	if !ok {
 		// The platform has no CI surface. This is not an error: it is the
 		// expected shape for any provider that only implements Provider.
 		return 0, nil
+	}
+
+	// First pass for THIS repo's CI: an empty ledger means nothing has been
+	// recorded yet, whatever the item watermark says.
+	baselined, err := HasAnyPipelineRun(repoKey)
+	if err != nil {
+		return 0, fmt.Errorf("read pipeline ledger: %w", err)
 	}
 
 	page := 1
@@ -187,9 +201,9 @@ func (s *ForgeSyncer) syncPipelines(
 			if !fresh {
 				continue // already handled on an earlier pass
 			}
-			if firstSync {
-				// Baseline: recorded so it never fires, but deliberately not
-				// dispatched.
+			if !baselined {
+				// Baseline pass: recorded so it never fires, but deliberately
+				// not dispatched.
 				continue
 			}
 			if !forge.PipelineFiresTask(run.Status) {

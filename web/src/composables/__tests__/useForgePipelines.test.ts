@@ -126,6 +126,59 @@ describe('useForgePipelines', () => {
 
     expect(p.pipelines.value.map(r => r.id)).toEqual([9])
   })
+
+  it('does not let an in-flight loadMore pollute a different filter', async () => {
+    // The append is fetched for the OLD filter. If the user switches filters
+    // while it is in flight, those rows must not be appended to the new list —
+    // they belong to a result set the user has already left.
+    let resolveAppend: (v: unknown) => void = () => {}
+    mockFetchForgePipelines
+      // load(): the failure filter, with more available.
+      .mockResolvedValueOnce({ pipelines: [run(1, 'failure')], hasMore: true, nextPage: 2, binding })
+      // loadMore(): held open, then resolved AFTER the filter switch.
+      .mockImplementationOnce(() => new Promise(r => { resolveAppend = r }))
+      // setFilter('running') -> load()
+      .mockResolvedValueOnce({ pipelines: [run(7, 'running')], hasMore: false, nextPage: 2, binding })
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+
+    const appending = p.loadMore()
+    p.setFilter('running')
+    await vi.waitFor(() => expect(p.pipelines.value.map(r => r.id)).toEqual([7]))
+
+    // The stale append lands now; it must be dropped.
+    resolveAppend({ pipelines: [run(2, 'failure')], hasMore: true, nextPage: 3, binding })
+    await appending
+
+    expect(p.pipelines.value.map(r => r.id)).toEqual([7])
+    expect(p.hasMore.value).toBe(false)
+    expect(p.loadingMore.value).toBe(false)
+  })
+
+  it('clears the append spinner when a reload supersedes it', async () => {
+    // The superseded append bails on its seq check without clearing the flag,
+    // so the reload has to clear it or loadMore would refuse to run forever.
+    let resolveAppend: (v: unknown) => void = () => {}
+    mockFetchForgePipelines
+      .mockResolvedValueOnce({ pipelines: [run(1, 'failure')], hasMore: true, nextPage: 2, binding })
+      .mockImplementationOnce(() => new Promise(r => { resolveAppend = r }))
+      .mockResolvedValueOnce({ pipelines: [run(7, 'running')], hasMore: true, nextPage: 2, binding })
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+    const appending = p.loadMore()
+
+    p.setFilter('running')
+    await vi.waitFor(() => expect(p.loading.value).toBe(false))
+
+    expect(p.loadingMore.value).toBe(false, 'the spinner must not stick')
+
+    resolveAppend({ pipelines: [run(2, 'failure')], hasMore: true, nextPage: 3, binding })
+    await appending
+    // The flag stays clear, so a later loadMore can still run.
+    expect(p.loadingMore.value).toBe(false)
+  })
 })
 
 describe('useForgePipelineDetail', () => {

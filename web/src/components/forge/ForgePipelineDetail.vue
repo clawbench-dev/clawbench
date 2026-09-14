@@ -180,7 +180,9 @@ function formatTime(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleDateString()
+  // Matches ForgeDetail: the two forge drill-down views must render the same
+  // timestamp the same way.
+  return d.toLocaleString()
 }
 </script>
 
@@ -195,6 +197,9 @@ function formatTime(iso: string): string {
 }
 .forge-pipeline-sha-full {
   font-family: var(--font-mono, monospace);
+}
+.forge-pipeline-duration {
+  font-variant-numeric: tabular-nums;
 }
 .forge-pipeline-jobs {
   margin-top: var(--space-5);
@@ -246,6 +251,9 @@ function formatTime(iso: string): string {
   font-size: var(--font-size-xs);
   color: var(--color-red);
   font-family: var(--font-mono, monospace);
+}
+.forge-pipeline-job-row .col-stage {
+  color: var(--text-secondary, #666);
 }
 .forge-pipeline-job-row .col-status {
   display: flex;
