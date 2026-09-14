@@ -188,9 +188,17 @@ onMounted(() => {
 // Re-render and re-verify whenever the loaded item or its comments change.
 // renderId guards against a slow verification pass from a previous item
 // mutating the container after the user has moved on.
+//
+// `loading` MUST be a dependency. The detail body only exists once loading is
+// false (the template shows a spinner branch while it is true), and `open()`
+// sets item/comments *before* clearing loading. Watching only item/comments
+// therefore fired while bodyRef was still null — verifyAnnotations() bailed on
+// its `if (!el) return` guard — and nothing ran again when the body finally
+// mounted, so no path in an issue/PR body was ever verified and every
+// annotation stayed data-path-type-less and unclickable.
 let renderId = 0
 watch(
-  () => [detail.item.value, detail.comments.value] as const,
+  () => [detail.item.value, detail.comments.value, detail.loading.value] as const,
   async () => {
     const id = ++renderId
     await nextTick()
