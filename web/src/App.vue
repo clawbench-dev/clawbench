@@ -728,6 +728,11 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
       projectPath: resolvedProjectPath,
       switchTab,
       switchSession: sessionIdentity.switchSession,
+      // Only open while the user is still on the project this session belongs
+      // to. Without this, a fallback watcher (armed when identity was not yet
+      // resolved) would survive an unrelated later project switch and open this
+      // stale session there.
+      isStillRelevant: () => store.state.projectRoot === resolvedProjectPath,
     })
   }
 }
