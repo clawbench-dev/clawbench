@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { normalizeRatio } from '@/utils/splitRatio'
+import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS } from '@/composables/dockTabs'
 
 export const WIDE_SCREEN_MIN_WIDTH = 1024
 // Physical (device-pixel) width threshold for the wide-screen layout. CSS width
@@ -9,25 +10,24 @@ export const WIDE_SCREEN_MIN_PHYSICAL_WIDTH = 1280
 export const WIDE_SCREEN_LEFT_TAB_KEY = 'clawbench-widescreen-left-tab'
 export const WIDE_SCREEN_SPLIT_RATIO_KEY = 'clawbench-widescreen-split-ratio'
 export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collapsed'
-// Every tab the wide-screen vertical dock can switch to. This is the
-// validation whitelist for switchLeftTab / readPersistedLeftTab /
-// resolveLeftTabOnEnter, so it must list *all* rendered tabs — the dock renders
-// WIDE_SCREEN_PRIMARY_TABS followed by overflowTabs (App.vue), and a tab that
-// is rendered but missing here is a dead button (click does nothing).
-export const WIDE_SCREEN_DOCK_TABS = ['browse', 'view', 'history', 'forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings']
 /**
- * Tabs that are always rendered in the wide-screen vertical dock, in order.
- * The wide dock shows every tab inline — no overflow/popup — so this is the
- * fixed head of the dock; secondary tabs (overflowTabs) follow it.
+ * Validation whitelist for the wide-screen dock. Derived from the DOCK_TABS
+ * registry (composables/dockTabs.ts) so it can never drift from what the dock
+ * renders — the dock renders these ids, and these ids are switchable.
+ *
+ * Historically this was a hand-written array living apart from the render list;
+ * adding a tab without updating it produced a button that did nothing on click.
  */
-export const WIDE_SCREEN_PRIMARY_TABS = ['browse', 'view', 'history']
+export const WIDE_SCREEN_DOCK_TABS = DOCK_TAB_IDS
+
+export { WIDE_SCREEN_PRIMARY_TABS }
 
 /**
  * Visible tab order of the wide-screen vertical dock: fixed primary tabs first,
  * then the (already-filtered) secondary tabs. Used for rendering and for the
  * active-indicator position. Deterministic — never depends on runtime geometry.
  */
-export function wideDockTabOrder(overflowTabs: string[]): string[] {
+export function wideDockTabOrder(overflowTabs: readonly string[]): string[] {
   return [...WIDE_SCREEN_PRIMARY_TABS, ...overflowTabs]
 }
 

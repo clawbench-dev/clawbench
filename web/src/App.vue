@@ -50,14 +50,14 @@
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
             <!-- Secondary tabs (always shown inline; the dock scrolls if too short) -->
             <div v-for="tab in overflowTabs" :key="tab" class="dock-btn-wrap">
               <button class="dock-btn" :class="wideDockBtnClass(tab)" @click.stop="handleWideDockTabClick(tab)" :title="wideDockTabTitle(tab)">
                 <component :is="wideDockTabIcon(tab)" />
               </button>
-              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': wideDockBadgeAnim(tab) }" @animationend="wideDockBadgeAnimEnd(tab)">{{ formatBadgeCount(wideDockBadgeCount(tab)) }}</span>
+              <span v-if="wideDockBadgeVisible(tab)" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }" @animationend="dockTabBadgeAnimEnd(tab)">{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
             </div>
           </div>
           <!-- Chat visibility toggle pinned to the bottom of the vertical dock -->
@@ -425,33 +425,21 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
-          <button v-if="popupOverflowTabs.includes('forge')" class="dock-overflow-item" :class="{ active: activeTab === 'forge' }" @click.stop="handleOverflowSelect('forge')">
-            <component :is="dockTabIcon('forge')" :size="16" />
-            <span>{{ t('nav.forge') }}</span>
-            <span v-if="forgeUnreadCount > 0" class="dock-overflow-count">{{ formatBadgeCount(forgeUnreadCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
-            <Clock :size="16" />
-            <span>{{ t('nav.tasks') }}</span>
-            <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('terminal')" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
-            <TerminalIcon :size="16" />
-            <span>{{ t('terminal.title') }}</span>
-            <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
-            <Network :size="16" />
-            <span>{{ t('nav.portForward') }}</span>
-            <span v-if="store.state.portForwardEnabledCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardEnabledCount) }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('stats')" class="dock-overflow-item" :class="{ active: activeTab === 'stats' }" @click.stop="handleOverflowSelect('stats')">
-            <BarChart3 :size="16" />
-            <span>{{ t('nav.stats') }}</span>
-          </button>
-          <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
-            <Settings :size="16" />
-            <span>{{ t('nav.settings') }}</span>
+          <button
+            v-for="tab in popupOverflowTabs"
+            :key="tab"
+            class="dock-overflow-item"
+            :class="{ active: activeTab === tab }"
+            @click.stop="handleOverflowSelect(tab)"
+          >
+            <component :is="dockTabIcon(tab)" :size="16" />
+            <span>{{ dockTabTitle(tab) }}</span>
+            <span
+              v-if="dockTabBadgeCount(tab) > 0"
+              class="dock-overflow-count"
+              :class="{ 'dock-badge-pop': dockTabBadgeAnim(tab) }"
+              @animationend="dockTabBadgeAnimEnd(tab)"
+            >{{ formatBadgeCount(dockTabBadgeCount(tab)) }}</span>
           </button>
         </div>
       </Transition>
@@ -581,6 +569,9 @@ import {
   PANE_LEFT,
   PANE_RIGHT,
 } from './composables/useWideScreenLayout'
+// Single source of truth for dock tabs (render list, switch whitelist, icons,
+// titles). See the module doc for why this exists.
+import { DOCK_TABS } from './composables/dockTabs'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -1879,21 +1870,33 @@ function handleDockTerminal() {
 // Overflow menu state
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
+// Secondary (non-primary) dock tabs, in registry order, minus the ones the
+// current runtime has disabled. The render list, the switch whitelist and the
+// icon/title lookups all derive from DOCK_TABS — see composables/dockTabs.ts.
 const overflowTabs = computed(() => {
-  const tabs = ['forge', 'tasks']
-  if (!isTerminalDisabled.value) tabs.push('terminal')
-  if (!isSSHDisabled.value) tabs.push('proxy')
-  tabs.push('stats')
-  tabs.push('settings')
-  return tabs
+  return DOCK_TABS
+    .filter((t) => !t.primary)
+    .filter((t) => !(t.id === 'terminal' && isTerminalDisabled.value))
+    .filter((t) => !(t.id === 'proxy' && isSSHDisabled.value))
+    .map((t) => t.id)
 })
-const overflowTabMeta = {
-  forge:   { icon: Github, titleKey: 'nav.forge' },
-  tasks:   { icon: Clock, titleKey: 'nav.tasks' },
-  proxy:   { icon: Network, titleKey: 'nav.portForward' },
-  terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
-  stats:   { icon: BarChart3, titleKey: 'nav.stats' },
-  settings:{ icon: Settings, titleKey: 'nav.settings' },
+// Icon lookup shared by both docks. Layer 1 keeps the icon map here; a later
+// change moves it next to the registry so the icon set can't drift either.
+const DOCK_TAB_ICONS = {
+  browse: FolderOpen,
+  view: FileText,
+  history: GitBranch,
+  forge: Github,
+  tasks: Clock,
+  terminal: TerminalIcon,
+  proxy: Network,
+  stats: BarChart3,
+  settings: Settings,
+}
+function dockTabMeta(tab) {
+  const found = DOCK_TABS.find((t) => t.id === tab)
+  if (!found) return undefined
+  return { ...found, icon: DOCK_TAB_ICONS[tab] }
 }
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
@@ -1946,10 +1949,11 @@ function dockTabIcon(tab) {
   if (tab === 'forge') {
     return forgeDockIconKind(forgePlatform.value) === 'gitlab' ? Gitlab : Github
   }
-  return overflowTabMeta[tab]?.icon ?? Clock
+  return dockTabMeta(tab)?.icon ?? Clock
 }
 function dockTabTitle(tab) {
-  return overflowTabMeta[tab] ? t(overflowTabMeta[tab].titleKey) : ''
+  const meta = dockTabMeta(tab)
+  return meta ? t(meta.titleKey) : ''
 }
 function dockInlineOverflowBtnClass(tab) {
   return {
@@ -2125,26 +2129,15 @@ function onChatColDrop(e) {
   }
 }
 
-const wideScreenTabMeta = {
-  browse: { icon: FolderOpen, titleKey: 'nav.fileManager' },
-  view: { icon: FileText, titleKey: 'nav.fileView' },
-  history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
-  forge: overflowTabMeta.forge,
-  tasks: overflowTabMeta.tasks,
-  proxy: overflowTabMeta.proxy,
-  terminal: overflowTabMeta.terminal,
-  stats: overflowTabMeta.stats,
-  settings: overflowTabMeta.settings,
-}
-
 function wideDockTabIcon(tab) {
   // Route forge through the same platform-aware logic as the compact dock, so
   // the wide-screen dock shows the GitHub/GitLab brand too.
   if (tab === 'forge') return dockTabIcon('forge')
-  return wideScreenTabMeta[tab]?.icon ?? FolderOpen
+  return dockTabMeta(tab)?.icon ?? FolderOpen
 }
 function wideDockTabTitle(tab) {
-  return wideScreenTabMeta[tab] ? t(wideScreenTabMeta[tab].titleKey) : ''
+  const meta = dockTabMeta(tab)
+  return meta ? t(meta.titleKey) : ''
 }
 /** Chat toggle button tooltip: points at the action that will happen on click. */
 const chatToggleTitle = computed(() => (chatCollapsed.value ? t('nav.showChat') : t('nav.hideChat')))
@@ -2157,7 +2150,9 @@ function wideDockBtnClass(tab) {
     'has-running': tab === 'tasks' && store.state.taskRunning && leftTab.value !== 'tasks',
   }
 }
-function wideDockBadgeCount(tab) {
+// Badge lookups shared by the narrow popup, the inline overflow buttons and the
+// wide-screen dock. One switch per concern instead of one per dock.
+function dockTabBadgeCount(tab) {
   switch (tab) {
     case 'history': return store.state.gitWorkingTreeChangeCount
     case 'forge': return forgeUnreadCount.value
@@ -2167,10 +2162,7 @@ function wideDockBadgeCount(tab) {
     default: return 0
   }
 }
-function wideDockBadgeVisible(tab) {
-  return wideDockBadgeCount(tab) > 0 && leftTab.value !== tab
-}
-function wideDockBadgeAnim(tab) {
+function dockTabBadgeAnim(tab) {
   switch (tab) {
     case 'history': return historyBadgeAnim.value
     case 'forge': return forgeBadgeAnim.value
@@ -2180,7 +2172,7 @@ function wideDockBadgeAnim(tab) {
     default: return false
   }
 }
-function wideDockBadgeAnimEnd(tab) {
+function dockTabBadgeAnimEnd(tab) {
   switch (tab) {
     case 'history': historyBadgeAnim.value = false; break
     case 'forge': forgeBadgeAnim.value = false; break
@@ -2188,6 +2180,9 @@ function wideDockBadgeAnimEnd(tab) {
     case 'terminal': terminalBadgeAnim.value = false; break
     case 'proxy': proxyBadgeAnim.value = false; break
   }
+}
+function wideDockBadgeVisible(tab) {
+  return dockTabBadgeCount(tab) > 0 && leftTab.value !== tab
 }
 const wideDockActiveIndex = computed(() => {
   // Visible order mirrors the rendered dock: fixed primary tabs + all secondary tabs.
@@ -2218,7 +2213,7 @@ const overflowPopupStyle = computed(() => {
 const overflowButtonIcon = computed(() => {
   // If active tab is in the popup, show its icon on the overflow button
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    return overflowTabMeta[activeTab.value]?.icon ?? MoreHorizontal
+    return dockTabMeta(activeTab.value)?.icon ?? MoreHorizontal
   }
   return MoreHorizontal
 })
@@ -2275,7 +2270,8 @@ const overflowBadgeCount = computed(() => {
 
 const overflowButtonTitle = computed(() => {
   if (popupOverflowTabs.value.includes(activeTab.value)) {
-    return overflowTabMeta[activeTab.value] ? t(overflowTabMeta[activeTab.value].titleKey) : t('nav.more')
+    const meta = dockTabMeta(activeTab.value)
+    return meta ? t(meta.titleKey) : t('nav.more')
   }
   return t('nav.more')
 })
