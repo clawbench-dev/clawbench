@@ -29,7 +29,7 @@ sequenceDiagram
     F->>F: 渲染后端列表<br/>已安装项高亮 + 安装入口
     Note over F: 用户点 rescan
     F->>H: POST /api/agents/rescan
-    H->>H: SyncDiscoverAgentsDB
+    H->>H: RefreshAgents
     H-->>F: 刷新结果
     Note over F: 用户关闭欢迎
     F->>F: localStorage.setItem<br/>(STORAGE_KEY, "1")
@@ -48,7 +48,7 @@ sequenceDiagram
     F->>F: 展示命令 + 复制按钮
     Note over F: 用户在终端执行
     F->>H: POST /api/agents/rescan
-    H->>S: SyncDiscoverAgentsDB
+    H->>S: RefreshAgents
     S->>S: 扫描 PATH + 验证 CLI
     S-->>H: 新检测到的 Agent
     H-->>F: agents 列表更新
@@ -63,7 +63,7 @@ sequenceDiagram
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）
   - ACP 能力（是否支持 `Transport: "acp-stdio"`）
-- **手动刷新**：`POST /api/agents/rescan` 触发 `SyncDiscoverAgentsDB`（`cmd/server/main.go`）重新扫描 PATH 中的 CLI
+- **手动刷新**：`POST /api/agents/rescan` 触发 `model.RefreshAgents`（`internal/model/refresh.go`）重新扫描 PATH 中的 CLI
 - **安装对话框**：`AgentInstallDialog` 组件打开后显示安装命令和复制按钮，引导用户在终端执行
 - **持久化关闭状态**：用户关闭后写入 `localStorage['clawbench_welcome_dismissed']`，下次不再自动显示
 - **事件触发重显**：`clawbench-show-welcome` 自定义事件允许设置页主动重新打开欢迎面板
@@ -81,5 +81,5 @@ sequenceDiagram
   - `auth.json` / `models.json` 文件
   - 内嵌 Pi 二进制检测
 - **Agent 创建时机**：当前 Agent 创建有两种路径：
-  1. 自动发现：`SyncDiscoverAgentsDB` 扫描 PATH 中的 CLI（启动时 + `rescan` 时）
+  1. 自动发现：`model.RefreshAgents` 扫描 PATH 中的 CLI（启动时 + `rescan` 时）
   2. 手动安装：用户通过 `AgentInstallDialog` 在终端执行 `InstallCmd`，然后 `rescan` 触发发现

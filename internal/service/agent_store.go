@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +38,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_modes TEXT NOT NULL DEFAULT '[]',
 	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
+	acp_available_models TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
 	auto_approve INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -297,60 +297,16 @@ func composedSystemPrompt(custom string) string {
 	}
 }
 
-// LoadAgentsIntoMemory loads agents from DB into the global model.Agents map and model.AgentList slice.
-// Also builds the common prompt and prepends it to each agent's system prompt.
+// LoadAgentsIntoMemory loads agents from the database into the global
+// model.Agents map and model.AgentList, populating runtime-only fields and
+// composing each agent's system prompt.
+//
+// This delegates to model.LoadAgentsIntoMemoryFromDB so there is exactly one
+// implementation of the load-and-compose step. Previously this function and
+// model.MergeDiscoveredDataDB both did it, with subtly different SQL and prompt
+// handling, and which one took effect depended on call order.
 func LoadAgentsIntoMemory() error {
-	agents, err := LoadAgentsFromDB()
-	if err != nil {
-		return err
-	}
-
-	// Build new map fully before assigning to avoid a window where
-	// concurrent HTTP handlers see 0 agents (ISS-302).
-	newAgentsMap := make(map[string]*model.Agent, len(agents))
-	model.AgentList = agents
-
-	for _, agent := range agents {
-		newAgentsMap[agent.ID] = agent
-		// Populate runtime-only fields from BackendRegistry
-		// (CanRefreshModels, SupportsCLI and ThinkingEffortLevels are not persisted in DB)
-		if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
-			if model.CanDiscoverModels(*spec) {
-				agent.CanRefreshModels = true
-			}
-			if len(agent.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
-				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
-			}
-		}
-		agent.SupportsCLI = model.BackendSupportsCLI(agent.Backend)
-		agent.SupportsMidTurn = model.BackendSupportsMidTurn(agent.Backend)
-	}
-
-	// Atomically assign the fully-built map so concurrent readers never see an empty map.
-	model.Agents = newAgentsMap
-
-	// Sort by ID for deterministic ordering
-	sort.Slice(model.AgentList, func(i, j int) bool {
-		return model.AgentList[i].ID < model.AgentList[j].ID
-	})
-
-	// Build common prompt from embedded rules
-	commonPrompt := model.BuildCommonPrompt()
-
-	// Compose SystemPrompt from commonPrompt + CustomSystemPrompt for each agent.
-	// This ensures SystemPrompt is always the full composed prompt at runtime,
-	// while the DB stores only the user-editable CustomSystemPrompt portion.
-	for _, agent := range model.Agents {
-		if commonPrompt != "" && agent.CustomSystemPrompt != "" {
-			agent.SystemPrompt = commonPrompt + "\n\n" + agent.CustomSystemPrompt
-		} else if commonPrompt != "" {
-			agent.SystemPrompt = commonPrompt
-		}
-		// If CustomSystemPrompt is empty but SystemPrompt has content (legacy data),
-		// keep SystemPrompt as-is so existing agents don't lose their prompts.
-	}
-
-	return nil
+	return model.LoadAgentsIntoMemoryFromDB(dbRead)
 }
 
 // DuplicateAgent creates a new agent by cloning an existing one.

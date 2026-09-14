@@ -1082,6 +1082,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add the ACP-reported model list column. Without it the ACP model
+	// list lives only in memory, so an agent's selectable models change across a
+	// restart (CLI list before the first ACP session, ACP list after) until a new
+	// session repopulates the registry.
+	var hasACPModels int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_models'").Scan(&hasACPModels)
+	if hasACPModels == 0 {
+		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_models TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_available_models column: %w", err)
+		}
+	}
+
 	// Migrate: add ACP LoadSession/ListSessions capability columns to agents table.
 	var hasLoadSessionCol int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_load_session'").Scan(&hasLoadSessionCol)

@@ -86,7 +86,9 @@ func syncViaRealAgent(t *testing.T, agentID, sid string) int {
 	w := httptest.NewRecorder()
 	ServeACPSyncSession(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp struct{ Added int `json:"added"` }
+	var resp struct {
+		Added int `json:"added"`
+	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	return resp.Added
 }

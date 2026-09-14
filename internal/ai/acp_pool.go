@@ -1205,6 +1205,12 @@ func (c *ACPConn) AgentID() string {
 	return ""
 }
 
+// Agent returns the agent bound to this connection, or nil. The agent pointer is
+// immutable once the connection is created, so no lock is needed.
+func (c *ACPConn) Agent() *model.Agent {
+	return c.agent
+}
+
 // BackendID returns the backend identifier of the agent this connection belongs to.
 // Used for ACP event mapping to look up backend-specific tool name and input remap tables.
 // c.agent is set once at construction and never mutated, so no lock needed.

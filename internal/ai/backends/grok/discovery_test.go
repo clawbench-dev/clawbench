@@ -104,9 +104,12 @@ func TestParseGrokModels_SkipsEmptyStars(t *testing.T) {
 	assert.Equal(t, "grok-build", models[0].ID)
 }
 
-func TestGrokDefaults_FirstIsDefault(t *testing.T) {
-	models := grokDefaults()
-	require.Len(t, models, len(grokDefaultModels))
+func TestGrokCatalog_FirstIsDefault(t *testing.T) {
+	src, ok := model.LookupModelSource("grok")
+	require.True(t, ok)
+
+	models, _ := src.Discover()
+	require.NotEmpty(t, models)
 	assert.True(t, models[0].Default)
 	assert.Equal(t, "grok-4.5", models[0].ID)
 }
@@ -169,15 +172,11 @@ Available models:
 	assert.False(t, models[2].Default)
 }
 
-func TestDiscoverGrokModels_Registered(t *testing.T) {
-	// model discovery function should be registered via init()
-	registry := model.GetBackendRegistry()
-	found := false
-	for _, spec := range registry {
-		if spec.Backend == "grok" {
-			found = true
-			assert.True(t, model.CanDiscoverModels(spec), "grok should support model discovery")
-		}
-	}
-	assert.True(t, found, "grok should be in the backend registry")
+func TestGrokSource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "grok", Backend: "grok", DefaultCmd: "grok"}
+	assert.True(t, model.CanDiscoverModels(spec), "grok should support model discovery")
+
+	src, ok := model.LookupModelSource("grok")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindCLI, src.Kind())
 }
