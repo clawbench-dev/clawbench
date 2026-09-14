@@ -501,9 +501,8 @@ body.code-preview-dragging * {
   /* Single line with an ellipsis, so the compact header row stays 27px even for
      a very long file name. It used to wrap to 2 lines, which measured 34.7px and
      undid the compaction. The full path is still reachable via the title's
-     tooltip, so nothing is lost. Only the floating header renders this class
-     (the docked pane uses .code-preview-compact-name, the sheet uses
-     .code-preview-sheet-title). */
+     tooltip, so nothing is lost. The floating header and the docked pane both
+     render this class (the sheet uses .code-preview-sheet-title). */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -889,94 +888,19 @@ body.code-preview-dragging * {
   z-index: auto;
 }
 /* Docked, the pane is laid out by the caller's split — nothing to drag, so the
-   grab cursors the floating card uses are dropped. */
+   grab cursors the floating card uses are dropped. This matters for the header
+   too now that the docked pane renders it (it is the drag handle when floating,
+   but a plain title row here). */
 .code-link-preview-floating.is-docked .code-preview-header,
 .code-link-preview-floating.is-docked .code-preview-meta {
   cursor: default;
 }
 
-/* ── Docked pane: ONE row, identical on desktop and touch ───────────────────
-   The docked pane is a single-row layout on BOTH platforms. It used to be
-   two rows on desktop (title row + meta row, ~68px) and one row only on touch,
-   so the same pane had two different shapes depending on the device and the PC
-   version burned ~22% of a ~300px pane on chrome.
+/* The docked pane deliberately has NO shape-specific rules of its own: it
+   reuses the floating card's header + meta rows as-is, so the tool row gets the
+   full pane width instead of competing with the file name. Anything added here
+   would be a divergence between the two, and a `(pointer: coarse)` / platform
+   split is explicitly unwanted — the docked shape must not depend on the
+   device. Only the container rules above (layout role, cursor, z-index) belong
+   to the docked variant. */
 
-   The row mirrors the mobile (BottomSheet) mode's `.code-preview-sheet-row2`:
-   the file name on the left, icon tools plus Close on the right. The title row
-   (file path) is not rendered at all — the file manager's breadcrumb sits
-   directly above the pane — and neither is the line/size summary: the name is
-   what identifies the pane.
-
-   Metrics are shared by both platforms, so these rules key off `.is-docked`
-   alone. Do NOT reintroduce a `(pointer: coarse)` / `is-compact` split here:
-   a platform-conditional docked layout is exactly what this replaced. */
-.code-link-preview-floating.is-docked .code-preview-meta {
-  /* A 28px row with 28px buttons. 28px is the smallest comfortable touch
-     target, so one value satisfies both platforms — that is what makes the
-     shared row possible without short-changing touch. The tight paddings/gaps
-     are what let a 10-tool code file fit beside the file name on a 390px
-     screen without the name collapsing. */
-  gap: var(--space-3);
-  min-height: 28px;
-  padding: var(--space-1) var(--space-4);
-}
-.code-link-preview-floating.is-docked .code-preview-meta-info {
-  /* The file name is the only thing on the left. A code file shows up to 10
-     tools, which would otherwise crush the name to zero width — so the name
-     keeps a floor and the tool row scrolls instead. */
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 auto;
-  min-width: 84px;
-  font-size: var(--font-size-xs);
-  overflow: hidden;
-}
-.code-link-preview-floating.is-docked .code-preview-compact-name {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #202124);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.code-link-preview-floating.is-docked .code-preview-actions {
-  /* Scrolls rather than shrinking the name away — this is the "drag sideways"
-     affordance: the full tool set stays reachable at any pane width. */
-  flex: 0 1 auto;
-  min-width: 0;
-  gap: var(--space-2);
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-}
-/* Close ends the row but lives OUTSIDE the scrollable strip, so a long tool set
-   cannot scroll it out of reach. */
-.code-link-preview-floating.is-docked .code-preview-meta > .code-preview-btn.close {
-  flex: 0 0 auto;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  margin-left: var(--space-1);
-  color: var(--text-secondary, #5f6368);
-}
-.code-link-preview-floating.is-docked .code-preview-actions::-webkit-scrollbar {
-  display: none;
-}
-.code-link-preview-floating.is-docked .code-preview-btn {
-  /* 28px target on both platforms: the desktop 24px control is too small to
-     tap, and matching the touch size is what keeps the row identical. */
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  flex-shrink: 0;
-}
-.code-link-preview-floating.is-docked .code-preview-btn svg {
-  width: 14px;
-  height: 14px;
-}
-.code-link-preview-floating.is-docked .code-preview-actions-divider {
-  height: 14px;
-  margin: 0 1px;
-}
