@@ -1243,12 +1243,34 @@ function scrollToEntryAndSelect(path, { openFile = false } = {}) {
   const container = fileListRef.value || fileGridRef.value
   if (!container) return
 
-  // navigateToDir is async (API call + DOM render), so retry until the item appears
-  let attempts = 0
-  const maxAttempts = 20
+  // navigateToDir / the post-create refresh is async (API call + DOM render), so
+  // retry until the item appears. The budget is time-based rather than a fixed
+  // attempt count: a slow /api/dir (large directory, loaded machine, slow link)
+  // can outlast a short count, and giving up early leaves the entry selected but
+  // scrolled off-screen.
+  //
+  // "Still waiting for the listing" is detected by the entries prop identity —
+  // the store assigns a fresh array on every load, so an unchanged reference
+  // means the listing we are waiting for has not arrived yet. A load-in-flight
+  // flag is deliberately NOT used: the post-create refresh is silent
+  // (dirLoading stays false) and the shared isRefreshing flag clears as soon as
+  // refreshCurrentFile returns, which is before loadFiles resolves.
+  const initialEntries = props.entries
+  const start = Date.now()
+  const RETRY_INTERVAL_MS = 100
+  const GRACE_MS = 2000      // window for the render tick after the listing lands
+  const MAX_WAIT_MS = 15000  // cap on waiting for the listing itself
   const tryHighlight = () => {
     const item = container.querySelector(`.file-item[data-path="${CSS.escape(path)}"], .grid-item[data-path="${CSS.escape(path)}"]`)
-    if (!item) { if (attempts++ < maxAttempts) { highlightRetryTimer = setTimeout(tryHighlight, 100) }; return }
+    if (!item) {
+      const elapsed = Date.now() - start
+      const listingArrived = props.entries !== initialEntries
+      const budget = listingArrived ? GRACE_MS : MAX_WAIT_MS
+      if (elapsed < budget) {
+        highlightRetryTimer = setTimeout(tryHighlight, RETRY_INTERVAL_MS)
+      }
+      return
+    }
 
     // jsdom (tests) may not implement scrollIntoView — guard it
     if (typeof item.scrollIntoView === 'function') {
@@ -1619,6 +1641,11 @@ async function doNewFile() {
     const name = await dialog.prompt(t('file.prompt.fileName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(entry)
+    // Drop the results layer before refreshing: it renders search hits, not the
+    // directory listing, so the new entry would never appear in it — leaving the
+    // row both unselected and unscrolled. exitSearch() also clears selectedPath,
+    // hence it runs before the post-create selection below.
+    exitSearch()
     try {
         const resp = await fetch('/api/file/create', {
             method: 'POST',
@@ -1646,6 +1673,9 @@ async function doNewFolder() {
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(entry)
+    // See doNewFile: the results layer cannot show the new entry, so collapse it
+    // before the refresh + selection.
+    exitSearch()
     try {
         const resp = await fetch('/api/dir/create', {
             method: 'POST',
