@@ -964,78 +964,17 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 // that can be prepended to the user's prompt. This gives the AI context from the
 // parent session when the forked session sends its first message.
 //
-// Tool output fields are truncated to 500 runes (see
-// service.forkToolOutputMaxLen) to avoid token explosion.
+// The header/footer and capitalized roles are handler-specific presentation; the
+// rendering and budget enforcement live in service so both the web chat path and
+// the task engine path share one implementation.
 func buildForkContext(sessionID string) string {
-	// Use GetMessagesBySessionIDRaw: GetMessagesBySessionID strips the content
-	// blocks of assistant messages that have a reading summary (empty
-	// {"blocks":[]}), which would drop all AI replies from the fork context.
-	msgs, err := service.GetMessagesBySessionIDRaw(sessionID)
-	if err != nil || len(msgs) == 0 {
-		return ""
-	}
-
-	// Batch-fetch tool call details for the session
-	toolCalls, _ := service.GetToolCallsBySession(sessionID)
-	toolCallMap := make(map[string]*service.ToolCallRecord, len(toolCalls))
-	for i := range toolCalls {
-		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
-	}
-
-	var sb strings.Builder
-	sb.WriteString("[Below is the conversation history from before this session. Continue based on this context.]\n\n")
-
-	for _, m := range msgs {
-		role := "User"
-		if m.Role == "assistant" {
-			role = "Assistant"
-		}
-
-		if m.Role != "user" && m.Role != "assistant" {
-			continue
-		}
-
-		var wrapper struct {
-			Blocks []model.ContentBlock `json:"blocks"`
-		}
-		if !strings.HasPrefix(m.Content, `{"blocks":`) || json.Unmarshal([]byte(m.Content), &wrapper) != nil {
-			// Non-block content: treat as plain text. Use the unified extractor
-			// so nested JSON serializations (bare content arrays, ACP notification
-			// wrappers from sync replay) never leak raw JSON into the model.
-			content := service.ExtractPlainText(m.Content)
-			if content == "" {
-				continue
-			}
-			fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-			continue
-		}
-
-		// Render blocks: text as-is, tool_use as structured JSON, thinking skipped
-		var msgParts []string
-		for _, b := range wrapper.Blocks {
-			switch b.Type {
-			case "text":
-				if b.Text != "" {
-					msgParts = append(msgParts, b.Text)
-				}
-			case strToolUse:
-				tcJSON := service.FormatToolUseBlock(b, toolCallMap)
-				if tcJSON != "" {
-					msgParts = append(msgParts, tcJSON)
-				}
-				// thinking, warning, error: skipped
-			}
-		}
-		if len(msgParts) == 0 {
-			continue
-		}
-
-		content := strings.Join(msgParts, "\n\n")
-		fmt.Fprintf(&sb, "%s: %s\n\n", role, content)
-	}
-
-	sb.WriteString("[End of conversation history. Now answer the user's new question.]\n\n")
-	return sb.String()
+	return service.BuildForkContextWithOptions(sessionID, service.ForkContextOptions{
+		Header:            "[Below is the conversation history from before this session. Continue based on this context.]\n\n",
+		Footer:            "[End of conversation history. Now answer the user's new question.]\n\n",
+		CapitalizeRoles:   true,
+		PlainTextFallback: true,
+		BudgetChars:       model.ChatForkContextBudget,
+	})
 }
 
 // buildChatRequestFromQueue constructs an ai.ChatRequest from a queued message.

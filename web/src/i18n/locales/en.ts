@@ -2041,6 +2041,8 @@ export default {
       messageDisplayModeOriginal: 'Original text',
       chatSystemPromptInterval: 'System Prompt Interval',
       chatSystemPromptIntervalDesc: 'Insert a system prompt every N messages (0 = never)',
+      chatForkContextBudget: 'Fork / Rewind History Limit',
+      chatForkContextBudgetDesc: 'Max characters of conversation history re-injected when forking or rewinding a session. Older messages are omitted beyond this limit (default 100000).',
       sessionMaxCount: 'Max Sessions',
       sessionMaxCountDesc: 'Maximum number of concurrent chat sessions',
       archiveRetentionSectionHeader: 'Archive Retention',
