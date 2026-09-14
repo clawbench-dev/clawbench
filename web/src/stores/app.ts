@@ -197,7 +197,7 @@ const state = reactive<AppState>({
     chatInitialMessages: 20,
     chatPageSize: 20,
     chatSessionPageSize: 10,
-    sessionMaxCount: 20,
+    sessionMaxCount: 15,
     sessionCount: 0,
     sessionListVersion: 0,
     recentProjectsMaxCount: 10,
@@ -338,7 +338,7 @@ function resetProjectState(): void {
     state.chatInitialMessages = 20
     state.chatPageSize = 20
     state.chatSessionPageSize = 10
-    state.sessionMaxCount = 20
+    state.sessionMaxCount = 15
     state.sessionCount = 0
     state.recentProjectsMaxCount = 10
 }
