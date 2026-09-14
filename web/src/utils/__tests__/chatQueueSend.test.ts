@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { enqueueAndMaybeStart, generateQueueId } from '@/utils/chatQueueSend'
+import { isInFlightSend, resetInFlightSendsForTest } from '@/utils/chatStreamUtils'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { EnqueueAndMaybeStartOptions } from '@/utils/chatQueueSend'
 
@@ -129,5 +130,63 @@ describe('enqueueAndMaybeStart', () => {
       enqueue: vi.fn().mockResolvedValue(true),
     })
     await expect(enqueueAndMaybeStart(opts)).resolves.toMatch(/^pending-/)
+  })
+})
+
+// ── In-flight guard on the enqueue path ──
+//
+// Reported: while the AI is generating, sending a message sometimes shows the
+// reply streaming but the user's own bubble is absent, restored only by a
+// manual refresh. Same root cause as the idle direct-send bug (0face18c4) but on
+// the enqueue path, which lacked the guard: a loadHistory GET in flight BEFORE
+// the enqueue POST committed returns a snapshot predating the new row, and
+// rebuildFromDb drops the pending bubble as "transient without a DB row". The
+// user_message self-echo only adopts an existing bubble, and an injected
+// (mid-turn) message never emits queue_drain — so nothing re-creates it.
+describe('enqueueAndMaybeStart in-flight guard', () => {
+  beforeEach(() => { resetInFlightSendsForTest() })
+  afterEach(() => { resetInFlightSendsForTest() })
+
+  it('tracks the pushed bubble as in-flight before the enqueue POST resolves', async () => {
+    let trackedDuringEnqueue = false
+    const opts = makeOpts({
+      enqueue: vi.fn().mockImplementation(async (_sid, _t, _a, _p, queueId: string) => {
+        // While the POST is in flight the bubble must already be guarded, or a
+        // concurrent db_load would drop it.
+        trackedDuringEnqueue = isInFlightSend(queueId)
+        return true
+      }),
+    })
+    const queueId = await enqueueAndMaybeStart(opts)
+    expect(trackedDuringEnqueue).toBe(true)
+    // Still guarded after success — the row has not been seen in a db_load yet.
+    expect(isInFlightSend(queueId)).toBe(true)
+  })
+
+  it('guards the caller-provided queueId', async () => {
+    let trackedDuringEnqueue = false
+    const opts = makeOpts({
+      queueId: 'custom-qid',
+      enqueue: vi.fn().mockImplementation(async () => {
+        trackedDuringEnqueue = isInFlightSend('custom-qid')
+        return true
+      }),
+    })
+    await enqueueAndMaybeStart(opts)
+    expect(trackedDuringEnqueue).toBe(true)
+  })
+
+  it('releases the guard when the enqueue call resolves with false', async () => {
+    const opts = makeOpts({ enqueue: vi.fn().mockResolvedValue(false) })
+    await expect(enqueueAndMaybeStart(opts)).rejects.toThrow()
+    const queueId = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].id
+    expect(isInFlightSend(queueId)).toBe(false)
+  })
+
+  it('releases the guard when the enqueue call rejects', async () => {
+    const opts = makeOpts({ enqueue: vi.fn().mockRejectedValue(new Error('network down')) })
+    await expect(enqueueAndMaybeStart(opts)).rejects.toThrow('network down')
+    const queueId = (opts.pushMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].id
+    expect(isInFlightSend(queueId)).toBe(false)
   })
 })

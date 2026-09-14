@@ -12,7 +12,7 @@
  */
 
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
-import { nextClientSeq } from '@/utils/chatStreamUtils'
+import { nextClientSeq, trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils'
 
 /** Generate a unique queue ID for matching pending messages to queue_drain events. */
 export function generateQueueId(): string {
@@ -76,8 +76,27 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
   })
   opts.onPendingRendered?.()
 
-  const ok = await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
+  // Guard this optimistic bubble against a stale loadHistory snapshot that was
+  // fetched before the enqueue POST committed its row — exactly the protection
+  // sendMessageNow applies to the direct-send path (see trackInFlightSend in
+  // chatStreamUtils). Without it, rebuildFromDb drops the pending bubble as
+  // "transient without a DB row" and nothing re-creates it: the user_message
+  // self-echo only ADOPTS an existing bubble, and an injected (mid-turn) message
+  // never emits a queue_drain that could rebuild it — the bubble stays gone until
+  // a full refresh. The registry clears itself once a db_load contains the row.
+  trackInFlightSend(queueId)
+
+  let ok: boolean
+  try {
+    ok = await opts.enqueue(opts.sessionId, opts.text, opts.attachedFiles, opts.pendingFiles, queueId)
+  } catch (err) {
+    // The POST never committed — release the guard so a later rebuild is not
+    // left holding a bubble that no DB row will ever back.
+    untrackInFlightSend(queueId)
+    throw err
+  }
   if (ok === false) {
+    untrackInFlightSend(queueId)
     throw new Error('enqueue failed')
   }
 
