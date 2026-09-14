@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -510,4 +511,90 @@ func TestPruneForgeEvents_RespectsCutoff(t *testing.T) {
 	removed, err = service.PruneForgeEvents(repo, now.Add(-30*24*time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), removed)
+}
+
+// TestForgeSyncer_WritesItemKey is the guard for the ONLY production writer of
+// item_key (forge_syncer.go's persistAndDispatch).
+//
+// Every other event test builds service.ForgeEvent{ItemKey: "..."} by hand, so
+// they exercise the read side against a literal the writer is never proven to
+// produce. Deleting the writer's ItemKey line left the whole suite green while
+// every row got item_key = ”, which both CountUnreadForgeEvents and
+// UnreadForgeItemKeys filter out — the badge would read 0 forever and no row
+// would ever show a dot, i.e. exactly the bug this feature fixed.
+//
+// So this drives the real SyncRepo path and asserts on the stored column.
+func TestForgeSyncer_WritesItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	provider := &fakeProvider{pages: map[forge.ItemType]map[int]forge.ListResult{
+		forge.ItemTypeIssue: {1: {Items: []forge.Item{issue("open", t0)}}},
+	}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, &fakeSink{})
+	binding := testBinding()
+
+	// First pass establishes the baseline (no events), second emits a close.
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+	provider.pages[forge.ItemTypeIssue] = map[int]forge.ListResult{
+		1: {Items: []forge.Item{issue("closed", t1)}},
+	}
+	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
+
+	var key string
+	require.NoError(t, service.ReadDB().QueryRow(
+		`SELECT item_key FROM forge_events WHERE number = 1`,
+	).Scan(&key))
+	assert.Equal(t, "issue/1", key,
+		"the syncer must store the item key; an empty key makes the row invisible to the badge")
+
+	// And it must be countable through the same query the badge uses.
+	n, err := service.CountUnreadForgeEvents(testRepoKey())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}
+
+// TestForgeSyncer_WritesPipelineItemKey: a pipeline event has number 0, so its
+// key must carry the run id. Every run must land in its own bucket.
+//
+// Uses the pipelineProvider fake (which implements the optional PipelineLister)
+// and drives the real sync path, so it fails if persistAndDispatch stops writing
+// the key for the synthetic pipeline item.
+func TestForgeSyncer_WritesPipelineItemKey(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	t0 := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	t1 := t0.Add(time.Hour)
+
+	provider := &pipelineProvider{runs: []forge.PipelineRun{pipelineRun(100, forge.PipelineSuccess, t0)}}
+	syncer := service.NewForgeSyncer(func(service.ProjectForge) (forge.Provider, error) { return provider, nil }, &fakeSink{})
+
+	// First pass baselines the run (recorded, not dispatched).
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+
+	// A second run appears.
+	provider.runs = append(provider.runs, pipelineRun(101, forge.PipelineSuccess, t1))
+	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
+
+	rows, err := service.ReadDB().Query(
+		`SELECT item_key FROM forge_events WHERE item_type = 'pipeline' ORDER BY item_key`,
+	)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var keys []string
+	for rows.Next() {
+		var k string
+		require.NoError(t, rows.Scan(&k))
+		keys = append(keys, k)
+	}
+	require.NoError(t, rows.Err())
+
+	// Run 100 was baselined on the first pass, so only 101 dispatched.
+	require.Len(t, keys, 1, "only the run that appeared after the baseline fires")
+	assert.Equal(t, "pipeline/run:101", keys[0],
+		"the key must carry the run id, not a shared number-0 bucket")
+
+	n, err := service.CountUnreadForgeEvents(testRepoKey())
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
 }

@@ -29,6 +29,13 @@ func ParseSHA256Hash(password string) string {
 	return hash
 }
 
+// DefaultForkContextBudget is the default character budget for the conversation
+// history re-injected into a forked or rewound session (chat.fork_context_budget).
+// It bounds the injected text, not the current prompt, and is deliberately a
+// single global value rather than per-model metadata — the model registry
+// carries no context-window sizes.
+const DefaultForkContextBudget = 100000
+
 // Config holds the application configuration.
 type Config struct {
 	Port         int    `yaml:"port"`
@@ -61,6 +68,7 @@ type Config struct {
 		SystemPromptInterval     int  `yaml:"system_prompt_interval"`     // Re-inject system prompt every N assistant turns (0=never, default: 0)
 		RecommendEnabled         bool `yaml:"recommend_enabled"`          // 推荐回复: generate a next-step recommendation after each assistant reply (default: false)
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
+		ForkContextBudget        int  `yaml:"fork_context_budget"`        // Max characters of history re-injected on fork/rewind; older messages are omitted beyond this (default: 100000)
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -309,6 +317,9 @@ var (
 	ChatSessionPageSize      int  // Default: 10
 	ChatSystemPromptInterval int  // Re-inject system prompt every N assistant turns (0=never, default: 10)
 	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
+	// ChatForkContextBudget bounds the history text re-injected on fork/rewind
+	// (default: DefaultForkContextBudget). Read by service.BuildForkContext.
+	ChatForkContextBudget int
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

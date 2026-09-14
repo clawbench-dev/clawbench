@@ -24,7 +24,9 @@ vi.mock('@/composables/useForgeUnread', () => ({
     forgeUnreadCount: { value: 0 },
     refresh: vi.fn(),
     onForgeEvent: vi.fn(),
-    markRead: vi.fn(),
+    // The list delegates the repo-wide write to the shared composable; forward
+    // it so this test still asserts the request shape.
+    markAllRead: () => mockMarkForgeRead(),
   }),
 }))
 
@@ -323,7 +325,28 @@ describe('useForgePipelines read state', () => {
     await p.load()
     await p.markAllRead()
 
+    // No itemKey: the whole repository.
     expect(mockMarkForgeRead).toHaveBeenCalledWith()
     expect(p.pipelines.value.every(r => !r.unread)).toBe(true)
+  })
+
+  it('restores the rows when the repo-wide clear fails', async () => {
+    // Without the rollback the list claims every run was seen while the server
+    // still holds them unread.
+    mockFetchForgePipelines.mockResolvedValue({
+      pipelines: [
+        { ...run(100, 'failure'), unread: true },
+        { ...run(101, 'failure'), unread: false },
+      ],
+      hasMore: false, nextPage: 2, binding,
+    })
+    mockMarkForgeRead.mockRejectedValueOnce(new Error('offline'))
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+    await p.markAllRead()
+
+    expect(p.pipelines.value[0].unread).toBe(true, 'a failed clear must roll back')
+    expect(p.pipelines.value[1].unread).toBe(false)
   })
 })

@@ -240,6 +240,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.RecommendContextMessages <= 0 {
 		cfg.Chat.RecommendContextMessages = 10
 	}
+	// ForkContextBudget bounds the history text re-injected when forking or
+	// rewinding a session. 0/negative (omitted field, or hand-edited yaml)
+	// falls back to the default rather than meaning "inject nothing".
+	if cfg.Chat.ForkContextBudget <= 0 {
+		cfg.Chat.ForkContextBudget = DefaultForkContextBudget
+	}
 
 	// --- Session ---
 	if cfg.Session.MaxCount <= 0 {

@@ -594,52 +594,11 @@ func appendMediaPrompt(systemPrompt string) string {
 // that can be prepended to the user's prompt for fork sessions.
 // Includes text blocks as-is and tool_use blocks as structured JSON wrapped in
 // <tool_use> tags. Thinking blocks are excluded.
+//
+// The result is bounded by chat.fork_context_budget; older messages are omitted
+// once the budget is exceeded. See fork_context.go for the bounded builder.
 func BuildForkContext(sessionID string) string {
-	messages, err := GetMessagesBySessionIDRaw(sessionID)
-	if err != nil || len(messages) == 0 {
-		return ""
-	}
-
-	// Batch-fetch tool call details for the session (input/output are stored
-	// separately in chat_tool_calls, not in content JSON).
-	toolCalls, err := GetToolCallsBySession(sessionID)
-	if err != nil {
-		toolCalls = nil // proceed without tool details; blocks get slim version
-	}
-	// Build lookup: toolID → ToolCallRecord for quick enrichment
-	toolCallMap := make(map[string]*ToolCallRecord, len(toolCalls))
-	for i := range toolCalls {
-		toolCallMap[toolCalls[i].ToolID] = &toolCalls[i]
-	}
-
-	var sb strings.Builder
-	for _, msg := range messages {
-		if msg.Role != roleUser && msg.Role != roleAssistant {
-			continue
-		}
-		var content struct {
-			Blocks []model.ContentBlock `json:"blocks"`
-		}
-		if err := json.Unmarshal([]byte(msg.Content), &content); err != nil {
-			continue
-		}
-
-		// Collect all non-skipped block outputs for this message
-		msgParts := extractMessageParts(content.Blocks, toolCallMap)
-		if len(msgParts) == 0 {
-			continue
-		}
-		sb.WriteString(msg.Role)
-		sb.WriteString(": ")
-		for i, part := range msgParts {
-			if i > 0 {
-				sb.WriteString("\n\n")
-			}
-			sb.WriteString(part)
-		}
-		sb.WriteString("\n\n")
-	}
-	return sb.String()
+	return BuildForkContextWithOptions(sessionID, defaultForkContextOptions())
 }
 
 // extractMessageParts collects non-skipped block outputs from content blocks.
