@@ -176,6 +176,33 @@ describe('SessionTagDialog', () => {
     expect(wrapper.vm.candidates.some((c: any) => c.name === 'needs review')).toBe(true)
   })
 
+  it('addNewTag folds case like the backend', async () => {
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    // The backend folds tag names to lowercase, so "Bug" IS "bug". Without the
+    // same fold here the dialog would create a second, near-identical chip.
+    wrapper.vm.newTagName = 'Bug'
+    wrapper.vm.addNewTag()
+
+    expect(wrapper.vm.selected).toEqual(['bug'])
+    expect(wrapper.vm.candidates.some((c: any) => c.name === 'bug')).toBe(true)
+    expect(wrapper.vm.candidates.some((c: any) => c.name === 'Bug')).toBe(false)
+  })
+
+  it('addNewTag does not duplicate an existing tag via a case variant', async () => {
+    const wrapper = await mountDialog()
+    await flushPromises()
+    const before = wrapper.vm.candidates.length
+
+    // 'bug' already exists as a candidate (fixture).
+    wrapper.vm.newTagName = 'BUG'
+    wrapper.vm.addNewTag()
+
+    expect(wrapper.vm.candidates.length).toBe(before)
+    expect(wrapper.vm.selected).toEqual(['bug'])
+  })
+
   it('addNewTag ignores a blank name', async () => {
     const wrapper = await mountDialog()
     await flushPromises()
@@ -204,11 +231,11 @@ describe('SessionTagDialog', () => {
     const wrapper = await mountDialog({ initialTags: ['bug'] })
     await flushPromises()
 
-    await wrapper.vm.requestDelete({ name: 'bug' })
+    await wrapper.vm.requestDelete({ name: 'bug', scope: 'project' })
     await flushPromises()
 
     expect(mockDialogHolder.confirm).toHaveBeenCalled()
-    expect(mockDelete).toHaveBeenCalledWith('/api/ai/session/tags?name=bug')
+    expect(mockDelete).toHaveBeenCalledWith('/api/ai/session/tags?name=bug&scope=project')
     expect(wrapper.vm.candidates.some((c: any) => c.name === 'bug')).toBe(false)
     expect(wrapper.vm.selected).toEqual([])
     // Deleting affects every session carrying the label, not just this one.
@@ -220,7 +247,7 @@ describe('SessionTagDialog', () => {
     const wrapper = await mountDialog({ initialTags: ['bug'] })
     await flushPromises()
 
-    await wrapper.vm.requestDelete({ name: 'bug' })
+    await wrapper.vm.requestDelete({ name: 'bug', scope: 'project' })
 
     expect(mockDelete).not.toHaveBeenCalled()
     expect(wrapper.vm.selected).toEqual(['bug'])
@@ -229,9 +256,9 @@ describe('SessionTagDialog', () => {
   it('URL-encodes the tag name on delete', async () => {
     const wrapper = await mountDialog()
     await flushPromises()
-    await wrapper.vm.requestDelete({ name: 'needs review' })
+    await wrapper.vm.requestDelete({ name: 'needs review', scope: 'project' })
     await flushPromises()
-    expect(mockDelete).toHaveBeenCalledWith('/api/ai/session/tags?name=needs%20review')
+    expect(mockDelete).toHaveBeenCalledWith('/api/ai/session/tags?name=needs%20review&scope=project')
   })
 
   it('keeps the tag when deletion fails', async () => {
@@ -239,7 +266,7 @@ describe('SessionTagDialog', () => {
     const wrapper = await mountDialog({ initialTags: ['bug'] })
     await flushPromises()
 
-    await wrapper.vm.requestDelete({ name: 'bug' })
+    await wrapper.vm.requestDelete({ name: 'bug', scope: 'project' })
     await flushPromises()
 
     expect(wrapper.vm.candidates.some((c: any) => c.name === 'bug')).toBe(true)

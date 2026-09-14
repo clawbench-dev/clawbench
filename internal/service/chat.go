@@ -2345,6 +2345,25 @@ func GetSessionFullInfo(sessionID string) *SessionInfo {
 	return info
 }
 
+// GetSessionProjectPathAny returns a session's project_path whether or not the
+// session is archived, plus whether the session exists at all.
+//
+// This exists for ownership/attribution checks that must still work on an
+// archived session: GetSessionFullInfo filters archived=0, so using it to
+// resolve "which project owns this session" would silently degrade to an empty
+// path for an archived row (which is how a tag could get filed under no project
+// at all and become unreachable).
+func GetSessionProjectPathAny(sessionID string) (string, bool) {
+	var projectPath string
+	err := dbRead.QueryRow(
+		`SELECT project_path FROM chat_sessions WHERE id = ?`, sessionID,
+	).Scan(&projectPath)
+	if err != nil {
+		return "", false
+	}
+	return projectPath, true
+}
+
 // GetSessionAgentID returns the agent_id of an active (non-archived) session.
 func GetSessionAgentID(sessionID string) string {
 	var agentID string
@@ -2713,6 +2732,12 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 
 	// Delete task_executions for purged scheduled sessions
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id IN ("+placeholders+")", args...)
+
+	// Delete session tag links for purged sessions. The link table has no FK to
+	// chat_sessions, so without this the rows survive the purge forever and the
+	// tag's session count stays permanently inflated (HardDeleteSession does the
+	// same cleanup; this retention path was missed).
+	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id IN ("+placeholders+")", args...)
 
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)

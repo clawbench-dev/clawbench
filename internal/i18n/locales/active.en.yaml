@@ -29,6 +29,8 @@ InvalidPath: invalid path
 PathTraversal: path traversal detected
 InternalError: internal server error
 SessionNotFound: session not found
+TagNameRequired: tag name required
+TagDeleteFailed: failed to delete tag (it may belong to another project, or no longer exist)
 NoAgentsAvailable: no agents available
 MessageOrFilesRequired: Message or files required
 TextRequired: text is required

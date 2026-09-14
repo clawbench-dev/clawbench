@@ -34,11 +34,19 @@ type SessionTagRef struct {
 	Scope string `json:"scope,omitempty"`
 }
 
-// NormalizeSessionTagName trims and collapses internal whitespace so that
-// "  foo  " and "foo" are the same tag. Returns "" for a blank name, which
-// callers treat as "ignore this entry".
+// NormalizeSessionTagName trims, collapses internal whitespace, and lowercases,
+// so that "  Foo  ", "foo" and "FOO" are all the same tag. Returns "" for a
+// blank name, which callers treat as "ignore this entry".
+//
+// Lowercasing is what makes the tag identity case-insensitive. The DB collation
+// is BINARY, so UNIQUE(name, project_path) alone would happily store both "bug"
+// and "Bug" in one project — two chips that look identical to the user and
+// cannot be told apart in the dialog. Folding in Go (rather than declaring the
+// column COLLATE NOCASE) also handles non-ASCII properly, since SQLite's NOCASE
+// only folds ASCII. The frontend normalizes identically so a chip does not
+// change text when it is saved.
 func NormalizeSessionTagName(name string) string {
-	return strings.Join(strings.Fields(name), " ")
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
 }
 
 // normalizeSessionTagScope maps arbitrary input onto a known scope, defaulting
@@ -78,11 +86,15 @@ func ListSessionTags(projectPath string) ([]SessionTag, error) {
 			return nil, err
 		}
 		// ORDER BY scope ASC puts 'global' before 'project' (g < p), so the
-		// first row seen for a name is the global definition.
-		if seen[t.Name] {
+		// first row seen for a name is the global definition. The key is
+		// lowercased so a mixed-case row (e.g. one written before names were
+		// folded) still collapses onto its lowercase twin instead of showing
+		// the user two near-identical chips.
+		key := strings.ToLower(t.Name)
+		if seen[key] {
 			continue
 		}
-		seen[t.Name] = true
+		seen[key] = true
 		tags = append(tags, t)
 	}
 	return tags, rows.Err()
@@ -196,6 +208,14 @@ func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
 	defer WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
+	// Snapshot which definition each name currently resolves to for this
+	// session BEFORE clearing the links — the existing link is the preferred
+	// resolution target below, so it must be read first.
+	existingIDs, err := sessionTagIDsByName(tx, sessionID)
+	if err != nil {
+		return err
+	}
+
 	// Clear the existing links for this session first; re-inserting below is
 	// simpler and safer than diffing, and the link table is tiny.
 	if _, err := tx.Exec(`DELETE FROM session_tag_links WHERE session_id = ?`, sessionID); err != nil {
@@ -203,11 +223,7 @@ func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
 	}
 
 	for _, name := range names {
-		// Resolve to an existing definition when one is visible in this
-		// project (global first, then this project's own), otherwise create a
-		// new row. The lookup order mirrors ListSessionTags so a session never
-		// links to a shadowed definition.
-		tagID, err := resolveOrCreateSessionTag(tx, name, scopeByName[name], projectPath)
+		tagID, err := resolveOrCreateSessionTag(tx, existingIDs, name, scopeByName[name], projectPath)
 		if err != nil {
 			return err
 		}
@@ -224,14 +240,50 @@ func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
 	return nil
 }
 
-// resolveOrCreateSessionTag returns the id of the tag definition visible in
-// projectPath, creating it if absent.
+// sessionTagIDsByName returns the tag definitions a session currently links to,
+// keyed by lowercase name. Used to keep re-saves idempotent: a name that is
+// already linked must keep pointing at the SAME definition.
+func sessionTagIDsByName(tx *sql.Tx, sessionID string) (map[string]int64, error) {
+	rows, err := tx.Query(`
+		SELECT t.name, t.id
+		FROM session_tag_links l
+		JOIN session_tags t ON t.id = l.tag_id
+		WHERE l.session_id = ?`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read existing session tags: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]int64{}
+	for rows.Next() {
+		var name string
+		var id int64
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, fmt.Errorf("failed to scan existing session tag: %w", err)
+		}
+		out[strings.ToLower(name)] = id
+	}
+	return out, rows.Err()
+}
+
+// resolveOrCreateSessionTag returns the id of the tag definition to link for
+// `name`, creating it if absent.
 //
-// An existing definition always wins and keeps its own scope/project_path —
-// that is what makes "re-tagging an existing label" non-destructive. The
-// caller's requested scope only applies to a brand-new definition.
-func resolveOrCreateSessionTag(tx *sql.Tx, name, scope, projectPath string) (int64, error) {
-	// Prefer the global definition, then this project's own.
+// Resolution order is deliberate:
+//  1. the definition this session already links to (keeps re-saves stable and
+//     prevents a newly-created global tag from silently migrating a session off
+//     its project-scoped label),
+//  2. the global definition,
+//  3. this project's own definition,
+//  4. create a new row with the caller's requested scope.
+//
+// An existing definition always keeps its own scope/project_path; the caller's
+// requested scope only applies to a brand-new definition.
+func resolveOrCreateSessionTag(tx *sql.Tx, existingIDs map[string]int64, name, scope, projectPath string) (int64, error) {
+	if id, ok := existingIDs[name]; ok {
+		return id, nil
+	}
+
 	tagID, err := findSessionTagID(tx, name, projectPath)
 	if err == nil {
 		return tagID, nil
@@ -252,21 +304,51 @@ func resolveOrCreateSessionTag(tx *sql.Tx, name, scope, projectPath string) (int
 // findSessionTagID looks up the definition a session in projectPath would see
 // for `name`: the global one first, then the project's own. Returns
 // sql.ErrNoRows when neither exists.
+//
+// Comparisons use COLLATE NOCASE so a mixed-case row (written before names were
+// folded to lowercase) is still found rather than duplicated.
 func findSessionTagID(tx *sql.Tx, name, projectPath string) (int64, error) {
 	var tagID int64
-	err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? AND scope = 'global'`, name).Scan(&tagID)
+	err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'global'`, name).Scan(&tagID)
 	if err == nil {
 		return tagID, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	err = tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? AND project_path = ?`,
+	err = tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND project_path = ?`,
 		name, projectPath).Scan(&tagID)
 	if err != nil {
 		return 0, err
 	}
 	return tagID, nil
+}
+
+// findSessionTagIDForDelete resolves the exact definition a delete should hit.
+//
+// An explicit scope ('global'/'project') selects that definition precisely.
+// An empty/unknown scope falls back to findSessionTagID's legacy chain (global
+// first, then this project's own) so existing callers keep working — note this
+// is the path that can delete a global tag that shadows a project one, which is
+// why the HTTP handler always passes the scope the user actually saw.
+//
+// When scope is 'project' only this project's own row is targeted, never a
+// global one the user did not select. This is stricter than the fallback chain
+// so a delete can never silently destroy the wrong project's label.
+func findSessionTagIDForDelete(tx *sql.Tx, name, projectPath, scope string) (int64, error) {
+	switch scope {
+	case SessionTagScopeGlobal:
+		var tagID int64
+		err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'global'`, name).Scan(&tagID)
+		return tagID, err
+	case SessionTagScopeProject:
+		var tagID int64
+		err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'project' AND project_path = ?`,
+			name, projectPath).Scan(&tagID)
+		return tagID, err
+	default:
+		return findSessionTagID(tx, name, projectPath)
+	}
 }
 
 // projectPathForScope stores the owning project only for project-scoped tags;
@@ -282,10 +364,18 @@ func projectPathForScope(scope, projectPath string) string {
 // DeleteSessionTag removes a tag definition and every link to it, i.e. the tag
 // disappears from all sessions that used it.
 //
-// Deletion targets the definition the caller can actually see in projectPath:
-// the global tag if one exists, otherwise this project's own tag. A project
-// therefore cannot delete another project's label (it is not visible to it).
-func DeleteSessionTag(name, projectPath string) error {
+// `scope` selects WHICH definition to delete when the same name exists both
+// globally and as a project tag — it is the scope the caller saw in the
+// candidate list. Passing an empty scope keeps the historical "global first,
+// then this project" resolution.
+//
+// This distinction matters: with the old global-first lookup, deleting what
+// looked like a project-scoped label could silently destroy a global label
+// shared by every project (and the project's own label would then reappear,
+// making the delete look like it failed). A project may only delete a
+// project-scoped definition it owns; deleting a global definition is allowed
+// because it is visible in every project by design.
+func DeleteSessionTag(name, projectPath, scope string) error {
 	normalized := NormalizeSessionTagName(name)
 	if normalized == "" {
 		return fmt.Errorf("tag name is required")
@@ -298,7 +388,7 @@ func DeleteSessionTag(name, projectPath string) error {
 	defer WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	tagID, err := findSessionTagID(tx, normalized, projectPath)
+	tagID, err := findSessionTagIDForDelete(tx, normalized, projectPath, scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session tag %q not found", normalized)
 	}

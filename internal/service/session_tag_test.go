@@ -31,6 +31,34 @@ func TestNormalizeSessionTagName(t *testing.T) {
 	assert.Equal(t, "needs review", service.NormalizeSessionTagName("\tneeds\nreview "))
 	assert.Equal(t, "", service.NormalizeSessionTagName("   "))
 	assert.Equal(t, "", service.NormalizeSessionTagName(""))
+
+	// Case folding is part of the identity. The DB collation is BINARY, so
+	// without this "bug" and "Bug" would be two distinct rows in one project —
+	// two chips that look identical to the user and cannot be told apart.
+	assert.Equal(t, "bug", service.NormalizeSessionTagName("Bug"))
+	assert.Equal(t, "bug", service.NormalizeSessionTagName("  BUG  "))
+	assert.Equal(t, "needs review", service.NormalizeSessionTagName("Needs   Review"))
+}
+
+// TestSetSessionTags_CaseVariantsCollapseToOne pins the user-visible
+// consequence of case folding: sending "bug" and "Bug" must yield ONE tag, not
+// two near-identical chips on the session row.
+func TestSetSessionTags_CaseVariantsCollapseToOne(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, tagProjectA, "codebuddy", "s1")
+
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{
+		{Name: "bug"}, {Name: "Bug"}, {Name: "BUG"},
+	}))
+
+	tags, err := service.GetSessionTags(sid)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bug"}, namesOf(tags))
+
+	all, err := service.ListSessionTags(tagProjectA)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, 1, all[0].Count)
 }
 
 func TestSetSessionTags_CreatesAndLinks(t *testing.T) {
@@ -155,12 +183,12 @@ func TestListSessionTags_ProjectIsolationAndGlobalVisibility(t *testing.T) {
 	// Project A sees its own label + the global one, never B's.
 	tagsA, err := service.ListSessionTags(tagProjectA)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"localA", "shared"}, namesOf(tagsA))
+	assert.Equal(t, []string{"locala", "shared"}, namesOf(tagsA))
 
 	// Project B sees its own label + the global one, never A's.
 	tagsB, err := service.ListSessionTags(tagProjectB)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"localB", "shared"}, namesOf(tagsB))
+	assert.Equal(t, []string{"localb", "shared"}, namesOf(tagsB))
 }
 
 func TestListSessionTags_GlobalTagSurvivesWithEmptyProjectPath(t *testing.T) {
@@ -258,7 +286,7 @@ func TestDeleteSessionTag_RemovesFromAllSessions(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(s1, tagProjectA, []service.SessionTagRef{{Name: "bug"}, {Name: "keep"}}))
 	require.NoError(t, service.SetSessionTags(s2, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
 
-	require.NoError(t, service.DeleteSessionTag("bug", tagProjectA))
+	require.NoError(t, service.DeleteSessionTag("bug", tagProjectA, service.SessionTagScopeProject))
 
 	// The label is gone from both sessions...
 	t1, err := service.GetSessionTags(s1)
@@ -282,7 +310,7 @@ func TestDeleteSessionTag_GlobalIsDeletableFromAnyProject(t *testing.T) {
 	}))
 
 	// A global label is visible everywhere, so any project may delete it.
-	require.NoError(t, service.DeleteSessionTag("shared", tagProjectB))
+	require.NoError(t, service.DeleteSessionTag("shared", tagProjectB, service.SessionTagScopeGlobal))
 
 	tags, err := service.ListSessionTags(tagProjectA)
 	require.NoError(t, err)
@@ -295,23 +323,23 @@ func TestDeleteSessionTag_CannotDeleteAnotherProjectsLabel(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "localA"}}))
 
 	// B must not be able to delete A's label — it cannot even see it.
-	err := service.DeleteSessionTag("localA", tagProjectB)
+	err := service.DeleteSessionTag("localA", tagProjectB, service.SessionTagScopeProject)
 	require.Error(t, err)
 
 	tags, err := service.ListSessionTags(tagProjectA)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"localA"}, namesOf(tags))
+	assert.Equal(t, []string{"locala"}, namesOf(tags))
 }
 
 func TestDeleteSessionTag_UnknownNameErrors(t *testing.T) {
 	setupDB(t)
-	err := service.DeleteSessionTag("nope", tagProjectA)
+	err := service.DeleteSessionTag("nope", tagProjectA, service.SessionTagScopeProject)
 	require.Error(t, err)
 }
 
 func TestDeleteSessionTag_BlankNameErrors(t *testing.T) {
 	setupDB(t)
-	require.Error(t, service.DeleteSessionTag("   ", tagProjectA))
+	require.Error(t, service.DeleteSessionTag("   ", tagProjectA, service.SessionTagScopeProject))
 }
 
 func TestDeleteSessionTag_NormalizesName(t *testing.T) {
@@ -321,11 +349,111 @@ func TestDeleteSessionTag_NormalizesName(t *testing.T) {
 
 	// Deletion must accept the same whitespace-padded spelling the dialog may
 	// hand back.
-	require.NoError(t, service.DeleteSessionTag("  bug  ", tagProjectA))
+	require.NoError(t, service.DeleteSessionTag("  bug  ", tagProjectA, service.SessionTagScopeProject))
 
 	tags, err := service.ListSessionTags(tagProjectA)
 	require.NoError(t, err)
 	assert.Empty(t, tags)
+}
+
+// ── Shadowing: same name as both a global and a project tag ────────────────
+
+// TestSetSessionTags_DoesNotMigrateOntoShadowingGlobal pins the fix for a
+// silent re-scope. Once a global tag with the same name appears, a global-first
+// lookup would move the session onto the global definition on the next save,
+// orphaning the project's own label (zero links) — after which deleting "it"
+// would destroy the global tag instead.
+func TestSetSessionTags_DoesNotMigrateOntoShadowingGlobal(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, tagProjectA, "codebuddy", "s1")
+
+	// Session starts with a PROJECT-scoped "bug".
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeProject},
+	}))
+
+	// A global "bug" appears (created from another project).
+	other := helperCreateSession(t, tagProjectB, "codebuddy", "sB")
+	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	// Re-saving the SAME selection must keep the session on its own project tag.
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeProject},
+	}))
+
+	tags, err := service.GetSessionTags(sid)
+	require.NoError(t, err)
+	require.Len(t, tags, 1)
+	assert.Equal(t, service.SessionTagScopeProject, tags[0].Scope,
+		"session must not be silently migrated onto the shadowing global tag")
+}
+
+// TestDeleteSessionTag_ProjectScopeDoesNotDestroyShadowingGlobal is the other
+// half: deleting what the user saw as a project label must not remove a global
+// label shared by every project (and must not leave the project label behind
+// looking like the delete failed).
+func TestDeleteSessionTag_ProjectScopeDoesNotDestroyShadowingGlobal(t *testing.T) {
+	setupDB(t)
+	sidA := helperCreateSession(t, tagProjectA, "codebuddy", "sA")
+	sidB := helperCreateSession(t, tagProjectB, "codebuddy", "sB")
+
+	require.NoError(t, service.SetSessionTags(sidA, tagProjectA, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeProject},
+	}))
+	require.NoError(t, service.SetSessionTags(sidB, tagProjectB, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	// The user in project A deletes the PROJECT-scoped "bug" they can see.
+	require.NoError(t, service.DeleteSessionTag("bug", tagProjectA, service.SessionTagScopeProject))
+
+	// Project B's session must still carry the global "bug"...
+	tB, err := service.GetSessionTags(sidB)
+	require.NoError(t, err)
+	require.Len(t, tB, 1, "global tag must survive a project-scoped delete")
+	assert.Equal(t, service.SessionTagScopeGlobal, tB[0].Scope)
+
+	// ...and A's own project label is gone (not "resurrected").
+	tA, err := service.GetSessionTags(sidA)
+	require.NoError(t, err)
+	assert.Empty(t, tA)
+
+	// The candidate list for A still shows the global definition (it is visible
+	// everywhere) but no project-scoped "bug" remains.
+	candidatesA, err := service.ListSessionTags(tagProjectA)
+	require.NoError(t, err)
+	require.Len(t, candidatesA, 1)
+	assert.Equal(t, service.SessionTagScopeGlobal, candidatesA[0].Scope)
+}
+
+// TestDeleteSessionTag_GlobalScopeRemovesGlobalOnly is the mirror case: asking
+// for the global definition deletes that one and leaves a project twin alone.
+func TestDeleteSessionTag_GlobalScopeRemovesGlobalOnly(t *testing.T) {
+	setupDB(t)
+	sidA := helperCreateSession(t, tagProjectA, "codebuddy", "sA")
+	sidB := helperCreateSession(t, tagProjectB, "codebuddy", "sB")
+
+	require.NoError(t, service.SetSessionTags(sidA, tagProjectA, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeProject},
+	}))
+	require.NoError(t, service.SetSessionTags(sidB, tagProjectB, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	require.NoError(t, service.DeleteSessionTag("bug", tagProjectA, service.SessionTagScopeGlobal))
+
+	// The project-scoped label in A is untouched.
+	tA, err := service.GetSessionTags(sidA)
+	require.NoError(t, err)
+	require.Len(t, tA, 1)
+	assert.Equal(t, service.SessionTagScopeProject, tA[0].Scope)
+
+	// The global label is gone from B.
+	tB, err := service.GetSessionTags(sidB)
+	require.NoError(t, err)
+	assert.Empty(t, tB)
 }
 
 func TestDeleteSessionTagsForSession_OnlyThatSessionsLinks(t *testing.T) {

@@ -100,13 +100,15 @@ const newTagName = ref('')
 const newTagScope = ref('project')
 
 /**
- * Normalize a tag name the same way the backend does (`strings.Fields` +
- * join): trim and collapse runs of whitespace to a single space. Without this
- * a name typed as "needs  review" would render that way in the dialog but come
+ * Normalize a tag name the same way the backend does (`strings.Fields` + join,
+ * lowercased): trim, collapse whitespace runs, and lowercase. Without this a
+ * name typed as "Needs  review" would render that way in the dialog but come
  * back as "needs review" after saving, i.e. the chip would silently change.
+ * Lowercasing matters because the backend treats tag identity as
+ * case-insensitive, so "Bug" and "bug" are the SAME tag.
  */
 function normalizeTagName(raw) {
-  return String(raw ?? '').trim().split(/\s+/).filter(Boolean).join(' ')
+  return String(raw ?? '').trim().split(/\s+/).filter(Boolean).join(' ').toLowerCase()
 }
 
 const canAdd = computed(() => normalizeTagName(newTagName.value).length > 0)
@@ -148,6 +150,10 @@ function addNewTag() {
 /**
  * Deletes the tag definition itself (from every session), not just this one.
  * Removes it from both the candidate list and the current selection.
+ *
+ * The scope is sent so the backend deletes exactly the definition the user saw:
+ * when the same name exists globally and as a project tag, omitting it could
+ * destroy a global label shared by every project.
  */
 async function requestDelete(tag) {
   const confirmed = await dialog.confirm(
@@ -156,7 +162,8 @@ async function requestDelete(tag) {
   )
   if (!confirmed) return
   try {
-    await apiDelete(`/api/ai/session/tags?name=${encodeURIComponent(tag.name)}`)
+    const query = `name=${encodeURIComponent(tag.name)}&scope=${encodeURIComponent(tag.scope || 'project')}`
+    await apiDelete(`/api/ai/session/tags?${query}`)
     candidates.value = candidates.value.filter(c => c.name !== tag.name)
     selected.value = selected.value.filter(n => n !== tag.name)
     // Other rows may carry this label too — refresh them.

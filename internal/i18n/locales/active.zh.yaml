@@ -29,6 +29,8 @@ InvalidPath: 无效路径
 PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
 SessionNotFound: 会话未找到
+TagNameRequired: 标签名为必填项
+TagDeleteFailed: 删除标签失败（该标签可能属于其他项目，或已不存在）
 NoAgentsAvailable: 没有可用的智能体
 MessageOrFilesRequired: 消息或文件为必填项
 TextRequired: 文本为必填项

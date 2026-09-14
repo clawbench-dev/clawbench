@@ -1592,7 +1592,8 @@ func TestUpdateLastRead_AnchorsToNewestAssistantMessage(t *testing.T) {
 	const msgCreated = "2025-01-01 10:00:00"
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', 'final', 0, ?)",
-		"/project", "claude", sid, msgCreated)
+		"/project", "claude", sid, msgCreated,
+	)
 	assert.NoError(t, err)
 
 	service.UpdateLastRead(sid)
@@ -1639,21 +1640,24 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	// Previous turn: a finalized assistant reply from an earlier time.
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"/project", sid,
+	)
 	require.NoError(t, err)
 
 	// Current turn: user cancelled while the reply row is still streaming=1 —
 	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
 	_, err = service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
-		"/project", sid)
+		"/project", sid,
+	)
 	require.NoError(t, err)
 
 	service.UpdateLastRead(sid)
 
 	// The executor finalizes the interrupted reply immediately after.
 	_, err = service.UnsafeDBForTest().Exec(
-		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid)
+		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid,
+	)
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions("/project", "")
@@ -1886,6 +1890,41 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
+}
+
+// TestPurgeArchivedData_CleansSessionTagLinks guards the retention path: the
+// link table has no FK to chat_sessions, so without an explicit delete the rows
+// survive the purge forever and the tag's session count stays inflated.
+// HardDeleteSession does this cleanup; this path was missed.
+func TestPurgeArchivedData_CleansSessionTagLinks(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Tagged")
+	keep := helperCreateSession(t, "/project", "claude", "Keep")
+	require.NoError(t, service.SetSessionTags(sid, "/project", []service.SessionTagRef{{Name: "bug"}}))
+	require.NoError(t, service.SetSessionTags(keep, "/project", []service.SessionTagRef{{Name: "bug"}}))
+	_ = service.ArchiveSession("/project", "claude", sid)
+
+	_, _, err := service.PurgeArchivedData([]string{sid})
+	assert.NoError(t, err)
+
+	// No orphan link row for the purged session.
+	var count int
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM session_tag_links WHERE session_id = ?", sid,
+	).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count, "purge must not leave orphan tag links")
+
+	// The surviving session keeps its link, and the count is now accurate (1).
+	tags, err := service.GetSessionTags(keep)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bug"}, namesOf(tags))
+
+	all, err := service.ListSessionTags("/project")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, 1, all[0].Count, "tag count must reflect only live sessions")
 }
 
 func TestPurgeArchivedData_DoesNotPurgeActiveSession(t *testing.T) {
@@ -2622,7 +2661,8 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
 		_, err := service.UnsafeDBForTest().Exec(
 			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?",
-			fmt.Sprintf("%d", offset), id)
+			fmt.Sprintf("%d", offset), id,
+		)
 		assert.NoError(t, err)
 	}
 
@@ -2630,7 +2670,8 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// were updated_at, page 2 would re-return it (and its neighbors) because
 	// their created_at is < that future timestamp.
 	_, err := service.UnsafeDBForTest().Exec(
-		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld)
+		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld,
+	)
 	assert.NoError(t, err)
 
 	// Page 1 (limit=1) → newest session.
@@ -2653,7 +2694,8 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// the exact duplicate-producing behavior this contract guards against.
 	var oldUpdatedAt string
 	err = service.UnsafeDBForTest().QueryRow(
-		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld).Scan(&oldUpdatedAt)
+		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
+	).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
 	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil)
 	assert.NoError(t, err)
@@ -5604,7 +5646,8 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	// which drives the relative-time label and GetLatestSessionID's "most recent"
 	// pick. Backdate updated_at first so a bump would be visible.
 	_, err := service.WriteExec(
-		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2)
+		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2,
+	)
 	require.NoError(t, err)
 
 	// Pin the second session (oldest by creation)

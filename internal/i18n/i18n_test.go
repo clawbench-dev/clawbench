@@ -123,6 +123,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PathTraversal",
 		"InternalError",
 		"SessionNotFound",
+		"TagNameRequired",
+		"TagDeleteFailed",
 		"InvalidForkPoint",
 		"InvalidRewindPoint",
 		"NothingToRewind",

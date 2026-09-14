@@ -47,8 +47,9 @@ export const TAG_PALETTE: TagAccent[] = [
  * "evil"), giving unrelated tags the same color. FNV-1a folds in position via
  * the multiply step, so reordered names diverge.
  *
- * Case-insensitive so "Bug" and "bug" render identically — the backend also
- * treats tag names as case-insensitively unique per project.
+ * Case-insensitive so "Bug" and "bug" render identically — the backend folds
+ * tag names to lowercase (see NormalizeSessionTagName), so they are in fact the
+ * same tag and must not be given different colors.
  */
 export function hashTagName(name: string): number {
   let hash = 0x811c9dc5

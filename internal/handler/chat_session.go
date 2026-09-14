@@ -409,25 +409,40 @@ func getSessionID(r *http.Request) string {
 // cookie may point at a different session (another project, or a background
 // refresh). Falling back to the cookie there would rename the WRONG session,
 // leaving the intended one unlocked so its first message overwrites the title
-// — the "renamed title gets clobbered" bug. Returns ("", false) after writing
-// an error response when the target is missing or not owned by the project.
+// — the "renamed title gets clobbered" bug.
+//
+// Returns ("", false) after writing an error response when the target is
+// missing or not owned by the project.
+//
+// Ownership is enforced on BOTH paths. Previously only the body-sessionId path
+// was checked, so `?session_id=<id of another project's session>` bypassed the
+// guard entirely (requireSessionID only checks presence) and let a caller
+// rewrite or clear another project's session settings — most damagingly its
+// tags, which are the first project-visible data written through this endpoint.
+// The check is skipped when no project cookie is present, preserving the
+// historical lenient behavior for tests and pre-project callers.
 func resolveUpdateTargetSession(w http.ResponseWriter, r *http.Request, bodySessionID string) (string, bool) {
-	if bodySessionID == "" {
-		return requireSessionID(w, r)
+	sessionID := bodySessionID
+	if sessionID == "" {
+		var ok bool
+		sessionID, ok = requireSessionID(w, r)
+		if !ok {
+			return "", false
+		}
 	}
-	info := service.GetSessionFullInfo(bodySessionID)
-	if info == nil {
+
+	// GetSessionProjectPathAny (not GetSessionFullInfo) so an archived session
+	// still resolves to its owning project instead of an empty path.
+	projectPath, found := service.GetSessionProjectPathAny(sessionID)
+	if !found {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return "", false
 	}
-	// Enforce project ownership when a project cookie is present (mirrors the
-	// GET/POST chat guards). Tests and pre-project callers without the cookie
-	// keep the historical lenient behavior.
-	if projectPath := middleware.GetProjectFromCookie(r); projectPath != "" && info.ProjectPath != projectPath {
+	if cookieProject := middleware.GetProjectFromCookie(r); cookieProject != "" && projectPath != cookieProject {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return "", false
 	}
-	return bodySessionID, true
+	return sessionID, true
 }
 
 // ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
@@ -526,10 +541,19 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 // new label under the cookie's project would drop it from the session's own
 // project candidate list whenever the cookie points elsewhere (e.g. tagging
 // from the floating window or a cross-project view).
+//
+// Uses GetSessionProjectPathAny rather than GetSessionFullInfo: the latter
+// filters archived=0, so a session archived while the dialog was open would
+// resolve to "" and its new tags would be filed under project_path=” — a
+// definition no project's candidate list matches, making the tag permanently
+// invisible and undeletable from the UI.
 func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
-	projectPath := ""
-	if info := service.GetSessionFullInfo(sessionID); info != nil {
-		projectPath = info.ProjectPath
+	projectPath, found := service.GetSessionProjectPathAny(sessionID)
+	if !found {
+		// The caller already validated the session exists; reaching here means
+		// it was deleted between validation and write. Refuse rather than
+		// creating link rows for a session that no longer exists.
+		return fmt.Errorf("session %s no longer exists", sessionID)
 	}
 	return service.SetSessionTags(sessionID, projectPath, tags)
 }
@@ -580,7 +604,8 @@ func attachSessionTags(sessions []model.ChatSession) {
 //
 //	GET    → the tag candidates selectable in the current project
 //	         (global tags + this project's own tags)
-//	DELETE → delete a tag definition everywhere (name in the `name` query param)
+//	DELETE → delete a tag definition everywhere
+//	         (name + optional scope in the query string)
 func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
@@ -602,7 +627,12 @@ func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagNameRequired")
 			return
 		}
-		if err := service.DeleteSessionTag(name, projectPath); err != nil {
+		// The scope the client saw identifies WHICH definition to delete when
+		// the same name exists both globally and as a project tag. Without it,
+		// deleting a project-scoped label could destroy a global label shared
+		// by every project. Empty scope keeps the legacy global-first fallback.
+		scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+		if err := service.DeleteSessionTag(name, projectPath, scope); err != nil {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagDeleteFailed")
 			return
 		}

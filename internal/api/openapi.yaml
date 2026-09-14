@@ -1105,6 +1105,15 @@ paths:
           required: true
           schema:
             type: string
+        - name: scope
+          in: query
+          description: |
+            要删除的定义的作用范围（`project`/`global`），即客户端在候选列表中看到的那一条。
+            同名标签同时存在全局与项目内两条时，必须传 scope 才能精确删除；
+            省略则退回旧的「全局优先，其次本项目」查找，可能删掉其他项目共享的全局标签。
+          schema:
+            type: string
+            enum: [project, global]
       responses:
         "200":
           description: 已删除

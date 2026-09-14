@@ -56,7 +56,7 @@ func TestServeSessionTags_Get_ReturnsGlobalAndProjectTags(t *testing.T) {
 	w := callHandler(ServeSessionTags, req)
 	assertOK(t, w)
 
-	assert.Equal(t, []string{"globalTag", "localTag"}, tagNames(decodeTags(t, w.Body.Bytes())))
+	assert.Equal(t, []string{"globaltag", "localtag"}, tagNames(decodeTags(t, w.Body.Bytes())))
 }
 
 func TestServeSessionTags_Get_EmptyWhenNoTags(t *testing.T) {
@@ -225,7 +225,7 @@ func TestServeAISessionUpdate_TagsFiledUnderSessionsOwnProject(t *testing.T) {
 
 	tags, err := service.ListSessionTags(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"orphanCandidate"}, tagNames2(tags))
+	assert.Equal(t, []string{"orphancandidate"}, tagNames2(tags))
 }
 
 func tagNames2(tags []service.SessionTag) []string {
@@ -251,4 +251,141 @@ func TestServeSessions_Get_NoTagsOmitsField(t *testing.T) {
 	// Raw JSON check: an untagged session must not gain a "tags": null key, so
 	// the payload for existing clients stays byte-identical.
 	assert.NotContains(t, w.Body.String(), `"tags"`)
+}
+
+// ── Project ownership on the query-param path ──────────────────────────────
+
+// TestServeAISessionUpdate_TagsForeignProjectViaQueryParam is the regression
+// test for a guard bypass: resolveUpdateTargetSession only enforced project
+// ownership when the body carried a sessionId, so `?session_id=<other
+// project's session>` slipped through (requireSessionID checks presence only)
+// and let a caller rewrite — or wipe — another project's tags.
+func TestServeAISessionUpdate_TagsForeignProjectViaQueryParam(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	foreign := env.ProjectDir + "-foreign"
+	sessionID, err := service.CreateSession(foreign, "claude", "Foreign", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(sessionID, foreign, []service.SessionTagRef{{Name: "victim"}}))
+
+	req := newRequest(t, http.MethodPatch,
+		"/api/ai/session/update?session_id="+sessionID, map[string]any{
+			"tags": []map[string]any{{"name": "attacker", "scope": "global"}},
+		})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusForbidden)
+
+	// The victim's tags must be untouched.
+	tags, err := service.GetSessionTags(sessionID)
+	require.NoError(t, err)
+	require.Len(t, tags, 1)
+	assert.Equal(t, "victim", tags[0].Name)
+}
+
+// TestServeAISessionUpdate_TagsForeignProjectClearViaQueryParam covers the
+// destructive variant: `"tags": []` must not be able to wipe another project's
+// tags either.
+func TestServeAISessionUpdate_TagsForeignProjectClearViaQueryParam(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	foreign := env.ProjectDir + "-foreign2"
+	sessionID, err := service.CreateSession(foreign, "claude", "Foreign", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(sessionID, foreign, []service.SessionTagRef{{Name: "victim"}}))
+
+	req := newRequest(t, http.MethodPatch,
+		"/api/ai/session/update?session_id="+sessionID, map[string]any{"tags": []map[string]any{}})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusForbidden)
+
+	tags, err := service.GetSessionTags(sessionID)
+	require.NoError(t, err)
+	assert.Len(t, tags, 1, "tags must not be cleared across projects")
+}
+
+// TestServeAISessionUpdate_UnknownSessionIDIs404 verifies an unknown id no
+// longer returns 200 while writing orphan link rows for a nonexistent session.
+func TestServeAISessionUpdate_UnknownSessionIDIs404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPatch,
+		"/api/ai/session/update?session_id=does-not-exist", map[string]any{
+			"tags": []map[string]any{{"name": "orphan"}},
+		})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestServeAISessionUpdate_TagsOnArchivedSessionStayReachable pins the fix for
+// a permanently unreachable tag: GetSessionFullInfo filters archived=0, so an
+// archived session resolved to project_path="" and its tags were filed under no
+// project — invisible in every candidate list and undeletable via the API.
+func TestServeAISessionUpdate_TagsOnArchivedSessionStayReachable(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Archived", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.ArchiveSession(env.ProjectDir, "claude", sessionID))
+
+	// Tag the archived session (models the dialog being open when it is archived).
+	req := newRequest(t, http.MethodPatch,
+		"/api/ai/session/update?session_id="+sessionID, map[string]any{
+			"tags": []map[string]any{{"name": "ghost"}},
+		})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	assertOK(t, w)
+
+	// The label must be visible in its own project's candidate list...
+	listReq := newRequest(t, http.MethodGet, "/api/ai/session/tags", nil)
+	listReq = withProjectCookie(listReq, env.ProjectDir)
+	listW := callHandler(ServeSessionTags, listReq)
+	assertOK(t, listW)
+	assert.Equal(t, []string{"ghost"}, tagNames(decodeTags(t, listW.Body.Bytes())))
+
+	// ...and deletable.
+	delReq := newRequest(t, http.MethodDelete, "/api/ai/session/tags?name=ghost&scope=project", nil)
+	delReq = withProjectCookie(delReq, env.ProjectDir)
+	delW := callHandler(ServeSessionTags, delReq)
+	assertOK(t, delW)
+}
+
+// ── Scoped delete ──────────────────────────────────────────────────────────
+
+// TestServeSessionTags_DeleteUsesScope verifies the scope query param reaches
+// the service: deleting the project-scoped definition must not remove a global
+// one of the same name.
+func TestServeSessionTags_DeleteUsesScope(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	other := env.ProjectDir + "-other-scope"
+	sidA, err := service.CreateSession(env.ProjectDir, "claude", "A", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	sidB, err := service.CreateSession(other, "claude", "B", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(sidA, env.ProjectDir, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeProject},
+	}))
+	require.NoError(t, service.SetSessionTags(sidB, other, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/tags?name=bug&scope=project", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionTags, req)
+	assertOK(t, w)
+
+	// The global label is untouched, so the other project still shows it.
+	globalTags, err := service.ListSessionTags(other)
+	require.NoError(t, err)
+	require.Len(t, globalTags, 1)
+	assert.Equal(t, service.SessionTagScopeGlobal, globalTags[0].Scope)
 }
