@@ -581,7 +581,7 @@ func PruneForgeEvents(repo ForgeRepoKey, createdBefore time.Time) (int64, error)
 		`DELETE FROM forge_events
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		   AND read_at IS NOT NULL AND created_at < ?`,
-		repo.Platform, repo.Host, repo.Owner, repo.Repo, createdBefore,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, createdBefore.UTC(),
 	)
 	if err != nil {
 		return 0, err

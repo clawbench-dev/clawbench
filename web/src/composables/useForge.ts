@@ -198,14 +198,20 @@ export function useForgeItems(getProjectPath: () => string) {
 
     /** Mark every item in the bound repository read. */
     async function markAllRead(): Promise<void> {
+        // Snapshot so a failed write can be undone — otherwise the list claims
+        // everything was seen while the server still holds it unread.
+        const before = items.value.map(it => it.unread)
         for (const it of items.value) it.unread = false
         try {
-            await markForgeRead()
+            // Shared with the badge and the pipeline list: one repo-wide write,
+            // not one per caller.
+            await useForgeUnread().markAllRead()
         } catch (err) {
             appLog.w(TAG, 'markAllRead failed', err)
+            items.value.forEach((it, i) => { it.unread = before[i] })
+            return
         }
         // Re-derive rather than assume: the server is authoritative.
-        useForgeUnread().refresh()
         void load()
     }
 
@@ -410,13 +416,15 @@ export function useForgePipelines(getProjectPath: () => string) {
 
     /** Mark every run in the bound repository read. */
     async function markAllRead(): Promise<void> {
+        const before = pipelines.value.map(r => r.unread)
         for (const r of pipelines.value) r.unread = false
         try {
-            await markForgeRead()
+            await useForgeUnread().markAllRead()
         } catch (err) {
             appLog.w(TAG, 'markAllPipelinesRead failed', err)
+            pipelines.value.forEach((r, i) => { r.unread = before[i] })
+            return
         }
-        useForgeUnread().refresh()
         void load()
     }
 
