@@ -322,7 +322,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	}
 
 	// Create forge binding + sync tables
-	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL} {
+	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		if _, err := db.Exec(ddl); err != nil {
 			t.Fatalf("failed to create forge tables: %v", err)
 		}

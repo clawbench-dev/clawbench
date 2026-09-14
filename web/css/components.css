@@ -69,3 +69,272 @@
     inset: 0;
     z-index: var(--z-context-menu-backdrop);
 }
+
+/* ==========================================================================
+   Forge panel — shared chrome
+   Used by: ForgePanelContent.vue (list), ForgeDetail.vue (issue/PR detail),
+            ForgePipelineDetail.vue (CI run detail)
+
+   These live here rather than in a component's `<style scoped>` because more
+   than one component renders them: a scoped rule only applies to the component
+   that declares it, so ForgePipelineDetail rendered its header, back button,
+   icon buttons, status dots and error card completely unstyled when these were
+   declared only inside ForgeDetail. Declaring them once here is what makes the
+   three forge views visually consistent.
+   ========================================================================== */
+
+/* ── Drill-down page shell ── */
+.forge-detail {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+/* ── Drill-down header: the same bar height as every other detail page ── */
+.forge-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: var(--header-height);
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    flex-shrink: 0;
+    gap: var(--space-4);
+}
+
+.forge-back {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    background: transparent;
+    border: none;
+    color: var(--accent-color);
+    cursor: pointer;
+    font-size: var(--font-size-md);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    transition: background var(--duration-base) ease;
+}
+
+@media (hover: hover) {
+    .forge-back:hover { background: var(--bg-secondary); }
+}
+
+.forge-back:active { background: var(--bg-tertiary); }
+
+.forge-detail-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+/* Round icon button. `border: none` is required: this class is used by BOTH <a>
+   and <button>, and a bare <button> keeps the UA's default border, which shows
+   up as a stray ring around the round icon. (<a> has no default border, which is
+   why the gap only appeared once a <button> used this class.) */
+.forge-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-lg);
+    border: none;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background var(--duration-slow) ease, color var(--duration-slow) ease;
+}
+
+@media (hover: hover) {
+    .forge-icon-btn:hover {
+        background: var(--bg-tertiary);
+        color: var(--accent-color);
+    }
+}
+
+.forge-loading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ── Error card ── */
+.forge-error-card {
+    margin: var(--space-6);
+    padding: var(--space-6);
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    border: 1px solid color-mix(in srgb, var(--color-red) 35%, var(--border-color));
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-red) 6%, var(--bg-secondary));
+}
+
+.forge-error-icon { color: var(--color-red); flex-shrink: 0; }
+.forge-error-text { flex: 1; min-width: 0; }
+.forge-error-title {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    margin-bottom: var(--space-1);
+}
+.forge-error-body { color: var(--text-secondary); font-size: var(--font-size-sm); }
+
+/* ── Status dot: baseline-aligned with the title's first line ── */
+.forge-state-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+    margin-top: var(--space-3);
+}
+
+/* Issue / PR lifecycle states. */
+.forge-state-dot.state-open { background: var(--color-success); }
+.forge-state-dot.state-closed { background: var(--color-red); }
+.forge-state-dot.state-merged { background: var(--color-purple); }
+
+/* CI run and job outcomes. Deliberately separate from the lifecycle states
+   above: a run's status is an outcome, not a lifecycle position. */
+.forge-state-dot.pipeline-success { background: var(--color-success); }
+.forge-state-dot.pipeline-failure { background: var(--color-red); }
+.forge-state-dot.pipeline-running { background: var(--color-yellow); }
+.forge-state-dot.pipeline-cancelled,
+.forge-state-dot.pipeline-skipped { background: var(--text-secondary); }
+.forge-state-dot.pipeline-unknown { background: var(--border-color); }
+
+/* ── Unread marker ──
+   A row with unseen activity. The dot sits at the end of the title line rather
+   than beside the state dot, so it reads as "new" without being mistaken for a
+   status. The row also takes a faint tint, so the unread set is scannable
+   without relying on spotting a small dot. */
+.forge-unread-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.forge-row.unread {
+    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+}
+
+.forge-row.unread .forge-row-text {
+    font-weight: var(--font-weight-medium);
+}
+
+/* The "mark all read" button mirrors the task list's clear-unread affordance:
+   accent-tinted while there is something to clear, and inert when there is not. */
+.clear-unread-btn.active {
+    color: var(--accent-color);
+}
+
+/* ── CI run row metadata (list rows and the detail header) ──
+   The ref is the most useful field, so it is emphasised over the run details. */
+.forge-pipeline-ref {
+    font-weight: var(--font-weight-medium);
+}
+
+.forge-pipeline-sha,
+.forge-pipeline-event {
+    font-family: var(--font-mono);
+    opacity: 0.85;
+}
+
+/* ── Detail page body: title block + meta line ── */
+.forge-detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+}
+
+.forge-detail-title-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-4);
+}
+
+.forge-detail-title-main { flex: 1; min-width: 0; }
+
+.forge-detail-title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    margin: 0;
+    line-height: 1.35;
+    color: var(--text-primary);
+}
+
+.forge-detail-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-4);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+}
+
+.forge-detail-number {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.forge-meta-sep { opacity: var(--opacity-muted); }
+
+/* State badge — tinted pill instead of bare coloured text. */
+.forge-state-badge {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    padding: 1px var(--space-4);
+    border-radius: var(--radius-full);
+    border: 1px solid transparent;
+}
+
+.forge-state-badge.state-open {
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+.forge-state-badge.state-closed {
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
+}
+.forge-state-badge.state-merged {
+    color: var(--color-purple);
+    background: color-mix(in srgb, var(--color-purple) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-purple) 35%, transparent);
+}
+
+/* CI outcomes reuse the badge shape with their own tints. */
+.forge-state-badge.pipeline-success {
+    color: var(--color-success);
+    background: color-mix(in srgb, var(--color-success) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+.forge-state-badge.pipeline-failure {
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
+}
+.forge-state-badge.pipeline-running {
+    color: var(--color-yellow);
+    background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-yellow) 35%, transparent);
+}
+.forge-state-badge.pipeline-cancelled,
+.forge-state-badge.pipeline-skipped,
+.forge-state-badge.pipeline-unknown {
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+}

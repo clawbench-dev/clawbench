@@ -21,6 +21,7 @@ import {
   parseEventUrl,
   eventSourceLabel,
   FORGE_EVENT_TRANSITIONS,
+  FORGE_REPO_TARGETED_TRANSITIONS,
 } from '@/utils/forgeEventLabels'
 
 describe('splitEventTypes', () => {
@@ -50,20 +51,36 @@ describe('expandStoredEventTypes', () => {
     expect(expandStoredEventTypes('bogus')).toEqual(['bogus'])
   })
 
-  it('does not invent keys for a retired transition on a kind that lacks it', () => {
-    // pipeline_done is not in FORGE_EVENT_TRANSITIONS at all.
+  it('keeps a repository-targeted transition BARE', () => {
+    // pipeline_done is offered without a kind prefix, and the backend matches it
+    // that way. Expanding it to "pipeline.pipeline_done" would produce a key the
+    // backend never matches, so the checkbox would silently stop working.
     expect(expandStoredEventTypes('pipeline_done')).toEqual(['pipeline_done'])
+  })
+
+  it('does not expand a repository-targeted transition into a kind-scoped key', () => {
+    // Guard against a regression where pipeline_done is added to
+    // FORGE_EVENT_TRANSITIONS as a pseudo-kind.
+    const expanded = expandStoredEventTypes('pipeline_done')
+    expect(expanded).not.toContain('pipeline.pipeline_done')
+    expect(expanded).not.toContain('repo.pipeline_done')
   })
 })
 
 describe('offeredEventValues', () => {
-  it('contains every kind-scoped transition and nothing else', () => {
+  it('contains every kind-scoped transition plus the bare repository events', () => {
     const offered = offeredEventValues()
-    const expected = Object.entries(FORGE_EVENT_TRANSITIONS)
-      .flatMap(([kind, transitions]) => transitions.map(tr => `${kind}.${tr}`))
+    const expected = [
+      ...Object.entries(FORGE_EVENT_TRANSITIONS)
+        .flatMap(([kind, transitions]) => transitions.map(tr => `${kind}.${tr}`)),
+      ...FORGE_REPO_TARGETED_TRANSITIONS,
+    ]
     expect([...offered].sort()).toEqual(expected.sort())
     expect(offered.has('issue.merged')).toBe(false)
     expect(offered.has('pr.merged')).toBe(true)
+    // Offered bare, because that is how the backend matches it.
+    expect(offered.has('pipeline_done')).toBe(true)
+    expect(offered.has('pipeline.pipeline_done')).toBe(false)
   })
 })
 
@@ -87,6 +104,18 @@ describe('eventChips', () => {
 
   it('returns no chips for an empty subscription', () => {
     expect(eventChips('')).toEqual([])
+  })
+
+  it('labels a repository-targeted transition with the repo pseudo-kind', () => {
+    // The stored key stays bare (that is what the backend matches), but the
+    // chip is labelled so the UI can group it under "Repository pipelines"
+    // instead of showing an unlabelled entry.
+    const chips = eventChips('pipeline_done')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].key).toBe('pipeline_done')
+    expect(chips[0].kind).toBe('repo')
+    expect(chips[0].transition).toBe('pipeline_done')
+    expect(chips[0].label).toBe('task.form.eventPipeline')
   })
 })
 

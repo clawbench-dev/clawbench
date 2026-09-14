@@ -476,45 +476,142 @@ func runGitInDir(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// seedUnreadEvent writes an unread event for the repo bindProject creates
+// (acme/widgets).
+func seedUnreadEvent(t *testing.T, itemKey string, number int, dedupe string) {
+	t.Helper()
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: number, ItemKey: itemKey,
+		EventType: "closed", DedupeKey: dedupe,
+	})
+	require.NoError(t, err)
+}
+
 func TestServeForgeUnreadAndMarkRead(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "k1")
+
+	unread := func() float64 {
+		t.Helper()
+		req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+		withAuthCookie(req, model.SessionToken)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(ServeForgeUnread, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		return resp["count"].(float64)
+	}
+
+	assert.Equal(t, float64(1), unread())
+
+	// Mark all read.
+	req := newRequest(t, http.MethodPost, "/api/forge/read", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeMarkRead, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	assert.Equal(t, float64(0), unread())
+}
+
+// TestServeForgeMarkRead_OneItem: the per-item path is what opening a row uses,
+// and it must leave the other rows unread.
+func TestServeForgeMarkRead_OneItem(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "k1")
+	seedUnreadEvent(t, "issue/2", 2, "k2")
+
+	req := newRequest(t, http.MethodPost, "/api/forge/read",
+		map[string]string{"itemKey": "issue/1"})
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeMarkRead, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(1), resp["count"], "the response reports what is still unread")
+
+	// issue/2 is still unread.
+	req = newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeForgeUnread, req)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(1), resp["count"])
+}
+
+// TestServeForgeUnread_RequiresProject: the badge points at one project's repo,
+// so an unscoped call must not silently report a global number.
+func TestServeForgeUnread_RequiresProject(t *testing.T) {
 	_, teardown := setupForgeEnv(t)
 	defer teardown()
 
-	// Seed an unread event.
+	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeUnread, req)
+	assert.NotEqual(t, http.StatusOK, w.Code, "a missing project must be rejected, not answered globally")
+}
+
+// TestServeForgeUnread_UnboundProjectIsZero: an unbound project has nothing to be
+// unread about. This is a normal state (the panel shows its bind prompt), so it
+// must be a 200 with zero rather than an error the UI would surface.
+func TestServeForgeUnread_UnboundProjectIsZero(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
+	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForgeUnread, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["count"])
+}
+
+// TestServeForgeUnread_ScopedToBoundRepo: another repository's activity must not
+// inflate this project's badge.
+func TestServeForgeUnread_ScopedToBoundRepo(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+	bindProject(t, env.ProjectDir, "github", "github.com")
+
+	seedUnreadEvent(t, "issue/1", 1, "mine")
+	// A different repo's event.
 	_, err := service.InsertForgeEvent(service.ForgeEvent{
-		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
-		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+		Platform: "github", Host: "github.com", Owner: "other", Repo: "repo",
+		ItemType: "issue", Number: 9, ItemKey: "issue/9",
+		EventType: "closed", DedupeKey: "theirs",
 	})
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/forge/unread", nil)
 	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeForgeUnread, req)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(1), resp["count"])
-
-	// Mark read.
-	req = newRequest(t, http.MethodPost, "/api/forge/read", nil)
-	withAuthCookie(req, model.SessionToken)
-	w = callHandler(ServeForgeMarkRead, req)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Now zero.
-	req = newRequest(t, http.MethodGet, "/api/forge/unread", nil)
-	withAuthCookie(req, model.SessionToken)
-	w = callHandler(ServeForgeUnread, req)
-	require.Equal(t, http.StatusOK, w.Code)
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, float64(0), resp["count"])
+	assert.Equal(t, float64(1), resp["count"], "only the bound repository counts")
 }
 
 func TestServeForgeUnread_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupForgeEnv(t)
+	env, teardown := setupForgeEnv(t)
 	defer teardown()
 	req := newRequest(t, http.MethodPost, "/api/forge/unread", nil)
 	withAuthCookie(req, model.SessionToken)
+	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeForgeUnread, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
