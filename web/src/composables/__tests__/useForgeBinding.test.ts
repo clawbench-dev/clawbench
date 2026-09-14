@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 const mockFetchBinding = vi.fn()
 
@@ -15,14 +15,13 @@ describe('useForgeBinding', () => {
     resetForgeBindingState()
   })
 
-  it('refresh exposes the bound platform and host', async () => {
+  it('refresh exposes the bound platform', async () => {
     mockFetchBinding.mockResolvedValue({
       binding: { platform: 'gitlab', host: 'git.acme.internal', owner: 'a', repo: 'b' },
     })
-    const { platform, host, refresh } = useForgeBinding()
+    const { platform, refresh } = useForgeBinding()
     await refresh()
     expect(platform.value).toBe('gitlab')
-    expect(host.value).toBe('git.acme.internal')
   })
 
   it('an unbound project clears the platform', async () => {
@@ -61,6 +60,16 @@ describe('useForgeBinding', () => {
     mockFetchBinding.mockResolvedValue({ binding: null })
     await refresh(true)
     expect(slug.value).toBe('')
+  })
+
+  // A binding missing either half reads as unbound. The stored slug field and
+  // the computed one must agree, or the panel and the task views disagree
+  // about the same binding.
+  it('treats a half-empty binding as unbound in both slug forms', () => {
+    setForgeBindingState({ platform: 'github', host: 'github.com', owner: 'acme' })
+    const { slug, binding } = useForgeBinding()
+    expect(slug.value).toBe('')
+    expect(binding.value?.slug).toBe('')
   })
 
   // The distinction the task views rely on: an unresolved lookup must not be
@@ -133,6 +142,23 @@ describe('useForgeBinding request coalescing', () => {
     expect(mockFetchBinding).toHaveBeenCalledTimes(1)
   })
 
+  // Without an expiry the cache would be permanent, and a repository bound in
+  // another tab or session would never appear.
+  it('re-fetches once the TTL has elapsed', async () => {
+    vi.useFakeTimers()
+    mockFetchBinding.mockResolvedValue({
+      binding: { platform: 'github', host: 'github.com', owner: 'a', repo: 'b' },
+    })
+    const { refresh } = useForgeBinding()
+    await refresh()
+    expect(mockFetchBinding).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(5_001)
+    await refresh()
+    expect(mockFetchBinding).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
   it('force bypasses the cache after a write', async () => {
     mockFetchBinding.mockResolvedValue({
       binding: { platform: 'github', host: 'github.com', owner: 'a', repo: 'b' },
@@ -163,6 +189,38 @@ describe('useForgeBinding request coalescing', () => {
     await stale
 
     expect(slug.value).toBe('new/repo')
+  })
+})
+
+// A transient failure must not be served from cache: the project may well be
+// bound, and a cached failure would render "no repository bound" — plus the
+// form's "this task will never fire" warning — for the whole TTL with no retry.
+describe('useForgeBinding failure handling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetForgeBindingState()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('retries on the next lookup instead of caching the failure', async () => {
+    mockFetchBinding.mockRejectedValueOnce(new Error('network blip'))
+    const { refresh, slug, resolved } = useForgeBinding()
+
+    await refresh(true)
+    // The failure still ends the loading state, so consumers stop waiting.
+    expect(resolved.value).toBe(true)
+    expect(slug.value).toBe('')
+
+    // The project IS bound — the next (non-force) lookup must actually ask.
+    mockFetchBinding.mockResolvedValue({
+      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
+    })
+    await refresh()
+    expect(mockFetchBinding).toHaveBeenCalledTimes(2)
+    expect(slug.value).toBe('acme/widgets')
   })
 })
 

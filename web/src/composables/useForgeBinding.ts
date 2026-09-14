@@ -20,7 +20,6 @@ const BINDING_TTL_MS = 5_000
 // "no repository bound" warning during the initial load, which is wrong.
 const binding = ref<ForgeBinding | null>(null)
 const resolved = ref(false)
-const loading = ref(false)
 
 // In-flight dedup: concurrent callers share one request instead of each
 // issuing its own. Without this, opening the task list fires 3-5 identical
@@ -33,13 +32,20 @@ let fetchedAt = 0
 let requestSeq = 0
 
 const platform = computed(() => binding.value?.platform ?? '')
-const host = computed(() => binding.value?.host ?? '')
+
+/**
+ * The canonical "owner/repo" label, or '' when either half is missing.
+ *
+ * Shared by the `slug` computed and setForgeBindingState so the two can never
+ * disagree: a binding with an empty owner or repo reads as unbound either way,
+ * rather than one path yielding "/" and the other "".
+ */
+function bindingSlug(b: { owner?: string; repo?: string } | null | undefined): string {
+    return b && b.owner && b.repo ? `${b.owner}/${b.repo}` : ''
+}
 
 /** The canonical "owner/repo" label, or '' when unbound. */
-const slug = computed(() => {
-    const b = binding.value
-    return b ? `${b.owner}/${b.repo}` : ''
-})
+const slug = computed(() => bindingSlug(binding.value))
 
 /**
  * setForgeBindingState updates the shared binding from a caller that already
@@ -53,7 +59,7 @@ export function setForgeBindingState(next: { platform?: string; host?: string; o
             host: next.host ?? '',
             owner: next.owner ?? '',
             repo: next.repo ?? '',
-            slug: next.owner && next.repo ? `${next.owner}/${next.repo}` : '',
+            slug: bindingSlug(next),
         }
         : null
     resolved.value = true
@@ -100,7 +106,6 @@ export function useForgeBinding() {
         // Bumping the sequence makes any older in-flight response discard its
         // result instead of overwriting this one.
         const seq = ++requestSeq
-        loading.value = true
         const request = (async () => {
             try {
                 const res = await fetchForgeBinding()
@@ -111,35 +116,27 @@ export function useForgeBinding() {
                 return binding.value
             } catch (err) {
                 // A failed lookup must not leave a stale binding driving the
-                // icon or the repository label. Mark resolved so consumers stop
-                // showing a loading state, but leave the value empty.
+                // icon or the repository label, so the value is cleared. It is
+                // deliberately NOT stamped into the cache: a transient failure
+                // would otherwise be served as "confirmed unbound" for the
+                // whole TTL, showing a bound project as unbound with no retry.
+                // `resolved` still flips so consumers leave the loading state.
                 appLog.w(TAG, 'refresh failed', err)
                 if (seq === requestSeq) {
                     binding.value = null
                     resolved.value = true
-                    fetchedAt = Date.now()
+                    fetchedAt = 0
                 }
                 return binding.value
             } finally {
-                if (seq === requestSeq) {
-                    loading.value = false
-                    inflight = null
-                }
+                if (seq === requestSeq) inflight = null
             }
         })()
         inflight = request
         return request
     }
 
-    function clear() {
-        binding.value = null
-        resolved.value = false
-        fetchedAt = 0
-        inflight = null
-        requestSeq++
-    }
-
-    return { binding, platform, host, slug, resolved, loading, refresh, clear }
+    return { binding, platform, slug, resolved, refresh }
 }
 
 /**

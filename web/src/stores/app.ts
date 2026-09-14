@@ -7,6 +7,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useFileNavStack } from '@/composables/useFileNavStack'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 const TAG = 'Store'
 
@@ -306,6 +307,12 @@ function resetProjectState(): void {
     state.projectName = ''
     state.rootPaths = []
     state.homeDir = ''
+    // The forge binding belongs to the project being left behind. Dropping it
+    // here — rather than in App.vue's hotSwitchProject — covers every switch
+    // path: worktree jumps (task exec detail, chat messages, git panel) call
+    // setProject() directly and never remount the app subtree, so a cached
+    // binding would otherwise keep labelling the new project with the old repo.
+    resetForgeBindingState()
     // File browser
     state.currentDir = ''
     state.dirEntries = []

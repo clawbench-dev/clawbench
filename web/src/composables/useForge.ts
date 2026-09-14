@@ -8,7 +8,7 @@ import {
     ForgeApiError,
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
-import { resetForgeBindingState, setForgeBindingState, useForgeBinding } from '@/composables/useForgeBinding'
+import { setForgeBindingState, useForgeBinding } from '@/composables/useForgeBinding'
 
 const TAG = 'UseForge'
 
@@ -87,6 +87,11 @@ export function useForgeItems(getProjectPath: () => string) {
             // The list response carries the binding it was served for, so this
             // is a free confirmation — route it through the shared setter so
             // the resolved flag and cache timestamp stay consistent.
+            //
+            // Safety note: this runs only for the newest request (seq guard
+            // above), and a bind/unbind triggers refresh(true) + load(), which
+            // bumps requestSeq. So a list response that started before a manual
+            // bind cannot land here afterwards and overwrite it.
             setForgeBindingState(res.binding)
             hasMore.value = res.hasMore
             nextPage.value = res.nextPage
@@ -148,22 +153,11 @@ export function useForgeItems(getProjectPath: () => string) {
         void load()
     }
 
-    function reset() {
-        items.value = []
-        error.value = null
-        hasMore.value = false
-        nextPage.value = 1
-        // The binding is shared state, so clear it through its own reset rather
-        // than assigning to the ref — that keeps the resolved flag and the
-        // in-flight dedup in step with the value.
-        resetForgeBindingState()
-    }
-
     return {
         items, binding, loading, loadingMore, error,
         type, state, mineFilter, query,
         hasMore, nextPage, isBound, isEmpty,
-        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery, reset,
+        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery,
     }
 }
 
