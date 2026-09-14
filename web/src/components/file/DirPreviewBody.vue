@@ -4,8 +4,10 @@
        scrolls under the fixed toolbar. -->
   <div class="dir-preview-body" :class="{ 'is-loading': loading }">
     <!-- Toolbar: same metrics/colors as .code-preview-meta so the two pane
-         bodies read as one component. -->
-    <div class="dir-preview-meta">
+         bodies read as one component. Suppressed with `chromeless` when the
+         host already renders a title/meta row (the floating preview card does),
+         which would otherwise stack a third, redundant row. -->
+    <div v-if="!chromeless" class="dir-preview-meta">
       <div class="dir-preview-meta-info">
         <span class="dir-preview-title">{{ dirName }}</span>
         <span class="dir-preview-count">{{ t('file.dirPreview.count', { n: shown.length }) }}</span>
@@ -83,6 +85,12 @@ const props = defineProps<{
   visible: (entry: DirPreviewEntry) => boolean
   /** Display name of the directory being listed (its own base name). */
   dirName: string
+  /**
+   * Render only the listing, without this component's own toolbar. Set by hosts
+   * that already show a title/meta row (the floating preview card), so the pane
+   * doesn't end up with three stacked bars.
+   */
+  chromeless?: boolean
 }>()
 
 const emit = defineEmits<{

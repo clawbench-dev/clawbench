@@ -128,6 +128,13 @@ const i18n = createI18n({
           renderedView: 'Rendered preview',
           sourceView: 'Source code',
         },
+        dirPreview: {
+          loading: 'Loading…',
+          empty: 'This directory is empty',
+          loadFailed: 'Failed to load directory',
+          close: 'Close preview',
+          count: '{n} items',
+        },
         header: {
           lineNumbers: 'Line Numbers',
         },
@@ -168,6 +175,15 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const errorMessage = ref<string | null>(null)
   const isLargeFile = ref(false)
   const windowTruncated = ref(false)
+  // Directory targets: the card lists the directory instead of slicing code.
+  const isDirTarget = ref(false)
+  const dirEntries = ref<any[]>([])
+  const dirLoading = ref(false)
+  const dirError = ref(false)
+  const dirLoadedPath = ref('')
+  const dirEntryVisible = (entry: { name: string }) => !entry.name.startsWith('.')
+  const openDirChild = vi.fn()
+  const openDirFile = vi.fn()
   const contextExpansion = ref(0)
   const placement = ref<any>({
     viewportX: 100,
@@ -220,6 +236,14 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     errorMessage,
     isLargeFile,
     windowTruncated,
+    isDirTarget,
+    dirEntries,
+    dirLoading,
+    dirError,
+    dirLoadedPath,
+    dirEntryVisible,
+    openDirChild,
+    openDirFile,
     contextExpansion,
     placement,
     renderMode,
@@ -397,6 +421,80 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     expect(document.body.textContent).toContain('oversized line')
+  })
+
+  it('lists a directory target instead of slicing code', () => {
+    const openDirChild = vi.fn()
+    const openDirFile = vi.fn()
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+      ]),
+      openDirChild,
+      openDirFile,
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The directory listing replaces the code slice.
+    const items = document.querySelectorAll('.dir-preview-item')
+    expect(items.length).toBe(2)
+    // No code-slice body, and no text-viewer tools for a directory.
+    expect(document.querySelector('.code-preview-lines')).toBeNull()
+    // The card supplies its own title + meta rows, so the embedded body must
+    // drop its own toolbar — otherwise three bars stack up.
+    expect(document.querySelector('.dir-preview-body .dir-preview-meta')).toBeNull()
+
+    // Clicking a child directory hands off to the file manager.
+    ;(items[1] as HTMLElement).click()
+    expect(openDirChild).toHaveBeenCalledWith('nested')
+
+    // Clicking a child file opens it in the full-screen viewer.
+    ;(items[0] as HTMLElement).click()
+    expect(openDirFile).toHaveBeenCalledWith('a.ts')
+  })
+
+  it('hides the "open file" action for a directory target', () => {
+    // A directory has no file to open in the viewer, and the reveal button
+    // already opens the directory itself — the two would be redundant, and
+    // "Full file" would be mislabeled.
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.querySelector('button[title="Open file"]')).toBeNull()
+    // "Open Directory" (reveal) stays available.
+    expect(document.querySelector('button[title="Open Directory"]')).not.toBeNull()
+  })
+
+  it('shows the entry count in the meta row for a directory target', () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+        { name: 'deep', type: 'dir' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // Line count / size would be meaningless here.
+    expect(document.body.textContent).toContain('3 items')
   })
 
   it('renders binary file error with open full file button', () => {

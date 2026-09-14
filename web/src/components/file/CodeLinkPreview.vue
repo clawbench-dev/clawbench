@@ -138,9 +138,21 @@
         </button>
       </div>
 
-      <!-- Content Area: rendered Markdown document OR source code slice -->
+      <!-- Content Area: directory listing / media / rendered Markdown / code -->
+      <DirPreviewBody
+        v-if="isDirView"
+        chromeless
+        :entries="preview.dirEntries.value"
+        :loading="preview.dirLoading.value"
+        :error="preview.dirError.value"
+        :visible="preview.dirEntryVisible"
+        :dir-name="dirViewName"
+        @open-file="preview.openDirFile"
+        @open-dir="preview.openDirChild"
+        @closed="preview.close()"
+      />
       <MediaPreviewBody
-        v-if="isMediaView"
+        v-else-if="isMediaView"
         ref="bodyRef"
         :path="targetFilePath"
         :kind="mediaKind"
@@ -232,7 +244,7 @@
           <span>{{ t('file.codePreview.openFileShort') }}</span>
         </button>
         <button
-          v-else
+          v-else-if="!isDirView"
           class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
@@ -502,7 +514,7 @@
             {{ t('file.codePreview.viewDetails') }}
           </button>
           <button
-            v-else
+            v-else-if="!isDirView"
             class="code-preview-btn"
             :title="t('file.codePreview.openFull')"
             :aria-label="t('file.codePreview.openFull')"
@@ -593,9 +605,22 @@
         </div>
       </div>
 
-      <!-- Body / Scroll pane: media / rendered Markdown document / source code slice -->
+      <!-- Body / Scroll pane: directory listing / media / rendered Markdown /
+           source code slice -->
+      <DirPreviewBody
+        v-if="isDirView"
+        chromeless
+        :entries="preview.dirEntries.value"
+        :loading="preview.dirLoading.value"
+        :error="preview.dirError.value"
+        :visible="preview.dirEntryVisible"
+        :dir-name="dirViewName"
+        @open-file="preview.openDirFile"
+        @open-dir="preview.openDirChild"
+        @closed="preview.close()"
+      />
       <MediaPreviewBody
-        v-if="isMediaView"
+        v-else-if="isMediaView"
         ref="bodyRef"
         :path="targetFilePath"
         :kind="mediaKind"
@@ -651,6 +676,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
+import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
@@ -753,7 +779,21 @@ const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
   return null
 })
 // Text-slice tools are only meaningful when a code/markdown body is showing.
-const showTextTools = computed(() => !isMediaView.value)
+const showTextTools = computed(() => !isMediaView.value && !isDirView.value)
+
+// ── Directory body ─────────────────────────────────────────────────────────
+// A directory annotation has no file content, so the card lists it with the
+// same control the file manager's docked pane uses (DirPreviewBody). The
+// listing replaces the code/markdown/media bodies entirely, and every
+// text-viewer tool is hidden — none of them mean anything for a directory.
+const isDirView = computed(() => Boolean(props.preview.isDirTarget?.value))
+
+/** Base name of the listed directory, for the card's title. */
+const dirViewName = computed(() => {
+  const p = props.preview.target.value?.filePath || ''
+  const base = p.replace(/\/+$/, '').split('/').pop()
+  return base || p
+})
 
 function toggleRenderView() {
   props.preview.toggleRenderMode?.()
@@ -929,6 +969,11 @@ function formatFileSize(bytes: number): string {
 const contextMeta = computed(() => {
   const filePath = props.preview.target.value?.filePath
   if (!filePath) return ''
+  // A directory has no line count or size; show how many entries it holds,
+  // matching the docked pane's count. `dirEntries` is the unfiltered listing.
+  if (isDirView.value) {
+    return t('file.dirPreview.count', { n: props.preview.dirEntries.value.length })
+  }
   const total = props.preview.slicedCode.value?.totalLines
   const size = props.preview.fileContent.value?.size
   // File type/language label is omitted: the file-name extension already
@@ -1010,6 +1055,13 @@ const handleQuoteToChat = () => {
 const handleRevealInTree = async () => {
   const filePath = props.preview.target.value?.filePath
   if (!filePath) return
+  // A directory card reveals the directory ITSELF (navigate into it), which is
+  // what "open directory" means for a directory. navToFileInManager would
+  // instead reveal its parent, which is wrong here.
+  if (props.preview.isDirTarget?.value) {
+    props.preview.openDirChild('')
+    return
+  }
   props.preview.close()
   // Shared "reveal in file manager" behavior (same as file-search results):
   // navigates to the containing directory and highlights the file there.

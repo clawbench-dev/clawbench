@@ -630,7 +630,13 @@ describe('useCodeLinkPreview', () => {
     expect(preview.visible.value).toBe(false)
   })
 
-  it('does not preview directories (data-path-type="dir")', () => {
+  it('previews directories by listing them (data-path-type="dir")', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      items: [
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+      ],
+    })
     const preview = useCodeLinkPreview()
     const dirAnchor = document.createElement('span')
     dirAnchor.className = 'chat-file-path'
@@ -638,8 +644,31 @@ describe('useCodeLinkPreview', () => {
     dirAnchor.setAttribute('data-path-type', 'dir')
 
     preview.handleClick({ target: dirAnchor, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
-    expect(preview.visible.value).toBe(false)
-    expect(mockApiGet).not.toHaveBeenCalled()
+    expect(preview.visible.value).toBe(true)
+    expect(preview.isDirTarget.value).toBe(true)
+
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    // Lists via /api/dir, never /api/file (a directory has no file content).
+    const url = mockApiGet.mock.calls[0][0] as string
+    expect(url).toContain('/api/dir?path=src%2Fcomponents')
+    expect(preview.dirEntries.value.map(e => e.name)).toEqual(['a.ts', 'nested'])
+  })
+
+  it('ignores a line annotation on a directory target', () => {
+    const preview = useCodeLinkPreview()
+    const dirAnchor = document.createElement('span')
+    dirAnchor.className = 'chat-file-path'
+    dirAnchor.setAttribute('data-file-path', 'src/components')
+    dirAnchor.setAttribute('data-path-type', 'dir')
+    // A dir annotation has no meaningful lines; they must not reach the fetch.
+    dirAnchor.setAttribute('data-line-start', '10')
+    dirAnchor.setAttribute('data-line-end', '20')
+
+    preview.handleClick({ target: dirAnchor, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+    expect(preview.target.value?.isDir).toBe(true)
+    expect(preview.target.value?.lineStart).toBeUndefined()
   })
 
   it('maps binary and too-large error states properly', async () => {
@@ -1179,13 +1208,21 @@ describe('handleVerifiedFilePathClick (shared container interceptor)', () => {
     expect(handleClick).toHaveBeenCalledTimes(1)
   })
 
-  it('directories and unverified paths fall through (return false)', () => {
-    for (const pathType of ['dir', null]) {
-      const { preview, handleClick } = makePreview()
-      const handled = handleVerifiedFilePathClick(makeEvent(makeElement(pathType)), preview as never)
-      expect(handled).toBe(false)
-      expect(handleClick).not.toHaveBeenCalled()
-    }
+  it('unverified paths fall through (return false)', () => {
+    // Only a *verified* path is intercepted. Without data-path-type the
+    // annotation has not been confirmed yet, so the container's own handler
+    // must get the click.
+    const { preview, handleClick } = makePreview()
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement(null)), preview as never)
+    expect(handled).toBe(false)
+    expect(handleClick).not.toHaveBeenCalled()
+  })
+
+  it('intercepts directory paths too (they preview a listing)', () => {
+    const { preview, handleClick } = makePreview()
+    const handled = handleVerifiedFilePathClick(makeEvent(makeElement('dir')), preview as never)
+    expect(handled).toBe(true)
+    expect(handleClick).toHaveBeenCalledTimes(1)
   })
 })
 
