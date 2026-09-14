@@ -12,7 +12,7 @@
       @toggle="toggleTagFilter"
     />
 
-    <!-- ── Project pane: pinned + recent sections, infinite-scrolling ── -->
+    <!-- ── Project pane: one flat, infinite-scrolling list ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
            On background refreshes the existing list stays visible so it can be
@@ -20,110 +20,52 @@
       <LoadingIndicator v-if="loading && sessions.length === 0" size="md" :label="t('common.loading')" />
       <div v-else-if="sessions.length === 0" class="session-empty">{{ t('session.noSessions') }}</div>
       <template v-else>
-        <!-- Pinned section: only shown when there are pinned sessions -->
-        <section v-if="pinnedSessions.length > 0" class="session-section">
-          <SessionGroupHeader
-            :title="t('common.pinnedSection')"
-            :count="pinnedSessions.length"
-            :collapsed="pinnedCollapsed"
-            @toggle="pinnedCollapsed = !pinnedCollapsed"
+        <!-- Single flat list. Pinned sessions stay first (the backend returns
+             them in that order, so this array order is authoritative) but are no
+             longer split into their own section — a pinned row is marked with a
+             corner wedge plus a small pin glyph at the end of its title. -->
+        <TransitionGroup name="session-list" tag="div" class="session-rows">
+          <div
+            v-for="(session, idx) in sessionsWithStatus"
+            :key="session.id"
+            :data-session-id="session.id"
+            class="session-row"
+            :class="{ pinned: session.pinned, active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
+            @contextmenu.prevent="showContextMenu($event, session)"
+            v-long-press="onSessionLongPress"
           >
-            <template #icon><Pin :size="12" class="session-group-pin-icon" /></template>
-          </SessionGroupHeader>
-          <TransitionGroup v-show="!pinnedCollapsed" name="session-list" tag="div" class="session-rows">
+            <span v-if="session.running" class="session-running-line"></span>
             <div
-              v-for="(session, idx) in pinnedSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-row pinned"
-              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-              @contextmenu.prevent="showContextMenu($event, session)"
-              v-long-press="onSessionLongPress"
+              class="session-item"
+              :class="{ active: session.id === currentSessionId }"
+              @click="selectSession(session.id, session.backend)"
             >
-              <span v-if="session.running" class="session-running-line"></span>
-              <div
-                class="session-item"
-                :class="{ active: session.id === currentSessionId }"
-                @click="selectSession(session.id, session.backend)"
-              >
-                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                  </div>
-                  <div v-if="session.tags && session.tags.length" class="session-item-tags">
-                    <span
-                      v-for="tag in session.tags"
-                      :key="tag.name"
-                      class="session-tag"
-                      :style="tagAccentStyle(tag.name)"
-                    >{{ tag.name }}</span>
-                  </div>
+              <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
+              <div class="session-item-info">
+                <div class="session-item-header">
+                  <span class="session-item-title">{{ session.title }}</span>
+                  <Pin v-if="session.pinned" :size="11" class="session-pin-icon" />
+                </div>
+                <div class="session-item-meta">
+                  <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
+                  <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                  <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                </div>
+                <div v-if="session.tags && session.tags.length" class="session-item-tags">
+                  <span
+                    v-for="tag in session.tags"
+                    :key="tag.name"
+                    class="session-tag"
+                    :style="tagAccentStyle(tag.name)"
+                  >{{ tag.name }}</span>
                 </div>
               </div>
-              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-                <Archive :size="15" />
-              </button>
             </div>
-          </TransitionGroup>
-        </section>
-
-        <!-- Recent (unpinned) section -->
-        <section class="session-section">
-          <SessionGroupHeader
-            v-if="pinnedSessions.length > 0"
-            :title="t('common.recentSection')"
-            :count="unpinnedSessions.length"
-            :collapsed="recentCollapsed"
-            @toggle="recentCollapsed = !recentCollapsed"
-          />
-          <TransitionGroup v-show="!recentCollapsed" name="session-list" tag="div" class="session-rows">
-            <div
-              v-for="(session, idx) in unpinnedSessions"
-              :key="session.id"
-              :data-session-id="session.id"
-              class="session-row"
-              :class="{ active: session.id === currentSessionId, running: session.running, 'session-row-active': listNav.activeIndex.value === unpinnedIndexOffset + idx, 'menu-open': contextMenu.visible && contextMenu.sessionId === session.id }"
-              @contextmenu.prevent="showContextMenu($event, session)"
-              v-long-press="onSessionLongPress"
-            >
-              <span v-if="session.running" class="session-running-line"></span>
-              <div
-                class="session-item"
-                :class="{ active: session.id === currentSessionId }"
-                @click="selectSession(session.id, session.backend)"
-              >
-                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
-                <div class="session-item-info">
-                  <div class="session-item-header">
-                    <span class="session-item-title">{{ session.title }}</span>
-                  </div>
-                  <div class="session-item-meta">
-                    <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
-                  </div>
-                  <div v-if="session.tags && session.tags.length" class="session-item-tags">
-                    <span
-                      v-for="tag in session.tags"
-                      :key="tag.name"
-                      class="session-tag"
-                      :style="tagAccentStyle(tag.name)"
-                    >{{ tag.name }}</span>
-                  </div>
-                </div>
-              </div>
-              <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
-                <Archive :size="15" />
-              </button>
-            </div>
-          </TransitionGroup>
-        </section>
+            <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
+              <Archive :size="15" />
+            </button>
+          </div>
+        </TransitionGroup>
 
         <div ref="sentinelRef" class="session-list-sentinel"></div>
         <LoadingIndicator v-if="loadingMore" size="sm" inline :label="t('common.loading')" />
@@ -275,16 +217,9 @@ const sessionsWithStatus = computed(() => {
 })
 
 // Display order is pinned-first, then the rest — matching the backend's
-// `ORDER BY pinned DESC, created_at DESC`. Both sections are derived from the
-// same source array so the rendered DOM order equals sessionsWithStatus order,
-// which is what useListNav indexes into.
-const pinnedSessions = computed(() => sessionsWithStatus.value.filter(s => s.pinned))
-const unpinnedSessions = computed(() => sessionsWithStatus.value.filter(s => !s.pinned))
-// Global nav index of the first unpinned row: pinned rows occupy [0, n).
-const unpinnedIndexOffset = computed(() => pinnedSessions.value.length)
-
-const pinnedCollapsed = ref(false)
-const recentCollapsed = ref(false)
+// `ORDER BY pinned DESC, created_at DESC`. Rendered as one flat list, so the
+// rendered DOM order equals sessionsWithStatus order, which is what useListNav
+// indexes into.
 
 // Cross-project group collapse state, keyed by absolute project path. In-memory
 // only: the pane is v-show'd (never unmounted) while the app runs, so the state
@@ -666,10 +601,8 @@ function reload() {
 }
 
 // Keyboard navigation indexes sessionsWithStatus, whose order (pinned first,
-// then newest-first) is exactly the rendered DOM order. Both sections bind
-// `session-row-active` against that same global index — the unpinned section
-// offsets by the pinned count — so the highlight and Enter target stay aligned
-// with what the user sees.
+// then newest-first) is exactly the rendered DOM order. The list is flat, so
+// the nav index maps straight onto the rows — no section offset to apply.
 const listNav = useListNav({
   getCount: () => sessionsWithStatus.value.length,
   onConfirm: (idx) => {
@@ -1096,19 +1029,30 @@ onUnmounted(() => {
   height: 0;
 }
 
-/* ── Pinned / section grouping ── */
-
-/* Section groups. The collapsible header itself is the shared
-   SessionGroupHeader component; only the wrapper layout lives here. */
-.session-section {
-  display: flex;
-  flex-direction: column;
+/* ── Pinned marker ──
+   Pinned sessions are no longer split into their own section; a row is marked
+   by a small wedge in the top-right corner plus a pin glyph after the title.
+   The wedge is painted with border-color (not an SVG) so it scales with the
+   row and needs no extra DOM. Amber matches the pin glyph. `.session-row` is
+   already position:relative, so the wedge anchors to it directly. */
+.session-row.pinned::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 8px solid #f59e0b;
+  border-left: 8px solid transparent;
+  pointer-events: none;
+  z-index: 1;
 }
 
-/* Slot content passed into SessionGroupHeader is compiled in THIS component's
-   scope, so its styling must live here — the child's scoped rules do not reach
-   it. */
-.session-group-pin-icon {
+/* The unread badge lives at the top-right of `.session-item`, which ends where
+   the 34px archive cell begins — so it already sits clear of the wedge in the
+   row's own top-right corner and needs no offset. */
+
+.session-pin-icon {
   color: #f59e0b;
   flex-shrink: 0;
 }

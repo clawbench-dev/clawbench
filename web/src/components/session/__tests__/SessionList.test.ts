@@ -448,26 +448,43 @@ describe('SessionList', () => {
     expect(wrapper.vm.hasMore).toBe(false)
   })
 
-  describe('pinned section grouping and keyboard nav', () => {
+  describe('pinned marker and keyboard nav', () => {
     // Backend returns pinned DESC, created_at DESC. The component must render in
     // that same order so useListNav's index maps onto the visible rows.
     const pinnedOld = { id: 'p-old', title: 'Pinned Old', pinned: true, createdAt: '2024-01-01', updatedAt: '2024-01-01', agentId: 'agent-1', backend: 'cli' }
     const newest = { id: 'n-new', title: 'Newest', pinned: false, createdAt: '2025-06-01', updatedAt: '2025-06-01', agentId: 'agent-1', backend: 'cli' }
     const middle = { id: 'n-mid', title: 'Middle', pinned: false, createdAt: '2025-05-01', updatedAt: '2025-05-01', agentId: 'agent-1', backend: 'cli' }
 
-    it('renders pinned sessions in a pinned section before the recent section', async () => {
+    it('renders one flat list — no pinned/recent section headers', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      const sections = wrapper.findAll('.session-section')
-      expect(sections.length).toBe(2)
-      // Pinned row sits in the first section, unpinned rows in the second.
-      expect(sections[0].findAll('.session-row.pinned').length).toBe(1)
-      expect(sections[0].find('[data-session-id="p-old"]').exists()).toBe(true)
-      expect(sections[1].findAll('.session-row').length).toBe(2)
-      expect(sections[1].find('[data-session-id="p-old"]').exists()).toBe(false)
+      // The section split is gone: a single .session-rows container holds all
+      // three rows, and no group header is rendered in the project pane.
+      expect(wrapper.findAll('.session-section').length).toBe(0)
+      const rows = wrapper.findAll('.session-rows > .session-row')
+      expect(rows.length).toBe(3)
+      expect(wrapper.findAll('.session-group-header').length).toBe(0)
+    })
+
+    it('marks the pinned row with the corner wedge and pin glyph only', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const pinnedRow = wrapper.find('[data-session-id="p-old"]')
+      expect(pinnedRow.classes()).toContain('pinned')
+      expect(pinnedRow.find('.session-pin-icon').exists()).toBe(true)
+
+      // Unpinned rows carry neither marker.
+      for (const id of ['n-new', 'n-mid']) {
+        const row = wrapper.find(`[data-session-id="${id}"]`)
+        expect(row.classes()).not.toContain('pinned')
+        expect(row.find('.session-pin-icon').exists()).toBe(false)
+      }
     })
 
     it('DOM order matches sessionsWithStatus order (pinned first, then newest)', async () => {
@@ -487,7 +504,7 @@ describe('SessionList', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
     }
 
-    it('highlights the pinned row at nav index 0 and unpinned rows after it', async () => {
+    it('highlights rows in flat DOM order, pinned row first', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [pinnedOld, newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
@@ -500,8 +517,7 @@ describe('SessionList', () => {
       expect(highlighted.length).toBe(1)
       expect(highlighted[0].attributes('data-session-id')).toBe('p-old')
 
-      // Next is the first unpinned row — this is the offset the unpinned section
-      // must apply (unpinnedIndexOffset) to stay aligned with the nav index.
+      // The flat list means index 1 is simply the next row — no section offset.
       pressKey('ArrowDown')
       await nextTick()
       highlighted = wrapper.findAll('.session-row.session-row-active')
@@ -548,14 +564,15 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('renders no pinned section when nothing is pinned', async () => {
+    it('renders no pinned marker when nothing is pinned', async () => {
       mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [newest, middle], hasMore: false }) })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
       await flushPromises()
 
       expect(wrapper.findAll('.session-row.pinned').length).toBe(0)
-      expect(wrapper.findAll('.session-section').length).toBe(1)
+      expect(wrapper.findAll('.session-pin-icon').length).toBe(0)
+      expect(wrapper.findAll('.session-row').length).toBe(2)
     })
 
     it('togglePin sends the pinned flag for the long-pressed session and bumps the list version', async () => {

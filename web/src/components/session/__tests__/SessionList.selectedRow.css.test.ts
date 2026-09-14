@@ -64,3 +64,31 @@ describe('SessionList selected-row tint covers the archive button', () => {
     }
   })
 })
+
+describe('SessionList pinned marker', () => {
+  it('paints the corner wedge from the .pinned row modifier', async () => {
+    const src = await sessionListSource()
+    // The wedge is a border-triangle pseudo-element on the row. jsdom has no CSS
+    // engine, so this asserts the declaration survives — a `width`/`height` of
+    // non-zero (or a missing border) would render a box instead of a wedge.
+    const rule = src.match(/\.session-row\.pinned::after\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.session-row.pinned::after should exist').toBeTruthy()
+    expect(rule).toMatch(/border-top:\s*8px solid/)
+    expect(rule).toMatch(/border-left:\s*8px solid transparent/)
+    expect(rule).toMatch(/width:\s*0/)
+    expect(rule).toMatch(/height:\s*0/)
+    // Anchored to the row's own top-right corner.
+    expect(rule).toMatch(/top:\s*0/)
+    expect(rule).toMatch(/right:\s*0/)
+    // Decorative only — must not swallow clicks meant for the archive button.
+    expect(rule).toMatch(/pointer-events:\s*none/)
+  })
+
+  it('has no leftover pinned/recent section wrapper styles', async () => {
+    const src = await sessionListSource()
+    // The grouping is gone; a stray .session-section rule would mean the layout
+    // wrapper outlived its markup.
+    expect(src).not.toMatch(/\.session-section\s*\{/)
+    expect(src).not.toMatch(/\.session-group-pin-icon/)
+  })
+})

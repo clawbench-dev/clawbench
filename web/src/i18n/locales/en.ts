@@ -6,8 +6,6 @@ export default {
     archive: 'Archive',
     pin: 'Pin to Top',
     unpin: 'Unpin',
-    pinnedSection: 'Pinned',
-    recentSection: 'Recent',
     confirm: 'OK',
     close: 'Close',
     back: 'Back',
