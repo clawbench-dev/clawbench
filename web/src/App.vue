@@ -555,6 +555,7 @@ import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
+import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
@@ -720,22 +721,18 @@ async function hotSwitchProject(newProjectPath, pendingSessionId, pendingTaskNav
       openExecDetail(pendingTaskNav.executionId)
     }
   } else if (pendingSessionId) {
-    // Watch for session identity to be ready instead of polling
-    const stopWatch = watch(
-      () => sessionIdentity.currentSessionId.value,
-      (id) => {
-        if (id) {
-          stopWatch()
-          switchTab('chat')
-          // Pass the (now-current) project path so the mark-as-read call can
-          // prove ownership. Without it the backend falls back to the cookie
-          // project and 403s, leaving the cross-project session's unread badge
-          // stuck — the whole point of opening it from the cross-project tab.
-          sessionIdentity.switchSession(pendingSessionId, resolvedProjectPath)
-        }
-      },
-      { immediate: true }
-    )
+    // Open the session the cross-project tab targeted. Pass the (now-current)
+    // project path so the mark-as-read call can prove ownership — without it
+    // the backend falls back to the cookie project and 403s, leaving the
+    // cross-project session's unread badge stuck, which is the whole point of
+    // opening it from that tab.
+    openPendingSessionWhenReady({
+      currentSessionId: sessionIdentity.currentSessionId,
+      sessionId: pendingSessionId,
+      projectPath: resolvedProjectPath,
+      switchTab,
+      switchSession: sessionIdentity.switchSession,
+    })
   }
 }
 
