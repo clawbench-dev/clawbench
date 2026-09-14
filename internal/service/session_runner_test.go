@@ -20,11 +20,11 @@ func TestSubmitRunner_CreatesThenReuses(t *testing.T) {
 
 	sessionID := "runner-reuse"
 
-	ctx1, created := SubmitSessionRun(sessionID)
+	ctx1, created := TryClaimSessionRun(sessionID)
 	require.True(t, created, "the first submit creates the runner")
 	require.NotNil(t, ctx1)
 
-	ctx2, createdAgain := SubmitSessionRun(sessionID)
+	ctx2, createdAgain := TryClaimSessionRun(sessionID)
 	assert.False(t, createdAgain, "a live runner must be reused, not duplicated")
 	assert.Equal(t, ctx1, ctx2, "the reused runner must expose the same context")
 	assert.True(t, IsSessionRunning(sessionID))
@@ -51,7 +51,7 @@ func TestSubmitRunner_ConcurrentCreatesExactlyOne(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if _, created := SubmitSessionRun(sessionID); created {
+			if _, created := TryClaimSessionRun(sessionID); created {
 				mu.Lock()
 				creates++
 				mu.Unlock()
@@ -73,12 +73,12 @@ func TestRetireRunner_WakeClosesExitRace(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-wake-race"
-	_, created := SubmitSessionRun(sessionID)
+	_, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 
 	// Simulate the interleaving: the runner has just found the queue empty and
 	// is about to retire, and a send arrives in that window.
-	_, createdAgain := SubmitSessionRun(sessionID)
+	_, createdAgain := TryClaimSessionRun(sessionID)
 	require.False(t, createdAgain)
 
 	assert.False(t, retireRunner(sessionID),
@@ -95,7 +95,7 @@ func TestRetireRunner_IdleExits(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-idle"
-	SubmitSessionRun(sessionID)
+	TryClaimSessionRun(sessionID)
 
 	assert.True(t, retireRunner(sessionID), "an idle runner retires")
 	assert.False(t, IsSessionRunning(sessionID))
@@ -117,7 +117,7 @@ func TestCancelSession_CancelsThroughRegistry(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-cancel"
-	ctx, created := SubmitSessionRun(sessionID)
+	ctx, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 	require.NoError(t, ctx.Err())
 
@@ -136,7 +136,7 @@ func TestIsSessionRunning_ImpliesCancelable(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-invariant"
-	ctx, _ := SubmitSessionRun(sessionID)
+	ctx, _ := TryClaimSessionRun(sessionID)
 	require.True(t, IsSessionRunning(sessionID))
 
 	require.True(t, CancelSession(sessionID))
@@ -148,7 +148,7 @@ func TestFinishSessionRun_RemovesAndCancels(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-finish"
-	ctx, _ := SubmitSessionRun(sessionID)
+	ctx, _ := TryClaimSessionRun(sessionID)
 
 	FinishSessionRun(sessionID)
 
@@ -165,7 +165,7 @@ func TestFinishSessionRun_ConcurrentWithCancel(t *testing.T) {
 
 	for i := 0; i < 50; i++ {
 		sessionID := "runner-race"
-		SubmitSessionRun(sessionID)
+		TryClaimSessionRun(sessionID)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -197,7 +197,7 @@ func TestSetSessionRunning_FalseRetires(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-clear"
-	SubmitSessionRun(sessionID)
+	TryClaimSessionRun(sessionID)
 	require.True(t, IsSessionRunning(sessionID))
 
 	SetSessionRunning(sessionID, false, true)
@@ -227,8 +227,8 @@ func TestGetRunningSessionIDs_ReflectsRegistry(t *testing.T) {
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
 
-	SubmitSessionRun("runner-a")
-	SubmitSessionRun("runner-b")
+	TryClaimSessionRun("runner-a")
+	TryClaimSessionRun("runner-b")
 
 	ids := GetRunningSessionIDs()
 	assert.ElementsMatch(t, []string{"runner-a", "runner-b"}, ids)
@@ -244,7 +244,7 @@ func TestTurnRegistration_Lifecycle(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-turn"
-	SubmitSessionRun(sessionID)
+	TryClaimSessionRun(sessionID)
 
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -263,7 +263,7 @@ func TestCurrentTurnID_NoTurnRegistered(t *testing.T) {
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
 
-	SubmitSessionRun("runner-turn-none")
+	TryClaimSessionRun("runner-turn-none")
 	_, ok := CurrentTurnID("runner-turn-none")
 	assert.False(t, ok)
 }
@@ -276,7 +276,7 @@ func TestInterruptSessionTurnIfCurrent_StaleIDDoesNotCancel(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-turn-stale"
-	SubmitSessionRun(sessionID)
+	TryClaimSessionRun(sessionID)
 
 	_, cancelOld := context.WithCancel(context.Background())
 	defer cancelOld()
@@ -305,7 +305,7 @@ func TestInterruptSessionTurnIfCurrent_OnlyOneWinner(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "runner-turn-race"
-	SubmitSessionRun(sessionID)
+	TryClaimSessionRun(sessionID)
 
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -343,8 +343,8 @@ func TestCancelAllSessions_CancelsEveryRunner(t *testing.T) {
 	cleanupAllSessionState()
 	t.Cleanup(cleanupAllSessionState)
 
-	ctxA, _ := SubmitSessionRun("runner-shutdown-a")
-	ctxB, _ := SubmitSessionRun("runner-shutdown-b")
+	ctxA, _ := TryClaimSessionRun("runner-shutdown-a")
+	ctxB, _ := TryClaimSessionRun("runner-shutdown-b")
 
 	CancelAllSessions()
 

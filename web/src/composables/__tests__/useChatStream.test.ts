@@ -3056,6 +3056,74 @@ describe('useChatStream', () => {
       expect(text).not.toContain('chunk-0')
     })
 
+    it('does not replay a stale buffer after done arrived first', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      // Deltas arrive with no placeholder, so they buffer.
+      simulateWsEvent('content', { content: 'orphan' })
+      // The turn then ends. `done` is not gated on stream_start, so it can
+      // arrive first.
+      simulateWsEvent('done', {})
+
+      // A late stream_start (WS reconnect replay, or a backend retry) creates a
+      // fresh placeholder. The stale buffer must NOT be replayed into it: the
+      // previous turn's text would appear inside a bubble that will never
+      // receive another terminal event, leaving the UI streaming forever.
+      simulateWsEvent('stream_start', { message_id: 90 })
+
+      const allText = options.messages.value
+        .flatMap((m: any) => m.blocks || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('')
+      expect(allText).not.toContain('orphan')
+    })
+
+    it('discards the buffer on error and on cancel', () => {
+      for (const terminal of ['error', 'cancelled']) {
+        const options = createOptions()
+        const { connectStream } = useChatStream(options)
+        connectStream('test-session-1')
+
+        options.messages.value = []
+        options.loading.value = true
+        simulateWsEvent('content', { content: `orphan-${terminal}` })
+        simulateWsEvent(terminal, {})
+
+        simulateWsEvent('stream_start', { message_id: 91 })
+
+        const allText = options.messages.value
+          .flatMap((m: any) => m.blocks || [])
+          .filter((b: any) => b.type === 'text')
+          .map((b: any) => b.text)
+          .join('')
+        expect(allText).not.toContain(`orphan-${terminal}`)
+      }
+    })
+
+    it('does not buffer content_reset, which is order-sensitive', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      options.messages.value = []
+      options.loading.value = true
+      // content_reset clears accumulated content. Replaying it after a
+      // placeholder appears could wipe content that arrived live in between,
+      // so it must be dropped rather than buffered.
+      simulateWsEvent('content_reset', {})
+      simulateWsEvent('content', { content: 'kept' })
+      simulateWsEvent('stream_start', { message_id: 92 })
+
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      const text = (streaming.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+      expect(text).toContain('kept')
+    })
+
     it('does not re-buffer an event that still cannot be applied during replay', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)

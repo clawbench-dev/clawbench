@@ -468,7 +468,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prevent concurrent sessions for the same session ID
-	if !service.TrySetSessionRunning(sessionID) {
+	runCtx, claimed := service.TryClaimSessionRun(sessionID)
+	if !claimed {
 		// Session already running — enqueue the message to DB (queued=1).
 		// The running drain loop picks it up via DequeueQueuedMessage.
 		//
@@ -478,14 +479,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// behavior is identical for every backend and the message is visible
 		// (and actionable) in the queue instead of silently disappearing into
 		// the reply being written.
+		//
+		// The row is inserted here, AFTER the claim above. That order matters:
+		// the claim marks the live runner as having pending work, and a runner
+		// about to exit consumes that mark on its next retire check. Inserting
+		// afterwards would leave the mark consumed with the row not yet visible,
+		// and the runner would exit before it could dequeue — stranding the
+		// message until the reaper's next pass. (The queue path inserts first
+		// for the same reason.) A row that is already visible when the runner
+		// re-checks cannot be missed.
 		msgID, err := service.AddQueuedMessage(projectPath, backendName, sessionID, req.Message, allFiles, req.QueueID, T(r, "FileMessage"))
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
 		}
-		// No explicit wake is needed: the failed TrySetSessionRunning above already
-		// marked the live runner as having pending work, which is what it checks
-		// before deciding to exit.
+		// Re-mark the runner as having pending work. The claim above already set
+		// this, but a retire pass may have consumed the mark between the claim
+		// and the insert above; re-marking now that the row exists makes the
+		// guarantee unconditional rather than depending on timing.
+		service.WakeSessionRunner(sessionID)
 
 		// Emit user_message to other session subscribers for cross-device sync.
 		// SenderClientID allows the sending device to skip its own echo. MessageID
@@ -533,19 +545,12 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID, "msgId": msgID})
 
-	// The runner created by TrySetSessionRunning already owns the execution
-	// context, and it is the one CancelSession will cancel. Reuse it instead of
-	// minting a second context: two contexts would mean the session's "running"
-	// state and its cancellability referred to different things.
-	ctx := service.SessionRunContext(sessionID)
-	if ctx == nil {
-		// The runner vanished between the claim and here (a cancel landed in the
-		// gap). Nothing to execute — the user's message stays queued for the
-		// queue reaper to recover if they still want it answered.
-		slog.Warn("ai goroutine skipped: session runner disappeared after claim",
-			slog.String("session", sessionID))
-		return
-	}
+	// The context came from the claim, so it is both the one the runner owns and
+	// the one CancelSession will cancel. It is captured at claim time on purpose:
+	// a lookup here could find nothing if a cancel landed in between, and by now
+	// the user message has already been persisted with queued=0 — the reaper only
+	// scans queued rows, so a message skipped here would be lost outright.
+	ctx := runCtx
 
 	slog.Info("about to start ai goroutine", slog.String("project", projectPath))
 

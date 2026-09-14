@@ -1187,7 +1187,7 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "panic-sess-1"
-	_, created := SubmitSessionRun(sessionID)
+	_, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 
 	cfg := LaunchConfig{

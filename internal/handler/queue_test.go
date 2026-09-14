@@ -891,7 +891,13 @@ func TestQueueInterruptHandler_StopsRegisteredTurn(t *testing.T) {
 	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-int-happy", "")
 	require.NoError(t, err)
 
-	// Register a turn so CurrentTurnID finds one.
+	// Register a live runner, then a turn on it so CurrentTurnID finds one.
+	// (A turn belongs to an execution; registering one without a runner is not a
+	// state production can reach.)
+	_, claimed := service.TryClaimSessionRun(sessionID)
+	require.True(t, claimed)
+	t.Cleanup(func() { service.FinishSessionRun(sessionID) })
+
 	turnCtx, turnCancel := context.WithCancel(context.Background())
 	t.Cleanup(turnCancel)
 	turnID := service.RegisterSessionTurnCancel(sessionID, turnCancel)
@@ -932,6 +938,11 @@ func TestQueueInterruptHandler_StaleTurnIDDoesNotKillReplacement(t *testing.T) {
 
 	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "queued", nil, "q-int-race", "")
 	require.NoError(t, err)
+
+	// Register a live runner for the turns below (a turn belongs to an execution).
+	_, claimed := service.TryClaimSessionRun(sessionID)
+	require.True(t, claimed)
+	t.Cleanup(func() { service.FinishSessionRun(sessionID) })
 
 	// T1 is registered, then replaced by T2 before the handler's interrupt runs.
 	_, t1Cancel := context.WithCancel(context.Background())

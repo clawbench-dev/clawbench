@@ -65,10 +65,6 @@ type TurnSpec struct {
 	ExecutionID int64
 	TriggerType string
 
-	// SkipStreamStart suppresses the stream_start broadcast. Used by the
-	// scheduler, which emits it itself.
-	SkipStreamStart bool
-
 	// DrainOnFinalize controls whether Finalize drains leftover events from the
 	// stream channel. The interactive paths pass their channel (tool calls the
 	// debouncer flushed after the event loop exited are still pending); the
@@ -263,6 +259,10 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 			slog.String("queueID", spec.QueueID),
 			slog.String("err", err.Error()))
 		at.earlyFails = spec.failTurn(err, reasonStreamStartFailed)
+		// The stream is already producing into eventCh but no executor will
+		// consume it. Drain in the background until the producer closes it, or
+		// the producer goroutine blocks forever on a full channel and leaks.
+		drainEventChannel(eventCh)
 		return at
 	}
 	at.msgID = streamingMsgID
@@ -276,12 +276,10 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// placeholder if none exists yet. This makes the assistant bubble purely
 	// data-driven: any client, at any time, sees a placeholder whenever the DB
 	// has a streaming=1 row or a stream_start event arrives.
-	if !spec.SkipStreamStart {
-		ws.EmitToSession(spec.SessionID, ai.StreamEvent{
-			Type:        "stream_start",
-			StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: spec.QueueID},
-		})
-	}
+	ws.EmitToSession(spec.SessionID, ai.StreamEvent{
+		Type:        "stream_start",
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: spec.QueueID},
+	})
 
 	execCfg := RunConfig{
 		Mode:               spec.Mode,
@@ -359,6 +357,20 @@ func runTurn(spec TurnSpec) TurnResult {
 		return at.earlyFails
 	}
 	return at.runTurnFinalize()
+}
+
+// drainEventChannel consumes a stream channel in the background until the
+// producer closes it.
+//
+// Needed on paths that abandon an already-started stream (early failure after
+// ExecuteStream succeeded): parser sends are not context-aware, so a producer
+// that fills the channel with no consumer blocks forever, leaking the goroutine
+// and holding the agent process open.
+func drainEventChannel(ch <-chan ai.StreamEvent) {
+	go func() {
+		for range ch {
+		}
+	}()
 }
 
 // resolveFileDir resolves a project path to an absolute working directory.

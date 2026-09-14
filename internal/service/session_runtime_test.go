@@ -300,7 +300,7 @@ func TestCancelSession_CancelsContextAndLeavesQueueToTheRun(t *testing.T) {
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Cancel')", sessionID)
 	require.NoError(t, err)
 
-	ctx, created := SubmitSessionRun(sessionID)
+	ctx, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 	// Enqueue a message; it belongs to the (cancelled) run, which is what
 	// clears it, so it must still be present right after the cancel.
@@ -376,7 +376,7 @@ func TestForceCancelSession(t *testing.T) {
 		_ = db.Close()
 	}()
 
-	ctx, created := SubmitSessionRun("session-force")
+	ctx, created := TryClaimSessionRun("session-force")
 	require.True(t, created)
 
 	ForceCancelSession("session-force")

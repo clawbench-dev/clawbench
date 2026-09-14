@@ -194,19 +194,33 @@ type LaunchConfig struct {
 	// the frontend can anchor the reply to its own question when multiple
 	// queued messages interleave (DB id order ≠ conversational order).
 	QueueID string
+
+	// RunCtx is the execution context returned by TryClaimSessionRun. It must be
+	// passed through so the execution is both the one the claim created and the
+	// one a cancel reaches. Nil falls back to a registry lookup (see
+	// LaunchSessionExecution).
+	RunCtx context.Context
 }
 
 // LaunchSessionExecution starts the AI execution goroutine for a session.
 // The caller must have already persisted the user message and called TrySetSessionRunning.
 func LaunchSessionExecution(cfg LaunchConfig) {
 	sessionID := cfg.SessionID
-	// Reuse the context the runner created when it claimed the session, so
-	// "running" and "cancellable" refer to the same execution. The caller has
-	// just won TrySetSessionRunning, so the runner is present; if it vanished in
-	// the meantime (a cancel landed) there is nothing to execute.
-	ctx := runnerContext(sessionID)
+	// The execution context is the one the claim returned (see
+	// TryClaimSessionRun). It is passed in rather than looked up here on purpose:
+	// a cancel landing between the claim and this call removes the registry
+	// entry, and a lookup would then find nothing — after the caller had already
+	// consumed the message row, which the reaper cannot recover (it only scans
+	// rows still queued).
+	ctx := cfg.RunCtx
 	if ctx == nil {
-		slog.Warn("launch: session runner gone before execution started",
+		// Defensive: a caller that bypassed TryClaimSessionRun. Fall back to the
+		// registry so behaviour is unchanged for such callers, and warn because
+		// it re-opens the window this field exists to close.
+		ctx = runnerContext(sessionID)
+	}
+	if ctx == nil {
+		slog.Warn("launch: no execution context for session, nothing to run",
 			slog.String("session", sessionID))
 		return
 	}
@@ -334,15 +348,15 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 	// means a live runner exists and has been woken to pick this message up.
 	// Either way the message cannot be stranded: a runner that is about to exit
 	// re-checks for late work under the same lock (see retireRunner).
-	if TrySetSessionRunning(cfg.SessionID) {
+	if runCtx, created := TryClaimSessionRun(cfg.SessionID); created {
 		// Session was idle — the message we just queued is the FIRST one and must
 		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
 		// so dequeue the row we just inserted (it would otherwise be picked up
 		// again by the drain loop's DequeueQueuedMessage, executing it twice).
 		//
 		// Consume BY ID: a concurrent enqueue may have slipped an earlier row
-		// into the queue between our insert and the TrySetSessionRunning claim,
-		// and that earlier row belongs to the drain loop, not to this execution.
+		// into the queue between our insert and the claim, and that earlier row
+		// belongs to the drain loop, not to this execution.
 		consumeQueuedMessageByID(cfg.SessionID, msgID)
 		// Start execution now; the loop inside will consume the REST of the
 		// queue (any messages beyond the first).
@@ -353,6 +367,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
 			QueueID:     cfg.QueueID,
+			RunCtx:      runCtx,
 		})
 		return true, false, msgID, nil
 	}

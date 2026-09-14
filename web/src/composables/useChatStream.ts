@@ -245,6 +245,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   function disconnectStream() {
     stopStreaming()
+    // Events buffered for a placeholder that never appeared belong to the
+    // stream being torn down; keeping them would replay stale content into the
+    // next stream this composable attaches to.
+    clearBufferedEvents()
     unsubscribe()
   }
 
@@ -431,7 +435,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'content_reset': {
         if (sessionChanged()) return
-        if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'content_reset', payload); noteDroppedEvent('content_reset', 'buffered until placeholder'); return }
+        if (!findStreamingMsg(messages.value)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
         dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break
@@ -530,6 +534,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'done': {
         if (sessionChanged()) return
+        // The turn is over. Anything still buffered belongs to a placeholder
+        // that never appeared; replaying it later (e.g. on a reconnect's stale
+        // stream_start) would build a zombie streaming bubble that never
+        // receives another terminal event.
+        clearBufferedEvents()
         stopStreaming()
 
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
@@ -598,6 +607,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'cancelled': {
         if (sessionChanged()) return
+        // Terminal: discard anything buffered for a placeholder that never came.
+        clearBufferedEvents()
         const sm = findStreamingMsg(messages.value)
         if (!sm) { noteDroppedEvent('cancelled', 'no streaming message'); return }
         stopStreaming()
@@ -610,6 +621,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'error': {
         if (sessionChanged()) return
+        // Terminal: discard anything buffered for a placeholder that never came.
+        clearBufferedEvents()
         stopStreaming()
         const errorData = payload as unknown as ErrorEventData
         // Set the error block via the reducer's single write channel so the UI

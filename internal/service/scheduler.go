@@ -816,18 +816,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		}
 	}()
 
-	// Mark session as running so ACP idle sweep does not close the connection
-	// while the task is still executing. Without this, the 5-minute
-	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
-	// sweep closing connection" after ~5m, causing "peer disconnected").
-	// skipEvent=true because the scheduler emits its own task events.
-	SetSessionRunning(sessionID, true, true)
-
-	// Register session stream for WS event delivery
-	defer func() {
-		SetSessionRunning(sessionID, false, true)
-	}()
-
+	// The session is marked running further down, when its real execution
+	// context is adopted (see RegisterExternalExecution). Marking it here first
+	// would register a placeholder whose cancel func nothing watches: a user
+	// cancel landing in that window would cancel the placeholder, broadcast
+	// "cancelled", and then the adoption below would re-register the session and
+	// the task would run to completion anyway.
 	slog.Info(
 		"executing task",
 		slog.Int64("task_id", task.ID),
@@ -912,12 +906,24 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Adopt this execution into the session registry so a user cancel actually
-	// reaches it. SetSessionRunning(true) above registered a placeholder for the
-	// idle sweep; without this the registry would hold a context nobody watches
-	// and CancelSession would cancel the wrong thing. This is also what makes
-	// scheduled sessions cancellable at all — previously their cancel func lived
-	// only in the scheduler's own map, so a user cancel could not reach it.
+	// reaches it, and mark the session running in the same step.
+	//
+	// This is the ONLY place a scheduled run becomes "running": the context
+	// registered here is the one the run actually uses, so "running" and
+	// "cancellable" refer to the same execution. It is also what makes scheduled
+	// sessions cancellable at all — previously their cancel func lived only in
+	// the scheduler's own map, so a user cancel could not reach it. Skipping the
+	// earlier placeholder registration is what keeps the ACP idle sweep away
+	// while still leaving no window where a cancel lands on the wrong context.
+	// skipEvent semantics: the scheduler emits its own task events, so no
+	// session_update is broadcast here (ISS-128 also requires no "running" event
+	// for a task that fails before it starts).
 	RegisterExternalExecution(sessionID, ctx, cancel)
+
+	// Clear the running state when this execution ends.
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+	}()
 
 	running := &RunningExecution{
 		ID:          sessionID,
@@ -938,18 +944,17 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// update the execution row and emit task events — behaviour the interactive
 	// paths do not have.
 	at := runTurnStart(TurnSpec{
-		Ctx:             ctx,
-		Mode:            ModeScheduled,
-		ProjectPath:     projectPath,
-		BackendName:     backendName,
-		SessionID:       sessionID,
-		AgentID:         task.AgentID,
-		ChatReq:         chatReq,
-		FileDir:         projectPath,
-		TaskID:          task.ID,
-		ExecutionID:     executionID,
-		TriggerType:     triggerType,
-		SkipStreamStart: true,
+		Ctx:         ctx,
+		Mode:        ModeScheduled,
+		ProjectPath: projectPath,
+		BackendName: backendName,
+		SessionID:   sessionID,
+		AgentID:     task.AgentID,
+		ChatReq:     chatReq,
+		FileDir:     projectPath,
+		TaskID:      task.ID,
+		ExecutionID: executionID,
+		TriggerType: triggerType,
 	})
 	defer at.release()
 
@@ -971,16 +976,13 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	executor := at.executor
 	eventCh := at.eventCh
-	streamingMsgID := at.msgID
 	runResult := at.runResult
 
-	// Broadcast stream_start (same as interactive paths) so clients that open the
-	// task's session mid-stream can create the streaming placeholder from the
-	// event, not just from the DB streaming row.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
-	})
+	// stream_start is emitted by runTurnStart, BEFORE the turn's event loop, so
+	// subscribers get the placeholder id before any content arrives. It used to
+	// be emitted here (with SkipStreamStart set) — which put it after the whole
+	// turn had already run, so a client could create a placeholder for an
+	// already-finished row.
 
 	// If context was cancelled, mark execution as cancelled and update stats
 	if ctx.Err() == context.Canceled {

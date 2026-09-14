@@ -2,6 +2,7 @@ package ws
 
 import (
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
 
@@ -113,14 +114,44 @@ func TestRecordDeliveryDrop_LogsOncePerType(t *testing.T) {
 	// All 100 are counted...
 	assert.Equal(t, int64(100), GetDeliveryStats().NoSubscribers)
 
-	// ...but the dedup set holds only one entry for this (reason, type).
+	// ...but the dedup map holds only one entry for this (reason, type).
 	deliveryLoggedMu.Lock()
-	_, logged := deliveryLogged[DropReasonNoSubscribers+"|thinking"]
-	count := len(deliveryLogged)
+	_, logged := deliveryLoggedAt[DropReasonNoSubscribers+"|thinking"]
+	count := len(deliveryLoggedAt)
 	deliveryLoggedMu.Unlock()
 
 	assert.True(t, logged)
-	assert.Equal(t, 1, count, "each (reason, type) pair is logged once")
+	assert.Equal(t, 1, count, "each (reason, type) pair is logged once per window")
+}
+
+// TestRecordDeliveryDrop_LogsAgainAfterWindow verifies the rate limit is a
+// window, not a one-shot. A permanent suppression would hide a later incident:
+// the first drop must not silence the next one hours later.
+func TestRecordDeliveryDrop_LogsAgainAfterWindow(t *testing.T) {
+	ResetDeliveryStatsForTest()
+	t.Cleanup(ResetDeliveryStatsForTest)
+
+	orig := deliveryLogWindow
+	deliveryLogWindow = time.Nanosecond
+	t.Cleanup(func() { deliveryLogWindow = orig })
+
+	key := DropReasonNoSubscribers + "|done"
+
+	recordDeliveryDrop(DropReasonNoSubscribers, "s", "done")
+	deliveryLoggedMu.Lock()
+	first := deliveryLoggedAt[key]
+	deliveryLoggedMu.Unlock()
+	require.False(t, first.IsZero())
+
+	// Past the (tiny) window, the same pair is logged again.
+	time.Sleep(2 * time.Millisecond)
+	recordDeliveryDrop(DropReasonNoSubscribers, "s", "done")
+	deliveryLoggedMu.Lock()
+	second := deliveryLoggedAt[key]
+	deliveryLoggedMu.Unlock()
+
+	assert.True(t, second.After(first), "a drop after the window must be logged again")
+	assert.Equal(t, int64(2), GetDeliveryStats().NoSubscribers, "both drops are still counted")
 }
 
 func TestRecordDeliveryDrop_DistinctTypesLoggedSeparately(t *testing.T) {
@@ -132,7 +163,7 @@ func TestRecordDeliveryDrop_DistinctTypesLoggedSeparately(t *testing.T) {
 	recordDeliveryDrop(DropReasonNoManager, "s", "thinking")
 
 	deliveryLoggedMu.Lock()
-	count := len(deliveryLogged)
+	count := len(deliveryLoggedAt)
 	deliveryLoggedMu.Unlock()
 
 	assert.Equal(t, 3, count, "different reasons/types must each be logged")

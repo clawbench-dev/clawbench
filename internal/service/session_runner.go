@@ -77,6 +77,43 @@ func adoptRunner(sessionID string, ctx context.Context, cancel context.CancelFun
 	registry[sessionID] = &sessionRunner{sessionID: sessionID, ctx: ctx, cancel: cancel}
 }
 
+// WakeSessionRunner guarantees that work already persisted for a session will be
+// consumed.
+//
+// It exists because the wake mark is consumed, not sticky: a runner that finds
+// the queue empty clears the mark and may exit on its next pass. So a caller
+// that claimed the session first and persisted the row second can still lose the
+// race — the runner can consume the mark, find nothing, and exit before the row
+// lands.
+//
+// Calling this AFTER the row is visible closes that window: either a runner is
+// still alive (mark set, so it will not exit before dequeuing), or none is left
+// (start one). Both outcomes leave exactly one consumer for the row.
+func WakeSessionRunner(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if wakeRunnerIfPresent(sessionID) {
+		return
+	}
+	// No runner survived: it consumed the earlier mark and exited. Start a
+	// consumer for the row that is now visible.
+	EnsureConsumer(sessionID)
+}
+
+// wakeRunnerIfPresent sets the wake mark on a live runner and reports whether one
+// was found.
+func wakeRunnerIfPresent(sessionID string) bool {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	r, ok := registry[sessionID]
+	if !ok {
+		return false
+	}
+	r.wake = true
+	return true
+}
+
 // retireRunner removes a session's runner when its work queue looks empty.
 //
 // Returns true when the runner was removed and the caller must exit. Returns
@@ -187,22 +224,6 @@ func allRunners() []*sessionRunner {
 		out = append(out, r)
 	}
 	return out
-}
-
-// SubmitSessionRun claims a session for a new unit of work and returns the
-// execution context. created=true means the caller must start the execution
-// goroutine; created=false means a runner already exists and has been woken.
-//
-// The caller must have persisted the message before calling this, so the
-// consumer it starts (or wakes) has something to find.
-func SubmitSessionRun(sessionID string) (ctx context.Context, created bool) {
-	return submitRunner(sessionID)
-}
-
-// SessionRunContext exposes the execution context of a running session so the
-// HTTP handler can hand the same context to its execution goroutine.
-func SessionRunContext(sessionID string) context.Context {
-	return runnerContext(sessionID)
 }
 
 // FinishSessionRun removes a session's runner and cancels its execution

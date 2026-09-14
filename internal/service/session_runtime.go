@@ -483,9 +483,28 @@ func FinalizeOrphanedMessages(sessionID string, cancelReason string) {
 // exists — it has been woken, and its own loop will pick the work up.
 // Emits a "running" session_update event on success.
 func TrySetSessionRunning(sessionID string) bool {
-	_, created := submitRunner(sessionID)
+	_, created := tryClaimSessionRun(sessionID)
+	return created
+}
+
+// TryClaimSessionRun claims a session and returns the execution context in the
+// same atomic step.
+//
+// Callers that will run the work themselves MUST use this instead of
+// TrySetSessionRunning followed by a separate context lookup: the lookup can
+// find nothing if a cancel lands in between, and by then the caller may have
+// already consumed the message row — losing it, because the reaper only scans
+// rows that are still queued. Returning the context with the claim removes the
+// window entirely.
+func TryClaimSessionRun(sessionID string) (ctx context.Context, created bool) {
+	ctx, created = tryClaimSessionRun(sessionID)
+	return ctx, created
+}
+
+func tryClaimSessionRun(sessionID string) (ctx context.Context, created bool) {
+	ctx, created = submitRunner(sessionID)
 	if !created {
-		return false
+		return ctx, false
 	}
 
 	// Reset the terminal-push guard so a new run of the same session can push again.
@@ -494,7 +513,7 @@ func TrySetSessionRunning(sessionID string) bool {
 	// Emit event so frontends know the session started running
 	EmitSessionEvent(sessionID, "running", false)
 
-	return true
+	return ctx, true
 }
 
 // RegisterSessionCancel makes a caller-owned execution cancellable by recording
@@ -548,9 +567,12 @@ func RegisterSessionTurnCancel(sessionID string, cancel context.CancelFunc) uint
 	registryMu.Lock()
 	if r, ok := registry[sessionID]; ok {
 		r.turn = &sessionTurn{id: id, cancel: cancel}
-	} else {
-		registry[sessionID] = &sessionRunner{sessionID: sessionID, turn: &sessionTurn{id: id, cancel: cancel}}
 	}
+	// No runner means no execution to interrupt. Creating a runner here would
+	// register a session whose ctx/cancel are nil: IsSessionRunning would report
+	// true, runnerContext would return nil, and CancelSession would take its
+	// nil-cancel defensive branch. The turn registration is only meaningful
+	// alongside a live runner, which every production caller already has.
 	registryMu.Unlock()
 	return id
 }

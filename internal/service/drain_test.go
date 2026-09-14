@@ -24,6 +24,15 @@ import (
 // emitSessionEvent → GetSessionTitle with no test DB configured, which
 // dereferences a nil pool and panics — taking down unrelated tests whose
 // failures look like real bugs.
+// SubmitRunForTest registers a live runner for a session so turn-scoped tests
+// have the execution a turn belongs to.
+func SubmitRunForTest(t *testing.T, sessionID string) {
+	t.Helper()
+	_, created := TryClaimSessionRun(sessionID)
+	require.True(t, created, "expected to claim an idle session")
+	t.Cleanup(func() { FinishSessionRun(sessionID) })
+}
+
 func setupDrainTest(t *testing.T) {
 	t.Helper()
 	prev := ws.GetManager()
@@ -406,11 +415,11 @@ func TestRetireRunner_KeepsGoingWhenWorkArrived(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "drain-retire-race"
-	_, created := SubmitSessionRun(sessionID)
+	_, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 
 	// A concurrent send arrives: it sees the runner and marks it as having work.
-	_, createdAgain := SubmitSessionRun(sessionID)
+	_, createdAgain := TryClaimSessionRun(sessionID)
 	require.False(t, createdAgain, "the second submit must reuse the runner")
 
 	// The runner must NOT retire — the work has to be picked up.
@@ -429,7 +438,7 @@ func TestRetireRunner_ExitsWhenIdle(t *testing.T) {
 	t.Cleanup(cleanupAllSessionState)
 
 	sessionID := "drain-retire-idle"
-	_, created := SubmitSessionRun(sessionID)
+	_, created := TryClaimSessionRun(sessionID)
 	require.True(t, created)
 
 	assert.True(t, retireRunner(sessionID))
@@ -658,6 +667,8 @@ func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
 // so the executor finalizes the turn without stamping it "cancelled".
 func TestInterruptSessionTurn(t *testing.T) {
 	sessionID := "interrupt-turn-test"
+	// Turn registration requires a live runner (a turn belongs to an execution).
+	SubmitRunForTest(t, sessionID)
 
 	// No turn registered → nothing to interrupt.
 	if InterruptSessionTurnIfCurrent(sessionID, 1) {
@@ -700,6 +711,7 @@ func TestInterruptSessionTurn(t *testing.T) {
 // messages would run against a cancelled session context.
 func TestInterruptSessionTurn_DoesNotClobberExistingReason(t *testing.T) {
 	sessionID := "interrupt-reason-ownership"
+	SubmitRunForTest(t, sessionID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -733,6 +745,7 @@ func TestInterruptSessionTurn_DoesNotClobberExistingReason(t *testing.T) {
 // never asked to stop, so the id check must refuse.
 func TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn(t *testing.T) {
 	sessionID := "interrupt-replaced-turn"
+	SubmitRunForTest(t, sessionID)
 
 	// The turn the caller inspected (T1).
 	ctx1, cancel1 := context.WithCancel(context.Background())
@@ -767,6 +780,7 @@ func TestInterruptSessionTurnIfCurrent_RefusesReplacedTurn(t *testing.T) {
 // turn was redirected (not cancelled).
 func TestInterruptSessionTurn_ClaimsEmptySlot(t *testing.T) {
 	sessionID := "interrupt-claims-empty"
+	SubmitRunForTest(t, sessionID)
 
 	_, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

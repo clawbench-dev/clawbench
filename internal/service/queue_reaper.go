@@ -217,9 +217,11 @@ func EnsureConsumer(sessionID string) bool {
 		return false
 	}
 
-	// Claim the session. If another consumer won the race, it will drain the
-	// queue and this pass has nothing to do.
-	if !TrySetSessionRunning(sessionID) {
+	// Claim the session, taking the execution context in the same step. If
+	// another consumer won the race, it will drain the queue and this pass has
+	// nothing to do.
+	runCtx, created := TryClaimSessionRun(sessionID)
+	if !created {
 		return false
 	}
 
@@ -252,6 +254,7 @@ func EnsureConsumer(sessionID string) bool {
 		AgentID:     info.AgentID,
 		Message:     msg.Content,
 		QueueID:     msg.QueueID,
+		RunCtx:      runCtx,
 	})
 	return true
 }

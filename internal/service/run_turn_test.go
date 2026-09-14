@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -229,18 +231,26 @@ func TestRunTurn_BackendCreationFailure(t *testing.T) {
 	assert.Zero(t, streaming, "a failed start must not leave a streaming=1 row behind")
 }
 
-// TestRunTurn_SkipStreamStart verifies the scheduler's opt-out: it broadcasts
-// stream_start itself, so the shared implementation must not double-emit.
-func TestRunTurn_SkipStreamStart(t *testing.T) {
-	_, sessionID := setupRunTurnTest(t, []ai.StreamEvent{
+// TestRunTurn_EmitsStreamStartBeforeContent verifies stream_start is broadcast
+// BEFORE the turn's event loop runs, so a subscriber learns the placeholder id
+// before any content arrives. Emitting it after the loop (as the scheduler once
+// did) lets a client create a placeholder for an already-finished row.
+func TestRunTurn_EmitsStreamStartBeforeContent(t *testing.T) {
+	db, sessionID := setupRunTurnTest(t, []ai.StreamEvent{
 		{Type: "content", Content: "ok"},
 		{Type: "done"},
 	})
 
-	// A TurnSpec with SkipStreamStart must still run to completion; the absence
-	// of a duplicate event is asserted by the scheduler's own test
-	// (TestScheduler_ExecuteTask_BroadcastsStreamStart), which counts events.
-	res := runTurn(TurnSpec{
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(origMgr) })
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "run-turn-order-client", "")
+	mgr.StreamHub().Subscribe("run-turn-order-client", sessionID)
+
+	runTurn(TurnSpec{
 		Ctx:             context.Background(),
 		Mode:            ModeScheduled,
 		ProjectPath:     "/tmp",
@@ -249,11 +259,28 @@ func TestRunTurn_SkipStreamStart(t *testing.T) {
 		AgentID:         "run-turn-agent",
 		ChatReq:         ai.ChatRequest{Prompt: "hi", ScheduledExecution: true},
 		FileDir:         "/tmp",
-		SkipStreamStart: true,
+		DrainOnFinalize: true,
 	})
 
-	assert.Empty(t, res.Err)
-	assert.Greater(t, res.MsgID, int64(0))
+	// The DB row must exist and the stream_start event must have been broadcast.
+	require.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if ok && data.EventType == "stream_start" {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 20*time.Millisecond, "runTurn must broadcast stream_start")
+
+	var streaming int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sessionID).Scan(&streaming))
+	assert.Zero(t, streaming, "the placeholder must have been finalized by the run")
 }
 
 // TestRunTurn_CancelledContextIsReportedAsCancel verifies a cancelled turn is

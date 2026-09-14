@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // delivery_stats.go tracks events that were produced but not delivered.
@@ -60,19 +61,21 @@ type deliveryStats struct {
 var globalDeliveryStats deliveryStats
 
 // deliveryLogState rate-limits the per-event-type log lines so a long burst of
-// dropped deltas cannot flood the log. Only the first occurrence of each
-// (reason, type) pair is logged at its full level; the rest are counted only.
+// dropped deltas cannot flood the log.
+//
+// The rate limit is per (reason, type) per WINDOW, not forever. A permanent
+// one-shot would hide the second incident: the whole point is to notice a stuck
+// UI, and the first drop at 09:00 must not silence the one at 17:00. Within a
+// window only the first occurrence is logged; the counter carries the magnitude
+// for the rest.
 var (
-	deliveryLoggedMu sync.Mutex
-	deliveryLogged   = map[string]struct{}{}
+	deliveryLoggedMu  sync.Mutex
+	deliveryLoggedAt  = map[string]time.Time{}
+	deliveryLogWindow = 5 * time.Minute
 )
 
-// recordDeliveryDrop counts a dropped event and logs it once per (reason, type).
-//
-// Logging once per pair is what makes this usable: during the observed 09-11
-// incident ~9000 thinking deltas were dropped within 20 seconds, and one line
-// per drop would have buried every other log entry. The counter carries the
-// magnitude; the log line carries the fact.
+// recordDeliveryDrop counts a dropped event and logs it once per (reason, type)
+// per deliveryLogWindow.
 func recordDeliveryDrop(reason, sessionID, eventType string) {
 	switch reason {
 	case DropReasonNoSubscribers:
@@ -82,14 +85,17 @@ func recordDeliveryDrop(reason, sessionID, eventType string) {
 	}
 
 	key := reason + "|" + eventType
+	now := time.Now()
+
 	deliveryLoggedMu.Lock()
-	_, alreadyLogged := deliveryLogged[key]
-	if !alreadyLogged {
-		deliveryLogged[key] = struct{}{}
+	last, seen := deliveryLoggedAt[key]
+	suppressed := seen && now.Sub(last) < deliveryLogWindow
+	if !suppressed {
+		deliveryLoggedAt[key] = now
 	}
 	deliveryLoggedMu.Unlock()
 
-	if alreadyLogged {
+	if suppressed {
 		return
 	}
 
@@ -99,9 +105,9 @@ func recordDeliveryDrop(reason, sessionID, eventType string) {
 		slog.String("event_type", eventType),
 	}
 	if IsCriticalEvent(eventType) {
-		slog.Warn("ws: dropped critical stream event (first occurrence for this type; see /api/ws/delivery-stats)", attrs...)
+		slog.Warn("ws: dropped critical stream event (see /api/ws/delivery-stats for totals)", attrs...)
 	} else {
-		slog.Debug("ws: dropped stream event (first occurrence for this type)", attrs...)
+		slog.Debug("ws: dropped stream event", attrs...)
 	}
 }
 
@@ -132,6 +138,6 @@ func ResetDeliveryStatsForTest() {
 	globalDeliveryStats.noSubscribers.Store(0)
 	globalDeliveryStats.noManager.Store(0)
 	deliveryLoggedMu.Lock()
-	deliveryLogged = map[string]struct{}{}
+	deliveryLoggedAt = map[string]time.Time{}
 	deliveryLoggedMu.Unlock()
 }
