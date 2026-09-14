@@ -97,14 +97,41 @@ describe('resize-divider.css — resting line', () => {
   it('fills its host so the line thickness is the host width', () => {
     // Centring a 1px line inside a wider host (3px for SplitDivider under
     // `pointer: coarse`, 6px for TocDock) leaves an uneven gap either side that
-    // reads as stray padding. `inset: 0` also keeps it on the pixel grid.
-    const resting = declsOf('.resize-divider__line')
-    expect(resting).toHaveLength(1)
-    expect(resting[0]).toContain('inset: 0')
-    expect(resting[0]).not.toContain('50%')
-    expect(resting[0]).not.toContain('transform')
+    // reads as stray padding. The thin axis is an explicit `100%` (not
+    // `inset: 0`) so it can take part in the release transition — `auto` is not
+    // interpolatable, which is what produced the release flash.
+    const base = declsOf('.resize-divider__line')
+    expect(base).toHaveLength(1)
+    expect(base[0]).not.toContain('50%')
+    expect(base[0]).not.toContain('transform')
     // A fixed thickness would reintroduce the gap on the wider hosts.
-    expect(resting[0]).not.toMatch(/\b(width|height):\s*1px/)
+    expect(base[0]).not.toMatch(/\b(width|height):\s*1px/)
+
+    for (const [orientation, axis] of [['vertical', 'width'], ['horizontal', 'height']]) {
+      const resting = declsOf(`.resize-divider[aria-orientation='${orientation}'] .resize-divider__line`)
+      expect(resting, `${orientation} resting rule must exist`).toHaveLength(1)
+      expect(resting[0], `${orientation} must fill the host on its thin axis`)
+        .toContain(`${axis}: 100%`)
+      expect(resting[0], `${orientation} must not use inset:0 on the thin axis`)
+        .not.toMatch(new RegExp(`${axis}:\\s*auto`))
+    }
+  })
+
+  it('transitions the line geometry, not just its colour', () => {
+    // Regression: the host animates width/height/margin over --duration-base but
+    // the line only transitioned `background`. On drag release the `--expanded`
+    // class is dropped, so the line snapped back to filling its host while the
+    // host was still ~12px and the line was still fading out of full accent —
+    // a 12px SOLID ACCENT bar for a frame. Measured on touch: first frame after
+    // release was host=12px/line=12px; with the transition it is 12px/2px.
+    const base = declsOf('.resize-divider__line')
+    const transition = base[0].match(/transition:([^;]+)/)
+    expect(transition, 'the line must declare a transition').not.toBeNull()
+    const t = transition![1]
+    expect(t, 'line transition must include its thin axis (width)').toContain('width')
+    expect(t, 'line transition must include its thin axis (height)').toContain('height')
+    expect(t, 'line transition must include the centring offset (left)').toContain('left')
+    expect(t, 'line transition must include the centring offset (top)').toContain('top')
   })
 })
 
@@ -130,9 +157,6 @@ describe('resize-divider.css — expanded state cannot drift between triggers', 
     // pixel — (12 - 1) / 2 = 5.5, (12 - 2) / 2 = 5.
     expect(decls).toContain('calc((100% - 2px) / 2)')
     expect(decls).toContain('width: 2px')
-    // Releasing the trailing edge is what lets the width shrink away from the
-    // leading inset; without it the stripe stays full width.
-    expect(decls).toContain('right: auto')
   })
 
   it('keeps the horizontal centre stripe identical across :active / --expanded / :hover', () => {
@@ -143,7 +167,6 @@ describe('resize-divider.css — expanded state cannot drift between triggers', 
     )
     expect(decls).toContain('calc((100% - 2px) / 2)')
     expect(decls).toContain('height: 2px')
-    expect(decls).toContain('bottom: auto')
   })
 
   it('selects the centring axis from aria-orientation', () => {

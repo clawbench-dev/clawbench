@@ -45,21 +45,51 @@
 /* The line fills its host at rest, so its thickness IS the host's: 1px on
    desktop, 3px for SplitDivider under `pointer: coarse`, 6px for TocDock.
    Centring a 1px line inside a wider box leaves an uneven gap either side that
-   reads as stray padding, and `inset: 0` also keeps it on the pixel grid at
-   every width. */
+   reads as stray padding.
+
+   The resting thickness is written as an explicit `100%` rather than `inset: 0`
+   so that it can take part in a transition — `auto` (what `inset: 0` resolves
+   the thin axis to) is not an interpolatable value. See the geometry
+   transitions below for why that matters. */
 .resize-divider__line {
   position: absolute;
-  inset: 0;
   background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background var(--duration-base) ease;
+  /* Geometry transitions MUST match the host's (SplitDivider/TocDock animate
+     width/height/margin over --duration-base).
+
+     Without them the line snapped back to filling its host the instant
+     `--expanded` was dropped, while the host was still ~12px and the line
+     colour was still fading out of full accent — so the release frame painted a
+     12px solid accent bar. Measured on a touch device: host=12px/line=12px on
+     the first frame after release, then it settled. The enter direction never
+     showed it because the line snaps NARROW there. */
+  transition: background var(--duration-base) ease,
+    width var(--duration-base) ease,
+    height var(--duration-base) ease,
+    left var(--duration-base) ease,
+    top var(--duration-base) ease;
+}
+/* The thin axis is explicit `100%` on both orientations so it can interpolate;
+   the long axis spans the host. */
+.resize-divider[aria-orientation='vertical'] .resize-divider__line {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+}
+.resize-divider[aria-orientation='horizontal'] .resize-divider__line {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
 }
 
 /* ── Expanded ─────────────────────────────────────────────────────────────
    The host widens into a tinted band and the line stops filling it, becoming a
    crisp centred stripe instead of a solid block. 2px rather than 1px because a
    12px band cannot centre a 1px line on a whole pixel — (12 - 1) / 2 = 5.5,
-   (12 - 2) / 2 = 5. Releasing the trailing edge (`right`/`bottom`) is what lets
-   the explicit thickness shrink the box away from the leading inset.
+   (12 - 2) / 2 = 5. The thin axis is explicit (not `auto`) so it interpolates
+   against the `100%` resting value.
 
    Every declaration block below lists ALL its triggers in one selector list, so
    a trigger cannot be tinted without also being narrowed. The triggers are:
@@ -80,13 +110,11 @@
 }
 .resize-divider[aria-orientation='vertical']:active .resize-divider__line,
 .resize-divider[aria-orientation='vertical'].resize-divider--expanded .resize-divider__line {
-  right: auto;
   left: calc((100% - 2px) / 2);
   width: 2px;
 }
 .resize-divider[aria-orientation='horizontal']:active .resize-divider__line,
 .resize-divider[aria-orientation='horizontal'].resize-divider--expanded .resize-divider__line {
-  bottom: auto;
   top: calc((100% - 2px) / 2);
   height: 2px;
 }
@@ -96,12 +124,10 @@
     background: var(--accent-color, #0066cc);
   }
   .resize-divider[aria-orientation='vertical']:hover .resize-divider__line {
-    right: auto;
     left: calc((100% - 2px) / 2);
     width: 2px;
   }
   .resize-divider[aria-orientation='horizontal']:hover .resize-divider__line {
-    bottom: auto;
     top: calc((100% - 2px) / 2);
     height: 2px;
   }
