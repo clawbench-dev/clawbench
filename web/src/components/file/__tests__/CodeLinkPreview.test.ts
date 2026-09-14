@@ -2743,3 +2743,48 @@ describe('code-link-preview.css — compact floating header', () => {
     expect(name).not.toMatch(/-webkit-line-clamp/)
   })
 })
+
+describe('code-link-preview.css — the touch sheet is content-sized', () => {
+  // The sheet is the quick preview opened by tapping a path link in chat on a
+  // touch device (preview.mode === 'sheet'). BottomSheet is given `auto`, so the
+  // height should come from the content. A `height: min(84vh, 720px) !important`
+  // override used to beat that and pin the drawer to ~709px on an 844px phone
+  // even for a directory with a couple of entries. jsdom does not evaluate the
+  // stylesheet, so this is a source contract.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  const panelDecls = (): string => {
+    const m = code.match(/\.code-preview-sheet-panel\s*\{([^}]*)\}/)
+    expect(m, '.code-preview-sheet-panel rule must exist').not.toBeNull()
+    return m![1]
+  }
+
+  it('does not pin the sheet to a fixed height', () => {
+    const body = panelDecls()
+    // A fixed height (with or without !important) is the regression.
+    expect(body).not.toMatch(/(?<!max-)height\s*:/)
+    expect(body).not.toMatch(/84vh/)
+    expect(body).not.toMatch(/720px/)
+  })
+
+  it('keeps a max-height cap so a long file cannot cover the page', () => {
+    // The cap must stay (and stay !important, to win over the base .bs-panel),
+    // otherwise a huge directory would expand past the overlay.
+    expect(panelDecls()).toMatch(/max-height:\s*100%\s*!important/)
+  })
+
+  it('passes `auto` to BottomSheet so the height follows the content', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../../file/CodeLinkPreview.vue'),
+      'utf8',
+    )
+    const m = src.match(/<BottomSheet\b[\s\S]*?>/)
+    expect(m, 'the sheet BottomSheet element must exist').not.toBeNull()
+    expect(m![0]).toMatch(/\sauto\b/)
+    expect(m![0]).toContain('code-preview-sheet-panel')
+  })
+})

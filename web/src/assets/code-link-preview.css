@@ -533,9 +533,18 @@ body.code-preview-dragging * {
 /* Mobile BottomSheet Header & Footer styles */
 .code-preview-sheet-panel {
   top: auto !important;
-  /* Keep the sheet compact enough to leave a visible strip of the page on
-     phones, while retaining enough room for the code slice. */
-  height: min(84vh, 720px) !important;
+  /* Content-sized, NOT a fixed slab.
+
+     The sheet is opened with BottomSheet's `auto` prop (height: auto, capped at
+     the full overlay), which is exactly what a preview wants. This rule used to
+     force `height: min(84vh, 720px) !important`, which beat `auto` and pinned
+     the drawer to ~709px on an 844px phone no matter how little it had to show
+     — a directory with three entries still opened a near-fullscreen slab.
+
+     The !important is still needed on `max-height` (it must win over the base
+     `.bs-panel` rules), but the height now comes from the content. `max-height`
+     keeps a long file or a big directory from covering the whole page, and the
+     body scrolls past that point. */
   max-height: 100% !important;
 }
 
