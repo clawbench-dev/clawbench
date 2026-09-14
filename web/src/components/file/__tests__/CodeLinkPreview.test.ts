@@ -497,6 +497,49 @@ describe('CodeLinkPreview.vue', () => {
     expect(document.body.textContent).toContain('3 items')
   })
 
+  it('counts only visible entries so the number matches the rendered grid', () => {
+    // The mock's dirEntryVisible hides dotfiles. The count must apply the same
+    // filter the grid does, or the meta row reports entries the user cannot see
+    // (and disagrees with the docked pane, which counts the filtered list).
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: '.hidden', type: 'file' },
+        { name: '.env', type: 'file' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.body.textContent).toContain('1 items')
+    expect(document.body.textContent).not.toContain('3 items')
+    // And the grid really does render just the one.
+    expect(document.querySelectorAll('.dir-preview-item').length).toBe(1)
+  })
+
+  it('does not open a dead search bar over a directory listing (Ctrl+F)', async () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The search button is hidden for a directory; the window-level Ctrl+F
+    // shortcut must not bypass that and open an unsearchable bar.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }))
+    await nextTick()
+
+    expect(document.querySelector('.code-preview-search-input')).toBeNull()
+  })
+
   it('renders binary file error with open full file button', () => {
     const preview = createMockPreviewController({
       status: ref('error'),

@@ -1780,6 +1780,9 @@ paths:
         （1-based，闭区间）的行，并附带文件总行数 `totalLines`，避免大文件整体传输。
         行窗口只对文本文件生效；`forceText` / 二进制嗅探路径会忽略窗口并返回完整
         净化内容。窗口最多 `maxWindowLines` 行。
+
+        非法区间（0 / 负数 / 非整数 / `lineEnd < lineStart` / 只传 `lineEnd`）一律返回
+        400 `InvalidLineRange`，**与文件类型无关**——二进制文件同样先校验区间。
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"

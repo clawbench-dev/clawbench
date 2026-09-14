@@ -1639,6 +1639,43 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not clobber an already-verified chunk when a later chunk fails', async () => {
+    // Chunking means a failure can happen after earlier chunks succeeded. The
+    // network-error fallback must not then mark the WHOLE list as missing —
+    // that would strip annotations from files the first chunk already resolved
+    // (and, because 'none' is cached, never recover them).
+    let call = 0
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      call += 1
+      if (call === 1) {
+        const body = JSON.parse(String(init.body)) as { paths: string[] }
+        const results: Record<string, string> = {}
+        for (const p of body.paths) results[p] = 'file'
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) })
+      }
+      return Promise.reject(new Error('offline'))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const paths = Array.from({ length: 250 }, (_, i) => `src/f${i}.go`)
+    const container = document.createElement('div')
+    container.innerHTML = paths
+      .map(p => `<span class="chat-file-path" data-file-path="${p}">${p}</span>`)
+      .join('')
+
+    await verifyFilePaths(paths, container)
+
+    // Chunk 1 (first 100) resolved as real files; its annotations must survive.
+    expect(mockFetch.mock.calls.length).toBeGreaterThan(1)
+    for (const p of paths.slice(0, 100)) {
+      const el = container.querySelector(`[data-file-path="${p}"]`)
+      expect(el, `${p} from the verified chunk must keep its annotation`).not.toBeNull()
+      expect(el!.getAttribute('data-path-type')).toBe('file')
+    }
+
+    vi.unstubAllGlobals()
+  })
+
   it('batches >100 paths into separate requests', async () => {
     // The endpoint rejects >100 paths with 400 TooManyPaths, and the error body
     // has no `results` field. Sending them all at once therefore made

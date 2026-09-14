@@ -656,6 +656,33 @@ describe('useCodeLinkPreview', () => {
     expect(preview.dirEntries.value.map(e => e.name)).toEqual(['a.ts', 'nested'])
   })
 
+  it('lists a directory even when its name ends in a media/markdown extension', async () => {
+    // `getFileType` is purely extension-based, so a DIRECTORY named `assets.png`
+    // (or `docs.md`) looks like a media/markdown file. The directory check must
+    // therefore win over the media branch, or the card would render a media
+    // body / markdown toggle for a directory and never fetch its listing.
+    mockApiGet.mockResolvedValueOnce({
+      items: [{ name: 'logo.png', type: 'file' }],
+    })
+    const preview = useCodeLinkPreview()
+    const dirAnchor = document.createElement('span')
+    dirAnchor.className = 'chat-file-path'
+    dirAnchor.setAttribute('data-file-path', 'assets.png')
+    dirAnchor.setAttribute('data-path-type', 'dir')
+
+    preview.handleClick({ target: dirAnchor, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as MouseEvent)
+
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    // The listing is fetched (not treated as a media file).
+    const url = mockApiGet.mock.calls[0]?.[0] as string
+    expect(url).toContain('/api/dir?path=assets.png')
+    expect(preview.dirEntries.value.map(e => e.name)).toEqual(['logo.png'])
+    // And the card is not put into the media view.
+    expect(preview.isMediaTarget.value).toBe(false)
+  })
+
   it('ignores a line annotation on a directory target', () => {
     const preview = useCodeLinkPreview()
     const dirAnchor = document.createElement('span')
@@ -916,6 +943,49 @@ describe('useCodeLinkPreview', () => {
     )
     // Widening cannot help — the cap would just trip again.
     expect(mockApiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('self-heals an annotation past EOF by widening to the real end of file', async () => {
+    // A stale/hallucinated line annotation (lineStart beyond the file's length)
+    // must not leave the pane blank. The window planner asks for lines past EOF,
+    // so the server returns the empty-window encoding; the card must then widen
+    // to the real last lines — the same self-heal the pre-window code did.
+    mockApiGet
+      .mockResolvedValueOnce({
+        content: '',
+        name: 'short.ts',
+        path: 'short.ts',
+        supported: true,
+        size: 100,
+        totalLines: 100,
+        windowStart: 4770,
+        windowEnd: 4769,
+      })
+      .mockResolvedValueOnce({
+        // The widen asks for 71..100; the server returns just that window.
+        content: Array.from({ length: 30 }, (_, i) => `line ${71 + i}`).join('\n'),
+        name: 'short.ts',
+        path: 'short.ts',
+        supported: true,
+        size: 100,
+        totalLines: 100,
+        windowStart: 71,
+        windowEnd: 100,
+      })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'short.ts', lineStart: 5000, lineEnd: 5000 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    // The pane shows real lines from the end of the file, not an empty body.
+    expect(preview.slicedCode.value?.code).not.toBe('')
+    expect(preview.slicedCode.value?.code).toContain('line 100')
+    expect(preview.slicedCode.value?.lineOutOfRange).toBe(true)
+    // Widening is what recovered it.
+    expect(mockApiGet.mock.calls.length).toBeGreaterThan(1)
   })
 
   it('supports context expansion and shrinking', async () => {
