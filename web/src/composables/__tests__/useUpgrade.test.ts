@@ -61,6 +61,19 @@ vi.mock('@/utils/appLog', () => ({
   },
 }))
 
+// The unverified-release gate opens a confirmation dialog; tests drive its
+// answer through mockDialogConfirm.
+const mockDialogConfirm = vi.fn().mockResolvedValue(true)
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({
+    confirm: (...args: any[]) => mockDialogConfirm(...args),
+  }),
+}))
+
+vi.mock('@/composables/useLocale', () => ({
+  gt: (key: string) => key,
+}))
+
 const mockReloadApp = vi.fn()
 const mockGetNative = vi.fn()
 vi.mock('@/utils/clawbenchNative', () => ({
@@ -108,6 +121,12 @@ describe('useUpgrade', () => {
     upgrade.installWritable.value = true
     upgrade.installDir.value = ''
     upgrade.isDocker.value = false
+    upgrade.verificationWarning.value = ''
+    // Module-level too: a previous test may have left the progress dialog open.
+    upgrade.clearShowProgressDialog()
+    // Default: the user accepts an unverified upgrade when asked.
+    mockDialogConfirm.mockReset()
+    mockDialogConfirm.mockResolvedValue(true)
   })
 
   // ── checkUpgrade ──
@@ -294,6 +313,82 @@ describe('useUpgrade', () => {
 
       expect(upgrade.state.error_code).toBe('')
       expect(upgrade.state.error).toBe('')
+    })
+  })
+
+  // ── unverified-release confirmation gate ──
+  //
+  // When the release could not be fully verified, the user must decide before
+  // anything is downloaded. These checks all run on registry metadata, so the
+  // decision happens up front.
+
+  describe('unverified upgrade confirmation', () => {
+    it('does not prompt when the release was fully verified', async () => {
+      mockApiPost.mockResolvedValue({})
+
+      const upgrade = useUpgrade()
+      await upgrade.startUpgrade()
+
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', {})
+    })
+
+    it('prompts with the warning text when verification was incomplete', async () => {
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = 'The registry did not sign this release.'
+      mockApiPost.mockResolvedValue({})
+
+      await upgrade.startUpgrade()
+
+      expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
+      expect(mockDialogConfirm.mock.calls[0][0]).toBe('The registry did not sign this release.')
+    })
+
+    it('proceeds with the upgrade when the user accepts', async () => {
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = 'unverified'
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiPost.mockResolvedValue({})
+
+      await upgrade.startUpgrade()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', {})
+      expect(upgrade.showProgressDialog.value).toBe(true)
+    })
+
+    it('starts nothing when the user cancels', async () => {
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = 'unverified'
+      mockDialogConfirm.mockResolvedValue(false)
+
+      await upgrade.startUpgrade()
+
+      expect(mockApiPost).not.toHaveBeenCalled()
+      expect(upgrade.showProgressDialog.value).toBe(false)
+    })
+
+    it('does not clear the previous failure when the user cancels', async () => {
+      // Cancelling means no attempt happened, so the last real failure must
+      // remain visible rather than being wiped by a no-op.
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = 'unverified'
+      upgrade.state.error = 'previous failure'
+      mockDialogConfirm.mockResolvedValue(false)
+
+      await upgrade.startUpgrade()
+
+      expect(upgrade.state.error).toBe('previous failure')
+    })
+
+    it('treats a whitespace-only warning as verified', async () => {
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = '   '
+      mockApiPost.mockResolvedValue({})
+
+      await upgrade.startUpgrade()
+
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+      expect(mockApiPost).toHaveBeenCalled()
     })
   })
 

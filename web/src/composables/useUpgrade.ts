@@ -2,6 +2,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useDialog } from '@/composables/useDialog'
+import { gt } from '@/composables/useLocale'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 import { compareVersions } from '@/utils/version'
@@ -272,8 +274,20 @@ export function useUpgrade() {
     }
   }
 
-  /** Start the upgrade process and show progress dialog */
+  /**
+   * Start the upgrade process and show progress dialog.
+   *
+   * When the release could not be fully verified, the user is asked to confirm
+   * before anything is downloaded. The checks that produce that warning all run
+   * on the registry metadata, so the decision can be made up front rather than
+   * mid-download. A cancelled confirmation starts nothing.
+   *
+   * A tarball that fails its integrity hash is a separate matter handled by the
+   * backend, which refuses to install it outright.
+   */
   async function startUpgrade(): Promise<void> {
+    if (!(await confirmUnverifiedUpgrade())) return
+
     showProgressDialog.value = true
     // Allow the auto-reload to fire again for this tab's next upgrade.
     sessionStorage.removeItem(RELOAD_SESSION_KEY)
@@ -287,6 +301,24 @@ export function useUpgrade() {
     } catch (e) {
       appLog.e(TAG, 'Start failed', e)
     }
+  }
+
+  /**
+   * Ask the user to confirm an upgrade whose release could not be fully
+   * verified. Returns true when there is nothing to confirm, or when the user
+   * explicitly accepts the risk.
+   */
+  async function confirmUnverifiedUpgrade(): Promise<boolean> {
+    const warning = verificationWarning.value.trim()
+    if (!warning) return true
+
+    const dialog = useDialog()
+    return await dialog.confirm(warning, {
+      title: gt('upgrade.verificationConfirmTitle'),
+      confirmText: gt('upgrade.verificationConfirmProceed'),
+      cancelText: gt('upgrade.verificationConfirmCancel'),
+      dangerous: true,
+    })
   }
 
   /** Clear show progress flag (called after dialog opens) */

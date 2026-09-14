@@ -2638,7 +2638,10 @@ export default {
     dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。建议改用镜像更新：',
     dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
     verificationWarningTitle: '本次升级未能完全验证',
-    verificationWarningHint: '这不影响继续升级，但上面的内容说明了哪些校验无法完成。内网镜像、代理或 registry 未提供哈希时通常属正常情况；如果你在官方源上看到此提示，请留意。',
+    verificationWarningHint: '上面的内容说明了哪些校验无法完成。内网镜像、代理或 registry 未提供哈希时通常属正常情况；如果你在官方源上看到此提示，请留意。开始升级前会再向你确认一次。',
+    verificationConfirmTitle: '本次升级未能完全验证',
+    verificationConfirmProceed: '仍然继续',
+    verificationConfirmCancel: '取消',
   },
   share: {
     loading: '加载中...',
