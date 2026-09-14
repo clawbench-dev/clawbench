@@ -369,5 +369,15 @@ describe('SessionTagDialog', () => {
       expect(rule).toMatch(/width:/)
       expect(rule).toMatch(/height:/)
     })
+
+    it('.session-tags-dialog insets its content from the card edge', () => {
+      // The shared .modal-body is deliberately padding-free (modal-card.css) —
+      // it only supplies the scroll container. A dialog that does not inset its
+      // own root renders flush against the card border, which is how this one
+      // shipped once.
+      const rule = ruleFor('.session-tags-dialog')
+      expect(rule).not.toBe('')
+      expect(rule).toMatch(/padding:/)
+    })
   })
 })

@@ -228,10 +228,15 @@ watch(() => props.open, (open) => {
 </script>
 
 <style scoped>
+/* The shared .modal-body is padding-free by design (modal-card.css) — it only
+   provides the scroll container, so every dialog must inset its own content or
+   it renders flush against the card edge. Matches the convention used by the
+   other dialogs (e.g. .jump-dialog-body). */
 .session-tags-dialog {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  padding: var(--space-6) var(--space-7);
 }
 
 .st-section-label {
