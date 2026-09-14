@@ -6,6 +6,7 @@ import {
     fetchForgeBinding,
     fetchForgePipelines,
     fetchForgePipeline,
+    markForgeRead,
     type ForgeItem,
     type ForgeComment,
     type ForgeBinding,
@@ -16,8 +17,25 @@ import {
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
 import { setForgeBindingState } from '@/composables/useForgeBinding'
+import { useForgeUnread } from '@/composables/useForgeUnread'
 
 const TAG = 'UseForge'
+
+/**
+ * The item key the server uses to identify an issue/PR row for read state.
+ *
+ * Must match forge.ItemKeyForNumber on the Go side: "<type>/<number>". Kept as a
+ * named function so the shape lives in one place rather than being re-spelled at
+ * each call site.
+ */
+export function forgeItemKey(item: { type: string; number: number }): string {
+    return `${item.type}/${item.number}`
+}
+
+/** The item key for one CI run, matching forge.PipelineItemKey on the Go side. */
+export function forgePipelineItemKey(runID: number): string {
+    return `pipeline/run:${runID}`
+}
 
 export type ForgeFilter = 'all' | 'assigned' | 'created' | 'review'
 
@@ -160,11 +178,45 @@ export function useForgeItems(getProjectPath: () => string) {
         nextPage.value = 1
     }
 
+    /**
+     * Mark one item read (what opening a row does).
+     *
+     * The local flag is cleared optimistically so the dot disappears at once;
+     * the badge is then re-derived from the server rather than decremented, so a
+     * missed event cannot leave it permanently wrong.
+     */
+    async function markItemRead(item: ForgeItem): Promise<void> {
+        if (!item.unread) return
+        item.unread = false
+        try {
+            await markForgeRead(forgeItemKey(item))
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markItemRead failed', err)
+            // Restore the flag so the UI does not claim it was seen.
+            item.unread = true
+        }
+    }
+
+    /** Mark every item in the bound repository read. */
+    async function markAllRead(): Promise<void> {
+        for (const it of items.value) it.unread = false
+        try {
+            await markForgeRead()
+        } catch (err) {
+            appLog.w(TAG, 'markAllRead failed', err)
+        }
+        // Re-derive rather than assume: the server is authoritative.
+        useForgeUnread().refresh()
+        void load()
+    }
+
     return {
         items, binding, suggested, loading, loadingMore, error,
         type, state, mineFilter, query,
         hasMore, nextPage, isBound, isEmpty,
         loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery, reset,
+        markItemRead, markAllRead,
     }
 }
 
@@ -345,9 +397,35 @@ export function useForgePipelines(getProjectPath: () => string) {
         void load()
     }
 
+    /** Mark one run read (what opening a row does). */
+    async function markItemRead(run: ForgePipelineRun): Promise<void> {
+        if (!run.unread) return
+        run.unread = false
+        try {
+            await markForgeRead(forgePipelineItemKey(run.id))
+            useForgeUnread().refresh()
+        } catch (err) {
+            appLog.w(TAG, 'markPipelineRead failed', err)
+            run.unread = true
+        }
+    }
+
+    /** Mark every run in the bound repository read. */
+    async function markAllRead(): Promise<void> {
+        for (const r of pipelines.value) r.unread = false
+        try {
+            await markForgeRead()
+        } catch (err) {
+            appLog.w(TAG, 'markAllPipelinesRead failed', err)
+        }
+        useForgeUnread().refresh()
+        void load()
+    }
+
     return {
         pipelines, loading, loadingMore, error, filter, hasMore, nextPage,
         load, loadMore, setFilter,
+        markItemRead, markAllRead,
     }
 }
 

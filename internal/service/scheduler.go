@@ -1193,8 +1193,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 			FROM scheduled_tasks s ORDER BY s.created_at DESC`
 	} else {
 		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.session_id,
@@ -1202,8 +1201,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
-			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 			FROM scheduled_tasks s WHERE s.project_path = ? ORDER BY s.created_at DESC`
 		args = []interface{}{projectPath}
 	}
@@ -1244,8 +1242,7 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
-		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-		 AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) AS unread_count
+		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') AS unread_count
 		FROM scheduled_tasks s WHERE s.id = ?`,
 		id,
 	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
@@ -1324,10 +1321,19 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 	return err
 }
 
-// UpdateTaskLastRead updates the last_read_at timestamp for a task, clearing unread status.
-func UpdateTaskLastRead(taskID int64) error {
+// MarkTaskExecutionsRead marks every finished execution of a task as read.
+//
+// This is the "mark all read" action. It writes per-execution read_at rather
+// than bumping a task-level watermark, because the unread model is per item: a
+// watermark cannot express "this one read, that one not", and it would silently
+// absorb a run that finished after it was written.
+//
+// Running executions are skipped: their outcome is not known yet, and marking
+// them read would hide the completion the user is waiting for.
+func MarkTaskExecutionsRead(taskID int64) error {
 	_, err := WriteExec(
-		"UPDATE scheduled_tasks SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?",
+		`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
+		 WHERE task_id = ? AND read_at IS NULL AND status != 'running'`,
 		taskID,
 	)
 	return err
@@ -1453,16 +1459,14 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			      AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
 		).Scan(&count)
 	} else {
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE s.project_path = ?
 			 AND (SELECT COUNT(*) FROM task_executions e
-			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running'
-			      AND (s.last_read_at IS NULL OR e.created_at > s.last_read_at)) > 0`,
+			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status != 'running') > 0`,
 			projectPath,
 		).Scan(&count)
 	}

@@ -210,6 +210,34 @@
 .forge-state-dot.pipeline-skipped { background: var(--text-secondary); }
 .forge-state-dot.pipeline-unknown { background: var(--border-color); }
 
+/* ── Unread marker ──
+   A row with unseen activity. The dot sits at the end of the title line rather
+   than beside the state dot, so it reads as "new" without being mistaken for a
+   status. The row also takes a faint tint, so the unread set is scannable
+   without relying on spotting a small dot. */
+.forge-unread-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.forge-row.unread {
+    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+}
+
+.forge-row.unread .forge-row-text {
+    font-weight: var(--font-weight-medium);
+}
+
+/* The "mark all read" button mirrors the task list's clear-unread affordance:
+   accent-tinted while there is something to clear, and inert when there is not. */
+.clear-unread-btn.active {
+    color: var(--accent-color);
+}
+
 /* ── CI run row metadata (list rows and the detail header) ──
    The ref is the most useful field, so it is emphasised over the run details. */
 .forge-pipeline-ref {

@@ -60,6 +60,9 @@ type forgePipelineRunView struct {
 	// report it), so the UI can distinguish "instant" from "not reported".
 	DurationSeconds int64  `json:"durationSeconds,omitempty"`
 	Slug            string `json:"slug"`
+	// Unread is true when this run has activity the user has not seen. Filled
+	// from the same rows the dock badge counts.
+	Unread bool `json:"unread,omitempty"`
 }
 
 // forgePipelineJobView is the frontend-facing shape of one job in a run.
@@ -178,9 +181,19 @@ func ServeForgePipelines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tag each run with its unread state. One query for the whole page; the run
+	// key carries the run id, since a pipeline event has no item number.
+	unreadKeys, err := service.UnreadForgeItemKeys(pf.RepoKey())
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
 	views := make([]forgePipelineRunView, 0, len(runs))
 	for i := range runs {
-		views = append(views, toPipelineRunView(pf, runs[i]))
+		view := toPipelineRunView(pf, runs[i])
+		view.Unread = unreadKeys[forge.PipelineItemKey(runs[i].ID)]
+		views = append(views, view)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

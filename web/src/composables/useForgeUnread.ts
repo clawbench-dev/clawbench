@@ -17,11 +17,15 @@ let refetchTimer: ReturnType<typeof setTimeout> | null = null
 let markingReadInProgress = false
 
 /**
- * useForgeUnread tracks the unread forge-event count.
+ * useForgeUnread tracks the unread forge count for the active project.
  *
- * The count is server-authoritative and independent of the notification
- * toggles: it answers "are there new changes", not "did we notify". Opening the
- * Issues & PRs tab clears it.
+ * The count is "how many ITEMS have new activity", scoped to the project's bound
+ * repository, and is server-authoritative. That is what makes the badge match
+ * what the user can see: the panel's rows carry the same per-item flag, so the
+ * number always corresponds to rows they can find and clear.
+ *
+ * It is independent of the notification toggles: it answers "are there new
+ * changes", not "did we notify".
  */
 export function useForgeUnread() {
     async function refresh() {
@@ -59,7 +63,11 @@ export function useForgeUnread() {
         forgeUnreadCount.value = 0
         markingReadInProgress = true
         try {
-            await markForgeRead()
+            // No itemKey: mark the whole bound repository read.
+            const res = await markForgeRead()
+            // Trust the server's remainder rather than assuming zero — it also
+            // covers activity that arrived while the request was in flight.
+            forgeUnreadCount.value = res.count ?? 0
         } catch (err) {
             appLog.w(TAG, 'markRead failed', err)
             void refresh()

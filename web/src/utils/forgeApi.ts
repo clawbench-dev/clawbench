@@ -38,6 +38,8 @@ export interface ForgeItem {
     createdAt: string
     updatedAt: string
     slug: string
+    /** True when this item has activity the user has not seen. */
+    unread?: boolean
 }
 
 export interface ForgeComment {
@@ -74,6 +76,8 @@ export interface ForgePipelineRun {
     /** Absent when the platform does not report it (GitHub's list endpoint). */
     durationSeconds?: number
     slug: string
+    /** True when this run has activity the user has not seen. */
+    unread?: boolean
 }
 
 export interface ForgePipelineJob {
@@ -308,6 +312,16 @@ export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number 
     return forgeFetch('/api/forge/unread', { signal })
 }
 
-export function markForgeRead(): Promise<{ count: number }> {
-    return forgeFetch('/api/forge/read', { method: 'POST' })
+/**
+ * Mark forge activity read.
+ *
+ * With no itemKey the whole bound repository is marked read (the "mark all
+ * read" action). With an itemKey only that item is marked, which is what
+ * opening a row does.
+ */
+export function markForgeRead(itemKey?: string): Promise<{ count: number }> {
+    return forgeFetch('/api/forge/read', {
+        method: 'POST',
+        body: itemKey ? { itemKey } : {},
+    })
 }

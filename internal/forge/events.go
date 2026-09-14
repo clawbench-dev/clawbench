@@ -194,6 +194,32 @@ func DedupeKey(repo Remote, itemType ItemType, number int, ev Change) string {
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, number, itemType, string(ev.Type), revision)
 }
 
+// ItemKeyForNumber identifies a numbered item (an issue or a change request).
+//
+// Use this where the item is known to be numbered, so no synthetic Change is
+// needed and a pipeline can never be passed by accident.
+func ItemKeyForNumber(itemType ItemType, number int) string {
+	return fmt.Sprintf("%s/%d", itemType, number)
+}
+
+// PipelineItemKey identifies one CI run, which has no item number.
+func PipelineItemKey(runID int64) string {
+	return fmt.Sprintf("pipeline/run:%d", runID)
+}
+
+// ItemKey identifies the thing an event is about, for grouping events into
+// "items with new activity".
+//
+// It cannot be derived from (itemType, number) alone: a pipeline event carries
+// Number 0 for every run, because a CI run is not an item and has no number. The
+// run id is what distinguishes two runs, so it becomes the key.
+func ItemKey(itemType ItemType, number int, ev Change) string {
+	if itemType == ItemTypePipeline {
+		return PipelineItemKey(ev.PipelineRunID)
+	}
+	return ItemKeyForNumber(itemType, number)
+}
+
 // StateRank orders terminal states so a multi-transition interval can pick the
 // most informative one.
 func StateRank(state State) int {

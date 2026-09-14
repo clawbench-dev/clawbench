@@ -82,6 +82,8 @@ export default {
     searchPlaceholder: '搜索议题 / 合并请求…',
     loading: '加载中…',
     emptyList: '没有匹配的议题 / 合并请求',
+    markAllRead: '全部标为已读',
+    unreadItem: '有新动态',
     retry: '重试',
     pipeline: {
       status: {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -102,6 +103,23 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// decodeOptionalJSON decodes the request body into v, treating an EMPTY body as
+// "no fields supplied" rather than an error. A non-empty but malformed body is
+// still a 400.
+//
+// This is for endpoints where the body carries only optional refinements, so the
+// same route serves "act on everything" and "act on one thing".
+func decodeOptionalJSON(r *http.Request, v any) error {
+	if r.Body == nil {
+		return nil
+	}
+	err := json.NewDecoder(r.Body).Decode(v)
+	if errors.Is(err, io.EOF) {
+		return nil // empty body: keep v's zero values
+	}
+	return err
 }
 
 // validateAndResolvePath validates a relative path and returns the absolute path.

@@ -816,10 +816,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab: string, force = false) {
-  // Opening the Issues & PRs tab clears its unread badge.
-  if (tab === 'forge') {
-    void markForgeRead()
-  }
+  // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
+  // per item now: opening a row clears that row, and the "mark all read" button
+  // clears the rest. Clearing on tab open is what made the badge number
+  // meaningless — it vanished before the user could find what it referred to.
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -2049,7 +2049,7 @@ function handleWideDockTabClick(tab: string) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
@@ -2541,6 +2541,14 @@ function playQuoteEmitAnimation(e?: Event) {
   }
   requestAnimationFrame(animate)
 }
+
+// The forge badge is scoped to the project's bound repository, so it must be
+// re-derived when the project changes — otherwise the previous project's count
+// would linger over a panel showing a different repository.
+watch(() => store.state.projectRoot, () => {
+    void refreshForgeUnread()
+    void refreshForgePlatform()
+})
 
 onMounted(async () => {
     applyTheme(theme.value)

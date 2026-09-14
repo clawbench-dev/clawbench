@@ -2226,6 +2226,11 @@ paths:
       tags: [Forge]
       summary: 议题 / 合并请求列表
       operationId: forgeItems
+      description: |
+        返回项目所绑定仓库的议题 / 合并请求。
+
+        每项的 `unread` 为 true 表示该条目有用户尚未查看的活动。它与 dock 角标
+        计数的是同一批数据，因此角标数字与列表中的未读标记始终一致。
       parameters:
         - name: type
           in: query
@@ -2324,6 +2329,9 @@ paths:
 
         `durationSeconds` 可能缺失：GitHub 的运行列表不返回耗时，只有详情端点
         能给出推算值。
+
+        每项的 `unread` 为 true 表示该次运行有用户尚未查看的活动，与 dock 角标
+        计数的是同一批数据。
       parameters:
         - name: status
           in: query
@@ -2444,20 +2452,51 @@ paths:
   /api/forge/unread:
     get:
       tags: [Forge]
-      summary: 未读条目
+      summary: 未读条目数（按项目绑定的仓库）
+      description: |
+        返回该项目的仓库中「有新活动的条目」数量（按条目去重，不是事件数）。
+        未绑定仓库时返回 count 为 0（正常状态，非错误）。
       operationId: forgeUnread
       responses:
         "200":
-          description: 未读列表
+          description: 未读条目数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
 
   /api/forge/read:
     post:
       tags: [Forge]
       summary: 标记已读
+      description: |
+        省略 body 或 itemKey 为空表示标记该仓库全部条目已读（「全部已读」）；
+        传 itemKey 则只标记该条目（打开某一行时使用）。
+        响应返回标记后剩余的未读条目数。
       operationId: forgeMarkRead
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                itemKey:
+                  type: string
+                  description: '条目键，如 issue/42、pr/7、pipeline/run:555'
       responses:
         "200":
-          description: 结果
+          description: 剩余未读条目数
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
 
   # ── Agents ────────────────────────────────────────────────────────────────
   /api/agents:

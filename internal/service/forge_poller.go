@@ -240,11 +240,23 @@ func (p *ForgePoller) pruneRepo(pf ProjectForge, key string) {
 	if err != nil {
 		slog.Warn("forge poller: prune pipeline runs failed",
 			slog.String("repo", key), slog.String("err", err.Error()))
-		return
-	}
-	if pipelineRemoved > 0 {
+	} else if pipelineRemoved > 0 {
 		slog.Info("forge poller: pruned stale pipeline runs",
 			slog.String("repo", key), slog.Int64("removed", pipelineRemoved))
+	}
+
+	// The event ledger grows with every derived change and nothing else deletes
+	// from it. Only read rows are eligible — an unread row is the user's only
+	// record that something changed.
+	eventsRemoved, err := PruneForgeEvents(repoKey, cutoff)
+	if err != nil {
+		slog.Warn("forge poller: prune events failed",
+			slog.String("repo", key), slog.String("err", err.Error()))
+		return
+	}
+	if eventsRemoved > 0 {
+		slog.Info("forge poller: pruned stale events",
+			slog.String("repo", key), slog.Int64("removed", eventsRemoved))
 	}
 }
 

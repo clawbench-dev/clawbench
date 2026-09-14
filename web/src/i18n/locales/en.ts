@@ -82,6 +82,8 @@ export default {
     searchPlaceholder: 'Search issues / PRs…',
     loading: 'Loading…',
     emptyList: 'No matching issues or PRs',
+    markAllRead: 'Mark all read',
+    unreadItem: 'New activity',
     retry: 'Retry',
     pipeline: {
       status: {

@@ -432,6 +432,7 @@ func (s *ForgeSyncer) persistAndDispatch(
 		Repo:      repoRef.Repo,
 		ItemType:  string(item.Type),
 		Number:    item.Number,
+		ItemKey:   forge.ItemKey(item.Type, item.Number, ch),
 		EventType: string(ch.Type),
 		DedupeKey: key,
 		Payload:   item.URL,

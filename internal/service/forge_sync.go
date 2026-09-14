@@ -388,6 +388,14 @@ func ListForgePipelineRuns(repo ForgeRepoKey) ([]int64, error) {
 // ForgeEventDDL creates the derived-event table. Events are persisted so that
 // notification and unread counting survive a restart, and so the same event is
 // never dispatched twice (event-level dedupe).
+//
+// item_key identifies the THING the event is about, and is what makes the unread
+// badge answer "how many items have new activity" rather than "how many events
+// happened". It cannot be derived from (item_type, number) because a pipeline
+// event carries Number 0 for every run — the run id only exists inside
+// dedupe_key. So the key is stored explicitly:
+//
+//	issue/<number>, pr/<number>, pipeline/run:<runID>
 const ForgeEventDDL = `
 CREATE TABLE IF NOT EXISTS forge_events (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -397,6 +405,7 @@ CREATE TABLE IF NOT EXISTS forge_events (
 	repo           TEXT NOT NULL,
 	item_type      TEXT NOT NULL,
 	number         INTEGER NOT NULL,
+	item_key       TEXT NOT NULL DEFAULT '',
 	event_type     TEXT NOT NULL,
 	dedupe_key     TEXT NOT NULL,
 	payload        TEXT NOT NULL DEFAULT '',
@@ -408,6 +417,17 @@ CREATE INDEX IF NOT EXISTS idx_forge_events_unread ON forge_events(read_at);
 CREATE INDEX IF NOT EXISTS idx_forge_events_repo ON forge_events(platform, host, owner, repo, id);
 `
 
+// ForgeEventItemIndexDDL creates the item_key index.
+//
+// It is kept OUT of ForgeEventDDL on purpose: that constant runs as one batch,
+// and on an existing database `CREATE TABLE IF NOT EXISTS` is a no-op, so an
+// index over item_key would be created before the migration has added the
+// column — failing the whole batch with "no such column". The migration adds the
+// column first, then runs this.
+const ForgeEventItemIndexDDL = `
+CREATE INDEX IF NOT EXISTS idx_forge_events_item ON forge_events(platform, host, owner, repo, item_key, read_at);
+`
+
 // ForgeEvent is a derived change event persisted for notification + unread.
 type ForgeEvent struct {
 	ID        int64
@@ -417,6 +437,7 @@ type ForgeEvent struct {
 	Repo      string
 	ItemType  string
 	Number    int
+	ItemKey   string
 	EventType string
 	DedupeKey string
 	Payload   string
@@ -432,10 +453,10 @@ func InsertForgeEvent(e ForgeEvent) (bool, error) {
 	}
 	res, err := WriteExec(
 		`INSERT INTO forge_events
-		   (platform, host, owner, repo, item_type, number, event_type, dedupe_key, payload)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   (platform, host, owner, repo, item_type, number, item_key, event_type, dedupe_key, payload)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(dedupe_key) DO NOTHING`,
-		e.Platform, e.Host, e.Owner, e.Repo, e.ItemType, e.Number, e.EventType, e.DedupeKey, e.Payload,
+		e.Platform, e.Host, e.Owner, e.Repo, e.ItemType, e.Number, e.ItemKey, e.EventType, e.DedupeKey, e.Payload,
 	)
 	if err != nil {
 		return false, err
@@ -447,24 +468,123 @@ func InsertForgeEvent(e ForgeEvent) (bool, error) {
 	return n > 0, nil
 }
 
-// CountUnreadForgeEvents returns the number of unread events. The unread count
-// is intentionally independent of the notification toggles: it answers "are
-// there new changes", not "did we notify".
-func CountUnreadForgeEvents() (int, error) {
+// CountUnreadForgeEvents returns the number of unread ITEMS for one repository,
+// i.e. how many distinct things have new activity.
+//
+// Distinct-by-item (not by event) is what makes the dock badge match what the
+// user can actually see: three comments on one issue is one unread row, not
+// three. It is scoped to a repo because the panel it points at is a single
+// project's bound repository — a global count is a number the user cannot act
+// on.
+//
+// The unread count is intentionally independent of the notification toggles: it
+// answers "are there new changes", not "did we notify".
+func CountUnreadForgeEvents(repo ForgeRepoKey) (int, error) {
 	if dbRead == nil {
 		return 0, nil
 	}
 	var n int
-	err := dbRead.QueryRow(`SELECT COUNT(*) FROM forge_events WHERE read_at IS NULL`).Scan(&n)
+	err := dbRead.QueryRow(
+		`SELECT COUNT(DISTINCT item_key) FROM forge_events
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
+		   AND read_at IS NULL AND item_key != ''`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+	).Scan(&n)
 	return n, err
 }
 
-// MarkForgeEventsRead marks every unread event as read (called when the user
-// opens the Issues & PRs tab).
-func MarkForgeEventsRead() error {
+// UnreadForgeItemKeys returns the set of item keys with at least one unread
+// event in this repository.
+//
+// The list endpoints use this to tag each row, so a row's unread dot and the
+// dock badge are computed from the same rows and cannot disagree.
+func UnreadForgeItemKeys(repo ForgeRepoKey) (map[string]bool, error) {
+	out := make(map[string]bool)
+	if dbRead == nil {
+		return out, nil
+	}
+	rows, err := dbRead.Query(
+		`SELECT DISTINCT item_key FROM forge_events
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
+		   AND read_at IS NULL AND item_key != ''`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out[key] = true
+	}
+	return out, rows.Err()
+}
+
+// MarkForgeEventsRead marks unread events as read.
+//
+// An empty itemKey marks the whole repository (the "mark all read" action); a
+// specific key marks just that item (opening one row). Only existing rows are
+// touched, so a later event for the same item starts unread again — no watermark
+// bookkeeping is needed to re-arm it.
+func MarkForgeEventsRead(repo ForgeRepoKey, itemKey string) error {
 	if db == nil {
 		return nil
 	}
-	_, err := WriteExec(`UPDATE forge_events SET read_at = CURRENT_TIMESTAMP WHERE read_at IS NULL`)
+	if itemKey == "" {
+		_, err := WriteExec(
+			`UPDATE forge_events SET read_at = CURRENT_TIMESTAMP
+			 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND read_at IS NULL`,
+			repo.Platform, repo.Host, repo.Owner, repo.Repo,
+		)
+		return err
+	}
+	_, err := WriteExec(
+		`UPDATE forge_events SET read_at = CURRENT_TIMESTAMP
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
+		   AND item_key = ? AND read_at IS NULL`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, itemKey,
+	)
 	return err
+}
+
+// SetForgeEventCreatedAtForTest backdates one item's events so a test can
+// exercise the retention cutoff without waiting. Test-only.
+func SetForgeEventCreatedAtForTest(repo ForgeRepoKey, itemKey string, at time.Time) error {
+	if db == nil {
+		return nil
+	}
+	_, err := WriteExec(
+		`UPDATE forge_events SET created_at = ?
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND item_key = ?`,
+		at, repo.Platform, repo.Host, repo.Owner, repo.Repo, itemKey,
+	)
+	return err
+}
+
+// PruneForgeEvents deletes events older than the cutoff.
+//
+// Only READ rows are deleted. An unread row is the user's only record that
+// something changed, so dropping one would silently lower the badge without the
+// user ever having seen it.
+//
+// The row-level dedupe key is what stops a pruned event from being re-dispatched
+// if the provider still reports the change: deleting the row re-arms that dedupe,
+// which is why the cutoff is far longer than any overlap window.
+func PruneForgeEvents(repo ForgeRepoKey, createdBefore time.Time) (int64, error) {
+	if db == nil {
+		return 0, nil
+	}
+	res, err := WriteExec(
+		`DELETE FROM forge_events
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
+		   AND read_at IS NOT NULL AND created_at < ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, createdBefore,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

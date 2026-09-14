@@ -39,6 +39,8 @@ const state = {
   setMineFilter: mockSetMineFilter,
   setQuery: mockSetQuery,
   reset: vi.fn(),
+  markItemRead: vi.fn(),
+  markAllRead: vi.fn(),
 }
 
 /** Mirrors the real useForgePipelines shape closely enough for the panel. */
@@ -54,6 +56,8 @@ const pipelineState = {
   loadMore: mockPipelinesLoadMore,
   setFilter: mockPipelinesSetFilter,
   reset: vi.fn(),
+  markItemRead: vi.fn(),
+  markAllRead: vi.fn(),
 }
 
 vi.mock('@/composables/useForge', () => ({
@@ -80,6 +84,23 @@ vi.mock('@/composables/useForge', () => ({
     close: vi.fn(),
   }),
 }))
+
+// A real ref, not a {value} literal: templates only auto-unwrap actual refs, and
+// the button's disabled state compares against the unwrapped number.
+const unreadCount = vi.hoisted(() => ({ current: null as null | { value: number } }))
+vi.mock('@/composables/useForgeUnread', async () => {
+  const { ref } = await import('vue')
+  const count = ref(0)
+  unreadCount.current = count
+  return {
+    useForgeUnread: () => ({
+      forgeUnreadCount: count,
+      refresh: vi.fn(),
+      onForgeEvent: vi.fn(),
+      markRead: vi.fn(),
+    }),
+  }
+})
 
 const mockFetchRemotes = vi.fn(async () => ({ remotes: [] }))
 const mockSetBinding = vi.fn(async () => ({ binding: {} }))
@@ -108,6 +129,8 @@ function makeI18n() {
           searchPlaceholder: 'Search',
           loading: 'Loading',
           emptyList: 'No matching issues or PRs',
+          markAllRead: 'Mark all read',
+          unreadItem: 'New activity',
           retry: 'Retry',
           pipeline: {
             status: { success: 'Success', failure: 'Failed', running: 'Running', cancelled: 'Cancelled', skipped: 'Skipped', unknown: 'Unknown' },
@@ -630,5 +653,82 @@ describe('ForgePanelContent', () => {
     const emitted = wrapper.emitted('quote')
     expect(emitted).toBeTruthy()
     expect(emitted![0][0]).toEqual({ item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
+  })
+})
+
+describe('ForgePanelContent unread rows', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    unreadCount.current!.value = 0
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.error.value = null
+  })
+
+  it('marks only the unread rows and gives them an unread dot', async () => {
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'Seen', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: false },
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const rows = wrapper.findAll('.forge-row')
+    expect(rows).toHaveLength(2)
+    // The user must be able to tell WHICH rows are new — that is the whole point
+    // of the change.
+    expect(rows[0].classes()).not.toContain('unread')
+    expect(rows[1].classes()).toContain('unread')
+    expect(rows[0].find('.forge-unread-dot').exists()).toBe(false)
+    expect(rows[1].find('.forge-unread-dot').exists()).toBe(true)
+  })
+
+  it('marks the row read when it is opened', async () => {
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-row').trigger('click')
+
+    // Opening the row is what marks it read.
+    expect(state.markItemRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables "mark all read" when nothing is unread', async () => {
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const btn = wrapper.find('.clear-unread-btn')
+    expect(btn.exists()).toBe(true)
+    // Nothing unread: the action has nothing to do.
+    expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('enables "mark all read" and calls the list when something is unread', async () => {
+    unreadCount.current!.value = 3
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const btn = wrapper.find('.clear-unread-btn')
+    expect(btn.attributes('disabled')).toBeUndefined()
+
+    await btn.trigger('click')
+    expect(state.markAllRead).toHaveBeenCalled()
   })
 })

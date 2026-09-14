@@ -79,6 +79,16 @@
             </button>
             <span v-else>{{ t('nav.forge') }}</span>
           </span>
+          <button
+            class="forge-header-btn clear-unread-btn"
+            :class="{ active: forgeUnreadCount > 0 }"
+            :disabled="forgeUnreadCount === 0"
+            :title="t('forge.markAllRead')"
+            :aria-label="t('forge.markAllRead')"
+            @click="markAllRead"
+          >
+            <CheckCheck :size="14" />
+          </button>
           <RefreshButton
             class="forge-header-btn"
             :loading="items.loading.value"
@@ -156,6 +166,7 @@
               v-for="run in pipelines.pipelines.value"
               :key="run.id"
               class="forge-row forge-pipeline-row"
+              :class="{ unread: run.unread }"
               @click="openPipelineDetail(run)"
             >
               <span class="forge-state-dot" :class="`pipeline-${run.status}`"></span>
@@ -163,6 +174,12 @@
                 <div class="forge-row-title">
                   <span class="forge-row-number">#{{ run.number }}</span>
                   <span class="forge-row-text">{{ run.name }}</span>
+                  <span
+                    v-if="run.unread"
+                    class="forge-unread-dot"
+                    :title="t('forge.unreadItem')"
+                    :aria-label="t('forge.unreadItem')"
+                  ></span>
                 </div>
                 <div class="forge-row-meta">
                   <span class="forge-pipeline-ref">{{ run.ref }}</span>
@@ -237,6 +254,7 @@
             v-for="it in items.items.value"
             :key="`${it.type}-${it.number}`"
             class="forge-row"
+            :class="{ unread: it.unread }"
             @click="openDetail(it)"
           >
             <span class="forge-state-dot" :class="`state-${it.state}`"></span>
@@ -244,6 +262,12 @@
               <div class="forge-row-title">
                 <span class="forge-row-number">#{{ it.number }}</span>
                 <span class="forge-row-text">{{ it.title }}</span>
+                <span
+                  v-if="it.unread"
+                  class="forge-unread-dot"
+                  :title="t('forge.unreadItem')"
+                  :aria-label="t('forge.unreadItem')"
+                ></span>
               </div>
               <div class="forge-row-meta">
                 <span class="forge-row-author">{{ it.author }}</span>
@@ -322,7 +346,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Github, Inbox, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
-  ChevronRight, ChevronDown, AlertCircle, Unlink,
+  ChevronRight, ChevronDown, AlertCircle, Unlink, CheckCheck,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
@@ -333,7 +357,8 @@ import ForgeDetail from '@/components/forge/ForgeDetail.vue'
 import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
 import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, ForgeApiError } from '@/utils/forgeApi'
+import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
+import { useForgeUnread } from '@/composables/useForgeUnread'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -349,6 +374,9 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const items = useForgeItems(() => props.projectPath)
 const pipelines = useForgePipelines(() => props.projectPath)
+// The same count the dock badge shows, so the "mark all read" button reflects
+// the badge rather than a separately-tracked number that could disagree.
+const { forgeUnreadCount } = useForgeUnread()
 
 /**
  * The three peer tabs of the forge panel. Declared as data rather than three
@@ -414,15 +442,27 @@ watch(() => props.active, (isActive) => {
   if (items.items.value.length === 0 && !items.loading.value) void items.load()
 })
 
-function openDetail(it: { type: 'issue' | 'pr'; number: number }) {
+function openDetail(it: ForgeItem) {
+  // Opening the row is what marks it read. Deliberately not awaited: the view
+  // opens immediately and the badge settles in the background.
+  void items.markItemRead(it)
   items.type.value = it.type
   detailNumber.value = it.number
   detailOpen.value = true
 }
 
 function openPipelineDetail(run: ForgePipelineRun) {
+  void pipelines.markItemRead(run)
   pipelineDetailId.value = run.id
   detailOpen.value = true
+}
+
+/** Mark every unread item in this repository read. */
+function markAllRead() {
+  // Both lists share one repo-level read state, so clear whichever is loaded.
+  // The other list re-reads on its next load and will come back already read.
+  void items.markAllRead()
+  void pipelines.markAllRead()
 }
 function closeDetail() {
   detailOpen.value = false

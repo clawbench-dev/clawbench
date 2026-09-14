@@ -115,21 +115,28 @@ func TestForgeDispatcher_UnreadIndependentOfToggles(t *testing.T) {
 	d := service.NewForgeEventDispatcher(func() model.Config { return cfg }, nil, nil)
 
 	ref := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"}
+	// The unread count is per-repository, so the key must match the repo the
+	// event was persisted under.
+	repoKey := service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"}
 
-	// Simulate what the syncer does: persist the event, then dispatch.
+	// Simulate what the syncer does: persist the event, then dispatch. The
+	// item_key is built the same way the syncer builds it, so the row is
+	// countable by the unread badge.
 	_, err := service.InsertForgeEvent(service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
-		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+		ItemType: "issue", Number: 1,
+		ItemKey:   forge.ItemKeyForNumber(forge.ItemTypeIssue, 1),
+		EventType: "closed", DedupeKey: "k1",
 	})
 	require.NoError(t, err)
 	d.HandleChange(context.Background(), ref, testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
 
-	n, err := service.CountUnreadForgeEvents()
+	n, err := service.CountUnreadForgeEvents(repoKey)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "unread must accrue even when notifications are disabled")
 
-	require.NoError(t, service.MarkForgeEventsRead())
-	n, err = service.CountUnreadForgeEvents()
+	require.NoError(t, service.MarkForgeEventsRead(repoKey, ""))
+	n, err = service.CountUnreadForgeEvents(repoKey)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }

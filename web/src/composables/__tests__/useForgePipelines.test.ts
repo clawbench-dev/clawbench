@@ -5,6 +5,7 @@ import { nextTick } from 'vue'
 // tests assert request shaping and state handling rather than HTTP.
 const mockFetchForgePipelines = vi.fn()
 const mockFetchForgePipeline = vi.fn()
+const mockMarkForgeRead = vi.fn()
 
 vi.mock('@/utils/forgeApi', async () => {
   const actual = await vi.importActual<typeof import('@/utils/forgeApi')>('@/utils/forgeApi')
@@ -12,8 +13,20 @@ vi.mock('@/utils/forgeApi', async () => {
     ...actual,
     fetchForgePipelines: (...a: unknown[]) => mockFetchForgePipelines(...a),
     fetchForgePipeline: (...a: unknown[]) => mockFetchForgePipeline(...a),
+    markForgeRead: (...a: unknown[]) => mockMarkForgeRead(...a),
   }
 })
+
+// Marking read re-derives the dock badge; the badge itself is covered by
+// useForgeUnread.test.ts, so stub it here to keep this test about the list.
+vi.mock('@/composables/useForgeUnread', () => ({
+  useForgeUnread: () => ({
+    forgeUnreadCount: { value: 0 },
+    refresh: vi.fn(),
+    onForgeEvent: vi.fn(),
+    markRead: vi.fn(),
+  }),
+}))
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -37,6 +50,7 @@ const binding = { platform: 'github', host: 'github.com', owner: 'acme', repo: '
 describe('useForgePipelines', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMarkForgeRead.mockResolvedValue({ count: 0 })
   })
 
   it('defaults to the failure filter', async () => {
@@ -184,6 +198,7 @@ describe('useForgePipelines', () => {
 describe('useForgePipelineDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockMarkForgeRead.mockResolvedValue({ count: 0 })
   })
 
   it('loads the run and its jobs', async () => {
@@ -236,5 +251,79 @@ describe('useForgePipelineDetail', () => {
 
     expect(d.run.value).toBeNull()
     expect(d.jobs.value).toEqual([])
+  })
+})
+
+describe('useForgePipelines read state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockMarkForgeRead.mockResolvedValue({ count: 0 })
+  })
+
+  it('marks one run read by its pipeline key, leaving the others alone', async () => {
+    mockFetchForgePipelines.mockResolvedValue({
+      pipelines: [
+        { ...run(100, 'failure'), unread: true },
+        { ...run(101, 'failure'), unread: true },
+      ],
+      hasMore: false, nextPage: 2, binding,
+    })
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+
+    await p.markItemRead(p.pipelines.value[0])
+
+    // The key must carry the run id: every run has number 0, so an item-number
+    // key would clear all of them at once.
+    expect(mockMarkForgeRead).toHaveBeenCalledWith('pipeline/run:100')
+    expect(p.pipelines.value[0].unread).toBe(false)
+    expect(p.pipelines.value[1].unread).toBe(true)
+  })
+
+  it('does not call the API for a run that is already read', async () => {
+    mockFetchForgePipelines.mockResolvedValue({
+      pipelines: [{ ...run(100, 'success'), unread: false }],
+      hasMore: false, nextPage: 2, binding,
+    })
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+
+    await p.markItemRead(p.pipelines.value[0])
+
+    expect(mockMarkForgeRead).not.toHaveBeenCalled()
+  })
+
+  it('restores the unread flag when the mark fails', async () => {
+    mockFetchForgePipelines.mockResolvedValue({
+      pipelines: [{ ...run(100, 'failure'), unread: true }],
+      hasMore: false, nextPage: 2, binding,
+    })
+    mockMarkForgeRead.mockRejectedValueOnce(new Error('offline'))
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+    await p.markItemRead(p.pipelines.value[0])
+
+    // The UI must not claim the item was seen when the write failed.
+    expect(p.pipelines.value[0].unread).toBe(true)
+  })
+
+  it('marks all read with no itemKey and clears every row', async () => {
+    mockFetchForgePipelines.mockResolvedValue({
+      pipelines: [
+        { ...run(100, 'failure'), unread: true },
+        { ...run(101, 'failure'), unread: true },
+      ],
+      hasMore: false, nextPage: 2, binding,
+    })
+    mockMarkForgeRead.mockResolvedValue({ count: 0 })
+
+    const p = useForgePipelines(() => '/proj')
+    await p.load()
+    await p.markAllRead()
+
+    expect(mockMarkForgeRead).toHaveBeenCalledWith()
+    expect(p.pipelines.value.every(r => !r.unread)).toBe(true)
   })
 })
