@@ -450,4 +450,108 @@ describe('SessionTagDialog', () => {
     // Whitespace-only input is not a tag; clearing the selection still works.
     expect(mockPatch.mock.calls[0][1]).toEqual({ tags: [] })
   })
+
+  // Regression: a tag created in the dialog has no server-side definition until
+  // the session is saved, so deleting it issued a DELETE that always failed and
+  // the catch left the row in place — the trash button looked dead.
+  it('removing a just-created tag drops it locally without calling the server', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('brandnew')
+    await wrapper.find('.st-add-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.st-candidate').length).toBe(1)
+
+    await wrapper.find('.st-delete-btn').trigger('click')
+    await flushPromises()
+
+    // Nothing to delete server-side; the request would 400.
+    expect(mockDelete).not.toHaveBeenCalled()
+    // And no confirmation — undoing a local creation affects nothing else.
+    expect(mockDialogHolder.confirm).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.st-candidate').length).toBe(0)
+    expect(wrapper.vm.selected).toEqual([])
+  })
+
+  it('removing a just-created tag also clears it from the pending save payload', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    mockPatch.mockResolvedValue({})
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('brandnew')
+    await wrapper.find('.st-add-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.st-delete-btn').trigger('click')
+    await flushPromises()
+
+    // No server round-trip: the tag never existed outside this dialog.
+    expect(mockDelete).not.toHaveBeenCalled()
+
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+    // The discarded tag must not sneak back in via the save payload.
+    expect(mockPatch.mock.calls[0][1]).toEqual({ tags: [] })
+  })
+
+  it('still deletes an existing tag through the server, after confirming', async () => {
+    mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 2 }] })
+    mockDelete.mockResolvedValue({ ok: true })
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    const wrapper = await mountDialog({ initialTags: ['bug'] })
+    await flushPromises()
+
+    await wrapper.find('.st-delete-btn').trigger('click')
+    await flushPromises()
+
+    // An existing definition is shared, so it keeps the confirm + server delete.
+    expect(mockDialogHolder.confirm).toHaveBeenCalled()
+    expect(mockDelete).toHaveBeenCalledTimes(1)
+    expect(mockDelete.mock.calls[0][0]).toContain('name=bug')
+    expect(wrapper.findAll('.st-candidate').length).toBe(0)
+  })
+
+  it('keeps an existing tag when the delete confirmation is declined', async () => {
+    mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 2 }] })
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(false)
+    const wrapper = await mountDialog({ initialTags: ['bug'] })
+    await flushPromises()
+
+    await wrapper.find('.st-delete-btn').trigger('click')
+    await flushPromises()
+
+    expect(mockDelete).not.toHaveBeenCalled()
+    expect(wrapper.findAll('.st-candidate').length).toBe(1)
+  })
+
+  it('re-adding a name after removing the pending tag still works', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    mockPatch.mockResolvedValue({})
+    mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('brandnew')
+    await wrapper.find('.st-add-btn').trigger('click')
+    await flushPromises()
+    await wrapper.find('.st-delete-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.st-candidate').length).toBe(0)
+
+    // Creating it again must behave like a fresh creation, not a no-op.
+    await wrapper.find('.st-input').setValue('brandnew')
+    await wrapper.find('.st-add-btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.st-candidate').length).toBe(1)
+
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+    expect(mockPatch.mock.calls[0][1]).toEqual({
+      tags: [{ name: 'brandnew', scope: 'project' }],
+    })
+  })
 })

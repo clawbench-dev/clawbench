@@ -141,21 +141,34 @@ function addNewTag() {
   // Adding a name that already exists in the candidate list must not create a
   // duplicate chip — just select it.
   if (!candidates.value.some(c => c.name === name)) {
-    candidates.value = [...candidates.value, { name, scope: newTagScope.value, count: 0 }]
+    // `pending: true` marks a tag that exists only in this dialog. It has no
+    // server-side definition yet, which requestDelete relies on: asking the
+    // server to delete it would fail and the row would appear undeletable.
+    candidates.value = [...candidates.value, { name, scope: newTagScope.value, count: 0, pending: true }]
   }
   if (!isSelected(name)) selected.value = [...selected.value, name]
   newTagName.value = ''
 }
 
 /**
- * Deletes the tag definition itself (from every session), not just this one.
- * Removes it from both the candidate list and the current selection.
+ * Removes a tag from this dialog.
  *
- * The scope is sent so the backend deletes exactly the definition the user saw:
- * when the same name exists globally and as a project tag, omitting it could
- * destroy a global label shared by every project.
+ * For a tag that already exists server-side this deletes the DEFINITION (from
+ * every session), which is why it confirms first and sends the scope the user
+ * saw — when the same name exists globally and as a project tag, omitting the
+ * scope could destroy a global label shared by every project.
+ *
+ * A tag created in this dialog but not yet saved has no server-side definition,
+ * so there is nothing to delete: the request would fail and the row would look
+ * undeletable. Dropping it locally is exactly "undo the creation", and it needs
+ * no confirmation since nothing outside this dialog is affected.
  */
 async function requestDelete(tag) {
+  if (tag.pending) {
+    candidates.value = candidates.value.filter(c => c.name !== tag.name)
+    selected.value = selected.value.filter(n => n !== tag.name)
+    return
+  }
   const confirmed = await dialog.confirm(
     t('sessionTags.deleteConfirm', { name: tag.name }),
     { confirmText: t('common.delete'), cancelText: t('common.cancel') }
