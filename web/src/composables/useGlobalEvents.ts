@@ -11,7 +11,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 
 // Event types from server
-interface ServerEvent {
+export interface ServerEvent {
     type: string           // "event" | "ping"
     id?: string            // event ID for dedup
     event?: string         // "session_update" | "task_update"
@@ -32,6 +32,7 @@ interface ServerEvent {
         response_preview?: string
         response_preview_plain?: string // Markdown-stripped preview for Android/browser notifications
         last_user_message?: string // plain-text preview of the most recent user message (completed only)
+        last_user_has_files?: boolean // whether that user message carried attachments (completed only)
         agent_id?: string // agent that ran the session/execution (completed only)
         tool_name?: string
         project_path?: string

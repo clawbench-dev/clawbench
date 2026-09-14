@@ -22,6 +22,7 @@ import {
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, isDockTabId } from '@/composables/dockTabs'
+import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
 
 beforeEach(() => {
   _resetForTest()
@@ -314,6 +315,16 @@ describe('dock tab registry (single source of truth)', () => {
   it('every registry entry carries an i18n title key', () => {
     for (const tab of DOCK_TABS) {
       expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)
+    }
+  })
+
+  it('every registry entry has an icon attached in the icon module', () => {
+    // Icons live in dockTabMeta.ts (kept out of dockTabs.ts so that importing
+    // the ids does not pull lucide into composable module graphs). Both halves
+    // must cover exactly the same ids.
+    expect(DOCK_TABS_WITH_ICONS.map((t) => t.id)).toEqual(DOCK_TABS.map((t) => t.id))
+    for (const tab of DOCK_TABS_WITH_ICONS) {
+      expect(tab.icon, `${tab.id} has no icon`).toBeTruthy()
     }
   })
 

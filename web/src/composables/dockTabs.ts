@@ -9,8 +9,8 @@
  * components here would make those tests throw at module load with
  * `No "FolderOpen" export is defined on the "lucide-vue-next" mock`.
  *
- * The icon half lives in `dockTabMeta.ts`, which only the dock-rendering code
- * imports.
+ * The icon/title half lives in `dockTabMeta.ts`, which only the dock-rendering
+ * code imports.
  */
 
 /**
