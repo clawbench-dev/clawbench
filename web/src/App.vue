@@ -548,6 +548,7 @@ import { useDirectoryReturn } from './composables/useDirectoryReturn'
 import { store } from './stores/app.ts'
 import { restoreProjectWorkspace as restoreProjectWorkspaceImpl } from './composables/useProjectWorkspace.ts'
 import { openPendingSessionWhenReady } from './composables/usePendingSessionOpen.ts'
+import { guardStartupWithSplash } from './composables/useStartupGuard.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
@@ -1492,6 +1493,10 @@ function registerAppEventListeners() {
  * Must complete BEFORE isAuthenticated is set to true (which triggers
  * ChatPanelContent mount and loadHistory).
  * Returns false if a fatal error occurred (callers should not set isAuthenticated).
+ *
+ * Callers must route this through guardStartupWithSplash(): an exception thrown
+ * here would otherwise reject the caller's async onMounted handler before it
+ * reaches dismissSplash(), leaving the native splash overlay up forever.
  */
 async function initializeApp() {
   // 1. Prerequisite data — must complete before UI renders
@@ -1535,15 +1540,29 @@ async function initializeApp() {
   return true
 }
 
+/** Report a fatal startup error to the user and to the client log relay. */
+function reportStartupFailure(context: string, err: unknown) {
+  appLog.e(TAG, `[${context}] app initialization failed:`, err)
+  toast.show(t('toast.initFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+}
+
 async function handleLoginSuccess() {
     // Full initialization BEFORE setting isAuthenticated — ensures
     // clawbench_project cookie, session identity, and all infrastructure
     // are ready before ChatPanelContent mounts and calls loadHistory().
-    if (!(await initializeApp())) return
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const ok = await guardStartupWithSplash({
+      initialize: initializeApp,
+      dismissSplash,
+      onError: (err) => reportStartupFailure('handleLoginSuccess', err),
+      // Flip auth before the splash fades so the app UI is already mounted
+      // behind it (the original ordering).
+      onReady: () => { isAuthenticated.value = true },
+    })
+    if (!ok) return
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
-    isAuthenticated.value = true
-    dismissSplash()
     await nextTick()
     applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()
@@ -2556,6 +2575,8 @@ onMounted(async () => {
         } else {
             toast.show(t('toast.serverUnreachableWeb'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
         }
+        // Login view stays mounted — drop the native splash so it can't cover it.
+        dismissSplash()
         return
     }
     if (!resp.ok) {
@@ -2567,10 +2588,10 @@ onMounted(async () => {
                         const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
                         if (loginRes.ok) {
                             await getNative()?.setSSHPassword?.(savedPwd)
-                        } else { isAuthenticated.value = false; return }
-                    } catch { isAuthenticated.value = false; return }
-                } else { isAuthenticated.value = false; return }
-            } else { isAuthenticated.value = false; return }
+                        } else { isAuthenticated.value = false; dismissSplash(); return }
+                    } catch { isAuthenticated.value = false; dismissSplash(); return }
+                } else { isAuthenticated.value = false; dismissSplash(); return }
+            } else { isAuthenticated.value = false; dismissSplash(); return }
         } else {
             isAuthenticated.value = false
             if (isAppMode.value) {
@@ -2578,6 +2599,7 @@ onMounted(async () => {
             } else {
                 toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
             }
+            dismissSplash()
             return
         }
     }
@@ -2587,9 +2609,17 @@ onMounted(async () => {
     // so that ChatPanelContent mounts only when the clawbench_project cookie
     // and session identity are already available. This prevents loadHistory()
     // from firing with missing cookies (Android first-login bug).
-    if (!(await initializeApp())) return
-    isAuthenticated.value = true
-    dismissSplash()
+    // The guard dismisses the native splash on every exit path, so a failure
+    // can't strand the user on the splash overlay.
+    const initOk = await guardStartupWithSplash({
+        initialize: initializeApp,
+        dismissSplash,
+        onError: (err) => reportStartupFailure('onMounted', err),
+        // Flip auth before the splash fades so the app UI is already mounted
+        // behind it (the original ordering).
+        onReady: () => { isAuthenticated.value = true },
+    })
+    if (!initOk) return
     await nextTick()
     applyUIScale(Number(localConfig.uiScale ?? 1))
     applyFontConfig()

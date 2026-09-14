@@ -3384,16 +3384,27 @@ components:
 
     FileEntry:
       type: object
-      description: 附件条目。
+      description: |
+        附件条目，可为本地文件/目录，也可为**外部链接**（`kind=url`）。
+        链接条目不参与文件系统校验，且其地址会以
+        `[Referenced external link: <url>]` 前缀注入 AI 的 prompt。
       properties:
         path:
           type: string
-        name:
-          type: string
-        size:
+          description: 本地路径；`kind=url` 时为人类可读标签（如 `owner/repo#123`）。
+        isDir:
+          type: boolean
+        startLine:
           type: integer
-        mime:
+        endLine:
+          type: integer
+        kind:
           type: string
+          enum: [file, url]
+          description: 缺省为本地文件；`url` 表示外部地址。
+        url:
+          type: string
+          description: 外部地址，仅当 `kind=url` 时使用；只接受 http(s)。
 
     GalleryItem:
       type: object

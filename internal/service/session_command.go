@@ -191,6 +191,11 @@ type LaunchConfig struct {
 	BackendName string
 	AgentID     string
 	Message     string
+	// Files are the message's attachments. They MUST be carried here: this
+	// engine builds its own prompt (executeStreamRunShared) and does not go
+	// through the handler's prompt builder, so omitting them silently drops
+	// every attachment — the URL of a quoted issue/PR and ordinary files alike.
+	Files []model.FileEntry
 	// QueueID is the queue_id of the queued user message this execution answers
 	// (set when draining a queued message). It is recorded on the reply row so
 	// the frontend can anchor the reply to its own question when multiple
@@ -243,6 +248,10 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 			ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
 				cfg.Message = msg.Content
 				cfg.QueueID = msg.QueueID
+				// Carry the drained row's own attachments, replacing whatever the
+				// previous turn carried — otherwise turn N's files would be
+				// re-prefixed onto turn N+1's prompt.
+				cfg.Files = msg.Files
 				nextResult := executeStreamRunShared(ctx, cfg)
 				return DrainResult{
 					CancelReason: nextResult.cancelReason,
@@ -348,6 +357,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 			BackendName: cfg.BackendName,
 			AgentID:     cfg.AgentID,
 			Message:     cfg.Message,
+			Files:       cfg.Files,
 			QueueID:     cfg.QueueID,
 		})
 		return true, false, msgID, nil
@@ -374,6 +384,7 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 					BackendName: cfg.BackendName,
 					AgentID:     cfg.AgentID,
 					Message:     cfg.Message,
+					Files:       cfg.Files,
 					QueueID:     cfg.QueueID,
 				})
 			}
@@ -762,7 +773,19 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		fileDir = absDir
 	}
 
-	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
+	// Prefix the attachments onto the prompt. This engine is a second prompt
+	// builder alongside handler.buildChatRequest, so it must apply the same
+	// classification — otherwise every attachment is silently dropped here
+	// (both an ordinary file's path and a quoted issue/PR's URL).
+	//
+	// Paths arrive already resolved/validated (the handler resolves them before
+	// persisting, and the drain loop reads them back from the DB), so there is
+	// no legacy filePaths channel to de-duplicate against.
+	prompt := cfg.Message
+	parts := model.ClassifyAttachments(cfg.Files, nil)
+	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
+
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
 
 	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
 	if err != nil {
