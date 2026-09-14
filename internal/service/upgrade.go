@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha1" //nolint:gosec // G505: legacy npm dist.shasum is sha1 by spec; see resolveExpectedDigest
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +30,10 @@ import (
 
 // osWindows is used for runtime.GOOS comparison to avoid goconst duplication.
 const osWindows = "windows"
+
+// sha1Name is the digest algorithm name shared by npm's SRI prefix and its
+// legacy hex-encoded dist.shasum.
+const sha1Name = "sha1"
 
 // URL schemes recognized by isValidRegistryURL.
 const (
@@ -125,7 +131,8 @@ type UpgradeInfo struct {
 	CurrentVersion string
 	LatestVersion  string
 	TarballURL     string
-	Integrity      string // e.g. "sha512-abcdef..."
+	Integrity      string // SRI string, e.g. "sha512-abcdef..."
+	Shasum         string // legacy hex-encoded sha1, used when Integrity is absent
 	HasUpgrade     bool
 }
 
@@ -299,6 +306,7 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 		LatestVersion:  npmResp.Version,
 		TarballURL:     tarballURL,
 		Integrity:      npmResp.Dist.Integrity,
+		Shasum:         npmResp.Dist.Shasum,
 		HasUpgrade:     hasUpgrade,
 	}, nil
 }
@@ -441,6 +449,17 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		return
 	}
 
+	// 1e. Resolve the expected digest before downloading anything: a registry
+	// response with no usable hash must abort the upgrade rather than produce a
+	// binary that was never verified.
+	digest, digestErr := resolveExpectedDigest(info.Integrity, info.Shasum)
+	if digestErr != nil {
+		slog.Warn("upgrade: unusable registry integrity metadata", "error", digestErr)
+		SetUpgradeError(fmt.Sprintf("Refusing to install an unverified binary: %v", digestErr))
+		broadcastUpgradeUpdate()
+		return
+	}
+
 	// 2. Download and extract (with timeout from ctx)
 	setStateAndBroadcast(UpgradePhaseDownloading, 0, "Downloading...")
 
@@ -456,7 +475,7 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 		newBinPath += ".exe"
 	}
 
-	if downloadErr := downloadAndExtract(ctx, info.TarballURL, info.Integrity, newBinPath); downloadErr != nil {
+	if downloadErr := downloadAndExtract(ctx, info.TarballURL, digest, newBinPath); downloadErr != nil {
 		_ = os.RemoveAll(tmpDir)
 		SetUpgradeError(fmt.Sprintf("Download/extract failed: %v", downloadErr))
 		broadcastUpgradeUpdate()
@@ -584,9 +603,11 @@ func tryShortCircuitRestart(currentBin, targetVersion string) bool {
 	return true
 }
 
-// downloadAndExtract downloads the npm tarball and extracts the binary.
-// ctx provides timeout and cancellation. integrity is the expected SHA-512 hash.
-func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath string) error { //nolint:gocyclo // download+extract+verify is inherently multi-branch
+// downloadAndExtract downloads the npm tarball, verifies it against digest, and
+// extracts the binary. ctx provides timeout and cancellation. The tarball is
+// always verified: digest comes from resolveExpectedDigest, which fails the
+// upgrade before any download when the registry supplied no usable hash.
+func downloadAndExtract(ctx context.Context, tarballURL string, digest expectedDigest, destPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create download request: %w", err)
@@ -602,13 +623,9 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
-	// If integrity is provided, wrap with hashing reader for verification
-	var bodyReader io.Reader = resp.Body
-	var hasher hash.Hash
-	if integrity != "" {
-		hasher = sha512.New()
-		bodyReader = io.TeeReader(resp.Body, hasher)
-	}
+	// Hash the bytes as they stream in, so verification needs no second pass.
+	hasher := digest.newHasher()
+	bodyReader := io.TeeReader(resp.Body, hasher)
 
 	// Wrap body with progress reader (throttled)
 	totalSize := resp.ContentLength
@@ -658,17 +675,15 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 			_ = outFile.Close()
 			_ = os.Chmod(destPath, 0o755) //nolint:gosec // G302: binary must be executable
 
-			// Verify integrity if available
-			if hasher != nil && integrity != "" {
-				// Read remaining data to ensure hasher has full tarball content
-				_, _ = io.Copy(io.Discard, gzr) //nolint:gosec // G110: integrity hash validates tarball
+			// Verify the tarball before the extracted binary can be used.
+			// Read remaining data to ensure hasher has full tarball content
+			_, _ = io.Copy(io.Discard, gzr) //nolint:gosec // G110: integrity hash validates tarball
 
-				if verifyErr := verifyIntegrity(hasher, integrity); verifyErr != nil {
-					_ = os.Remove(destPath)
-					return fmt.Errorf("integrity verification failed: %w", verifyErr)
-				}
-				slog.Info("upgrade: integrity verified", "algorithm", "sha512")
+			if verifyErr := digest.verify(hasher); verifyErr != nil {
+				_ = os.Remove(destPath)
+				return fmt.Errorf("integrity verification failed: %w", verifyErr)
 			}
+			slog.Info("upgrade: integrity verified", "algorithm", digest.algorithm)
 
 			return nil
 		}
@@ -677,23 +692,103 @@ func downloadAndExtract(ctx context.Context, tarballURL, integrity, destPath str
 	return fmt.Errorf("binary '%s' not found in tarball", binName)
 }
 
-// verifyIntegrity checks the downloaded tarball against the npm integrity string.
-// The integrity string format is "sha512-<base64-hash>".
-func verifyIntegrity(hasher hash.Hash, integrity string) error {
-	if !strings.HasPrefix(integrity, "sha512-") {
-		slog.Warn("upgrade: unsupported integrity algorithm, skipping verification", "integrity", integrity[:min(len(integrity), 20)])
-		return nil
+// expectedDigest is the algorithm and hash a downloaded tarball must match. It
+// is resolved from the registry response *before* the download starts, so an
+// unusable response fails the upgrade outright rather than reaching the
+// extraction step where verification could be skipped.
+type expectedDigest struct {
+	algorithm string // "sha512" or "sha1"
+	hash      []byte
+}
+
+// newHasher returns a hash.Hash for the digest's algorithm.
+func (d expectedDigest) newHasher() hash.Hash {
+	if d.algorithm == sha1Name {
+		return sha1.New() //nolint:gosec // G401: legacy npm dist.shasum compatibility, see resolveExpectedDigest
 	}
-	expectedB64 := strings.TrimPrefix(integrity, "sha512-")
-	expectedHash, err := base64.StdEncoding.DecodeString(expectedB64)
-	if err != nil {
-		return fmt.Errorf("failed to decode integrity hash: %w", err)
-	}
-	actualHash := hasher.Sum(nil)
-	if !equalHashes(actualHash, expectedHash) {
-		return fmt.Errorf("hash mismatch: expected %x, got %x", expectedHash[:8], actualHash[:8])
+	return sha512.New()
+}
+
+// verify compares the hasher's accumulated sum against the expected hash.
+func (d expectedDigest) verify(hasher hash.Hash) error {
+	actual := hasher.Sum(nil)
+	if !equalHashes(actual, d.hash) {
+		return fmt.Errorf("hash mismatch: expected %x, got %x", shortHash(d.hash), shortHash(actual))
 	}
 	return nil
+}
+
+// shortHash truncates a hash for error messages.
+func shortHash(b []byte) []byte {
+	const maxLen = 8
+	if len(b) > maxLen {
+		return b[:maxLen]
+	}
+	return b
+}
+
+// truncateForLog caps a registry-supplied value so a malformed response cannot
+// flood the logs.
+func truncateForLog(s string) string {
+	const maxLen = 20
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// resolveExpectedDigest turns the registry's dist fields into the digest the
+// downloaded tarball must match.
+//
+// It mirrors npm's own behavior (pacote): dist.integrity is the SRI string and
+// is preferred, falling back to the legacy hex-encoded sha1 dist.shasum when
+// integrity is absent — npm's spec makes dist.tarball the only required field,
+// and integrity "may not be present for older packages". A response carrying
+// neither field, or one using an algorithm we cannot compute, is an error:
+// installing a binary that was never verified is worse than refusing the
+// upgrade.
+func resolveExpectedDigest(integrity, shasum string) (expectedDigest, error) {
+	if integrity = strings.TrimSpace(integrity); integrity != "" {
+		algorithm, encoded, ok := strings.Cut(integrity, "-")
+		if !ok {
+			return expectedDigest{}, fmt.Errorf("malformed integrity string %q: missing algorithm prefix",
+				truncateForLog(integrity))
+		}
+
+		var size int
+		switch algorithm {
+		case "sha512":
+			size = sha512.Size
+		case sha1Name:
+			size = sha1.Size
+		default:
+			return expectedDigest{}, fmt.Errorf("unsupported integrity algorithm %q: only sha512 and sha1 can be verified",
+				algorithm)
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return expectedDigest{}, fmt.Errorf("failed to decode integrity hash: %w", err)
+		}
+		if len(decoded) != size {
+			return expectedDigest{}, fmt.Errorf("integrity hash for %s is %d bytes, want %d", algorithm, len(decoded), size)
+		}
+		return expectedDigest{algorithm: algorithm, hash: decoded}, nil
+	}
+
+	if shasum = strings.TrimSpace(shasum); shasum != "" {
+		decoded, err := hex.DecodeString(shasum)
+		if err != nil {
+			return expectedDigest{}, fmt.Errorf("failed to decode shasum %q: %w", truncateForLog(shasum), err)
+		}
+		if len(decoded) != sha1.Size {
+			return expectedDigest{}, fmt.Errorf("shasum is %d bytes, want %d", len(decoded), sha1.Size)
+		}
+		return expectedDigest{algorithm: sha1Name, hash: decoded}, nil
+	}
+
+	return expectedDigest{}, errors.New("registry response has neither dist.integrity nor dist.shasum; " +
+		"refusing to install an unverified binary")
 }
 
 func equalHashes(a, b []byte) bool {
