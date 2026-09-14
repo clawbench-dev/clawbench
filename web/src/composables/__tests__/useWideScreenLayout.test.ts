@@ -324,11 +324,10 @@ describe('dock tab registry (single source of truth)', () => {
 })
 
 describe('wide dock tab reachability (regression)', () => {
-  // A tab rendered in the wide dock but missing from WIDE_SCREEN_DOCK_TABS is a
-  // dead button: switchLeftTab() returns early, so clicking it does nothing at
-  // all (no state change, no error). That was the forge tab bug — it is
-  // rendered by the wide dock (App.vue renders overflowTabs, which starts with
-  // 'forge') but was never added to the whitelist.
+  // A tab rendered in the wide dock but not switchable is a dead button:
+  // switchLeftTab() rejects it, so clicking does nothing visible. That was the
+  // forge tab bug — it was rendered by the wide dock (App.vue renders
+  // overflowTabs, which starts with 'forge') but missing from the whitelist.
   const SECONDARY_TABS = DOCK_TABS.filter((t) => !t.primary).map((t) => t.id)
 
   it('every tab the wide dock renders can actually be switched to', () => {

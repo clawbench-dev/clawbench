@@ -1,6 +1,9 @@
 import { ref } from 'vue'
 import { normalizeRatio } from '@/utils/splitRatio'
-import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS } from '@/composables/dockTabs'
+import { appLog } from '@/utils/appLog'
+import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
+
+const TAG = 'WideScreenLayout'
 
 export const WIDE_SCREEN_MIN_WIDTH = 1024
 // Physical (device-pixel) width threshold for the wide-screen layout. CSS width
@@ -18,7 +21,7 @@ export const WIDE_SCREEN_CHAT_COLLAPSED_KEY = 'clawbench-widescreen-chat-collaps
  * Historically this was a hand-written array living apart from the render list;
  * adding a tab without updating it produced a button that did nothing on click.
  */
-export const WIDE_SCREEN_DOCK_TABS = DOCK_TAB_IDS
+export const WIDE_SCREEN_DOCK_TABS: readonly DockTabId[] = DOCK_TAB_IDS
 
 export { WIDE_SCREEN_PRIMARY_TABS }
 
@@ -45,7 +48,7 @@ export function computeIsWideScreen(cssWidth: number, screenWidth: number, scree
 }
 
 const isWideScreen = ref(false)
-const leftTab = ref<string>('browse')
+const leftTab = ref<DockTabId>('browse')
 const splitRatio = ref(0.5)
 export const PANE_LEFT = 'left' as const
 export const PANE_RIGHT = 'right' as const
@@ -66,8 +69,8 @@ const leftCollapsed = ref(false)
  */
 const chatCollapsed = ref(false)
 let initialized = false
-let sideEffects: ((tab: string) => void) | null = null
-let setActiveTab: ((tab: string) => void) | null = null
+let sideEffects: ((tab: DockTabId) => void) | null = null
+let setActiveTab: ((tab: DockTabId) => void) | null = null
 
 // Listener handles kept so re-init (test reset) can remove old listeners
 // instead of accumulating duplicates on window / matchMedia.
@@ -75,10 +78,10 @@ let resizeListener: (() => void) | null = null
 let mql: MediaQueryList | null = null
 let mqlChangeListener: (() => void) | null = null
 
-function readPersistedLeftTab(): string {
+function readPersistedLeftTab(): DockTabId {
   try {
     const v = localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)
-    if (v && WIDE_SCREEN_DOCK_TABS.includes(v)) return v
+    if (v && isDockTabId(v)) return v
   } catch {
     // localStorage may throw in restricted environments — fall through to default
   }
@@ -187,14 +190,27 @@ export function resolveActivePaneOnEnter(currentActiveTab: string): 'left' | 'ri
   return currentActiveTab === 'chat' ? 'right' : 'left'
 }
 
-export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: string) => void; setActiveTab?: (tab: string) => void }) {
+export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabId) => void; setActiveTab?: (tab: DockTabId) => void }) {
   sideEffects = opts.sideEffects ?? null
   setActiveTab = opts.setActiveTab ?? null
 }
 
-/** Switch the wide-screen left column tab. Writes activeTab + side-effects via callbacks; does NOT call onTabSwitch. */
+/**
+ * Switch the wide-screen left column tab. Writes activeTab + side-effects via
+ * callbacks; does NOT call onTabSwitch.
+ *
+ * Rejects unknown tabs loudly: a tab that the dock renders but that is not in
+ * DOCK_TABS would otherwise be a silently dead button (the original forge bug
+ * — click did nothing, with no state change, error or log). The whitelist is
+ * derived from the same registry the dock renders from, so this should be
+ * unreachable in practice; the log exists to make any future divergence
+ * visible on the first click instead of being reported as "nothing happens".
+ */
 export function switchLeftTab(tab: string) {
-  if (!WIDE_SCREEN_DOCK_TABS.includes(tab)) return
+  if (!isDockTabId(tab)) {
+    appLog.w(TAG, `switchLeftTab ignored unknown tab "${tab}" — is it missing from DOCK_TABS?`)
+    return
+  }
   if (leftTab.value === tab) return
   leftTab.value = tab
   leftCollapsed.value = false
@@ -212,9 +228,9 @@ export function switchLeftTab(tab: string) {
  * tab as the left column tab when it is a non-chat tab; otherwise keeps the
  * persisted/default leftTab.
  */
-export function resolveLeftTabOnEnter(currentActiveTab: string, persistedLeftTab: string): string {
-  if (currentActiveTab !== 'chat' && WIDE_SCREEN_DOCK_TABS.includes(currentActiveTab)) return currentActiveTab
-  return WIDE_SCREEN_DOCK_TABS.includes(persistedLeftTab) ? persistedLeftTab : 'browse'
+export function resolveLeftTabOnEnter(currentActiveTab: string, persistedLeftTab: string): DockTabId {
+  if (currentActiveTab !== 'chat' && isDockTabId(currentActiveTab)) return currentActiveTab
+  return isDockTabId(persistedLeftTab) ? persistedLeftTab : 'browse'
 }
 
 /** Normalize + persist the split ratio (persistence owned here, not in SplitView). */
