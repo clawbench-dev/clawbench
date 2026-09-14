@@ -557,7 +557,11 @@ describe('CodeLinkPreview.vue', () => {
     expect(openBtn).not.toBeNull()
   })
 
-  it('renders too-large error with view details button instead of openFull', () => {
+  it('keeps the icon open-button for a too-large file (no wide text button)', () => {
+    // An oversize file used to render a wide "View details / Download" text
+    // button — 4x the width of every other tool and the only one without an
+    // icon, so it broke the icon strip. It now renders the same icon button,
+    // with the tooltip carrying the download hint.
     const preview = createMockPreviewController({
       status: ref('error'),
       errorCode: ref('too-large'),
@@ -569,10 +573,28 @@ describe('CodeLinkPreview.vue', () => {
 
     const floating = document.querySelector('.code-link-preview-floating')
     expect(floating?.textContent).toContain('File exceeds 10MiB limit')
+
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()
-    const openFullBtn = floating?.querySelector('button[title="Open file"]')
-    expect(openFullBtn).toBeNull()
+    // It is an icon button, and it does not dump its label into the tool row.
+    expect(detailsBtn?.querySelector('svg')).not.toBeNull()
+    expect(detailsBtn?.textContent?.trim()).toBe('')
+    // No second, plain "Open file" button appears alongside it.
+    expect(floating?.querySelector('button[title="Open file"]')).toBeNull()
+  })
+
+  it('labels the open button normally when the file is not oversize', () => {
+    const preview = createMockPreviewController({ status: ref('ready') })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating')
+    const btn = floating?.querySelector('button[title="Open file"]')
+    expect(btn).not.toBeNull()
+    expect(btn?.querySelector('svg')).not.toBeNull()
+    expect(floating?.querySelector('button[title="View details / Download"]')).toBeNull()
   })
 
   it('toggles pin and updates aria-pressed', async () => {
