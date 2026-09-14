@@ -38,6 +38,8 @@ const i18n = createI18n({
         dockerHintTitle: '当前运行在 Docker 中',
         dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。',
         dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
+        signatureWarningTitle: '未能验证发布签名',
+        signatureWarningHint: '下载内容仍会做完整性校验，但无法证明该软件包确实来自发布者。',
       },
     },
   },
@@ -65,6 +67,7 @@ const mockReleaseNotesUrl = ref('https://example.com/releases')
 const mockInstallWritable = ref(true)
 const mockInstallDir = ref('')
 const mockIsDocker = ref(false)
+const mockSignatureWarning = ref('')
 
 const mockCheckUpgrade = vi.fn()
 const mockStartUpgrade = vi.fn()
@@ -91,6 +94,7 @@ vi.mock('@/composables/useUpgrade', async (importOriginal) => {
       installWritable: mockInstallWritable,
       installDir: mockInstallDir,
       isDocker: mockIsDocker,
+      signatureWarning: mockSignatureWarning,
     }),
   }
 })
@@ -153,6 +157,7 @@ beforeEach(() => {
   mockInstallWritable.value = true
   mockInstallDir.value = ''
   mockIsDocker.value = false
+  mockSignatureWarning.value = ''
 })
 
 describe('UpgradeDialog', () => {
@@ -547,6 +552,59 @@ describe('UpgradeDialog', () => {
       ;(wrapper!.vm as any).show()
       await nextTick()
       expect($('.ug-hint')).toBeFalsy()
+    })
+  })
+
+  describe('signature warning', () => {
+    const WARNING = "The release signature could not be verified because npm's signing keys were unreachable."
+
+    it('shows the warning when the server reports one', async () => {
+      mockSignatureWarning.value = WARNING
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn-signature')).toBeTruthy()
+      expect(document.body.textContent).toContain('未能验证发布签名')
+      expect(document.body.textContent).toContain('signing keys were unreachable')
+    })
+
+    it('does not show the warning for a verified release', async () => {
+      mockSignatureWarning.value = ''
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn-signature')).toBeFalsy()
+    })
+
+    it('does not block the upgrade — start button stays enabled', async () => {
+      // The warning is advisory: the user may still proceed, having been told
+      // the download is only integrity-checked.
+      mockSignatureWarning.value = WARNING
+      mockHasUpgrade.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-start')).toBeTruthy()
+    })
+
+    // Unlike the Docker and writability notices, this one must survive into the
+    // download: the user should see, while it runs, that it is unauthenticated.
+    it('stays visible while an upgrade is in progress', async () => {
+      mockSignatureWarning.value = WARNING
+      mockIsInProgress.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn-signature')).toBeTruthy()
+    })
+
+    it('is hidden after completion', async () => {
+      mockSignatureWarning.value = WARNING
+      mockIsCompleted.value = true
+      const wrapper = mountDialog()
+      ;(wrapper!.vm as any).show()
+      await nextTick()
+      expect($('.ug-warn-signature')).toBeFalsy()
     })
   })
 

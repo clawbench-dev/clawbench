@@ -72,46 +72,54 @@ func isOfficialRegistry(base string) bool {
 // verifyRegistrySignature checks npm's registry signature over the package
 // identity and integrity hash.
 //
+// It returns a non-empty warning when verification was downgraded — see below.
+//
 // Policy:
 //   - A signature that is present must verify, against a key published by npm.
 //     A present-but-invalid signature is never tolerated: it means the metadata
 //     was tampered with, or the package was re-signed by someone else.
 //   - A missing signature is fatal for official registries (npm signs
 //     everything published since 2023) but only a warning for a custom mirror,
-//     which may be a plain proxy with no signing support. The caller still has
-//     the integrity check in that case, so the upgrade degrades rather than
-//     breaks.
+//     which may be a plain proxy with no signing support.
+//   - An unreachable keys endpoint downgrades to the integrity check with a
+//     warning rather than failing the upgrade. Blocking one request to npmjs
+//     is a network-level attack, whereas refusing to upgrade strands users
+//     whose network cannot reach npmjs at all (the mainland-China mirror case).
+//     The caller must surface the warning so the user knows the install is
+//     unauthenticated.
 //
 // Integrity is required to reconstruct the signed payload; without it the
 // signature cannot be checked at all.
-func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string, sigs []npmSignature, registryBase string) error {
+func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string, sigs []npmSignature, registryBase string) (string, error) {
 	if integrity == "" {
 		if len(sigs) > 0 {
-			return errors.New("registry supplied signatures but no dist.integrity, so the signature cannot be checked")
+			return "", errors.New("registry supplied signatures but no dist.integrity, so the signature cannot be checked")
 		}
 		if isOfficialRegistry(registryBase) {
-			return fmt.Errorf("official registry %s returned neither a signature nor dist.integrity", registryBase)
+			return "", fmt.Errorf("official registry %s returned neither a signature nor dist.integrity", registryBase)
 		}
-		return nil
+		return "", nil
 	}
 
 	if len(sigs) == 0 {
 		if isOfficialRegistry(registryBase) {
-			return fmt.Errorf("official registry %s returned no dist.signatures for %s@%s; "+
+			return "", fmt.Errorf("official registry %s returned no dist.signatures for %s@%s; "+
 				"refusing to install from unauthenticated metadata", registryBase, pkg, version)
 		}
 		slog.Warn("upgrade: registry provided no signature — falling back to integrity check only",
 			"registry", registryBase, "package", pkg, "version", version)
-		return nil
+		return fmt.Sprintf("The registry %s did not sign this release, so the download could only be "+
+			"checked against its integrity hash.", registryBase), nil
 	}
 
 	keys, err := fetchNpmSigningKeys(ctx)
 	if err != nil {
-		// The anchor is what makes the signature meaningful. Treating an
-		// unreachable keys endpoint as "skip" would let an attacker who can
-		// block that one request downgrade the upgrade to integrity-only and
-		// walk straight past this check, so it is fatal.
-		return fmt.Errorf("cannot verify registry signature: npm signing keys unavailable: %w", err)
+		// Downgrade rather than fail: see the policy note above. The warning is
+		// what keeps this from being a silent bypass.
+		slog.Warn("upgrade: cannot reach npm signing keys — falling back to integrity check only",
+			"error", err, "package", pkg, "version", version)
+		return fmt.Sprintf("The release signature could not be verified because npm's signing keys were "+
+			"unreachable (%v). The download was checked against its integrity hash only.", err), nil
 	}
 
 	payload := fmt.Sprintf("%s@%s:%s", pkg, version, integrity)
@@ -130,10 +138,10 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 			continue
 		}
 		slog.Info("upgrade: registry signature verified", "keyid", key.KeyID, "package", pkg, "version", version)
-		return nil
+		return "", nil
 	}
 
-	return fmt.Errorf("registry signature verification failed: %w", lastErr)
+	return "", fmt.Errorf("registry signature verification failed: %w", lastErr)
 }
 
 // findSigningKey returns the key matching keyid.

@@ -53,6 +53,16 @@
           <p class="ug-warn-hint">{{ t('upgrade.installDirNotWritableHint') }}</p>
         </div>
 
+        <!-- Signature-verification downgrade: the release signature could not
+             be verified, so the download will only be checked against its
+             integrity hash. Shown prominently before the user commits, since
+             an unauthenticated install is materially weaker. -->
+        <div v-if="showSignatureWarning && !isCompleted" class="ug-warn ug-warn-signature">
+          <p class="ug-warn-title">{{ t('upgrade.signatureWarningTitle') }}</p>
+          <p class="ug-warn-body">{{ signatureWarning }}</p>
+          <p class="ug-warn-hint">{{ t('upgrade.signatureWarningHint') }}</p>
+        </div>
+
         <!-- Docker advisory: a container CAN self-upgrade, but a later rebuild
              from the unchanged image reverts it — recommend the image path
              without blocking the in-place upgrade. -->
@@ -136,7 +146,7 @@ defineExpose({ show })
 const { t } = useI18n()
 const {
   state, checking, hasUpgrade, isInProgress, isRestarting, isCompleted, isFailed,
-  installWritable, installDir, isDocker, checkUpgrade, startUpgrade, releaseNotesUrl,
+  installWritable, installDir, isDocker, signatureWarning, checkUpgrade, startUpgrade, releaseNotesUrl,
 } = useUpgrade()
 
 /**
@@ -153,6 +163,14 @@ const showWritableWarning = computed(() =>
   !isCompleted.value &&
   !isFailed.value,
 )
+
+/**
+ * Signature-verification warning — shown whenever the server reports that the
+ * release signature could not be verified. Unlike the writability and Docker
+ * notices this stays visible during the upgrade too: the user should be able to
+ * see, while the download is running, that it is only integrity-checked.
+ */
+const showSignatureWarning = computed(() => signatureWarning.value !== '')
 
 /**
  * Docker advisory — same visibility window as the writability warning: only
@@ -390,6 +408,18 @@ watch(visible, (v) => {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--text-muted);
+}
+
+/* Signature-verification downgrade: security-relevant, so it uses the danger
+   palette rather than the ordinary warning orange, and stays visible during
+   the upgrade (see showSignatureWarning). */
+.ug-warn-signature {
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+}
+
+.ug-warn-signature .ug-warn-title {
+  color: var(--color-red);
 }
 
 /* Docker advisory (informational, non-fatal) */

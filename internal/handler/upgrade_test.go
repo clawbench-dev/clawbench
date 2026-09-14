@@ -18,7 +18,7 @@ import (
 
 func TestServeUpgradeCheck_Success(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
@@ -28,8 +28,8 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
 	upgradeIsDocker = func() bool { return false }
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "1.0.0", "1.1.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int {
 		if a < b {
@@ -53,6 +53,45 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	assert.Equal(t, true, resp["install_writable"])
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
 	assert.Equal(t, false, resp["is_docker"])
+	assert.Equal(t, "", resp["signature_warning"], "a verified release must carry no warning")
+}
+
+// TestServeUpgradeCheck_SignatureWarning guards that a downgraded signature
+// check is reported to the UI. The user must learn before starting that the
+// download will only be integrity-checked.
+func TestServeUpgradeCheck_SignatureWarning(t *testing.T) {
+	defer func() {
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
+		upgradeCompareVersions = version.CompareVersions
+		upgradeIsDevBuild = version.IsDevBuild
+		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
+		upgradeIsDocker = service.IsDocker
+	}()
+
+	upgradeCheckInstallDirWrit = func() (string, error) { return "/usr/local/bin", nil }
+	upgradeIsDocker = func() bool { return false }
+	upgradeCompareVersions = func(a, b string) int { return -1 }
+	upgradeIsDevBuild = func(v string) bool { return false }
+
+	const warning = "The release signature could not be verified because npm's signing keys were unreachable."
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{
+			CurrentVersion:   "1.0.0",
+			LatestVersion:    "1.1.0",
+			SignatureWarning: warning,
+		}, nil
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeUpgradeCheck, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, warning, resp["signature_warning"])
+	assert.Equal(t, true, resp["has_upgrade"], "a signature warning must not block the upgrade")
 }
 
 // TestServeUpgradeCheck_DockerAdvisory guards that a container deployment is
@@ -60,14 +99,16 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 // without affecting has_upgrade — the upgrade must remain available.
 func TestServeUpgradeCheck_DockerAdvisory(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 		upgradeIsDocker = service.IsDocker
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) { return "/app", nil }
@@ -87,13 +128,15 @@ func TestServeUpgradeCheck_DockerAdvisory(t *testing.T) {
 
 func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) {
@@ -117,13 +160,15 @@ func TestServeUpgradeCheck_InstallDirNotWritable(t *testing.T) {
 // would show a misleading warning with an empty dir).
 func TestServeUpgradeCheck_ProbeInconclusive(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 		upgradeCheckInstallDirWrit = service.CheckInstallDirWritable
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) { return "1.0.0", "1.1.0", nil }
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.0.0", LatestVersion: "1.1.0"}, nil
+	}
 	upgradeCompareVersions = func(a, b string) int { return -1 }
 	upgradeIsDevBuild = func(v string) bool { return false }
 	upgradeCheckInstallDirWrit = func() (string, error) {
@@ -144,13 +189,13 @@ func TestServeUpgradeCheck_ProbeInconclusive(t *testing.T) {
 
 func TestServeUpgradeCheck_NoUpgrade(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "1.1.0", "1.1.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "1.1.0", LatestVersion: "1.1.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int { return 0 }
 	upgradeIsDevBuild = func(v string) bool { return false }
@@ -168,13 +213,13 @@ func TestServeUpgradeCheck_NoUpgrade(t *testing.T) {
 
 func TestServeUpgradeCheck_DevBuild(t *testing.T) {
 	defer func() {
-		upgradeCheckForUpgrade = service.CheckForUpgrade
+		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
 		upgradeIsDevBuild = version.IsDevBuild
 	}()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "dev", "1.0.0", nil
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return &service.UpgradeInfo{CurrentVersion: "dev", LatestVersion: "1.0.0"}, nil
 	}
 	upgradeCompareVersions = func(a, b string) int { return 1 } // dev > 1.0.0 lexicographically
 	upgradeIsDevBuild = func(v string) bool { return v == "dev" }
@@ -191,10 +236,10 @@ func TestServeUpgradeCheck_DevBuild(t *testing.T) {
 }
 
 func TestServeUpgradeCheck_Error(t *testing.T) {
-	defer func() { upgradeCheckForUpgrade = service.CheckForUpgrade }()
+	defer func() { upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo }()
 
-	upgradeCheckForUpgrade = func() (string, string, error) {
-		return "", "", errors.New("registry unreachable")
+	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
+		return nil, errors.New("registry unreachable")
 	}
 
 	req := newRequest(t, http.MethodGet, "/api/upgrade/check", nil)

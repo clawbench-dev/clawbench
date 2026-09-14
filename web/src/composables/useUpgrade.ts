@@ -26,6 +26,12 @@ export interface UpgradeState {
   /** Machine-readable failure id; empty for generic failures. */
   error_code: string
   error: string
+  /**
+   * Non-empty when the release signature could not be verified and the
+   * download will only be checked against its integrity hash. Shown to the
+   * user because an unauthenticated install is materially weaker.
+   */
+  signature_warning?: string
 }
 
 /** Failure id emitted when the install directory is not writable. */
@@ -58,6 +64,7 @@ const state = reactive<UpgradeState>({
   backup_path: '',
   error_code: '',
   error: '',
+  signature_warning: '',
 })
 
 const checking = ref(false)
@@ -77,6 +84,12 @@ const installDir = ref('')
 // `docker pull`. Kept outside `state` for the same reason as installWritable.
 const isDocker = ref(false)
 
+// Non-empty when the release signature could not be verified, so the download
+// will only be integrity-checked. Reported by /api/upgrade/check and also
+// carried by upgrade_update events; kept as a ref so the pre-upgrade check
+// response can set it directly.
+const signatureWarning = ref('')
+
 let wsUnsubscribe: (() => void) | null = null
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null
 let pollStartTime: number | null = null
@@ -90,6 +103,9 @@ function ensureWsListener() {
     if (event !== 'upgrade_update') return
     const d = data as UpgradeState
     Object.assign(state, d)
+    // Mirror the warning into its ref so both the check response and the WS
+    // stream drive the same piece of UI state.
+    signatureWarning.value = d.signature_warning ?? ''
   })
 }
 
@@ -236,6 +252,7 @@ export function useUpgrade() {
         install_writable?: boolean
         install_dir?: string
         is_docker?: boolean
+        signature_warning?: string
       }>('/api/upgrade/check')
       state.current_version = data.current_version
       state.latest_version = data.latest_version
@@ -245,6 +262,8 @@ export function useUpgrade() {
       installDir.value = data.install_dir ?? ''
       // Absent on older servers — default to false (no advisory).
       isDocker.value = data.is_docker === true
+      // Absent on older servers — default to empty (no warning).
+      signatureWarning.value = data.signature_warning ?? ''
     } catch (e) {
       appLog.w(TAG, 'Check failed', e)
       hasUpgrade.value = false
@@ -344,6 +363,7 @@ export function useUpgrade() {
     installWritable,
     installDir,
     isDocker,
+    signatureWarning,
     isInProgress,
     isRestarting,
     isCompleted,

@@ -131,7 +131,7 @@ func TestVerifyRegistrySignature_ValidSignature(t *testing.T) {
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.NoError(t, err)
 }
@@ -146,7 +146,7 @@ func TestVerifyRegistrySignature_WrongKeyRejected(t *testing.T) {
 
 	// The attacker signs correctly but with a key npm does not publish.
 	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{forged}, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not among npm's published signing keys")
@@ -163,7 +163,7 @@ func TestVerifyRegistrySignature_TamperedIntegrityRejected(t *testing.T) {
 	// Signed for the honest hash...
 	honestSig := keys.sign(t, "pkg", "1.2.3", "sha512-honest")
 	// ...but the response now advertises a different one.
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-tampered",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-tampered",
 		[]npmSignature{honestSig}, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signature verification failed")
@@ -175,7 +175,7 @@ func TestVerifyRegistrySignature_TamperedVersionRejected(t *testing.T) {
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	err := verifyRegistrySignature(context.Background(), "pkg", "9.9.9", "sha512-abc",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "9.9.9", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	require.Error(t, err)
 }
@@ -186,7 +186,7 @@ func TestVerifyRegistrySignature_TamperedPackageNameRejected(t *testing.T) {
 	defer restore()
 
 	sig := keys.sign(t, "real-pkg", "1.2.3", "sha512-abc")
-	err := verifyRegistrySignature(context.Background(), "evil-pkg", "1.2.3", "sha512-abc",
+	_, err := verifyRegistrySignature(context.Background(), "evil-pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	require.Error(t, err)
 }
@@ -196,7 +196,7 @@ func TestVerifyRegistrySignature_MalformedSignatureRejected(t *testing.T) {
 	restore := withKeysEndpoint(t, keys.keysJSON(t))
 	defer restore()
 
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{{KeyID: keys.keyID, Sig: "!!!not-base64!!!"}}, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode signature")
@@ -209,7 +209,7 @@ func TestVerifyRegistrySignature_MalformedSignatureRejected(t *testing.T) {
 func TestVerifyRegistrySignature_OfficialRegistryWithoutSignatureRejected(t *testing.T) {
 	for _, base := range []string{npmjsRegistryBase, npmMirrorRegistryBase} {
 		t.Run(base, func(t *testing.T) {
-			err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, base)
+			_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, base)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "no dist.signatures")
 		})
@@ -217,11 +217,13 @@ func TestVerifyRegistrySignature_OfficialRegistryWithoutSignatureRejected(t *tes
 }
 
 // A custom mirror may be a plain proxy with no signing support; the upgrade
-// degrades to integrity-only rather than breaking.
-func TestVerifyRegistrySignature_CustomMirrorWithoutSignatureAllowed(t *testing.T) {
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil,
+// degrades to integrity-only rather than breaking, but the caller is handed a
+// warning so the user can be told the install is unauthenticated.
+func TestVerifyRegistrySignature_CustomMirrorWithoutSignatureAllowedWithWarning(t *testing.T) {
+	warning, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil,
 		"https://my-nexus.internal/npm")
 	assert.NoError(t, err)
+	assert.Contains(t, warning, "did not sign this release")
 }
 
 // A custom mirror must not be able to launder an invalid signature.
@@ -231,14 +233,14 @@ func TestVerifyRegistrySignature_CustomMirrorWithBadSignatureRejected(t *testing
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-different",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-different",
 		[]npmSignature{sig}, "https://my-nexus.internal/npm")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signature verification failed")
 }
 
 func TestVerifyRegistrySignature_OfficialRegistryNoIntegrityRejected(t *testing.T) {
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "", nil, npmjsRegistryBase)
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "", nil, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "neither a signature nor dist.integrity")
 }
@@ -249,18 +251,21 @@ func TestVerifyRegistrySignature_SignatureWithoutIntegrityRejected(t *testing.T)
 	defer restore()
 
 	// Without integrity the signed payload cannot be reconstructed.
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "",
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "",
 		[]npmSignature{keys.sign(t, "pkg", "1.2.3", "")}, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no dist.integrity")
 }
 
-// --- keys endpoint failures ---
+// --- keys endpoint failures downgrade to a warning ---
+//
+// Blocking the keys endpoint is a network-level attack, whereas refusing to
+// upgrade strands every user whose network cannot reach npmjs at all (the
+// mainland-China mirror case). These cases therefore downgrade to the integrity
+// check, and the returned warning is what keeps the downgrade visible rather
+// than silent.
 
-// Treating an unreachable keys endpoint as "skip" would let an attacker who can
-// block that one request downgrade the upgrade to integrity-only, so it must be
-// fatal rather than permissive.
-func TestVerifyRegistrySignature_KeysEndpointUnreachableIsFatal(t *testing.T) {
+func TestVerifyRegistrySignature_KeysEndpointUnreachableDowngradesWithWarning(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
 
@@ -269,36 +274,53 @@ func TestVerifyRegistrySignature_KeysEndpointUnreachableIsFatal(t *testing.T) {
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "npm signing keys unavailable")
+	require.NoError(t, err, "an unreachable keys endpoint must not block the upgrade")
+	assert.Contains(t, warning, "could not be verified")
+	assert.Contains(t, warning, "integrity hash only")
 }
 
-func TestVerifyRegistrySignature_EmptyKeyListIsFatal(t *testing.T) {
+func TestVerifyRegistrySignature_EmptyKeyListDowngradesWithWarning(t *testing.T) {
 	restore := withKeysEndpoint(t, []byte(`{"keys":[]}`))
 	defer restore()
 
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "published no keys")
+	require.NoError(t, err)
+	assert.Contains(t, warning, "could not be verified")
 }
 
-func TestVerifyRegistrySignature_KeysEndpointInvalidJSONIsFatal(t *testing.T) {
+func TestVerifyRegistrySignature_KeysEndpointInvalidJSONDowngradesWithWarning(t *testing.T) {
 	restore := withKeysEndpoint(t, []byte(`not json`))
 	defer restore()
 
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
+	require.NoError(t, err)
+	assert.Contains(t, warning, "could not be verified")
+}
+
+// A reachable keys endpoint that simply does not carry the signing key must
+// still be fatal: nothing was unreachable, so the signature is genuinely
+// unverifiable rather than merely unavailable.
+func TestVerifyRegistrySignature_UnknownKeyIDStillRejected(t *testing.T) {
+	trusted := newTestSigningKeys(t)
+	attacker := newTestSigningKeys(t)
+	restore := withKeysEndpoint(t, trusted.keysJSON(t))
+	defer restore()
+
+	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+		[]npmSignature{forged}, npmjsRegistryBase)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to decode keys response")
+	assert.Contains(t, err.Error(), "not among npm's published signing keys")
 }
 
 // --- multiple signatures ---
@@ -315,7 +337,7 @@ func TestVerifyRegistrySignature_AcceptsAnyValidSignature(t *testing.T) {
 		stale.sign(t, "pkg", "1.2.3", "sha512-abc"),   // key not published
 		trusted.sign(t, "pkg", "1.2.3", "sha512-abc"), // valid
 	}
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, npmjsRegistryBase)
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, npmjsRegistryBase)
 	assert.NoError(t, err)
 }
 
@@ -328,7 +350,7 @@ func TestVerifyRegistrySignature_AllSignaturesInvalidRejected(t *testing.T) {
 		trusted.sign(t, "pkg", "1.2.3", "sha512-one"),
 		trusted.sign(t, "pkg", "1.2.3", "sha512-two"),
 	}
-	err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, npmjsRegistryBase)
+	_, err := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, npmjsRegistryBase)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signature verification failed")
 }

@@ -1710,6 +1710,28 @@ func TestSetUpgradeState_SetsAllFields(t *testing.T) {
 	assert.Equal(t, "Halfway there", s.Message)
 }
 
+// --- SetUpgradeSignatureWarning ---
+
+func TestSetUpgradeSignatureWarning_RecordsWarning(t *testing.T) {
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	const warning = "The release signature could not be verified."
+	SetUpgradeSignatureWarning(warning)
+
+	assert.Equal(t, warning, GetUpgradeState().SignatureWarning)
+}
+
+// ResetUpgradeState must clear the warning, otherwise a retry would keep
+// showing a stale downgrade notice after a successful verified check.
+func TestSetUpgradeSignatureWarning_ClearedByReset(t *testing.T) {
+	SetUpgradeSignatureWarning("stale warning")
+	ResetUpgradeState()
+	defer ResetUpgradeState()
+
+	assert.Empty(t, GetUpgradeState().SignatureWarning)
+}
+
 // --- ResetUpgradeState clears everything ---
 
 func TestResetUpgradeState_ClearsAll(t *testing.T) {
