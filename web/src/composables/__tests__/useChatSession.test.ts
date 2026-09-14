@@ -92,6 +92,9 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
     agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
+    // ACP model list consumption — the subject of the new-session model-list fix.
+    updateACPModelList: vi.fn(),
+    applyResolvedModelList: vi.fn(),
   }
   const mockUtilsFns = {
     buildMessageSnapshot: vi.fn().mockReturnValue(''),
@@ -126,6 +129,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
+    mockAgentFns.updateACPModelList.mockReset()
+    mockAgentFns.applyResolvedModelList.mockReset()
     mockUtilsFns.buildMessageSnapshot.mockReset().mockReturnValue('')
     mockUtilsFns.parseMessages.mockReset().mockReturnValue([])
     mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
@@ -347,6 +352,8 @@ vi.mock('@/composables/useAgents', () => ({
   restoreOriginalModels: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
+  updateACPModelList: mockAgentFns.updateACPModelList,
+  applyResolvedModelList: mockAgentFns.applyResolvedModelList,
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -6713,5 +6720,151 @@ describe('loadHistory session_id recovery', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
 
     vi.unstubAllGlobals()
+  })
+})
+
+// ── ACP model list from the chat response ──
+//
+// Regression: a brand-new session never talks to ACP, so the only way its model
+// list can include ACP-only models (e.g. "Auto") is by consuming the
+// `modelListState` that GET /api/ai/chat returns from the agent-level capability
+// registry. Before this the field was ignored, so ACP-only entries appeared or
+// disappeared depending on unrelated frontend cache timing.
+//
+// The backend now resolves the list, so the client must prefer `resolvedModels`
+// and store `cliModels` alongside it (the transport switch reads that).
+describe('syncSessionState — ACP model list', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('applies the backend-resolved model list on session switch', async () => {
+    const { options } = createSessionInternal()
+    lastSessionOptions = options
+    const resolved = [
+      { id: 'auto', name: 'Auto', default: true },
+      { id: 'deepseek-v4-flash', name: 'Deepseek v4 Flash', default: false },
+    ]
+    const cliModels = [{ id: 'cli-only', name: 'CLI Only', default: true }]
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-acp-1', sessionTitle: 'S', messages: [], total: 0,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'auto',
+          transport: 'acp-stdio',
+          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved, cliModels },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const session = useChatSession(options)
+    await session.switchSession('s-acp-1')
+
+    expect(mockAgentFns.applyResolvedModelList).toHaveBeenCalledWith('agent2', resolved, cliModels)
+    // The resolved path wins; the raw merge must not also run.
+    expect(mockAgentFns.updateACPModelList).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the raw ACP list when the backend sends no resolvedModels', async () => {
+    const { options } = createSessionInternal()
+    lastSessionOptions = options
+    const acpModels = [{ id: 'auto', name: 'Auto' }]
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-acp-2', sessionTitle: 'S', messages: [], total: 0,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'auto',
+          transport: 'acp-stdio',
+          modelListState: { currentModelId: 'auto', models: acpModels },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const session = useChatSession(options)
+    await session.switchSession('s-acp-2')
+
+    expect(mockAgentFns.updateACPModelList).toHaveBeenCalledWith('agent2', acpModels, 'auto')
+    expect(mockAgentFns.applyResolvedModelList).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when the response carries no modelListState', async () => {
+    const { options } = createSessionInternal()
+    lastSessionOptions = options
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-cli-1', sessionTitle: 'S', messages: [], total: 0,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'cli-only',
+          transport: 'cli', running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const session = useChatSession(options)
+    await session.switchSession('s-cli-1')
+
+    expect(mockAgentFns.applyResolvedModelList).not.toHaveBeenCalled()
+    expect(mockAgentFns.updateACPModelList).not.toHaveBeenCalled()
+  })
+
+  // Ordering guard: syncModelFromData resolves the display name from agent.models,
+  // so the model list must be applied first or an ACP-only modelId renders as its
+  // raw id instead of its name.
+  it('applies the model list before resolving the display name', async () => {
+    const { options } = createSessionInternal()
+    lastSessionOptions = options
+    const resolved = [{ id: 'auto', name: 'Auto', default: true }]
+    mockAgentFns.getAgentModel.mockImplementation((_agentId: string, modelId: string) =>
+      resolved.find(m => m.id === modelId),
+    )
+
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's-acp-3', sessionTitle: 'S', messages: [], total: 0,
+          backend: 'codebuddy', agentId: 'agent2', modelId: 'auto',
+          transport: 'acp-stdio',
+          modelListState: { currentModelId: 'auto', models: resolved, resolvedModels: resolved },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const session = useChatSession(options)
+    await session.switchSession('s-acp-3')
+
+    const applyOrder = mockAgentFns.applyResolvedModelList.mock.invocationCallOrder[0]
+    const lookupOrder = mockAgentFns.getAgentModel.mock.invocationCallOrder[0]
+    expect(applyOrder).toBeLessThan(lookupOrder)
   })
 })

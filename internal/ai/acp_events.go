@@ -916,10 +916,36 @@ func enrichModelList(conn *ACPConn, modelList *ModelListState) *ModelListState {
 	if agent == nil {
 		agent = conn.Agent()
 	}
-	if agent == nil || len(agent.Models) == 0 {
+	if agent == nil {
 		return modelList
 	}
+	if enriched := EnrichModelListWith(agent, modelList); enriched != nil {
+		return enriched
+	}
+	return modelList
+}
 
+// EnrichModelList attaches the CLI-discovered list and the resolved list to a
+// model list state for the given agent, so every channel that ships model state
+// (WS model_list_update, GET /api/agents, GET /api/ai/chat) delivers the same
+// shape and the client can render either view without merging.
+//
+// Returns nil when the agent is unknown or has no CLI list to resolve against —
+// callers then fall back to the raw ACP list rather than dropping the state.
+func EnrichModelList(agentID string, modelList *ModelListState) *ModelListState {
+	if modelList == nil {
+		return nil
+	}
+	return EnrichModelListWith(model.GetAgent(agentID), modelList)
+}
+
+// EnrichModelListWith is EnrichModelList against an already-resolved agent.
+// Exported so callers that hold an agent pointer (the ACP connection path) avoid
+// a second map lookup.
+func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelListState {
+	if agent == nil || modelList == nil || len(agent.Models) == 0 {
+		return nil
+	}
 	enriched := *modelList
 	enriched.CLIModels = agent.Models
 	enriched.ResolvedModels = model.ResolveModels(agent.Models, modelList.Models, modelList.CurrentModelID)

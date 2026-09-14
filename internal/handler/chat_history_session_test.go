@@ -9,6 +9,7 @@ import (
 	"os"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -557,4 +558,152 @@ func TestServeAISessionUpdate_CookieSessionIDFallback(t *testing.T) {
 			assert.Equal(t, "Renamed via Cookie", s.Title)
 		}
 	}
+}
+
+// --- AIChat: modelListState carries the resolved list ---
+//
+// GET /api/ai/chat must ship the same model-state shape as GET /api/agents: the
+// raw ACP list (models) plus the CLI list (cliModels) and the resolved list
+// (resolvedModels). The frontend renders resolvedModels directly instead of
+// merging the two halves itself.
+//
+// Regression guard: this endpoint previously returned the raw ACP list only, so a
+// client that consumed just modelListState.models lost every CLI model — and a
+// brand-new session (which never talks to ACP) had no way to show ACP-only models
+// at all.
+func TestAIChat_NewSession_ModelListStateCarriesResolvedList(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "acp-model-list-agent"
+	agent := &model.Agent{
+		ID:         agentID,
+		Name:       "ACP Model List Agent",
+		Backend:    "acp-model-list",
+		Transport:  "acp-stdio",
+		AcpCommand: "acp-model-list --acp",
+		Models: []model.AgentModel{
+			{ID: "cli-only", Name: "CLI Only", Default: true},
+			{ID: "auto", Name: "Auto"},
+		},
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels(agentID, []model.AgentModel{
+		{ID: "auto", Name: "Auto"},
+		{ID: "deepseek-v4-flash", Name: "Deepseek v4 Flash"},
+	})
+	t.Cleanup(func() { reg.UpdateModels(agentID, nil) })
+
+	// Brand-new session: transport is left empty, matching createSession.
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "New", agentID, "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		ModelListState *ai.ModelListState `json:"modelListState"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.ModelListState, "a new session must carry modelListState so the picker is populated")
+
+	// The raw ACP list stays available.
+	require.Len(t, resp.ModelListState.Models, 2)
+
+	// The resolved list follows ACP membership ("auto" is ACP-reported, so it
+	// survives; "cli-only" is not, so it is dropped) and includes ACP-only entries.
+	require.NotEmpty(t, resp.ModelListState.ResolvedModels, "the resolved list must be present")
+	ids := make([]string, 0, len(resp.ModelListState.ResolvedModels))
+	for _, m := range resp.ModelListState.ResolvedModels {
+		ids = append(ids, m.ID)
+	}
+	assert.Contains(t, ids, "auto")
+	assert.Contains(t, ids, "deepseek-v4-flash")
+
+	// The CLI list is shipped untouched for the CLI transport view.
+	require.Len(t, resp.ModelListState.CLIModels, 2)
+	assert.Equal(t, "cli-only", resp.ModelListState.CLIModels[0].ID)
+}
+
+// A CLI session must NOT be served ACP model state at all — the branch is gated
+// on transport != "cli". Negative half of the contract above.
+func TestAIChat_CLISession_OmitsModelListState(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "acp-model-list-cli-agent"
+	agent := &model.Agent{
+		ID:         agentID,
+		Name:       "CLI Session Agent",
+		Backend:    "acp-model-list-cli",
+		Transport:  "acp-stdio",
+		AcpCommand: "acp-model-list-cli --acp",
+		Models:     []model.AgentModel{{ID: "cli-only", Name: "CLI Only", Default: true}},
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	ai.GetAgentCapabilityRegistry().UpdateModels(agentID, []model.AgentModel{{ID: "auto", Name: "Auto"}})
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "CLI", agentID, "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.UpdateSessionTransport(sessionID, "cli"))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp["modelListState"], "CLI sessions must not receive ACP model state")
+}
+
+// With no CLI list to resolve against, the raw ACP state must still be delivered
+// rather than dropped — losing the list entirely would be worse than shipping it
+// unmerged.
+func TestAIChat_NoCLIList_StillReturnsRawACPState(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "acp-no-cli-list-agent"
+	agent := &model.Agent{
+		ID:         agentID,
+		Name:       "No CLI List Agent",
+		Backend:    "acp-no-cli",
+		Transport:  "acp-stdio",
+		AcpCommand: "acp-no-cli --acp",
+		Models:     nil, // discovery produced nothing
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels(agentID, []model.AgentModel{{ID: "auto", Name: "Auto"}})
+	t.Cleanup(func() { reg.UpdateModels(agentID, nil) })
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "NoCLI", agentID, "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		ModelListState *ai.ModelListState `json:"modelListState"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.ModelListState, "the ACP list must not be dropped just because enrichment was impossible")
+	require.Len(t, resp.ModelListState.Models, 1)
+	assert.Equal(t, "auto", resp.ModelListState.Models[0].ID)
+	assert.Empty(t, resp.ModelListState.ResolvedModels)
 }

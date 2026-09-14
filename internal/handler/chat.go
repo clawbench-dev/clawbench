@@ -197,6 +197,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Ship the same shape as GET /api/agents: the raw ACP list plus the
+			// CLI list and the resolved list. Without this the client would have
+			// to merge the two itself, and a consumer that only has the ACP half
+			// (this endpoint's modelListState.models) would drop the CLI models.
+			if ml, ok := modelListState.(*ai.ModelListState); ok && ml != nil && sessionAgentID != "" {
+				if enriched := ai.EnrichModelList(sessionAgentID, ml); enriched != nil {
+					modelListState = enriched
+				}
+			}
+
 			// DB fallback: if any state is still nil after in-memory lookups,
 			// try to restore from persisted context_state (survives server restart).
 			if modeState == nil || thinkingEffortState == nil || usageState == nil {

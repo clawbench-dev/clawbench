@@ -10,7 +10,7 @@ const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
@@ -206,6 +206,31 @@ export function useChatSession(options: UseChatSessionOptions) {
     currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
     currentBackend.value = (sessionData.backend as string) || ''
     currentAgentId.value = (sessionData.agentId as string) || ''
+    // ── ACP model list ──
+    // Must run BEFORE syncModelFromData below, which resolves the display name
+    // from agent.models: an ACP-only modelId would otherwise render as its raw id
+    // instead of its name.
+    //
+    // A brand-new session never talks to ACP, so this is the only way its model
+    // list can include ACP-only models (e.g. "Auto"): the backend resolves them
+    // from the agent-level capability registry and returns them here.
+    //
+    // Prefer the backend-resolved list — it already applied ACP membership over
+    // the CLI skeleton, and cliModels comes with it for the transport switch.
+    // The raw `models` fallback covers a backend too old to send resolvedModels.
+    const modelListState = sessionData.modelListState as {
+      models?: Array<{ id: string; name: string }>
+      resolvedModels?: Array<{ id: string; name: string; default: boolean }>
+      cliModels?: Array<{ id: string; name: string; default: boolean }>
+      currentModelId?: string
+    } | undefined
+    if (currentAgentId.value) {
+      if (modelListState?.resolvedModels && modelListState.resolvedModels.length > 0) {
+        applyResolvedModelList(currentAgentId.value, modelListState.resolvedModels, modelListState.cliModels)
+      } else if (modelListState?.models && modelListState.models.length > 0) {
+        updateACPModelList(currentAgentId.value, modelListState.models, modelListState.currentModelId)
+      }
+    }
     syncModelFromData(currentAgentId.value, sessionData.modelId as string)
     syncThinkingEffortFromData((sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '')
     syncModeFromData(

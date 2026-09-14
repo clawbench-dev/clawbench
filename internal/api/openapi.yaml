@@ -643,7 +643,17 @@ paths:
     get:
       tags: [Chat]
       summary: 聊天历史与运行状态
-      description: 分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
+      description: |
+        分页返回会话消息，并附带运行状态与 ACP 状态。`session_id` 缺省时回退到会话 Cookie。
+
+        **`modelListState` 与 `/api/agents` 同构**：返回原始 ACP 列表 `models`、
+        未经合并的纯 CLI 列表 `cliModels`，以及已解析的最终列表 `resolvedModels`
+        （CLI 提供顺序与名称，具体 ACP 列表对成员资格有权威性；档位别名只取其
+        显示名）。客户端直接渲染 `resolvedModels`，无需自行合并。
+
+        新建会话从不与 ACP 通信，其模型列表只能来自这里（后端从 agent 级能力
+        注册表解析）。CLI 会话不返回该字段。当 agent 没有 CLI 列表可合并时，
+        `resolvedModels` 为空但 `models` 仍会返回，避免整个列表丢失。
       operationId: chatGet
       parameters:
         - name: session_id
