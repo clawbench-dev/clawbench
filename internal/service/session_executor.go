@@ -1352,7 +1352,18 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// persistThinkingToDB just rewrote.
 	e.thinkingFlushed = make(map[string]*thinkingFlushState)
 
-	msgID, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
+	// A user-cancelled turn must not stamp completed_at: the user was looking at
+	// the session when they cancelled, so the frontend already marked it read
+	// before this finalize ran. Stamping the landing time would push the reply
+	// past that read and flip the session back to unread. See
+	// FinalizeCancelledStreamingMessage.
+	var msgID int64
+	var err error
+	if result.CancelReason == cancelReasonUser {
+		msgID, err = FinalizeCancelledStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
+	} else {
+		msgID, err = FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, dbContent)
+	}
 	if err != nil {
 		slog.Error("failed to finalize streaming message",
 			slog.String("session", e.cfg.SessionID),

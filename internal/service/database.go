@@ -227,6 +227,31 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				return fmt.Errorf("failed to add queued column: %w", err)
 			}
 		}
+
+		// chat_history.completed_at — when the assistant reply finished streaming
+		// (streaming=1 -> 0). NULL for user messages and for rows finalized
+		// before this column existed.
+		//
+		// The unread check compares a reply's timestamp against
+		// chat_sessions.last_read_at. Using created_at is wrong for a reply:
+		// created_at is stamped when the turn STARTS (the streaming placeholder
+		// row is inserted up front), while the reply only becomes visible to the
+		// user minutes later when it is finalized. Reading the session while its
+		// turn is still running therefore pushes last_read_at past created_at,
+		// and the finished reply can never be unread again — the completion
+		// popup fires but no badge ever appears. completed_at fixes the
+		// comparison by timestamping the moment the reply actually landed.
+		//
+		// No backfill: rows predating the column keep completed_at NULL and the
+		// unread queries fall back to created_at via COALESCE, which is exactly
+		// the old behavior for them.
+		var hasCompletedAt int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='completed_at'").Scan(&hasCompletedAt)
+		if hasCompletedAt == 0 {
+			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN completed_at DATETIME"); err != nil {
+				return fmt.Errorf("failed to add completed_at column: %w", err)
+			}
+		}
 	}
 
 	// Pre-migration: rename chat_sessions.deleted to archived.
@@ -299,7 +324,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			external_message_id TEXT DEFAULT '',
 			queue_id TEXT DEFAULT '',
 			queued INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -1042,7 +1068,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 				contentMap["blocks"] = blocks
 			}
 			updatedContent, _ := json.Marshal(contentMap)
-			if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+			// completed_at is stamped even for a restart-interrupted reply: the
+			// row becomes visible (streaming=0) and the user has not seen it, so
+			// it must be able to register as unread. Falling back to created_at
+			// (turn start, possibly before last_read_at) would hide it.
+			if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, completed_at = CURRENT_TIMESTAMP WHERE id = ?", string(updatedContent), m.id); err != nil {
 				slog.Error("failed to finalize orphaned streaming message", slog.Int64("id", m.id), slog.String("err", err.Error()))
 			}
 		}
