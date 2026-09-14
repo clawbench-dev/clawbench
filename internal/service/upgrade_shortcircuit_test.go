@@ -73,6 +73,12 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 	selfBinaryVersion = func(string) (string, error) { return diskVersion, nil }
 	t.Cleanup(func() { selfBinaryVersion = origVer })
 
+	// Registry metadata carries a real signature: the production path verifies
+	// it for official registries and would otherwise refuse the response.
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	// Registry: metadata always served; a tarball request is a failure signal.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
@@ -80,17 +86,17 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 			http.Error(w, "tarball must not be requested", http.StatusInternalServerError)
 			return
 		}
-		resp := npmRegistryResponse{}
-		resp.Version = h.targetVersion
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-" + h.targetVersion + ".tgz"
-		resp.Dist.Integrity = wellFormedIntegrity
+		resp := signedRegistryResponse(t, keys, pkg, h.targetVersion, wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(ts.Close)
 
 	origClient := upgradeHTTPClient
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()
@@ -193,18 +199,22 @@ func TestPerformUpgrade_ShortCircuitRestartFailureReportsError(t *testing.T) {
 func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 	dir := withTempDataDir(t) // empty data dir → no self-path record
 
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := npmRegistryResponse{}
-		resp.Version = "99.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = wellFormedIntegrity
+		resp := signedRegistryResponse(t, keys, pkg, "99.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(ts.Close)
 
 	origClient := upgradeHTTPClient
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()

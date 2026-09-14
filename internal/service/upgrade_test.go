@@ -286,13 +286,26 @@ func TestFetchUpgradeInfo_AllSourcesFail(t *testing.T) {
 // failoverTransport routes the default registry base to defaultBase and the
 // user mirror base to mirrorBase. This lets tests simulate the default registry
 // being unreachable while the user's mirror works.
+//
+// keysJSON, when set, is served for the npm signing-keys endpoint. The keys
+// endpoint is always fetched from npmjs, so it must be answerable even when the
+// test's package metadata comes from a mirror.
 type failoverTransport struct {
 	defaultBase string
 	mirrorBase  string
 	mirrorHit   *bool
+	keysJSON    []byte
+	// keysStatus overrides the keys-endpoint status when non-zero.
+	keysStatus int
 }
 
 func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// The signing-keys endpoint is a trust anchor fetched from npmjs directly;
+	// serve it locally so tests never reach the network.
+	if req.URL.Path == npmKeysPath {
+		return t.keysResponse(req)
+	}
+
 	target := t.defaultBase
 	// Requests to a user mirror host route to mirrorBase; the default registry
 	// host (npmjs) routes to defaultBase.
@@ -305,6 +318,25 @@ func (t *failoverTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	clone := req.Clone(req.Context())
 	clone.URL, _ = url.Parse(target + req.URL.Path)
 	return http.DefaultTransport.RoundTrip(clone)
+}
+
+// keysResponse synthesizes a response for the npm signing-keys endpoint.
+func (t *failoverTransport) keysResponse(req *http.Request) (*http.Response, error) {
+	status := t.keysStatus
+	if status == 0 {
+		status = http.StatusOK
+	}
+	body := t.keysJSON
+	if status != http.StatusOK {
+		body = []byte(`{"error":"keys unavailable"}`)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 // withTempHome redirects the process HOME (and USERPROFILE on Windows) to a
@@ -894,56 +926,18 @@ func TestFetchUpgradeInfo_NPMMirrorTarballRewrite(t *testing.T) {
 	assert.NotContains(t, info.TarballURL, "registry.npmjs.org")
 }
 
-// fetchUpgradeInfoWithBase is a test helper that calls fetchUpgradeInfo with a
-// custom registry base URL by temporarily replacing the HTTP client transport.
+// fetchUpgradeInfoWithBase calls the production registry query against baseURL.
+//
+// It deliberately delegates to fetchUpgradeInfoFromBase rather than
+// reimplementing it: an earlier copy of this logic drifted from production and
+// silently skipped the signature check, so tests passed while the real path
+// was unverified.
 func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 	pkg, err := getPlatformPkg()
 	if err != nil {
 		return nil, err
 	}
-
-	url := fmt.Sprintf("%s/%s/latest", baseURL, pkg)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := upgradeHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query registry: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned status %d", resp.StatusCode)
-	}
-
-	var npmResp npmRegistryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&npmResp); err != nil {
-		return nil, fmt.Errorf("failed to decode registry response: %w", err)
-	}
-
-	tarballURL := npmResp.Dist.Tarball
-	if tarballURL == "" {
-		return nil, fmt.Errorf("no tarball URL in registry response")
-	}
-
-	// Mirror the production pipeline in fetchUpgradeInfoFromBase: normalize the
-	// package-name segment first, then repoint the host at the query base.
-	tarballURL = normalizeTarballURL(tarballURL)
-	tarballURL = rewriteTarballURL(tarballURL, baseURL)
-
-	return &UpgradeInfo{
-		CurrentVersion: "0.0.1",
-		LatestVersion:  npmResp.Version,
-		TarballURL:     tarballURL,
-		Integrity:      npmResp.Dist.Integrity,
-		HasUpgrade:     true,
-	}, nil
+	return fetchUpgradeInfoFromBase(baseURL, pkg, version.Get())
 }
 
 // --- downloadAndExtract ---
@@ -1389,9 +1383,17 @@ func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
 	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
 	t.Cleanup(func() { selfBinaryVersion = origVer })
 
-	// The registry advertises an upgrade but supplies no hash at all.
+	// The default registry is unreachable, so the user's mirror supplies the
+	// metadata. A custom mirror is not required to sign, which is what lets
+	// this test reach the digest-resolution step under examination.
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failServer.Close)
+
+	// The mirror advertises an upgrade but supplies no hash at all.
 	var tarballHits int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
 			atomic.AddInt32(&tarballHits, 1)
 			http.Error(w, "must not be downloaded", http.StatusInternalServerError)
@@ -1399,20 +1401,27 @@ func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
 		}
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		resp.Dist.Tarball = "https://mirror.example.com/test/-/test-99.0.0.tgz"
 		// Both dist.integrity and dist.shasum deliberately left empty.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
-	t.Cleanup(ts.Close)
+	t.Cleanup(mirrorServer.Close)
 
 	origClient := upgradeHTTPClient
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: failServer.URL,
+		mirrorBase:  mirrorServer.URL,
+	}}
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()
-	platform.ChinaMirrorChecked.Store(2) // non-China → default base
+	platform.ChinaMirrorChecked.Store(2) // non-China → default base first
 	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+	t.Cleanup(func() { os.Setenv("NPM_CONFIG_REGISTRY", origEnv) })
 
 	ResetUpgradeState()
 	t.Cleanup(ResetUpgradeState)
@@ -1558,12 +1567,11 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 	pkg, err := getPlatformPkg()
 	require.NoError(t, err)
 
+	keys := newTestSigningKeys(t)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Contains(t, r.URL.Path, pkg)
-		resp := npmRegistryResponse{}
-		resp.Version = "2.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-2.0.0.tgz"
-		resp.Dist.Integrity = wellFormedIntegrity
+		resp := signedRegistryResponse(t, keys, pkg, "2.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -1577,7 +1585,11 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 
 	// Rewrite requests to test server
 	origTransport := upgradeHTTPClient.Transport
-	upgradeHTTPClient.Transport = &rewritingTransport{targetURL: ts.URL, orig: origTransport}
+	upgradeHTTPClient.Transport = &rewritingTransport{
+		targetURL: ts.URL,
+		orig:      origTransport,
+		keysJSON:  keys.keysJSON(t),
+	}
 	defer func() { upgradeHTTPClient.Transport = origTransport }()
 
 	currentVer, latestVer, err := CheckForUpgrade()
@@ -1610,13 +1622,19 @@ func TestCheckForUpgrade_DirectCallError(t *testing.T) {
 	assert.Empty(t, latestVer)
 }
 
-// rewritingTransport rewrites all requests to a target test server.
+// rewritingTransport rewrites all requests to a target test server, except the
+// npm signing-keys endpoint, which is answered from keysJSON so the signature
+// check can succeed without reaching the network.
 type rewritingTransport struct {
 	targetURL string
 	orig      http.RoundTripper
+	keysJSON  []byte
 }
 
 func (rt *rewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Path == npmKeysPath {
+		return syntheticJSONResponse(req, http.StatusOK, rt.keysJSON)
+	}
 	newURL, err := url.Parse(rt.targetURL + req.URL.Path)
 	if err != nil {
 		return nil, err
@@ -1626,6 +1644,17 @@ func (rt *rewritingTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		return rt.orig.RoundTrip(req)
 	}
 	return http.DefaultTransport.RoundTrip(req)
+}
+
+// syntheticJSONResponse builds an in-memory HTTP response.
+func syntheticJSONResponse(req *http.Request, status int, body []byte) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: status,
+		Status:     fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Request:    req,
+	}, nil
 }
 
 func TestCheckForUpgrade_Error(t *testing.T) {
@@ -1875,17 +1904,21 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 	defer func() { upgradeExecutable = origExe }()
 
 	// Registry reports an upgrade is available.
+	keys := newTestSigningKeys(t)
+	pkg, pkgErr := getPlatformPkg()
+	require.NoError(t, pkgErr)
+
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		resp := npmRegistryResponse{}
-		resp.Version = "99.0.0"
-		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = wellFormedIntegrity
+		resp := signedRegistryResponse(t, keys, pkg, "99.0.0", wellFormedIntegrity)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		defaultBase: ts.URL,
+		keysJSON:    keys.keysJSON(t),
+	}}
 
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)

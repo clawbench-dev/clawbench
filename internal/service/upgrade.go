@@ -120,9 +120,10 @@ var npmPlatformPkg = map[string]string{
 type npmRegistryResponse struct {
 	Version string `json:"version"`
 	Dist    struct {
-		Tarball   string `json:"tarball"`
-		Integrity string `json:"integrity"`
-		Shasum    string `json:"shasum"`
+		Tarball    string         `json:"tarball"`
+		Integrity  string         `json:"integrity"`
+		Shasum     string         `json:"shasum"`
+		Signatures []npmSignature `json:"signatures"`
 	} `json:"dist"`
 }
 
@@ -300,6 +301,17 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 	tarballURL = rewriteTarballURL(tarballURL, registryBase)
 
 	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
+
+	// Verify npm's registry signature before trusting any of the metadata
+	// above. This is the trust anchor: integrity alone is useless against a
+	// malicious registry, because it supplies the hash and the tarball URL from
+	// the same response. The signature is checked for every candidate, even
+	// when no upgrade is available, so a tampered response is rejected rather
+	// than silently reported as "already up to date".
+	if sigErr := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
+		npmResp.Dist.Signatures, registryBase); sigErr != nil {
+		return nil, sigErr
+	}
 
 	return &UpgradeInfo{
 		CurrentVersion: currentVer,
