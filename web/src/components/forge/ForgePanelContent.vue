@@ -289,8 +289,15 @@ const bindError = ref('')
 const repoMenuOpen = ref(false)
 const repoBadgeRef = ref<HTMLElement | null>(null)
 
-async function refresh() {
-  await items.loadBinding()
+/**
+ * Refresh the binding and, when bound, the item list.
+ *
+ * `force` bypasses the shared binding cache. Post-write callers (bind/unbind)
+ * must pass it: the server state is known to have changed, and a cached value
+ * would show the repository the user just switched away from.
+ */
+async function refresh(force = false) {
+  await items.loadBinding(force)
   if (items.isBound.value) await items.load()
 }
 
@@ -362,7 +369,7 @@ async function unbindRepo() {
     appLog.w(TAG, 'unbind failed', err)
   }
   closeDetail()
-  await refresh()
+  await refresh(true)
 }
 
 async function bindFromRemote(r: ForgeRemote) {
@@ -380,7 +387,8 @@ async function submitBinding(input: { url?: string; platform?: string; host?: st
     await setForgeBinding(input)
     bindDialogOpen.value = false
     manualUrl.value = ''
-    await refresh()
+    // The binding just changed server-side, so bypass the cache.
+    await refresh(true)
   } catch (err) {
     if (err instanceof ForgeApiError) {
       bindError.value = err.code === 'UnsafeHost' ? t('forge.bind.unsafeHost') : err.message

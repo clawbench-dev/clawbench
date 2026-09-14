@@ -554,7 +554,7 @@ import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
-import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
+import { useForgeBinding, resetForgeBindingState, forgeDockIconKind } from './composables/useForgeBinding.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData } from './utils/attachDrag'
 import SplitView from './components/common/SplitView.vue'
@@ -649,6 +649,9 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   resetTaskTabState()
   resetTabDrawerState()
   resetAllCrudLists()
+  // The binding belongs to the previous project; drop it so the new project's
+  // task views never render the old repository (or a stale "unbound").
+  resetForgeBindingState()
   completionPopover.reset()
   // Navigation context is a module-level singleton, so it survives the
   // keyed project subtree replacement. Never carry a return target from the

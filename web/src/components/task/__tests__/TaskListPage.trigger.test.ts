@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TaskListPage from '../TaskListPage.vue'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
@@ -108,6 +109,10 @@ describe('TaskListPage — trigger-type distinction', () => {
     mockStore.state.tasks = []
     mockStore.state.taskUnreadCount = 0
     mockFetchForgeBinding.mockReset()
+    // The binding lives in a module-level singleton that survives between
+    // tests, and it caches for a few seconds. Drop it so each test starts from
+    // a clean lookup — a real project switch does the same via App.vue.
+    resetForgeBindingState()
     mockFetchForgeBinding.mockResolvedValue({
       binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
     })
@@ -170,6 +175,24 @@ describe('TaskListPage — trigger-type distinction', () => {
 
     await vi.waitFor(() => {
       expect(wrapper.find('.task-item-repo').text()).toBe('task.form.eventRepoUnbound')
+    })
+  })
+
+  // Regression: the row rendered `boundRepoLabel || unbound`, and the label
+  // started at '', so an in-flight lookup claimed the project was unbound.
+  it('does not claim the project is unbound while the lookup is in flight', async () => {
+    let release: (v: unknown) => void = () => {}
+    mockFetchForgeBinding.mockReturnValue(new Promise(resolve => { release = resolve }))
+
+    const wrapper = await mountWith([makeTask({ id: 1, triggerMode: 'event', eventTypes: 'pr.opened' })])
+
+    const row = wrapper.find('.task-item-repo')
+    expect(row.text()).not.toBe('task.form.eventRepoUnbound')
+    expect(row.text()).toBe('common.loading')
+
+    release({ binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' } })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.task-item-repo').text()).toBe('acme/widgets')
     })
   })
 
