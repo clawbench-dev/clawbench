@@ -234,17 +234,11 @@
           <Folder :size="15" />
         </button>
 
-        <!-- Open Full / View Details — primary action -->
+        <!-- Open Full / View Details — primary action. Both cases render the
+             same control: an oversize file opens the same way (the label already
+             reads "Full file"). -->
         <button
-          v-if="preview.errorCode.value === 'too-large'"
-          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
-          @click="handleViewDetails"
-        >
-          <ExternalLink :size="15" />
-          <span>{{ t('file.codePreview.openFileShort') }}</span>
-        </button>
-        <button
-          v-else-if="!isDirView"
+          v-if="!isDirView"
           class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
@@ -492,26 +486,21 @@
           >
             <Folder :size="12" />
           </button>
-          <!-- Open File / View Details -->
+          <!-- Open File / View Details.
+               A too-large file used to swap this for a wide text button reading
+               "View details / Download", which was 4x the width of every other
+               control in the row (111px vs 26px) and broke the icon strip. It
+               also did nothing different: it called the same openFull() as the
+               normal case. So the icon is used in both cases, and only the
+               tooltip changes — it carries the "download" affordance for an
+               oversize file. -->
           <button
-            v-if="preview.errorCode.value === 'too-large'"
+            v-if="!isDirView"
             class="code-preview-btn"
-            :title="t('file.codePreview.viewDetails')"
-            :aria-label="t('file.codePreview.viewDetails')"
-            :data-tooltip="t('file.codePreview.viewDetails')"
-            @pointerenter="showTooltip($event, t('file.codePreview.viewDetails'))"
-            @pointerleave="hideTooltip()"
-            @click="handleViewDetails"
-          >
-            {{ t('file.codePreview.viewDetails') }}
-          </button>
-          <button
-            v-else-if="!isDirView"
-            class="code-preview-btn"
-            :title="t('file.codePreview.openFull')"
-            :aria-label="t('file.codePreview.openFull')"
-            :data-tooltip="t('file.codePreview.openFull')"
-            @pointerenter="showTooltip($event, t('file.codePreview.openFull'))"
+            :title="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            :aria-label="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            :data-tooltip="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            @pointerenter="showTooltip($event, tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull'))"
             @pointerleave="hideTooltip()"
             @click="preview.openFull()"
           >
@@ -1262,6 +1251,13 @@ const errorMessageText = computed(() => {
   return props.preview.errorMessage.value || t('file.codePreview.loadError')
 })
 
+/**
+ * The file exceeded the preview size cap. The open control still opens the file
+ * the same way, but its tooltip says "View details / Download" so the user knows
+ * that path is also where the download lives.
+ */
+const tooLarge = computed(() => props.preview.errorCode.value === 'too-large')
+
 const isTargetLine = (lineNum: number): boolean => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return false
@@ -1457,11 +1453,6 @@ const handleCopy = async () => {
   } catch {
     // ignore
   }
-}
-
-const handleViewDetails = () => {
-  // If file is too large, trigger full open which in Clawbench leads to details/download
-  props.preview.openFull()
 }
 
 // Media bodies (image/video/audio/PDF) size themselves from the file's own
