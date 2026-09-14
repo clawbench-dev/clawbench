@@ -187,6 +187,7 @@ UNIQUE：`(message_id)`
 | acp_available_modes | TEXT | NOT NULL | `'[]'` | ACP 可用模式 JSON |
 | acp_available_thinking_efforts | TEXT | NOT NULL | `'[]'` | ACP 可选力度 JSON |
 | acp_available_commands | TEXT | NOT NULL | `'[]'` | ACP 可用命令 JSON |
+| acp_available_models | TEXT | NOT NULL | `'[]'` | ACP 上报的模型列表 JSON（重启后仍可见） |
 | acp_config_options | TEXT | NOT NULL | `''` | ACP 配置选项 |
 
 | acp_load_session | BOOLEAN | NOT NULL | `false` | 支持加载会话 |

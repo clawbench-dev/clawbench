@@ -9,10 +9,8 @@ import (
 // --- canDiscoverModels internal tests ---
 
 func TestCanDiscoverModels(t *testing.T) {
-	// Register a test discovery function to test the positive case
-	RegisterDiscoverModelsFunc("test-can-discover", func() []AgentModel {
-		return nil
-	})
+	// Register a test source to exercise the positive case
+	RegisterModelSource(StaticSource("test-can-discover", "", []AgentModel{{ID: "m"}}))
 
 	tests := []struct {
 		name     string
@@ -20,7 +18,7 @@ func TestCanDiscoverModels(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "with registered discovery function",
+			name:     "with registered model source",
 			spec:     BackendSpec{Backend: "test-can-discover"},
 			expected: true,
 		},

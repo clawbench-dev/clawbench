@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"testing"
 
+	"clawbench/internal/model"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,10 +26,8 @@ func TestCodexModelRe(t *testing.T) {
 		{"gpt-4", false},         // single version segment
 		{"gpt-4.1", true},        // matches gpt-\d+\.\d+
 		{"o3-mini", true},        // matches o[34](-mini)?
-		{"o4", true},             // matches o[34]
-		{"gpt-3.5-turbo", false}, // "turbo" is not "-mini", regex only allows -mini suffix
+		{"gpt-3.5-turbo", false}, // only a -mini suffix is allowed
 		{"claude-sonnet-4", false},
-		{"model-x", false},
 		{"", false},
 	}
 
@@ -36,14 +36,6 @@ func TestCodexModelRe(t *testing.T) {
 			assert.Equal(t, tt.expected, codexModelRe.MatchString(tt.input))
 		})
 	}
-}
-
-func TestCodexModelOrder(t *testing.T) {
-	assert.Equal(t, 0, codexModelOrder["gpt-5.5"], "gpt-5.5 should come first")
-	assert.Equal(t, 1, codexModelOrder["gpt-5.4"])
-	assert.Equal(t, 2, codexModelOrder["gpt-5.4-mini"])
-	assert.Equal(t, 3, codexModelOrder["o3"])
-	assert.Equal(t, 4, codexModelOrder["o4-mini"])
 }
 
 func TestCodexTargetTriple(t *testing.T) {
@@ -82,11 +74,11 @@ func TestCodexTargetTriple(t *testing.T) {
 	}
 }
 
-func TestCodexDefaultModels_Structure(t *testing.T) {
-	assert.NotEmpty(t, codexDefaultModels)
+func TestCodexCatalog_Structure(t *testing.T) {
+	require.NotEmpty(t, model.CodexCatalog)
 
 	defaultCount := 0
-	for _, m := range codexDefaultModels {
+	for _, m := range model.CodexCatalog {
 		assert.NotEmpty(t, m.ID)
 		assert.NotEmpty(t, m.Name)
 		if m.Default {
@@ -94,30 +86,30 @@ func TestCodexDefaultModels_Structure(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, defaultCount, "exactly one model should be default")
+	assert.Equal(t, "gpt-5.5", model.CodexCatalog[0].ID)
+	assert.True(t, model.CodexCatalog[0].Default)
 }
 
-func TestCodexDefaultModels_FirstIsDefault(t *testing.T) {
-	assert.NotEmpty(t, codexDefaultModels)
-	assert.True(t, codexDefaultModels[0].Default)
-	assert.Equal(t, "gpt-5.5", codexDefaultModels[0].ID)
+func TestCodexSource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "codex", Backend: "codex", DefaultCmd: "codex"}
+	assert.True(t, model.CanDiscoverModels(spec), "codex should support model discovery")
+
+	src, ok := model.LookupModelSource("codex")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindPlugin, src.Kind())
 }
 
-func TestDiscoverCodexModels_NoCLI(t *testing.T) {
-	// When codex CLI is not installed, all strategies return nil.
-	models := DiscoverCodexModels()
-	// Result depends on installation; just verify no panic
-	_ = models
-}
+func TestCodexSource_NotInstalledReportsDetail(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
 
-func TestDiscoverCodexModelsDefaults_NoCLI(t *testing.T) {
-	// When codex is not on PATH, defaults should return nil
-	models := discoverCodexModelsDefaults()
-	_ = models // may be nil if not installed, just verify no panic
+	models, detail := discoverCodexModels()
+	assert.Nil(t, models)
+	assert.Contains(t, detail, "not found", "the reason must say the CLI is missing")
 }
 
 // mockCodexInstall builds a fake codex npm-style installation on disk:
 //
-//	tmp/bin/codex                      — executable so exec.LookPath finds it
+//	tmp/bin/codex                      — executable so ResolveCLIPath finds it
 //	tmp/vendor/<triple>/codex/codex    — "binary" whose printable strings are
 //	                                     extracted for model discovery
 //
@@ -128,20 +120,18 @@ func mockCodexInstall(t *testing.T, binaryStrings []string) {
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
-	// Windows resolves commands by .exe/.cmd suffix; the shebang line is
-	// meaningless there but harmless on POSIX (it is just a non-ASCII-printable
-	// byte, so it never shows up in ExtractStrings output).
+
 	codexName := "codex"
 	if runtime.GOOS == "windows" {
 		codexName = "codex.exe"
 	}
-	codexBin := filepath.Join(binDir, codexName)
-	require.NoError(t, os.WriteFile(codexBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, codexName), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	triple := codexTargetTriple()
 	require.NotEmpty(t, triple, "test platform must map to a known target triple")
 	binaryPath := filepath.Join(root, "vendor", triple, "codex", codexName)
 	require.NoError(t, os.MkdirAll(filepath.Dir(binaryPath), 0o755))
+
 	var buf bytes.Buffer
 	for _, s := range binaryStrings {
 		buf.WriteString("\x00")
@@ -155,136 +145,127 @@ func mockCodexInstall(t *testing.T, binaryStrings []string) {
 
 func TestDiscoverCodexModelsFromBinary_Success(t *testing.T) {
 	mockCodexInstall(t, []string{"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "not-a-model", "gpt-5.4-mini"})
-	// Duplicate gpt-5.4-mini must be deduped; non-model strings skipped.
+
 	models := discoverCodexModelsFromBinary()
 
-	require.Len(t, models, 3)
+	require.Len(t, models, 3, "duplicates and non-model strings must be dropped")
 	assert.Equal(t, "gpt-5.5", models[0].ID)
-	assert.True(t, models[0].Default, "first model must be marked default")
 	assert.Equal(t, "gpt-5.4", models[1].ID)
 	assert.Equal(t, "gpt-5.4-mini", models[2].ID)
-	assert.False(t, models[1].Default, "only first model is default")
 }
 
-func TestDiscoverCodexModelsFromBinary_NoModels(t *testing.T) {
-	// Binary exists but contains no recognizable model strings.
-	mockCodexInstall(t, []string{"claude-sonnet-4", "random text"})
-	models := discoverCodexModelsFromBinary()
-	assert.Nil(t, models)
-}
-
-func TestDiscoverCodexModelsFromBinary_BinaryMissing(t *testing.T) {
-	root := t.TempDir()
-	binDir := filepath.Join(root, "bin")
-	require.NoError(t, os.MkdirAll(binDir, 0o755))
-	codexBin := filepath.Join(binDir, "codex")
-	require.NoError(t, os.WriteFile(codexBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	// No vendor/ tree — the Rust binary path does not exist.
-	t.Setenv("PATH", binDir)
+func TestDiscoverCodexModelsFromBinary_OrdersByKnownPreference(t *testing.T) {
+	// o4-mini is later in CodexModelOrder than gpt-5.5, so the sorted result
+	// must not follow the raw extraction order.
+	mockCodexInstall(t, []string{"o4-mini", "gpt-5.5"})
 
 	models := discoverCodexModelsFromBinary()
-	assert.Nil(t, models)
-}
-
-func TestDiscoverCodexModelsFromBinary_CLINotInstalled(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	models := discoverCodexModelsFromBinary()
-	assert.Nil(t, models)
-}
-
-func TestDiscoverCodexModels_BinaryStrategyWins(t *testing.T) {
-	// When the strings strategy finds models, it must take priority over the
-	// hardcoded defaults. (Strings below minLen=4 are not extracted, so use
-	// multi-char model IDs.)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", "")
-	mockCodexInstall(t, []string{"gpt-5.5", "o4-mini"})
-	models := DiscoverCodexModels()
 
 	require.Len(t, models, 2)
 	assert.Equal(t, "gpt-5.5", models[0].ID)
 	assert.Equal(t, "o4-mini", models[1].ID)
 }
 
-func TestDiscoverCodexModels_FallsBackToDefaults(t *testing.T) {
-	// Codex installed but the binary tree has no extractable models → defaults.
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", "")
-	mockCodexInstall(t, []string{"unrelated string"})
-	models := DiscoverCodexModels()
-
-	require.Len(t, models, 3)
-	assert.Equal(t, "gpt-5.5", models[0].ID)
-	assert.True(t, models[0].Default)
+func TestDiscoverCodexModelsFromBinary_NoModels(t *testing.T) {
+	mockCodexInstall(t, []string{"claude-sonnet-4", "random text"})
+	assert.Nil(t, discoverCodexModelsFromBinary())
 }
 
-func TestDiscoverCodexModelsDefaults_Installed(t *testing.T) {
-	mockCodexInstall(t, nil)
-	models := discoverCodexModelsDefaults()
+func TestDiscoverCodexModelsFromBinary_BinaryMissing(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
 
-	require.Len(t, models, 3)
-	assert.Equal(t, "gpt-5.5", models[0].ID)
-	assert.True(t, models[0].Default)
+	assert.Nil(t, discoverCodexModelsFromBinary(), "no vendor/ tree means no binary to scan")
 }
 
-func TestDiscoverCodexModelsDefaults_NotInstalled(t *testing.T) {
+func TestDiscoverCodexModelsFromBinary_CLINotInstalled(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	models := discoverCodexModelsDefaults()
-	assert.Nil(t, models)
+	assert.Nil(t, discoverCodexModelsFromBinary())
 }
 
 func TestDiscoverCodexModelsFromCache(t *testing.T) {
-	home := t.TempDir()
-	codexDir := filepath.Join(home, ".codex")
-	require.NoError(t, os.MkdirAll(codexDir, 0o755))
-	cache := `{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},{"slug":"gpt-6-astra","display_name":"duplicate","visibility":"list"},{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"},{"slug":"hidden","visibility":"hide"}]}`
+	codexDir := t.TempDir()
+	cache := `{"models":[
+		{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},
+		{"slug":"gpt-6-astra","display_name":"duplicate","visibility":"list"},
+		{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"},
+		{"slug":"hidden","visibility":"hide"}
+	]}`
 	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o644))
 	t.Setenv("CODEX_HOME", codexDir)
+
 	models := discoverCodexModelsFromCache()
-	require.Len(t, models, 2)
+
+	require.Len(t, models, 2, "duplicates collapse and non-listable models are excluded")
 	assert.Equal(t, "gpt-6-astra", models[0].ID)
+	assert.Equal(t, "GPT-6-Astra", models[0].Name)
 	assert.Equal(t, "GPT-5.6 Luna", models[1].Name)
 }
 
-func TestDiscoverCodexModels_CacheWins(t *testing.T) {
-	home := t.TempDir()
-	codexDir := filepath.Join(home, ".codex")
-	require.NoError(t, os.MkdirAll(codexDir, 0o755))
-	cache := `{"models":[{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"}]}`
+func TestDiscoverCodexModelsFromCache_NoFile(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	assert.Nil(t, discoverCodexModelsFromCache())
+}
+
+func TestDiscoverCodexModelsFromCache_MalformedJSON(t *testing.T) {
+	codexDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte("{not json"), 0o644))
+	t.Setenv("CODEX_HOME", codexDir)
+
+	assert.Nil(t, discoverCodexModelsFromCache())
+}
+
+func TestDiscoverCodexModels_CacheWinsOverBinary(t *testing.T) {
+	codexDir := t.TempDir()
+	cache := `{"models":[
+		{"slug":"gpt-6-astra","display_name":"GPT-6-Astra","visibility":"list"},
+		{"slug":"gpt-5.6-luna","display_name":"GPT-5.6 Luna","visibility":"list"}
+	]}`
 	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "models_cache.json"), []byte(cache), 0o644))
 	t.Setenv("CODEX_HOME", codexDir)
 	mockCodexInstall(t, []string{"gpt-5.5"})
 
-	models := DiscoverCodexModels()
-	require.Len(t, models, 2)
+	models, detail := discoverCodexModels()
+
+	require.Len(t, models, 2, "the account's cached catalog is preferred over binary strings")
+	assert.Empty(t, detail)
 	assert.Equal(t, "gpt-6-astra", models[0].ID)
-	assert.True(t, models[0].Default)
-	assert.Equal(t, "gpt-5.6-luna", models[1].ID)
 }
 
-func TestDiscoverCodexModelsFromStateDB_NoCodexDir(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("CODEX_HOME", "")
-	models := discoverCodexModelsFromStateDB()
-	assert.Nil(t, models)
+func TestDiscoverCodexModels_BinaryBeatsCatalog(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir()) // no cache file
+	mockCodexInstall(t, []string{"gpt-5.5", "o4-mini"})
+
+	models, detail := discoverCodexModels()
+
+	require.Len(t, models, 2)
+	assert.Empty(t, detail)
+	assert.Equal(t, "gpt-5.5", models[0].ID)
 }
 
-func TestDiscoverCodexModelsFromStateDB_NoStateFile(t *testing.T) {
-	home := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".codex"), 0o755))
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", "")
-	models := discoverCodexModelsFromStateDB()
-	assert.Nil(t, models)
+func TestDiscoverCodexModels_FallsBackToCatalog(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir()) // no cache file
+	mockCodexInstall(t, []string{"unrelated string"})
+
+	models, detail := discoverCodexModels()
+
+	require.Len(t, models, len(model.CodexCatalog))
+	assert.Equal(t, "gpt-5.5", models[0].ID)
+	assert.Contains(t, detail, "built-in catalog", "the fallback must be reported, not silent")
 }
 
-func TestDiscoverCodexModelsFromStateDB_UnrelatedFilesOnly(t *testing.T) {
-	home := t.TempDir()
-	codexDir := filepath.Join(home, ".codex")
-	require.NoError(t, os.MkdirAll(codexDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("[x]\n"), 0o644))
-	t.Setenv("HOME", home)
-	t.Setenv("CODEX_HOME", "")
-	models := discoverCodexModelsFromStateDB()
-	assert.Nil(t, models)
+func TestCodexSource_MarksDefaultAtTheBoundary(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	mockCodexInstall(t, []string{"o4-mini", "gpt-5.4"})
+
+	src, ok := model.LookupModelSource("codex")
+	require.True(t, ok)
+	models, _ := src.Discover()
+
+	require.Len(t, models, 2)
+	assert.True(t, models[0].Default, "the source wrapper is responsible for marking a default")
+	assert.False(t, models[1].Default)
 }

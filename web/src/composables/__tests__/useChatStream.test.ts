@@ -108,6 +108,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 
 vi.mock('@/composables/useAgents', () => ({
   updateACPModelList: vi.fn(),
+  applyResolvedModelList: vi.fn(),
 }))
 
 vi.mock('@/composables/usePlanProgress', async (importOriginal) => {

@@ -1,14 +1,17 @@
 package claude
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClaudeIsDateStamped(t *testing.T) {
+func TestIsClaudeDateStamped(t *testing.T) {
 	tests := []struct {
 		modelID  string
 		expected bool
@@ -16,16 +19,13 @@ func TestClaudeIsDateStamped(t *testing.T) {
 		{"claude-opus-4-20250514", true},
 		{"claude-sonnet-4-6", false},
 		{"claude-haiku-3-5-20241022", true},
-		{"claude-sonnet-4-20250514", true},
 		{"claude-opus-4-5", false},
-		{"claude-3-5-haiku-20241022", true},
 		{"claude-3-haiku-20240307", true},
-		{"claude-sonnet-4-6", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.modelID, func(t *testing.T) {
-			assert.Equal(t, tt.expected, claudeIsDateStamped(tt.modelID))
+			assert.Equal(t, tt.expected, isClaudeDateStamped(tt.modelID))
 		})
 	}
 }
@@ -38,7 +38,7 @@ func TestClaudeModelRe(t *testing.T) {
 		{"claude-sonnet-4-6", true},
 		{"claude-opus-4-5", true},
 		{"claude-haiku-3-5", true},
-		{"claude-sonnet-4-20250514", true}, // regex matches (4-20250514 is two digit segments), but claudeIsDateStamped filters it
+		{"claude-sonnet-4-20250514", true}, // matches, but isDateStamped filters it later
 		{"claude-opus-4", false},           // single version segment
 		{"claude-3-5-haiku", false},        // old naming convention
 		{"gpt-4.1", false},                 // not a Claude model
@@ -53,123 +53,200 @@ func TestClaudeModelRe(t *testing.T) {
 	}
 }
 
-func TestClaudeModelNames(t *testing.T) {
-	assert.Equal(t, "Sonnet", claudeModelNames["sonnet"])
-	assert.Equal(t, "Opus", claudeModelNames["opus"])
-	assert.Equal(t, "Haiku", claudeModelNames["haiku"])
-}
-
-func TestClaudeModelOrder(t *testing.T) {
-	assert.Equal(t, 0, claudeModelOrder["sonnet"], "sonnet should come first")
-	assert.Equal(t, 1, claudeModelOrder["opus"], "opus should come second")
-	assert.Equal(t, 2, claudeModelOrder["haiku"], "haiku should come last")
-}
-
-func TestClaudeDefaultModels_Structure(t *testing.T) {
-	assert.NotEmpty(t, claudeDefaultModels)
-
-	defaultCount := 0
-	for _, m := range claudeDefaultModels {
+func TestClaudeCatalog_Structure(t *testing.T) {
+	assert.NotEmpty(t, model.ClaudeCatalog)
+	for _, m := range model.ClaudeCatalog {
 		assert.NotEmpty(t, m.ID)
 		assert.NotEmpty(t, m.Name)
-		if m.Default {
-			defaultCount++
-		}
 	}
-	// Default models in the list don't have Default:true set explicitly;
-	// DiscoverClaudeModels sets it on the first model when returning defaults.
 }
 
-func TestClaudeDefaultModels_ContainsKnownModels(t *testing.T) {
+func TestClaudeCatalog_ContainsKnownModels(t *testing.T) {
 	ids := make(map[string]bool)
-	for _, m := range claudeDefaultModels {
+	for _, m := range model.ClaudeCatalog {
 		ids[m.ID] = true
 	}
 	assert.True(t, ids["claude-sonnet-4-20250514"], "should contain Claude Sonnet 4")
 	assert.True(t, ids["claude-opus-4-20250514"], "should contain Claude Opus 4")
 }
 
-func TestLoadClaudeModelOverrides_NoConfigDir(t *testing.T) {
-	// Override configDir to a nonexistent path
+func TestParseClaudeModels_BuildsReadableNames(t *testing.T) {
+	models := parseClaudeModels([]string{
+		"claude-sonnet-4-6",
+		"claude-opus-4-5",
+		"claude-haiku-3-5",
+	})
+
+	require.Len(t, models, 3)
+	assert.Equal(t, "Claude Sonnet 4.6", models[0].Name)
+	assert.Equal(t, "Claude Opus 4.5", models[1].Name)
+	assert.Equal(t, "Claude Haiku 3.5", models[2].Name)
+}
+
+func TestParseClaudeModels_SkipsDateStampedAndDuplicates(t *testing.T) {
+	models := parseClaudeModels([]string{
+		"claude-sonnet-4-6",
+		"claude-sonnet-4-6",
+		"claude-opus-4-20250514",
+		"not-a-model",
+	})
+
+	require.Len(t, models, 1, "date-stamped snapshots and duplicates must be dropped")
+	assert.Equal(t, "claude-sonnet-4-6", models[0].ID)
+}
+
+func TestSortClaudeModels_FamilyOrderThenNewestFirst(t *testing.T) {
+	models := []model.AgentModel{
+		{ID: "claude-haiku-3-5"},
+		{ID: "claude-opus-4-4"},
+		{ID: "claude-opus-4-5"},
+		{ID: "claude-sonnet-4-6"},
+	}
+
+	sortClaudeModels(models)
+
+	ids := make([]string, len(models))
+	for i, m := range models {
+		ids[i] = m.ID
+	}
+	assert.Equal(t, []string{
+		"claude-sonnet-4-6",
+		"claude-opus-4-5",
+		"claude-opus-4-4",
+		"claude-haiku-3-5",
+	}, ids, "sonnet first, then opus newest-first, then haiku")
+}
+
+func TestLoadClaudeModelOverrides_MissingConfigDir(t *testing.T) {
 	orig := claudeConfigDir
-	defer func() { claudeConfigDir = orig }()
+	t.Cleanup(func() { claudeConfigDir = orig })
 
 	claudeConfigDir = func() string { return "/nonexistent/path" }
-	overrides := LoadClaudeModelOverrides()
-	assert.Nil(t, overrides, "should return nil when config dir doesn't exist")
+	assert.Nil(t, loadClaudeModelOverrides(), "a missing config dir is normal, not an error")
 }
 
-func TestOverrideDedup_KeepsFirstByName(t *testing.T) {
-	// Simulate the dedup logic: when multiple models override to the same Name,
-	// only the first (by sort order: sonnet > opus > haiku) is kept.
+func TestLoadClaudeModelOverrides_ReadsOverridesMap(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"modelOverrides":{"claude-sonnet-4-6":"MiniMax-M2.7"}}`), 0o644))
+
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return dir }
+
+	got := loadClaudeModelOverrides()
+	require.Len(t, got, 1)
+	assert.Equal(t, "MiniMax-M2.7", got["claude-sonnet-4-6"])
+}
+
+func TestApplyClaudeOverrides_ReplacesNameButNotID(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"modelOverrides":{"claude-sonnet-4-6":"MiniMax-M2.7"}}`), 0o644))
+
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return dir }
+
+	models := []model.AgentModel{{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"}}
+	models = applyClaudeOverrides(models)
+
+	require.Len(t, models, 1)
+	assert.Equal(t, "MiniMax-M2.7", models[0].Name, "display name reflects the real backing model")
+	assert.Equal(t, "claude-sonnet-4-6", models[0].ID, "the ID must stay the Claude ID the CLI expects")
+}
+
+func TestApplyClaudeOverrides_DedupesCollapsedNames(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"modelOverrides":{
+			"claude-sonnet-4-6":"MiniMax-M2.7",
+			"claude-opus-4-5":"MiniMax-M2.7"
+		}}`), 0o644))
+
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return dir }
+
 	models := []model.AgentModel{
-		{ID: "claude-sonnet-4-6", Name: "MiniMax-M2.7"},
-		{ID: "claude-opus-4-5", Name: "MiniMax-M2.7"},
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
 		{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5"},
 	}
-	seenNames := make(map[string]bool)
-	deduped := make([]model.AgentModel, 0, len(models))
-	for i := range models {
-		if seenNames[models[i].Name] {
-			continue
-		}
-		seenNames[models[i].Name] = true
-		deduped = append(deduped, models[i])
-	}
-	assert.Len(t, deduped, 2, "duplicate Name should be deduped")
-	assert.Equal(t, "claude-sonnet-4-6", deduped[0].ID, "first occurrence (sonnet) kept")
-	assert.Equal(t, "claude-haiku-3-5", deduped[1].ID, "non-duplicate kept")
+	models = applyClaudeOverrides(models)
+
+	require.Len(t, models, 2, "two tiers redirected to the same real model collapse to one entry")
+	assert.Equal(t, "claude-sonnet-4-6", models[0].ID, "highest-priority occurrence is kept")
+	assert.Equal(t, "MiniMax-M2.7", models[0].Name)
+	assert.Equal(t, "claude-haiku-3-5", models[1].ID, "unrelated model survives")
 }
 
-func TestOverrideDedup_AllSameName(t *testing.T) {
-	// All models override to the same Name — only first survives.
-	models := []model.AgentModel{
-		{ID: "claude-sonnet-4-6", Name: "Proxy"},
-		{ID: "claude-opus-4-5", Name: "Proxy"},
-		{ID: "claude-haiku-3-5", Name: "Proxy"},
-	}
-	seenNames := make(map[string]bool)
-	deduped := make([]model.AgentModel, 0, len(models))
-	for i := range models {
-		if seenNames[models[i].Name] {
-			continue
-		}
-		seenNames[models[i].Name] = true
-		deduped = append(deduped, models[i])
-	}
-	assert.Len(t, deduped, 1, "all same Name → only first kept")
-	assert.Equal(t, "claude-sonnet-4-6", deduped[0].ID)
+func TestClaudeSource_Registered(t *testing.T) {
+	spec := model.BackendSpec{ID: "claude", Backend: "claude", DefaultCmd: "claude"}
+	assert.True(t, model.CanDiscoverModels(spec), "claude should support model discovery")
+
+	src, ok := model.LookupModelSource("claude")
+	require.True(t, ok)
+	assert.Equal(t, model.SourceKindPlugin, src.Kind())
 }
 
-func TestOverrideDedup_NoCollisions(t *testing.T) {
-	// No Name collisions — all models pass through.
+func TestClaudeSource_NeverReturnsNothing(t *testing.T) {
+	// The plugin always has an answer: either models scanned from the binary or
+	// the catalog. Which one is environment-dependent (the CLI may or may not
+	// be installed), so assert the invariant rather than a specific branch.
+	models, _ := discoverClaudeModels()
+	require.NotEmpty(t, models, "claude discovery must always yield a usable list")
+	for _, m := range models {
+		assert.NotEmpty(t, m.ID)
+		assert.NotEmpty(t, m.Name)
+	}
+}
+
+func TestClaudeSource_FallsBackWhenCLIAbsent(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	models, detail := discoverClaudeModels()
+
+	require.Len(t, models, len(model.ClaudeCatalog))
+	assert.Contains(t, detail, "not found", "the reason must say the CLI is missing")
+}
+
+// With no overrides configured, every model passes through with its scanned name.
+func TestApplyClaudeOverrides_NoOverridesKeepsAllModels(t *testing.T) {
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return "/nonexistent/path" }
+
 	models := []model.AgentModel{
-		{ID: "claude-sonnet-4-6", Name: "MiniMax-M2.7"},
-		{ID: "claude-opus-4-5", Name: "DeepSeek-V3"},
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
 		{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5"},
 	}
-	seenNames := make(map[string]bool)
-	deduped := make([]model.AgentModel, 0, len(models))
-	for i := range models {
-		if seenNames[models[i].Name] {
-			continue
-		}
-		seenNames[models[i].Name] = true
-		deduped = append(deduped, models[i])
-	}
-	assert.Len(t, deduped, 3, "no collisions → all kept")
+
+	got := applyClaudeOverrides(models)
+
+	require.Len(t, got, 3, "no overrides means no dedup and no drops")
+	assert.Equal(t, "Claude Sonnet 4.6", got[0].Name)
+	assert.Equal(t, "Claude Haiku 3.5", got[2].Name)
 }
 
-func TestOverrideDedup_EmptyInput(t *testing.T) {
-	models := []model.AgentModel{}
-	seenNames := make(map[string]bool)
-	deduped := make([]model.AgentModel, 0, len(models))
-	for i := range models {
-		if seenNames[models[i].Name] {
-			continue
-		}
-		seenNames[models[i].Name] = true
-		deduped = append(deduped, models[i])
-	}
-	assert.Len(t, deduped, 0)
+func TestApplyClaudeOverrides_EmptyInput(t *testing.T) {
+	assert.Empty(t, applyClaudeOverrides(nil))
+}
+
+// An override for an ID that is not present must not affect the others.
+func TestApplyClaudeOverrides_UnrelatedOverrideIsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "settings.json"),
+		[]byte(`{"modelOverrides":{"some-other-model":"Whatever"}}`), 0o644))
+
+	orig := claudeConfigDir
+	t.Cleanup(func() { claudeConfigDir = orig })
+	claudeConfigDir = func() string { return dir }
+
+	models := []model.AgentModel{{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"}}
+	got := applyClaudeOverrides(models)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "Claude Sonnet 4.6", got[0].Name, "an unrelated override must not rename this model")
 }

@@ -35,13 +35,13 @@ type acpTestConfig struct {
 	Timeout    time.Duration // Per-prompt timeout
 
 	// Capability flags
-	HasThinking     bool // Whether backend supports thinking_effort configuration
-	SupportsConfig  bool // Whether backend supports set_config RPC (mode/model/thinking)
+	HasThinking    bool // Whether backend supports thinking_effort configuration
+	SupportsConfig bool // Whether backend supports set_config RPC (mode/model/thinking)
 
 	// Agent construction parameters
-	DefaultModel       string   // Default model ID
-	ThinkingLevels     []string // Available thinking_effort levels
-	AltModels          []string // Alternative model IDs for ModelSwitch test
+	DefaultModel   string   // Default model ID
+	ThinkingLevels []string // Available thinking_effort levels
+	AltModels      []string // Alternative model IDs for ModelSwitch test
 
 	// SupportedTests declares which test points this backend should run.
 	SupportedTests map[string]bool
@@ -49,74 +49,74 @@ type acpTestConfig struct {
 
 // --- ACP Test Point Names ---
 const (
-	AcpNewSessionCreateAndCapture    = "NewSessionCreateAndCapture"
-	AcpConnReuseSameSession          = "ConnReuseSameSession"
-	AcpProcessCrash                  = "ProcessCrash"
-	AcpPeerDisconnectRetryPrompt     = "PeerDisconnectRetryPrompt"
-	AcpIdleSweepRecycled             = "IdleSweepRecycled"
-	AcpExplicitCloseNewSession       = "ExplicitCloseNewSession"
-	AcpMultipleSessionsIsolated      = "MultipleSessionsIsolated"
-	AcpModeSwitch                    = "ModeSwitch"
-	AcpModelSwitch                   = "ModelSwitch"
-	AcpThinkingEffortSwitch          = "ThinkingEffortSwitch"
-	AcpUnsupportedConfig             = "UnsupportedConfig"
-	AcpConfigDedup                   = "ConfigDedup"
-	AcpConfigKilledConnection        = "ConfigKilledConnection"
-	AcpResumeModePreserved           = "ResumeModePreserved"
-	AcpResumeModelPreserved          = "ResumeModelPreserved"
-	AcpResumeThinkingPreserved       = "ResumeThinkingPreserved"
-	AcpResumeCommandsPreserved       = "ResumeCommandsPreserved"
-	AcpResumeConfigDedupReset        = "ResumeConfigDedupReset"
-	AcpResumePlanStateLost           = "ResumePlanStateLost"
-	AcpSSEDisconnectDrain            = "SSEDisconnectDrain"
-	AcpSSEReconnectStateReemitted    = "SSEReconnectStateReemitted"
-	AcpLongRunningMultipleTurns      = "LongRunningMultipleTurns"
-	AcpLongRunningConfigConsistency  = "LongRunningConfigConsistency"
-	AcpUserCancelResumeConversation  = "UserCancelResumeConversation"
+	AcpNewSessionCreateAndCapture     = "NewSessionCreateAndCapture"
+	AcpConnReuseSameSession           = "ConnReuseSameSession"
+	AcpProcessCrash                   = "ProcessCrash"
+	AcpPeerDisconnectRetryPrompt      = "PeerDisconnectRetryPrompt"
+	AcpIdleSweepRecycled              = "IdleSweepRecycled"
+	AcpExplicitCloseNewSession        = "ExplicitCloseNewSession"
+	AcpMultipleSessionsIsolated       = "MultipleSessionsIsolated"
+	AcpModeSwitch                     = "ModeSwitch"
+	AcpModelSwitch                    = "ModelSwitch"
+	AcpThinkingEffortSwitch           = "ThinkingEffortSwitch"
+	AcpUnsupportedConfig              = "UnsupportedConfig"
+	AcpConfigDedup                    = "ConfigDedup"
+	AcpConfigKilledConnection         = "ConfigKilledConnection"
+	AcpResumeModePreserved            = "ResumeModePreserved"
+	AcpResumeModelPreserved           = "ResumeModelPreserved"
+	AcpResumeThinkingPreserved        = "ResumeThinkingPreserved"
+	AcpResumeCommandsPreserved        = "ResumeCommandsPreserved"
+	AcpResumeConfigDedupReset         = "ResumeConfigDedupReset"
+	AcpResumePlanStateLost            = "ResumePlanStateLost"
+	AcpSSEDisconnectDrain             = "SSEDisconnectDrain"
+	AcpSSEReconnectStateReemitted     = "SSEReconnectStateReemitted"
+	AcpLongRunningMultipleTurns       = "LongRunningMultipleTurns"
+	AcpLongRunningConfigConsistency   = "LongRunningConfigConsistency"
+	AcpUserCancelResumeConversation   = "UserCancelResumeConversation"
 	AcpProcessCrashResumeConversation = "ProcessCrashResumeConversation"
-	AcpMultipleCancelResume          = "MultipleCancelResume"
-	AcpMultipleCrashResume           = "MultipleCrashResume"
-	AcpCancelAndCrashResume          = "CancelAndCrashResume"
-	AcpSessionRecoveryAfterConnLoss  = "SessionRecoveryAfterConnLoss"
-	AcpUnrecoverableSessionError     = "UnrecoverableSessionError"
-	AcpTransportSwitchACPtoCLItoACP  = "TransportSwitchACPtoCLItoACP"
-	AcpSessionCapabilities           = "SessionCapabilities"
-	AcpCodeWhaleBasicSession         = "CodeWhaleBasicSession"
-	AcpCodeWhaleMultiTurnContext     = "CodeWhaleMultiTurnContext"
-	AcpCodeWhaleMultiTurnResume      = "CodeWhaleMultiTurnResume"
-	AcpStateModeThinkingCommands     = "StateModeThinkingCommands"
-	AcpStateReemittedOnSecondPrompt  = "StateReemittedOnSecondPrompt"
+	AcpMultipleCancelResume           = "MultipleCancelResume"
+	AcpMultipleCrashResume            = "MultipleCrashResume"
+	AcpCancelAndCrashResume           = "CancelAndCrashResume"
+	AcpSessionRecoveryAfterConnLoss   = "SessionRecoveryAfterConnLoss"
+	AcpUnrecoverableSessionError      = "UnrecoverableSessionError"
+	AcpTransportSwitchACPtoCLItoACP   = "TransportSwitchACPtoCLItoACP"
+	AcpSessionCapabilities            = "SessionCapabilities"
+	AcpCodeWhaleBasicSession          = "CodeWhaleBasicSession"
+	AcpCodeWhaleMultiTurnContext      = "CodeWhaleMultiTurnContext"
+	AcpCodeWhaleMultiTurnResume       = "CodeWhaleMultiTurnResume"
+	AcpStateModeThinkingCommands      = "StateModeThinkingCommands"
+	AcpStateReemittedOnSecondPrompt   = "StateReemittedOnSecondPrompt"
 )
 
 // allACPTestPoints returns the base set of test points every ACP backend runs.
 func allACPTestPoints() map[string]bool {
 	return map[string]bool{
-		AcpNewSessionCreateAndCapture: true,
-		AcpConnReuseSameSession:       true,
-		AcpProcessCrash:               true,
-		AcpPeerDisconnectRetryPrompt:  true,
-		AcpIdleSweepRecycled:          true,
-		AcpExplicitCloseNewSession:    true,
-		AcpMultipleSessionsIsolated:   true,
-		AcpResumeModePreserved:        true,
-		AcpResumeModelPreserved:       true,
-		AcpResumeCommandsPreserved:    true,
-		AcpResumeConfigDedupReset:     true,
-		AcpResumePlanStateLost:        true,
-		AcpSSEDisconnectDrain:         true,
-		AcpLongRunningMultipleTurns:   true,
-		AcpUserCancelResumeConversation:  true,
+		AcpNewSessionCreateAndCapture:     true,
+		AcpConnReuseSameSession:           true,
+		AcpProcessCrash:                   true,
+		AcpPeerDisconnectRetryPrompt:      true,
+		AcpIdleSweepRecycled:              true,
+		AcpExplicitCloseNewSession:        true,
+		AcpMultipleSessionsIsolated:       true,
+		AcpResumeModePreserved:            true,
+		AcpResumeModelPreserved:           true,
+		AcpResumeCommandsPreserved:        true,
+		AcpResumeConfigDedupReset:         true,
+		AcpResumePlanStateLost:            true,
+		AcpSSEDisconnectDrain:             true,
+		AcpLongRunningMultipleTurns:       true,
+		AcpUserCancelResumeConversation:   true,
 		AcpProcessCrashResumeConversation: true,
-		AcpMultipleCancelResume:       true,
-		AcpMultipleCrashResume:        true,
-		AcpCancelAndCrashResume:       true,
-		AcpSessionRecoveryAfterConnLoss:  true,
-		AcpUnrecoverableSessionError:     true,
-		AcpTransportSwitchACPtoCLItoACP:  true,
+		AcpMultipleCancelResume:           true,
+		AcpMultipleCrashResume:            true,
+		AcpCancelAndCrashResume:           true,
+		AcpSessionRecoveryAfterConnLoss:   true,
+		AcpUnrecoverableSessionError:      true,
+		AcpTransportSwitchACPtoCLItoACP:   true,
 		// SessionCapabilities expanded from original 2 backends (codebuddy, claude)
 		// to all 7 ACP backends — the test handles non-supporting agents gracefully
-		AcpSessionCapabilities:           true,
-		AcpStateModeThinkingCommands:     true,
+		AcpSessionCapabilities:       true,
+		AcpStateModeThinkingCommands: true,
 	}
 }
 
@@ -230,9 +230,9 @@ var acpBackends = []acpTestConfig{
 		HasThinking:    false,
 		SupportsConfig: false,
 		SupportedTests: map[string]bool{
-			AcpCodeWhaleBasicSession:      true,
-			AcpCodeWhaleMultiTurnContext:  true,
-			AcpCodeWhaleMultiTurnResume:   true,
+			AcpCodeWhaleBasicSession:     true,
+			AcpCodeWhaleMultiTurnContext: true,
+			AcpCodeWhaleMultiTurnResume:  true,
 		},
 	},
 }
@@ -245,7 +245,7 @@ func buildACPAgent(cfg acpTestConfig) *model.Agent {
 		Backend:              cfg.Backend,
 		Transport:            "acp-stdio",
 		AcpCommand:           cfg.AcpCommand,
-		Models:                []model.AgentModel{{ID: cfg.DefaultModel, Name: cfg.DefaultModel, Default: true}},
+		Models:               []model.AgentModel{{ID: cfg.DefaultModel, Name: cfg.DefaultModel, Default: true}},
 		ThinkingEffortLevels: cfg.ThinkingLevels,
 	}
 }
@@ -305,8 +305,8 @@ func setupACPTestEnvForConfig(t *testing.T, cfg acpTestConfig) *acpTestEnv {
 
 // acpTestCase represents a single test point in the table-driven ACP integration suite.
 type acpTestCase struct {
-	Name      string                            // Test point name (matches SupportedTests keys)
-	ShouldRun func(cfg acpTestConfig) bool       // Returns true if this backend should run this test
+	Name      string                                // Test point name (matches SupportedTests keys)
+	ShouldRun func(cfg acpTestConfig) bool          // Returns true if this backend should run this test
 	Run       func(t *testing.T, cfg acpTestConfig) // The actual test function
 }
 
@@ -364,43 +364,43 @@ func validateACPTestCoverage(t *testing.T) {
 	t.Helper()
 	// Collect all test point constants defined above
 	allConstants := map[string]string{
-		AcpNewSessionCreateAndCapture:    AcpNewSessionCreateAndCapture,
-		AcpConnReuseSameSession:          AcpConnReuseSameSession,
-		AcpProcessCrash:                  AcpProcessCrash,
-		AcpPeerDisconnectRetryPrompt:     AcpPeerDisconnectRetryPrompt,
-		AcpIdleSweepRecycled:             AcpIdleSweepRecycled,
-		AcpExplicitCloseNewSession:       AcpExplicitCloseNewSession,
-		AcpMultipleSessionsIsolated:      AcpMultipleSessionsIsolated,
-		AcpModeSwitch:                    AcpModeSwitch,
-		AcpModelSwitch:                   AcpModelSwitch,
-		AcpThinkingEffortSwitch:          AcpThinkingEffortSwitch,
-		AcpUnsupportedConfig:             AcpUnsupportedConfig,
-		AcpConfigDedup:                   AcpConfigDedup,
-		AcpConfigKilledConnection:        AcpConfigKilledConnection,
-		AcpResumeModePreserved:           AcpResumeModePreserved,
-		AcpResumeModelPreserved:          AcpResumeModelPreserved,
-		AcpResumeThinkingPreserved:       AcpResumeThinkingPreserved,
-		AcpResumeCommandsPreserved:       AcpResumeCommandsPreserved,
-		AcpResumeConfigDedupReset:        AcpResumeConfigDedupReset,
-		AcpResumePlanStateLost:           AcpResumePlanStateLost,
-		AcpSSEDisconnectDrain:            AcpSSEDisconnectDrain,
-		AcpSSEReconnectStateReemitted:    AcpSSEReconnectStateReemitted,
-		AcpLongRunningMultipleTurns:      AcpLongRunningMultipleTurns,
-		AcpLongRunningConfigConsistency:  AcpLongRunningConfigConsistency,
-		AcpUserCancelResumeConversation:  AcpUserCancelResumeConversation,
+		AcpNewSessionCreateAndCapture:     AcpNewSessionCreateAndCapture,
+		AcpConnReuseSameSession:           AcpConnReuseSameSession,
+		AcpProcessCrash:                   AcpProcessCrash,
+		AcpPeerDisconnectRetryPrompt:      AcpPeerDisconnectRetryPrompt,
+		AcpIdleSweepRecycled:              AcpIdleSweepRecycled,
+		AcpExplicitCloseNewSession:        AcpExplicitCloseNewSession,
+		AcpMultipleSessionsIsolated:       AcpMultipleSessionsIsolated,
+		AcpModeSwitch:                     AcpModeSwitch,
+		AcpModelSwitch:                    AcpModelSwitch,
+		AcpThinkingEffortSwitch:           AcpThinkingEffortSwitch,
+		AcpUnsupportedConfig:              AcpUnsupportedConfig,
+		AcpConfigDedup:                    AcpConfigDedup,
+		AcpConfigKilledConnection:         AcpConfigKilledConnection,
+		AcpResumeModePreserved:            AcpResumeModePreserved,
+		AcpResumeModelPreserved:           AcpResumeModelPreserved,
+		AcpResumeThinkingPreserved:        AcpResumeThinkingPreserved,
+		AcpResumeCommandsPreserved:        AcpResumeCommandsPreserved,
+		AcpResumeConfigDedupReset:         AcpResumeConfigDedupReset,
+		AcpResumePlanStateLost:            AcpResumePlanStateLost,
+		AcpSSEDisconnectDrain:             AcpSSEDisconnectDrain,
+		AcpSSEReconnectStateReemitted:     AcpSSEReconnectStateReemitted,
+		AcpLongRunningMultipleTurns:       AcpLongRunningMultipleTurns,
+		AcpLongRunningConfigConsistency:   AcpLongRunningConfigConsistency,
+		AcpUserCancelResumeConversation:   AcpUserCancelResumeConversation,
 		AcpProcessCrashResumeConversation: AcpProcessCrashResumeConversation,
-		AcpMultipleCancelResume:          AcpMultipleCancelResume,
-		AcpMultipleCrashResume:           AcpMultipleCrashResume,
-		AcpCancelAndCrashResume:          AcpCancelAndCrashResume,
-		AcpSessionRecoveryAfterConnLoss:  AcpSessionRecoveryAfterConnLoss,
-		AcpUnrecoverableSessionError:     AcpUnrecoverableSessionError,
-		AcpTransportSwitchACPtoCLItoACP:  AcpTransportSwitchACPtoCLItoACP,
-		AcpSessionCapabilities:           AcpSessionCapabilities,
-		AcpCodeWhaleBasicSession:         AcpCodeWhaleBasicSession,
-		AcpCodeWhaleMultiTurnContext:     AcpCodeWhaleMultiTurnContext,
-		AcpCodeWhaleMultiTurnResume:      AcpCodeWhaleMultiTurnResume,
-		AcpStateModeThinkingCommands:     AcpStateModeThinkingCommands,
-		AcpStateReemittedOnSecondPrompt:  AcpStateReemittedOnSecondPrompt,
+		AcpMultipleCancelResume:           AcpMultipleCancelResume,
+		AcpMultipleCrashResume:            AcpMultipleCrashResume,
+		AcpCancelAndCrashResume:           AcpCancelAndCrashResume,
+		AcpSessionRecoveryAfterConnLoss:   AcpSessionRecoveryAfterConnLoss,
+		AcpUnrecoverableSessionError:      AcpUnrecoverableSessionError,
+		AcpTransportSwitchACPtoCLItoACP:   AcpTransportSwitchACPtoCLItoACP,
+		AcpSessionCapabilities:            AcpSessionCapabilities,
+		AcpCodeWhaleBasicSession:          AcpCodeWhaleBasicSession,
+		AcpCodeWhaleMultiTurnContext:      AcpCodeWhaleMultiTurnContext,
+		AcpCodeWhaleMultiTurnResume:       AcpCodeWhaleMultiTurnResume,
+		AcpStateModeThinkingCommands:      AcpStateModeThinkingCommands,
+		AcpStateReemittedOnSecondPrompt:   AcpStateReemittedOnSecondPrompt,
 	}
 
 	// Collect all names from acpTestCases

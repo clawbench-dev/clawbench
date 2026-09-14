@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, setCLIModels, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache, alignTierAliases } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, setCLIModels, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
 
 // Mock apiGet/apiPatch/apiPost/apiDelete to control agent data
 const mockApiGet = vi.fn()
@@ -48,7 +48,7 @@ describe('useAgents', () => {
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
     agentCanResume, supportsACP, supportsCLI, supportsDualTransport, getAgentTransport,
-    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, setCLIModels, mergeModelLists } = useAgents()
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents, hasPreferredMode, setCLIModels } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -73,6 +73,10 @@ describe('useAgents', () => {
         { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true },
         { id: 'claude-3-haiku', name: 'Claude 3 Haiku', default: false },
       ],
+      cliModels: [
+        { id: 'claude-3.5', name: 'Claude 3.5 Sonnet', default: true },
+        { id: 'claude-3-haiku', name: 'Claude 3 Haiku', default: false },
+      ],
       thinkingEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
     },
     {
@@ -81,6 +85,7 @@ describe('useAgents', () => {
       backend: 'gpt',
       canRefreshModels: true,
       models: [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
+      cliModels: [{ id: 'gpt-4o', name: 'GPT-4o', default: true }],
       thinkingEffortLevels: ['low', 'medium', 'high'],
     },
     {
@@ -513,143 +518,10 @@ describe('useAgents', () => {
     })
   })
 
-  // --- mergeModelLists (pure function) ---
-
-  // --- alignTierAliases (pure function) ---
-
-  describe('alignTierAliases', () => {
-    it('aligns ACP tier-alias names onto matching skeleton entries and drops alias entries', () => {
-      const aligned = alignTierAliases(
-        [
-          { id: 'claude-opus-4-20250514', name: 'claude-opus-4-20250514', default: true },
-          { id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' },
-          { id: 'claude-haiku-4-20250514', name: 'claude-haiku-4-20250514' },
-        ],
-        [
-          { id: 'opus', name: 'glm-5.3[1m]' },
-          { id: 'sonnet', name: 'deepseek-v3' },
-          { id: 'haiku', name: 'qwen-max' },
-        ],
-      )
-      expect(aligned).toEqual([
-        { id: 'claude-opus-4-20250514', name: 'glm-5.3[1m]', default: true },
-        { id: 'claude-sonnet-4-20250514', name: 'deepseek-v3' },
-        { id: 'claude-haiku-4-20250514', name: 'qwen-max' },
-      ])
-    })
-
-    it('skips the meta "default" tier', () => {
-      const aligned = alignTierAliases(
-        [{ id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' }],
-        [{ id: 'default', name: 'claude-sonnet-4-20250514' }],
-      )
-      expect(aligned).toEqual([{ id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' }])
-    })
-
-    it('appends alias entries the skeleton cannot represent', () => {
-      const aligned = alignTierAliases(
-        [{ id: 'claude-opus-4-20250514', name: 'claude-opus-4-20250514' }],
-        [
-          { id: 'sonnet', name: 'deepseek-v3' },
-          { id: 'fast', name: 'qwen-turbo' },
-        ],
-      )
-      expect(aligned).toEqual([
-        { id: 'claude-opus-4-20250514', name: 'claude-opus-4-20250514' },
-        { id: 'sonnet', name: 'deepseek-v3' },
-        { id: 'fast', name: 'qwen-turbo' },
-      ])
-    })
-
-    it('returns CLI list unchanged when no tier aliases present', () => {
-      const cli = [{ id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' }]
-      const aligned = alignTierAliases(cli, [{ id: 'real-model', name: 'Real Model' }])
-      expect(aligned).toEqual(cli)
-    })
-
-    it('handles empty lists', () => {
-      expect(alignTierAliases([], [])).toEqual([])
-      expect(alignTierAliases([{ id: 'a', name: 'A' }], [])).toEqual([{ id: 'a', name: 'A' }])
-    })
-
-    it('does not mutate inputs', () => {
-      const cli = [{ id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' }]
-      const acp = [{ id: 'sonnet', name: 'deepseek-v3' }]
-      alignTierAliases(cli, acp)
-      expect(cli[0].name).toBe('claude-sonnet-4-20250514')
-      expect(acp[0].name).toBe('deepseek-v3')
-    })
-  })
-
-  // --- mergeModelLists (pure function) ---
-
-  describe('mergeModelLists', () => {
-    it('merges by ID, ACP name wins, ACP-only appended, default from currentModelId', () => {
-      const merged = mergeModelLists(
-        [{ id: 'cli-a', name: 'CLI A', default: true }, { id: 'cli-b', name: 'CLI B' }],
-        [{ id: 'cli-a', name: 'ACP A' }, { id: 'acp-only', name: 'ACP Only' }],
-        'acp-only',
-      )
-      expect(merged).toEqual([
-        { id: 'cli-a', name: 'ACP A', default: false },
-        { id: 'cli-b', name: 'CLI B', default: false },
-        { id: 'acp-only', name: 'ACP Only', default: true },
-      ])
-    })
-
-    it('falls back to CLI default when no currentModelId and lists are disjoint', () => {
-      const merged = mergeModelLists(
-        [{ id: 'cli-a', name: 'CLI A', default: true }],
-        [{ id: 'acp-x', name: 'ACP X' }],
-      )
-      expect(merged.find(m => m.id === 'cli-a')?.default).toBe(true)
-      expect(merged.find(m => m.id === 'acp-x')?.default).toBe(false)
-    })
-
-    it('marks no model default when currentModelId matches nothing', () => {
-      const merged = mergeModelLists(
-        [{ id: 'cli-a', name: 'CLI A', default: true }],
-        [{ id: 'acp-x', name: 'ACP X' }],
-        'nonexistent-id',
-      )
-      expect(merged.every(m => m.default === false)).toBe(true)
-    })
-
-    it('handles empty CLI list: ACP models become the list with first as default', () => {
-      const merged = mergeModelLists([], [{ id: 'acp-a', name: 'ACP A' }, { id: 'acp-b', name: 'ACP B' }])
-      expect(merged).toEqual([
-        { id: 'acp-a', name: 'ACP A', default: true },
-        { id: 'acp-b', name: 'ACP B', default: false },
-      ])
-    })
-
-    it('handles empty ACP list: returns CLI list unchanged', () => {
-      const merged = mergeModelLists(
-        [{ id: 'cli-a', name: 'CLI A', default: true }],
-        [],
-      )
-      expect(merged).toEqual([{ id: 'cli-a', name: 'CLI A', default: true }])
-    })
-
-    it('handles both lists empty', () => {
-      expect(mergeModelLists([], [])).toEqual([])
-    })
-
-    it('does not mutate inputs', () => {
-      const cli = [{ id: 'cli-a', name: 'CLI A', default: true }]
-      const acp = [{ id: 'cli-a', name: 'ACP A' }]
-      mergeModelLists(cli, acp, 'cli-a')
-      expect(cli[0].name).toBe('CLI A')
-      expect(acp[0].name).toBe('ACP A')
-    })
-  })
-
-  // --- updateACPModelList ---
+  // --- updateACPModelList (WebSocket path) ---
 
   describe('updateACPModelList', () => {
     beforeEach(async () => {
-      // Reset module-level singletons (originalModels, acpStatesCache) and reload
-      // Deep-clone testAgents so mutations don't leak between tests
       resetAgents()
       registerMocks()
       mockApiGet.mockResolvedValue({
@@ -659,103 +531,93 @@ describe('useAgents', () => {
       await loadAgents()
     })
 
-    it('merges ACP models on top of CLI baseline by ID', () => {
-      const acpModels = [
+    it('applies the ACP list and marks the current model as default', () => {
+      updateACPModelList('claude', [
         { id: 'acp-model-1', name: 'ACP Model 1' },
         { id: 'acp-model-2', name: 'ACP Model 2' },
-      ]
-      updateACPModelList('claude', acpModels, 'acp-model-2')
-
-      const models = getAgentModels('claude')
-      // CLI baseline preserved, ACP-only models appended
-      expect(models).toHaveLength(4)
-      expect(models[0].id).toBe('claude-3.5')
-      expect(models[0].name).toBe('Claude 3.5 Sonnet')
-      expect(models[2].id).toBe('acp-model-1')
-      expect(models[2].name).toBe('ACP Model 1')
-      expect(models[3].id).toBe('acp-model-2')
-      // default follows currentModelId
-      expect(models[0].default).toBe(false)
-      expect(models[3].default).toBe(true)
-    })
-
-    it('uses ACP display name for matching model ID (stable naming)', () => {
-      // Same model ID, different display name between CLI and ACP sources
-      updateACPModelList('claude', [{ id: 'claude-3.5', name: 'Claude 3.5 Sonnet (ACP)' }])
+      ], 'acp-model-2')
 
       const models = getAgentModels('claude')
       expect(models).toHaveLength(2)
-      expect(models[0].id).toBe('claude-3.5')
-      // ACP friendly name wins for the matching ID
-      expect(models[0].name).toBe('Claude 3.5 Sonnet (ACP)')
-      expect(models[1].id).toBe('claude-3-haiku')
-      expect(models[1].name).toBe('Claude 3 Haiku')
+      expect(models[0].id).toBe('acp-model-1')
+      expect(models[0].default).toBe(false)
+      expect(models[1].id).toBe('acp-model-2')
+      expect(models[1].default).toBe(true)
     })
 
-    it('falls back to CLI name when ACP model has empty name', () => {
-      updateACPModelList('claude', [{ id: 'claude-3.5', name: '' }])
-
-      const models = getAgentModels('claude')
-      expect(models[0].id).toBe('claude-3.5')
-      expect(models[0].name).toBe('Claude 3.5 Sonnet')
-    })
-
-    it('marks first model as default when no currentModelId provided', () => {
-      const acpModels = [
+    it('marks the first model default when no current model is supplied', () => {
+      updateACPModelList('gpt', [
         { id: 'acp-a', name: 'ACP A' },
         { id: 'acp-b', name: 'ACP B' },
-      ]
-      updateACPModelList('gpt', acpModels)
+      ])
 
       const models = getAgentModels('gpt')
-      // CLI baseline default (gpt-4o) wins when currentModelId is absent
-      expect(models[0].id).toBe('gpt-4o')
       expect(models[0].default).toBe(true)
       expect(models[1].default).toBe(false)
-      expect(models[2].default).toBe(false)
     })
 
-    it('saves original models so they can be restored', () => {
-      const originalModels = getAgentModels('gpt')
-      expect(originalModels).toHaveLength(1) // gpt-4o
-
-      updateACPModelList('gpt', [{ id: 'acp-x', name: 'ACP X' }])
-      // gpt-4o baseline retained, acp-x appended
-      expect(getAgentModels('gpt')).toHaveLength(2)
-      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
-      expect(getAgentModels('gpt')[1].id).toBe('acp-x')
-
-      restoreOriginalModels('gpt')
-      const restored = getAgentModels('gpt')
-      expect(restored).toHaveLength(1)
-      expect(restored[0].id).toBe('gpt-4o')
+    it('ignores an empty list rather than blanking the picker', () => {
+      const before = getAgentModels('gpt')
+      updateACPModelList('gpt', [])
+      expect(getAgentModels('gpt')).toEqual(before)
     })
 
-    it('does not append duplicate ACP models across repeated calls', () => {
-      updateACPModelList('gpt', [{ id: 'gpt-4o', name: 'GPT-4o ACP' }])
-      updateACPModelList('gpt', [{ id: 'gpt-4o', name: 'GPT-4o ACP' }])
+    it('does nothing for an unknown agent', () => {
+      updateACPModelList('nonexistent', [{ id: 'x', name: 'X' }])
+    })
+  })
 
-      const models = getAgentModels('gpt')
-      expect(models).toHaveLength(1)
-      expect(models[0].id).toBe('gpt-4o')
-      expect(models[0].name).toBe('GPT-4o ACP')
+  // --- applyResolvedModelList (preferred path) ---
+
+  describe('applyResolvedModelList', () => {
+    beforeEach(async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: JSON.parse(JSON.stringify(testAgents)),
+        defaultAgent: 'claude',
+      })
+      await loadAgents()
     })
 
-    it('does not overwrite saved originals on second call', () => {
-      const original = getAgentModels('claude').map(m => ({ ...m }))
+    it('assigns the resolved list verbatim, preserving its default flag', () => {
+      applyResolvedModelList('claude', [
+        { id: 'claude-opus-4-5', name: 'Opus (via env)', default: false },
+        { id: 'kimi-k3', name: 'Kimi K3', default: true },
+      ], [{ id: 'claude-opus-4-5', name: 'Opus' }])
 
-      updateACPModelList('claude', [{ id: 'acp-1', name: 'ACP 1' }])
-      updateACPModelList('claude', [{ id: 'acp-2', name: 'ACP 2' }])
+      const models = getAgentModels('claude')
+      expect(models).toHaveLength(2)
+      expect(models[0].id).toBe('claude-opus-4-5')
+      expect(models[0].name).toBe('Opus (via env)')
+      expect(models[1].default).toBe(true)
+    })
+
+    it('records the CLI list so a transport switch is a plain read', () => {
+      applyResolvedModelList('claude', [
+        { id: 'acp-only', name: 'ACP Only', default: true },
+      ], [
+        { id: 'cli-a', name: 'CLI A', default: true },
+        { id: 'cli-b', name: 'CLI B', default: false },
+      ])
 
       restoreOriginalModels('claude')
-      const restored = getAgentModels('claude')
-      expect(restored).toHaveLength(original.length)
-      expect(restored[0].id).toBe(original[0].id)
+
+      const models = getAgentModels('claude')
+      expect(models.map(m => m.id)).toEqual(['cli-a', 'cli-b'])
+      expect(models[0].default).toBe(true)
     })
 
-    it('does nothing for unknown agent', () => {
-      // Should not throw
-      updateACPModelList('nonexistent', [{ id: 'x', name: 'X' }])
+    it('keeps the previous CLI list when none is supplied', () => {
+      applyResolvedModelList('claude', [{ id: 'acp-only', name: 'ACP Only', default: true }])
+
+      restoreOriginalModels('claude')
+
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-3.5', 'claude-3-haiku'])
+    })
+
+    it('does nothing for an unknown agent', () => {
+      applyResolvedModelList('nonexistent', [{ id: 'x', name: 'X', default: true }])
     })
   })
 
@@ -772,38 +634,24 @@ describe('useAgents', () => {
       await loadAgents()
     })
 
-    it('restores original CLI models after ACP override', () => {
-      const original = getAgentModels('claude').map(m => ({ ...m }))
-
-      updateACPModelList('claude', [{ id: 'acp-1', name: 'ACP 1' }])
-      // CLI baseline retained, ACP model appended
-      expect(getAgentModels('claude')[0].id).toBe('claude-3.5')
-      expect(getAgentModels('claude').some(m => m.id === 'acp-1')).toBe(true)
+    it('switches back to the CLI list after an ACP override', () => {
+      applyResolvedModelList('claude', [{ id: 'acp-1', name: 'ACP 1', default: true }])
+      expect(getAgentModels('claude')[0].id).toBe('acp-1')
 
       restoreOriginalModels('claude')
-      const restored = getAgentModels('claude')
-      expect(restored).toHaveLength(original.length)
-      expect(restored[0].id).toBe(original[0].id)
+
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-3.5', 'claude-3-haiku'])
     })
 
-    it('is a no-op when no ACP override was applied', () => {
-      const before = getAgentModels('gpt')
-      restoreOriginalModels('gpt')
-      expect(getAgentModels('gpt')).toEqual(before)
+    it('is a no-op when the agent reports no CLI list', () => {
+      applyResolvedModelList('simple', [{ id: 'acp-1', name: 'ACP 1', default: true }])
+      const before = getAgentModels('simple')
+      restoreOriginalModels('simple')
+      expect(getAgentModels('simple')).toEqual(before)
     })
 
-    it('allows re-overriding after restore', () => {
-      updateACPModelList('gpt', [{ id: 'acp-1', name: 'ACP 1' }])
-      restoreOriginalModels('gpt')
-      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
-
-      // Second override merges onto the same baseline again
-      updateACPModelList('gpt', [{ id: 'acp-2', name: 'ACP 2' }])
-      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
-      expect(getAgentModels('gpt')[1].id).toBe('acp-2')
-
-      restoreOriginalModels('gpt')
-      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
+    it('does nothing for an unknown agent', () => {
+      restoreOriginalModels('nonexistent')
     })
   })
 
@@ -820,7 +668,7 @@ describe('useAgents', () => {
       await loadAgents()
     })
 
-    it('replaces models and rebases the CLI baseline', () => {
+    it('replaces the list and the CLI baseline', () => {
       setCLIModels('claude', [
         { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
         { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
@@ -829,21 +677,15 @@ describe('useAgents', () => {
       const models = getAgentModels('claude')
       expect(models).toHaveLength(2)
       expect(models[0].id).toBe('claude-sonnet-4-6')
-      expect(models[0].name).toBe('Claude Sonnet 4.6')
       expect(models[0].default).toBe(true)
 
-      // ACP merge is now anchored on the new baseline
-      updateACPModelList('claude', [{ id: 'claude-sonnet-4-6', name: 'Sonnet (ACP)' }])
-      expect(getAgentModels('claude')[0].name).toBe('Sonnet (ACP)')
-      expect(getAgentModels('claude')[1].id).toBe('claude-opus-4-5')
-
-      // restore returns to the NEW CLI list, not the stale one
+      // The new list is the baseline a later restore returns to.
+      applyResolvedModelList('claude', [{ id: 'acp-x', name: 'ACP X', default: true }])
       restoreOriginalModels('claude')
-      expect(getAgentModels('claude')[0].name).toBe('Claude Sonnet 4.6')
-      expect(getAgentModels('claude')).toHaveLength(2)
+      expect(getAgentModels('claude').map(m => m.id)).toEqual(['claude-sonnet-4-6', 'claude-opus-4-5'])
     })
 
-    it('does nothing for unknown agent', () => {
+    it('does nothing for an unknown agent', () => {
       setCLIModels('nonexistent', [{ id: 'x', name: 'X' }])
     })
   })
@@ -899,11 +741,11 @@ describe('useAgents', () => {
       expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
       expect(mockUpdateAvailableThinkingEfforts).toHaveBeenCalledWith(acpState.claude.thinkingEffortState.availableLevels)
       expect(mockUpdateCommandState).toHaveBeenCalledWith(acpState.claude.commands)
-      // ACP model merged on top of CLI baseline; currentModelId marks default
+      // The backend-resolved list is applied as-is, with its default flag.
       const models = getAgentModels('claude')
-      expect(models[0].id).toBe('claude-3.5')
-      expect(models.find(m => m.id === 'acp-claude-1')?.name).toBe('ACP Claude 1')
-      expect(models.find(m => m.id === 'acp-claude-1')?.default).toBe(true)
+      expect(models.map(m => m.id)).toEqual(['acp-claude-1'])
+      expect(models[0].name).toBe('ACP Claude 1')
+      expect(models[0].default).toBe(true)
     })
 
     it('skips mode update when availableModes is empty', async () => {
@@ -1109,9 +951,9 @@ describe('useAgents', () => {
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithModels })
       await loadAgents()
 
-      // CLI baseline retained, ACP model appended and marked default
+      // The backend-resolved list replaces the placeholder list.
       const models = getAgentModels('claude')
-      expect(models[0].id).toBe('claude-3.5')
+      expect(models.map(m => m.id)).toEqual(['acp-new'])
       const acpNew = models.find(m => m.id === 'acp-new')
       expect(acpNew?.name).toBe('ACP New')
       expect(acpNew?.default).toBe(true)

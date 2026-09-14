@@ -240,6 +240,16 @@ type ModelListState struct {
 	ConfigID       string             `json:"configId,omitempty"`
 	CurrentModelID string             `json:"currentModelId"`
 	Models         []model.AgentModel `json:"models"`
+	// ResolvedModels is the model list after merging with the CLI-discovered
+	// list: ACP membership wins, the CLI list supplies order and names. Clients
+	// render this directly instead of merging the two sources themselves.
+	//
+	// Empty when the CLI list was unavailable at emit time; clients then fall
+	// back to Models.
+	ResolvedModels []model.AgentModel `json:"resolvedModels,omitempty"`
+	// CLIModels is the pure CLI-discovered list for the agent, so a client can
+	// render the CLI view after a transport switch without re-deriving it.
+	CLIModels []model.AgentModel `json:"cliModels,omitempty"`
 }
 
 // ThinkingEffortState carries the current and available thinking effort levels for an ACP session.

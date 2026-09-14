@@ -4,7 +4,7 @@ import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
-import { updateACPModelList } from './useAgents'
+import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, messageText, nextClientSeq, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
@@ -608,12 +608,25 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'model_list_update': {
         if (sessionChanged()) return
-        const mlData = payload as { models?: unknown[]; currentModelId?: string }
-        if (Array.isArray(mlData.models) && mlData.models.length > 0) {
-          const aid = currentAgentId.value
-          if (aid) {
-            updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
-          }
+        const mlData = payload as {
+          models?: unknown[]
+          currentModelId?: string
+          resolvedModels?: unknown[]
+          cliModels?: unknown[]
+        }
+        const aid = currentAgentId.value
+        if (!aid) break
+        // The backend resolves the CLI and ACP lists and sends both, so prefer
+        // the resolved list. Falling back to the raw ACP list keeps older
+        // backends (or an emit path without a bound agent) working.
+        if (Array.isArray(mlData.resolvedModels) && mlData.resolvedModels.length > 0) {
+          applyResolvedModelList(
+            aid,
+            mlData.resolvedModels as Array<{ id: string; name: string; default: boolean }>,
+            mlData.cliModels as Array<{ id: string; name: string; default: boolean }> | undefined,
+          )
+        } else if (Array.isArray(mlData.models) && mlData.models.length > 0) {
+          updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
         }
         break
       }

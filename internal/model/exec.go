@@ -14,7 +14,7 @@ import (
 // is killed by a Context deadline: if the spawned CLI leaves a grandchild
 // holding the stdout/stderr pipe open, Output() waits for pipe EOF and the
 // Context kill of the direct child never unblocks it. This blocks server
-// startup (SyncDiscoverModels runs synchronously in main), so the service
+// startup (model.RefreshAgents runs synchronously in main), so the service
 // "stops but never comes back up".
 //
 // Capturing to files makes Cmd.Run() return as soon as the direct child exits,

@@ -10,6 +10,7 @@ import (
 
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -457,4 +458,84 @@ func mustJSON(t *testing.T, b []byte) map[string]any {
 	var out map[string]any
 	require.NoError(t, json.Unmarshal(b, &out))
 	return out
+}
+
+// TestServeForgeItems_TagsUnreadRows is the guard for the server-side unread
+// tagging on list rows.
+//
+// Without it, setting view.Unread = false left every handler test green, so the
+// panel would show no dots while the dock badge counted N — the badge and the
+// rows disagreeing, which is the original complaint this feature set out to fix.
+//
+// Drives the real path (binding → provider → mock GitLab → forgeItemView) and
+// asserts the flag tracks the stored event.
+func TestServeForgeItems_TagsUnreadRows(t *testing.T) {
+	env, teardown := setupForgeEnv(t)
+	defer teardown()
+
+	bindMockGitLab(t, env, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/issues") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Two issues; only #1 will have an unread event.
+		_, _ = w.Write([]byte(`[
+			{"iid":1,"title":"unread one","state":"opened","description":"",
+			 "author":{"username":"alice"},"assignees":[],"labels":[],
+			 "user_notes_count":0,"web_url":"https://gitlab.example.com/acme/widgets/-/issues/1",
+			 "created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z"},
+			{"iid":2,"title":"read one","state":"opened","description":"",
+			 "author":{"username":"bob"},"assignees":[],"labels":[],
+			 "user_notes_count":0,"web_url":"https://gitlab.example.com/acme/widgets/-/issues/2",
+			 "created_at":"2026-09-01T10:00:00Z","updated_at":"2026-09-02T10:00:00Z"}
+		]`))
+	}))
+
+	// Only issue #1 has unread activity. The binding is acme/widgets, which
+	// bindProject/bindMockGitLab creates.
+	_, err := service.InsertForgeEvent(service.ForgeEvent{
+		Platform: "gitlab", Host: "", Owner: "acme", Repo: "widgets",
+		ItemType: "issue", Number: 1, ItemKey: "issue/1",
+		EventType: "commented", DedupeKey: "k1",
+	})
+	require.NoError(t, err)
+	// The mock host is dynamic, so fix the host on the stored row to match.
+	var host string
+	require.NoError(t, service.ReadDB().QueryRow(
+		`SELECT host FROM project_forges WHERE project_path = ?`, env.ProjectDir,
+	).Scan(&host))
+	_, err = service.WriteExec(`UPDATE forge_events SET host = ?`, host)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue&state=open&perPage=10", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeForgeItems, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	items := resp["items"].([]any)
+	require.Len(t, items, 2)
+
+	byNumber := map[float64]map[string]any{}
+	for _, raw := range items {
+		it := raw.(map[string]any)
+		byNumber[it["number"].(float64)] = it
+	}
+
+	assert.Equal(t, true, byNumber[1]["unread"],
+		"the row with a stored event must be tagged unread")
+	assert.NotEqual(t, true, byNumber[2]["unread"],
+		"a row with no event must not be tagged unread")
+
+	// And the badge must agree with the tagged rows.
+	n, err := service.CountUnreadForgeEvents(service.ForgeRepoKey{
+		Platform: "gitlab", Host: host, Owner: "acme", Repo: "widgets",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "badge count must match the number of tagged rows")
 }
