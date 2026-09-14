@@ -2753,6 +2753,10 @@ func HardDeleteSession(sessionID string) error {
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id = ?", sessionID)
+	// Drop the session's tag links too: the link table has no FK to
+	// chat_sessions, so without this the rows would linger forever. The tag
+	// definitions themselves are preserved (other sessions may use them).
+	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err

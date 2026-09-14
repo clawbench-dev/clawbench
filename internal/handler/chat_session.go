@@ -145,6 +145,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			sessions[i].Running = runningSet[sessions[i].ID]
 			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
 		}
+		attachSessionTags(sessions)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -445,6 +446,11 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
 		Title          string `json:"title"`
 		Pinned         *bool  `json:"pinned"` // pointer: distinguish "not sent" from false
+		// Tags replaces the session's full tag set when non-nil. A pointer is
+		// required here: `"tags": []` (clear all) must be distinguishable from
+		// the field being absent (leave tags untouched), which a plain slice
+		// cannot express.
+		Tags *[]service.SessionTagRef `json:"tags"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -457,36 +463,19 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		// Persist mode change to DB context_state so it survives restarts
 		persistContextStateModeChange(sessionID, req.ModeID)
 		// Forward mode change to ACP agent so it updates its runtime state.
-		// Run asynchronously — the RPC can block for up to 30s if the agent
-		// is slow (e.g., Claude bridge adapter starting its CLI subprocess).
-		// Blocking the HTTP handler would tie up a browser HTTP/1.1 connection
-		// and prevent other requests (like session list) from being served.
 		// The internal category key is passed ("mode"); SetSessionConfigOption
 		// resolves it to the config-option id the agent advertised (issue #429).
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				conn.SetSessionConfigOption(ctx, "mode", req.ModeID)
-			}()
-		}
+		forwardSessionConfigOption(sessionID, "mode", req.ModeID)
 	}
 	if req.ThinkingEffort != "" {
 		// Persist thinking effort change to DB context_state so it survives restarts
 		persistContextStateThinkingEffortChange(sessionID, req.ThinkingEffort)
-		// Forward thinking effort change to ACP agent — same async pattern as mode.
 		// "thought_level" is the internal category key; SetSessionConfigOption
 		// resolves it to the agent-advertised id (claude-agent-acp: "effort"),
 		// falling back to the historical "thinkingEffort" when unadvertised —
 		// otherwise the effort selector silently fails for agents whose id
 		// naming differs from ours (issue #429).
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				conn.SetSessionConfigOption(ctx, "thought_level", req.ThinkingEffort)
-			}()
-		}
+		forwardSessionConfigOption(sessionID, "thought_level", req.ThinkingEffort)
 	}
 	if req.ModelID != "" {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
@@ -518,7 +507,110 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.UpdateSessionPinned(sessionID, *req.Pinned)
 	}
+	if req.Tags != nil {
+		// Tag writes can genuinely fail (e.g. a conflicting definition), and
+		// unlike the settings above the frontend has no optimistic copy to fall
+		// back on — so surface the error instead of reporting a silent ok.
+		if err := applySessionTags(sessionID, *req.Tags); err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to save session tags")))
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// applySessionTags replaces a session's tag set, filing any brand-new labels
+// under the session's OWN project.
+//
+// The session's project — not the request cookie — is authoritative: filing the
+// new label under the cookie's project would drop it from the session's own
+// project candidate list whenever the cookie points elsewhere (e.g. tagging
+// from the floating window or a cross-project view).
+func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
+	projectPath := ""
+	if info := service.GetSessionFullInfo(sessionID); info != nil {
+		projectPath = info.ProjectPath
+	}
+	return service.SetSessionTags(sessionID, projectPath, tags)
+}
+
+// forwardSessionConfigOption pushes a config-option change to the session's ACP
+// agent, if one is connected.
+//
+// Run asynchronously: the RPC can block for up to 30s if the agent is slow
+// (e.g., the Claude bridge adapter starting its CLI subprocess). Blocking the
+// HTTP handler would tie up a browser HTTP/1.1 connection and prevent other
+// requests (like the session list) from being served.
+func forwardSessionConfigOption(sessionID, category, value string) {
+	conn := ai.GetACPConnManager().GetConn(sessionID)
+	if conn == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		conn.SetSessionConfigOption(ctx, category, value)
+	}()
+}
+
+// attachSessionTags batch-loads tags for a page of sessions and sets them in
+// place. Failures are logged and swallowed: tags are decoration, so a tag
+// lookup error must not take down the whole session list.
+func attachSessionTags(sessions []model.ChatSession) {
+	if len(sessions) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(sessions))
+	for i := range sessions {
+		ids = append(ids, sessions[i].ID)
+	}
+	tagsBySession, err := service.GetTagsForSessions(ids)
+	if err != nil {
+		slog.Warn("failed to load session tags", "error", err)
+		return
+	}
+	for i := range sessions {
+		for _, t := range tagsBySession[sessions[i].ID] {
+			sessions[i].Tags = append(sessions[i].Tags, model.SessionTag{Name: t.Name, Scope: t.Scope})
+		}
+	}
+}
+
+// ServeSessionTags handles GET/DELETE /api/ai/session/tags.
+//
+//	GET    → the tag candidates selectable in the current project
+//	         (global tags + this project's own tags)
+//	DELETE → delete a tag definition everywhere (name in the `name` query param)
+func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		tags, err := service.ListSessionTags(projectPath)
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to load session tags")))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"tags": tags})
+
+	case http.MethodDelete:
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagNameRequired")
+			return
+		}
+		if err := service.DeleteSessionTag(name, projectPath); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "TagDeleteFailed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
 }
 
 // persistContextStateModeChange updates the mode currentModeId in DB context_state

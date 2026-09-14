@@ -44,6 +44,14 @@
                     <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
                     <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
                   </div>
+                  <div v-if="session.tags && session.tags.length" class="session-item-tags">
+                    <span
+                      v-for="tag in session.tags"
+                      :key="tag.name"
+                      class="session-tag"
+                      :style="tagAccentStyle(tag.name)"
+                    >{{ tag.name }}</span>
+                  </div>
                 </div>
               </div>
               <button class="session-archive-btn" :title="t('common.archive')" @click.stop="archiveSession(session.id)">
@@ -87,6 +95,14 @@
                     <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
                     <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
                     <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                  </div>
+                  <div v-if="session.tags && session.tags.length" class="session-item-tags">
+                    <span
+                      v-for="tag in session.tags"
+                      :key="tag.name"
+                      class="session-tag"
+                      :style="tagAccentStyle(tag.name)"
+                    >{{ tag.name }}</span>
                   </div>
                 </div>
               </div>
@@ -157,6 +173,10 @@
           <PencilLine :size="14" />
           {{ t('common.renameSession') }}
         </div>
+        <div class="context-menu-item" @click.stop="openTagDialogFromMenu(contextMenu.sessionId)">
+          <Tags :size="14" />
+          {{ t('common.setTags') }}
+        </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
           {{ t('common.archive') }}
@@ -167,16 +187,25 @@
            working while the menu is open (mirrors FileManagerContent). -->
       <div v-if="contextMenu.visible" class="ctx-overlay" @click="closeContextMenu" @contextmenu.prevent="handleOverlayContextMenu" />
     </Teleport>
+
+    <SessionTagDialog
+      :open="tagDialog.open"
+      :session-id="tagDialog.sessionId"
+      :initial-tags="tagDialog.initialTags"
+      @close="tagDialog.open = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Pin, PinOff, PencilLine } from 'lucide-vue-next'
+import { Archive, Pin, PinOff, PencilLine, Tags } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
+import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
@@ -540,6 +569,19 @@ function archiveFromMenu(sessionId) {
   emit('archive', sessionId, session?.backend)
 }
 
+// Tag dialog state. `initialTags` seeds the checkboxes from the already-loaded
+// list so the dialog paints instantly; the PATCH on save is authoritative.
+const tagDialog = reactive({ open: false, sessionId: '', initialTags: [] })
+
+function openTagDialogFromMenu(sessionId) {
+  closeContextMenu()
+  const session = sessions.value.find(s => s.id === sessionId)
+  if (!session) return
+  tagDialog.sessionId = sessionId
+  tagDialog.initialTags = (session.tags || []).map(tag => tag.name)
+  tagDialog.open = true
+}
+
 function addSessionLocally(session) {
   if (!session) return
   if (sessions.value.some(s => s.id === session.id)) return
@@ -840,6 +882,39 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Tag row: the bottom line of each session entry ──
+   Accent comes from --tag-accent-{light,dark}, set inline per tag by
+   tagAccentStyle() (same palette as tool calls). --tag-accent resolves the
+   theme-appropriate one; color-mix tints background/border from it. */
+.session-item-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.session-tag {
+  --tag-accent: var(--tag-accent-light);
+  flex-shrink: 0;
+  max-width: 100%;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  color: var(--tag-accent);
+  background: color-mix(in srgb, var(--tag-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag-accent) 30%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme-base="dark"] .session-tag {
+  --tag-accent: var(--tag-accent-dark);
 }
 
 .session-item.active .session-item-title {

@@ -739,6 +739,59 @@ func TestInitDB_CreatesTables(t *testing.T) {
 	}
 }
 
+// TestInitDB_CreatesSessionTagTables guards the session-tag migration: an
+// existing database (created before tags existed) must gain both tables on the
+// next startup, otherwise every tag read/write fails with "no such table".
+//
+// Uses initTestDB (real InitDB against a temp dir) rather than the hand-rolled
+// test schema, because the point is to exercise the migration itself.
+func TestInitDB_CreatesSessionTagTables(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	// Restore the previous handles on exit (mirrors TestInitDB_ReadWriteSeparation):
+	// InitDB reassigns the package-level db/dbRead, so without restoring them the
+	// pools this test closes would stay installed and the next test to run a
+	// query would hit a closed database.
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	for _, table := range []string{"session_tags", "session_tag_links"} {
+		var count int
+		err := db.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+			table,
+		).Scan(&count)
+		assert.NoError(t, err)
+		assert.Equal(t, 1, count, "table %s should exist", table)
+	}
+
+	// The composite key is what keeps two projects' same-named labels apart.
+	var colCount int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('session_tags')
+		WHERE name IN ('name', 'project_path')`).Scan(&colCount)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, colCount)
+
+	// A global tag (project_path='') and a project tag may share a name.
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'global', '')`)
+	assert.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	assert.NoError(t, err)
+	// ...but the same (name, project_path) twice must be rejected.
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	assert.Error(t, err, "duplicate (name, project_path) must violate the unique constraint")
+}
+
 // ---------- Orphaned streaming message cleanup ----------
 
 func TestInitDB_CleansOrphanedStreamingJSON(t *testing.T) {

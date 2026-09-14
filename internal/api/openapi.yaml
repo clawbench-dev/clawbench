@@ -1059,9 +1059,55 @@ paths:
                   type: boolean
                 title:
                   type: string
+                pinned:
+                  type: boolean
+                tags:
+                  type: array
+                  description: |
+                    替换该会话的完整标签集合（整表覆盖，不是增量）。字段省略 = 不改动标签；
+                    传 `[]` = 清空该会话的全部标签。不存在的标签会按 `scope` 新建，
+                    已存在的标签保留其原有 scope（重新打标签不会把项目标签变成全局标签）。
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      scope:
+                        type: string
+                        enum: [project, global]
+                        description: 仅对新建标签生效；缺省为 `project`
       responses:
         "200":
           description: 已更新
+
+  /api/ai/session/tags:
+    get:
+      tags: [Sessions]
+      summary: 会话标签候选列表
+      description: 返回当前项目可选的标签：全部全局标签 + 当前项目自己的标签。同名时全局定义优先。
+      operationId: sessionTagsList
+      responses:
+        "200":
+          description: 标签候选列表
+    delete:
+      tags: [Sessions]
+      summary: 删除标签本身
+      description: |
+        删除标签定义及其在所有会话上的关联，即该标签从所有会话消失。
+        全局标签任意项目可删；项目标签只能由所属项目删除（其他项目看不到它）。
+      operationId: sessionTagsDelete
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已删除
+        "400":
+          description: 缺少 name，或标签不存在 / 属于其他项目
 
   /api/ai/session/archive:
     delete:

@@ -855,6 +855,42 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: create session tag registry + session↔tag links.
+	//
+	// Tags are a separate registry (not a JSON column on chat_sessions) so a
+	// label can be deleted globally and so the candidate list for a project is
+	// a cheap indexed lookup. `scope` is 'project' or 'global':
+	//   - project tags are visible/selectable only inside their project_path
+	//   - global tags are visible/selectable in every project (project_path='')
+	//
+	// Uniqueness is (name, project_path), NOT name alone: two projects may each
+	// own a label called "bug" without one leaking into the other's candidate
+	// list. Global tags live at project_path='' and therefore never collide with
+	// a project row.
+	// Both tables are created unconditionally (CREATE TABLE IF NOT EXISTS), so
+	// existing databases pick them up on the next startup.
+	if _, err := WriteExec(`
+		CREATE TABLE IF NOT EXISTS session_tags (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			scope TEXT NOT NULL DEFAULT 'project',
+			project_path TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(name, project_path)
+		);
+		CREATE TABLE IF NOT EXISTS session_tag_links (
+			session_id TEXT NOT NULL,
+			tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(session_id, tag_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_session_tags_project ON session_tags(project_path, name);
+		CREATE INDEX IF NOT EXISTS idx_session_tag_links_session ON session_tag_links(session_id);
+		CREATE INDEX IF NOT EXISTS idx_session_tag_links_tag ON session_tag_links(tag_id);
+	`); err != nil {
+		return fmt.Errorf("failed to create session tag tables: %w", err)
+	}
+
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)

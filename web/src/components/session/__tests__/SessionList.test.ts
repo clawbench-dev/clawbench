@@ -105,6 +105,15 @@ vi.mock('@/components/common/LoadingIndicator.vue', () => ({
 vi.mock('@/components/common/ModalDialog.vue', () => ({
   default: { name: 'ModalDialog', template: '<div class="modal-stub" />' },
 }))
+// The tag dialog owns its own API calls; stub it so these tests exercise the
+// list's wiring (open/seed) without hitting fetch for the candidate list.
+vi.mock('@/components/session/SessionTagDialog.vue', () => ({
+  default: {
+    name: 'SessionTagDialog',
+    props: ['open', 'sessionId', 'initialTags'],
+    template: '<div class="tag-dialog-stub" />',
+  },
+}))
 class MockIntersectionObserver {
   callback: any
   constructor(cb: any) { this.callback = cb }
@@ -856,7 +865,7 @@ describe('SessionList', () => {
       const menu = menus[menus.length - 1]
       expect(menu).toBeTruthy()
       // Reuses the file manager's item class + icon-left layout.
-      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(3)
+      expect(menu!.querySelectorAll('.context-menu-item').length).toBe(4)
       expect(document.body.querySelector('.session-context-menu')).toBeNull()
       wrapper.unmount()
     })
@@ -931,13 +940,108 @@ describe('SessionList', () => {
       await flushPromises()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
 
-      // Archive item (index 2) — dismisses and emits.
+      // Set-tags item (index 2) — dismisses and opens the tag dialog.
       openFor(wrapper.vm.sessions[0])
       await nextTick()
       clickLastMenu(2)
       await nextTick()
       expect(wrapper.vm.contextMenu.visible).toBe(false)
+      expect(wrapper.vm.tagDialog.open).toBe(true)
+
+      // Archive item (index 3) — dismisses and emits.
+      openFor(wrapper.vm.sessions[0])
+      await nextTick()
+      clickLastMenu(3)
+      await nextTick()
+      expect(wrapper.vm.contextMenu.visible).toBe(false)
       expect(wrapper.emitted('archive')).toBeTruthy()
+      wrapper.unmount()
+    })
+
+    it('opens the tag dialog seeded with the session tags', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ ...sessionsFixture().s1, tags: [{ name: 'bug' }, { name: 'urgent' }] }],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.openTagDialogFromMenu('s1')
+      expect(wrapper.vm.tagDialog.open).toBe(true)
+      expect(wrapper.vm.tagDialog.sessionId).toBe('s1')
+      // Seeded from the already-loaded list so the checkboxes paint instantly.
+      expect(wrapper.vm.tagDialog.initialTags).toEqual(['bug', 'urgent'])
+      wrapper.unmount()
+    })
+
+    it('does not open the tag dialog for an unknown session', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      wrapper.vm.openTagDialogFromMenu('nope')
+      expect(wrapper.vm.tagDialog.open).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
+  describe('session tag row', () => {
+    it('renders one chip per tag with a stable accent variable', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ ...sessionsFixture().s1, tags: [{ name: 'bug' }, { name: 'urgent' }] }],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const chips = wrapper.findAll('.session-tag')
+      expect(chips.length).toBe(2)
+      expect(chips.map(c => c.text())).toEqual(['bug', 'urgent'])
+      // The accent is carried inline (light+dark) so the CSS can pick per theme.
+      expect(chips[0].attributes('style')).toContain('--tag-accent-light')
+      wrapper.unmount()
+    })
+
+    it('omits the tag row entirely when the session has no tags', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [sessionsFixture().s1], hasMore: false }) })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // An empty tag row would still consume the info column's gap and shift
+      // the meta line, so the wrapper must not render at all.
+      expect(wrapper.find('.session-item-tags').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('gives the same tag the same color across sessions', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [
+            { ...sessionsFixture().s1, tags: [{ name: 'shared' }] },
+            { ...sessionsFixture().s2, tags: [{ name: 'shared' }] },
+          ],
+          hasMore: false,
+        }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const chips = wrapper.findAll('.session-tag')
+      expect(chips.length).toBe(2)
+      // Same name ⇒ same color, regardless of which session it sits on.
+      expect(chips[0].attributes('style')).toBe(chips[1].attributes('style'))
       wrapper.unmount()
     })
   })

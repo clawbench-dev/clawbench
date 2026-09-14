@@ -298,6 +298,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue/inject", QueueInjectHandler)
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
+	register("/api/ai/session/tags", ServeSessionTags)
 	register("/api/ai/sessions", ServeSessions)
 	register("/api/ai/sessions/overview", ServeSessionsOverview)
 	register("/api/ai/session/archive", ArchiveSession)

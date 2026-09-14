@@ -187,6 +187,20 @@ CREATE TABLE IF NOT EXISTS chat_thinking (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(think_id, message_id, seq)
 );
+CREATE TABLE IF NOT EXISTS session_tags (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	scope TEXT NOT NULL DEFAULT 'project',
+	project_path TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(name, project_path)
+);
+CREATE TABLE IF NOT EXISTS session_tag_links (
+	session_id TEXT NOT NULL,
+	tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(session_id, tag_id)
+);
 `
 
 // setupDB creates an in-memory SQLite database with the required schema,
