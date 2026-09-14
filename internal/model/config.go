@@ -63,7 +63,7 @@ type Config struct {
 		RecommendContextMessages int  `yaml:"recommend_context_messages"` // 推荐回复参考的最近消息条数（用户+助手） (default: 10)
 	} `yaml:"chat"`
 	Session struct {
-		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 10)
+		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 20)
 		ArchiveRetentionEnabled bool `yaml:"archive_retention_enabled"` // Enable auto-purge of archived sessions after retention period (default: false)
 		ArchiveRetentionDays    int  `yaml:"archive_retention_days"`    // Days to keep archived sessions before auto-purge (0=keep forever, default: 0)
 	} `yaml:"session"`
@@ -311,7 +311,7 @@ var (
 	ChatRecommendEnabled     bool // 推荐回复: generate next-step recommendation after each assistant reply (default: false)
 
 	// Session limits (set from config, with defaults)
-	SessionMaxCount int // Default: 10
+	SessionMaxCount int // Default: 20
 
 	// Recent projects limits (set from config, with defaults)
 	RecentProjectsMaxCount int // Default: 10
