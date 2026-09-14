@@ -704,3 +704,117 @@ func TestFilterSessionsByTag_UnpaginatedPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }
+
+// TestListProjectTagsInUse_CountMatchesFilterForShadowedName pins that a chip's
+// count equals the number of sessions clicking it returns, even when a global
+// and a project definition share the name.
+//
+// The filter matches by NAME across both visible definitions (a union), so a
+// count grouped per-definition would read low: with 2 sessions on the project
+// "bug" and 1 on the global "bug", the chip showed "2" while the filter
+// returned 3 sessions.
+func TestListProjectTagsInUse_CountMatchesFilterForShadowedName(t *testing.T) {
+	setupDB(t)
+	a1 := helperCreateSession(t, tagProjectA, "codebuddy", "a1")
+	a2 := helperCreateSession(t, tagProjectA, "codebuddy", "a2")
+	require.NoError(t, service.SetSessionTags(a1, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+	require.NoError(t, service.SetSessionTags(a2, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+
+	// A global "bug" appears, used by one more session in this project.
+	b1 := helperCreateSession(t, tagProjectB, "codebuddy", "b1")
+	require.NoError(t, service.SetSessionTags(b1, tagProjectB, []service.SessionTagRef{
+		{Name: "bug", Scope: service.SessionTagScopeGlobal},
+	}))
+	a3 := helperCreateSession(t, tagProjectA, "codebuddy", "a3")
+	require.NoError(t, service.SetSessionTags(a3, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+
+	tags, err := service.ListProjectTagsInUse(tagProjectA)
+	require.NoError(t, err)
+	require.Len(t, tags, 1, "one chip per name")
+
+	// The invariant that matters: count == what the filter yields.
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 50, "", "", nil, "bug")
+	require.NoError(t, err)
+	assert.Equal(t, len(got), tags[0].Count,
+		"chip count must equal the number of sessions the filter returns")
+
+	// And the reported scope follows the same preference as ListSessionTags
+	// (global wins when both definitions share the name).
+	assert.Equal(t, service.SessionTagScopeGlobal, tags[0].Scope)
+}
+
+// TestGetSessionsPaged_TagFilterMatchesGlobalTag covers the GLOBAL half of the
+// visibility predicate. Every other paged-filter test uses the default
+// (project) scope, so dropping the `t.scope = 'global'` branch left the suite
+// green — i.e. filtering by a global tag, the entire point of that scope, was
+// untested.
+func TestGetSessionsPaged_TagFilterMatchesGlobalTag(t *testing.T) {
+	setupDB(t)
+	tagged := helperCreateSession(t, tagProjectA, "codebuddy", "tagged")
+	helperCreateSession(t, tagProjectA, "codebuddy", "plain")
+	require.NoError(t, service.SetSessionTags(tagged, tagProjectA, []service.SessionTagRef{
+		{Name: "shared", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a global tag must be filterable in any project")
+	assert.Equal(t, tagged, got[0].ID)
+	assert.False(t, hasMore)
+}
+
+// TestGetSessionsPaged_TagFilterGlobalTagFromAnotherProject pins that a global
+// tag created elsewhere still matches here — global scope means visible
+// everywhere, not only in its project of origin.
+func TestGetSessionsPaged_TagFilterGlobalTagFromAnotherProject(t *testing.T) {
+	setupDB(t)
+	// Created while tagging a session in project B.
+	origin := helperCreateSession(t, tagProjectB, "codebuddy", "origin")
+	require.NoError(t, service.SetSessionTags(origin, tagProjectB, []service.SessionTagRef{
+		{Name: "shared", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	// A project A session adopts the same global label.
+	mine := helperCreateSession(t, tagProjectA, "codebuddy", "mine")
+	require.NoError(t, service.SetSessionTags(mine, tagProjectA, []service.SessionTagRef{{Name: "shared"}}))
+
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, mine, got[0].ID)
+}
+
+// TestFilterSessionsByTag_RequiresVisibleDefinition is the Go-side twin of the
+// SQL reachability test: the unpaginated path (limit<=0) filters in memory, and
+// its visibility check was unguarded — dropping it left the suite green.
+//
+// The state is a session in THIS project linked to a definition this project
+// cannot see (another project's project-scoped tag). The outer query cannot
+// exclude it, so only the visibility check can.
+func TestFilterSessionsByTag_RequiresVisibleDefinition(t *testing.T) {
+	setupDB(t)
+	mine := helperCreateSession(t, tagProjectA, "codebuddy", "mine")
+	visible := helperCreateSession(t, tagProjectA, "codebuddy", "visible")
+	require.NoError(t, service.SetSessionTags(visible, tagProjectA, []service.SessionTagRef{{Name: "shared"}}))
+
+	// Link "mine" directly to project B's project-scoped "shared".
+	other := helperCreateSession(t, tagProjectB, "codebuddy", "other")
+	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
+	var foreignTagID int64
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_path = ?",
+		tagProjectB,
+	).Scan(&foreignTagID))
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,
+	)
+	require.NoError(t, err)
+
+	all, err := service.GetSessions(tagProjectA, "")
+	require.NoError(t, err)
+
+	got, err := service.FilterSessionsByTag(all, tagProjectA, "shared")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only a project-A-visible definition counts")
+	assert.Equal(t, visible, got[0].ID)
+}

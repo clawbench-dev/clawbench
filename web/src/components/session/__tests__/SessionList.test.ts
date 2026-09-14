@@ -1169,7 +1169,12 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('clears the filter when the project changes', async () => {
+    it('clears the filter when the project changes, even if the tag name exists there too', async () => {
+      // The new project deliberately also has a "bug" tag in use. Without the
+      // explicit clear in the projectRoot watcher, loadFilterTags would find the
+      // name present and keep the filter — carrying project A's selection into a
+      // different project, where it means nothing. (If the new project had no
+      // tags, the auto-clear would mask this and the test would pass either way.)
       routeFetch({ sessions: [sessionsFixture().s1], tags: [{ name: 'bug', scope: 'project', count: 1 }] })
       const wrapper = await mountList()
       await wrapper.vm.loadSessions()
@@ -1179,11 +1184,87 @@ describe('SessionList', () => {
       expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
 
       mockStore.state.projectRoot = '/proj/other'
-      routeFetch({ sessions: [], tags: [] })
+      routeFetch({ sessions: [], tags: [{ name: 'bug', scope: 'project', count: 4 }] })
       await nextTick()
       await flushPromises()
 
+      // The chip is still offered (the tag exists here) but must be INACTIVE.
+      const chip = wrapper.find('.session-tag-filter-chip')
+      expect(chip.exists()).toBe(true)
+      expect(chip.classes()).not.toContain('active')
+      wrapper.unmount()
+    })
+
+
+    it('re-fetches the list after the applied tag disappears (no dead filter)', async () => {
+      // Regression: the chip set and the list are refreshed by the same watcher,
+      // but the list request captures activeTag synchronously. If the tag is
+      // cleared AFTER that request is issued, the list stays filtered by a tag
+      // whose chip is already gone — the user cannot clear it from the UI.
+      const route = (sessions: any[], tags: any[]) => {
+        mockFetch.mockImplementation((url: string) => {
+          if (String(url).includes('/api/ai/session/tags')) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags }) })
+          }
+          const u = String(url)
+          const filtered = u.includes('tag=bug') ? sessions.filter((x: any) => x.tagged) : sessions
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: filtered, hasMore: false }) })
+        })
+      }
+      const all = [
+        { id: 's1', title: 'A', createdAt: '2025-01-01', updatedAt: '2025-01-01', tagged: true },
+        { id: 's2', title: 'B', createdAt: '2025-01-02', updatedAt: '2025-01-02', tagged: false },
+      ]
+      route(all, [{ name: 'bug', scope: 'project', count: 1 }])
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+      expect(wrapper.vm.sessions.length).toBe(1)
+
+      // The tag is deleted elsewhere: the version bump drives the refresh.
+      route(all, [])
+      mockStore.state.sessionListVersion++
+      await nextTick()
+      await flushPromises()
+      await flushPromises()
+
+      // Bar is gone AND the list is no longer constrained by the dead tag.
       expect(wrapper.find('.session-tag-filter').exists()).toBe(false)
+      expect(wrapper.vm.sessions.length).toBe(2)
+      wrapper.unmount()
+    })
+
+    it('keeps chips and filter when the tag fetch fails', async () => {
+      // A transient API failure must not be read as "this project has no tags":
+      // that would hide the bar and silently drop the user's filter, with no way
+      // to restore it.
+      let failTags = false
+      mockFetch.mockImplementation((url: string) => {
+        if (String(url).includes('/api/ai/session/tags')) {
+          if (failTags) return Promise.reject(new Error('network'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ tags: [{ name: 'bug', scope: 'project', count: 1 }] }) })
+        }
+        const u = String(url)
+        const all = [
+          { id: 's1', title: 'A', createdAt: '2025-01-01', updatedAt: '2025-01-01', tagged: true },
+          { id: 's2', title: 'B', createdAt: '2025-01-02', updatedAt: '2025-01-02', tagged: false },
+        ]
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: u.includes('tag=bug') ? all.filter(x => x.tagged) : all, hasMore: false }) })
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+      await wrapper.find('.session-tag-filter-chip').trigger('click')
+      await flushPromises()
+
+      failTags = true
+      await wrapper.vm.loadFilterTags()
+      await flushPromises()
+
+      expect(wrapper.find('.session-tag-filter').exists()).toBe(true)
+      expect(wrapper.find('.session-tag-filter-chip').classes()).toContain('active')
       wrapper.unmount()
     })
 

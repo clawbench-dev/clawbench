@@ -1420,38 +1420,49 @@ func FilterSessionsByTag(sessions []model.ChatSession, projectPath, tagName stri
 //
 // This is what the session-list filter bar shows: unlike ListSessionTags (the
 // dialog's candidate list, which includes every global tag), a tag nobody in
-// this project uses would be a filter that always yields an empty list. The
-// visibility predicate matches ListSessionTags so the same name is not counted
-// under a definition this project cannot see.
+// this project uses would be a filter that always yields an empty list.
+//
+// Grouping is by NAME (COLLATE NOCASE), not by definition id, and the count is
+// the number of DISTINCT sessions carrying any visible definition of that name.
+// That mirrors the filter's predicate exactly (`t.name = ? COLLATE NOCASE AND
+// (t.scope='global' OR t.project_path=?)`), so the count on a chip always equals
+// the number of sessions clicking it returns. Grouping by t.id instead would
+// report one definition's count while the filter returned the union of both —
+// a chip reading "2" that lists 3 sessions.
 func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
 	rows, err := dbRead.Query(`
-		SELECT t.name, t.scope, t.project_path, COUNT(DISTINCT s.id) AS cnt
+		SELECT MIN(t.name) AS name,
+		       MIN(CASE WHEN t.scope = 'global' THEN 0 ELSE 1 END) AS is_project,
+		       COUNT(DISTINCT s.id) AS cnt
 		FROM session_tags t
 		JOIN session_tag_links l ON l.tag_id = t.id
 		JOIN chat_sessions s ON s.id = l.session_id
 		WHERE (t.scope = 'global' OR t.project_path = ?)
 		  AND s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'
-		GROUP BY t.id
-		ORDER BY cnt DESC, t.name COLLATE NOCASE`, projectPath, projectPath)
+		GROUP BY t.name COLLATE NOCASE
+		ORDER BY cnt DESC, name COLLATE NOCASE`, projectPath, projectPath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
 	tags := []SessionTag{}
-	seen := map[string]bool{}
 	for rows.Next() {
 		var t SessionTag
-		if err := rows.Scan(&t.Name, &t.Scope, &t.ProjectPath, &t.Count); err != nil {
+		var isProject int
+		if err := rows.Scan(&t.Name, &isProject, &t.Count); err != nil {
 			return nil, err
 		}
-		// A global and a project tag may share a name; the filter bar shows one
-		// chip per name, so keep the first (global wins, matching the list order).
-		key := strings.ToLower(t.Name)
-		if seen[key] {
-			continue
+		// One chip per name. When a global and a project definition share the
+		// name, report the global scope — matching ListSessionTags, which
+		// prefers the global definition (ORDER BY ... scope ASC).
+		if isProject == 0 {
+			t.Scope = SessionTagScopeGlobal
+			t.ProjectPath = ""
+		} else {
+			t.Scope = SessionTagScopeProject
+			t.ProjectPath = projectPath
 		}
-		seen[key] = true
 		tags = append(tags, t)
 	}
 	return tags, rows.Err()

@@ -405,19 +405,27 @@ function buildTagQuery() {
 /**
  * Load the tags in use in the current project for the filter bar. Tags that no
  * session here uses are excluded server-side, so every chip yields a result.
+ *
+ * Also clears the applied filter when its tag is no longer in use (deleted, or
+ * its last session dropped it) — otherwise the list stays constrained by a
+ * condition whose chip no longer exists, which the user cannot clear. Callers
+ * that may have already issued a request with the old tag must await this
+ * before fetching (see the sessionListVersion watcher).
  */
 async function loadFilterTags() {
+  let tags
   try {
     const res = await apiGet('/api/ai/session/tags?inUse=1')
-    filterTags.value = res.tags || []
+    tags = res.tags || []
   } catch (err) {
+    // Keep the previous chips on failure. Treating an error as "no tags" would
+    // both hide the bar and drop the user's filter, so a transient failure
+    // would silently widen the list with no way back to the filter.
     appLog.e('SessionList', 'Failed to load project tags:', err)
-    filterTags.value = []
+    return
   }
-  // If the applied tag no longer exists (deleted, or its last session dropped
-  // it), clear the filter — otherwise the list stays locked to a condition the
-  // user can no longer see or clear from the bar.
-  if (activeTag.value && !filterTags.value.some(tg => tg.name === activeTag.value)) {
+  filterTags.value = tags
+  if (activeTag.value && !tags.some(tg => tg.name === activeTag.value)) {
     activeTag.value = ''
   }
 }
@@ -734,11 +742,16 @@ function scrollActiveRowIntoView() {
 // after create/archive/destroy/read/completion — including cases that don't emit
 // a WS session_update event (e.g. mark-as-read, archive). Combined with the WS
 // subscription below, the drawer/sidebar list stays fresh without manual refresh.
-watch(() => store.state.sessionListVersion, () => {
+//
+// Tag edits and archive/destroy also change which tags are still in use, so the
+// chip set is refreshed FIRST and awaited. Order matters: if that refresh clears
+// the applied filter (its tag was deleted, or its last session dropped it), the
+// reload must observe the cleared value — reloading first would send the dead
+// tag and leave the list showing nothing behind a filter bar that has already
+// disappeared, with no chip left to clear it.
+watch(() => store.state.sessionListVersion, async () => {
+  await loadFilterTags()
   reload()
-  // Tag edits and archive/destroy also change which tags are still in use, so
-  // the filter bar's chip set has to be refreshed alongside the list.
-  loadFilterTags()
 })
 
 defineExpose({ loadSessions, addSessionLocally, reload })
