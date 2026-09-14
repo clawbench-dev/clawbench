@@ -170,6 +170,12 @@ type discoveryCache struct {
 	entries map[string]cacheEntry
 	ttl     time.Duration
 	now     func() time.Time // injectable clock for tests
+
+	// probing serializes concurrent first-callers per backend. Without it two
+	// callers would probe simultaneously and the later write would win, so a
+	// transient failure could overwrite a concurrent success (or vice versa) and
+	// be cached for the whole TTL.
+	probing map[string]*sync.Mutex
 }
 
 func newDiscoveryCache(ttl time.Duration) *discoveryCache {
@@ -177,20 +183,52 @@ func newDiscoveryCache(ttl time.Duration) *discoveryCache {
 		entries: make(map[string]cacheEntry),
 		ttl:     ttl,
 		now:     time.Now,
+		probing: make(map[string]*sync.Mutex),
 	}
+}
+
+// probeLock returns the per-backend probe mutex, creating it on first use.
+func (c *discoveryCache) probeLock(backend string) *sync.Mutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.probing == nil {
+		c.probing = make(map[string]*sync.Mutex)
+	}
+	mu, ok := c.probing[backend]
+	if !ok {
+		mu = &sync.Mutex{}
+		c.probing[backend] = mu
+	}
+	return mu
 }
 
 var globalDiscoveryCache = newDiscoveryCache(defaultDiscoveryTTL)
 
 // get returns the cached result for a backend, probing on a miss or after the
-// TTL. The probe runs outside the lock so a slow CLI cannot block other
-// backends; concurrent misses for the same backend may both probe, which is
-// harmless (last writer wins).
+// TTL.
+//
+// The probe runs outside the cache lock so a slow CLI cannot block other
+// backends, but under a per-backend lock so concurrent first-callers for the SAME
+// backend probe once. The double-check inside the lock picks up a result a
+// sibling just wrote, so a transient failure cannot overwrite a concurrent
+// success.
 func (c *discoveryCache) get(backend string, probe func() ([]AgentModel, string)) ([]AgentModel, string) {
 	c.mu.Lock()
 	entry, ok := c.entries[backend]
 	c.mu.Unlock()
 
+	if ok && c.now().Sub(entry.cachedAt) < c.ttl {
+		return cloneModels(entry.models), entry.detail
+	}
+
+	lock := c.probeLock(backend)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Re-check: another goroutine may have probed while we waited for the lock.
+	c.mu.Lock()
+	entry, ok = c.entries[backend]
+	c.mu.Unlock()
 	if ok && c.now().Sub(entry.cachedAt) < c.ttl {
 		return cloneModels(entry.models), entry.detail
 	}
@@ -205,7 +243,9 @@ func (c *discoveryCache) get(backend string, probe func() ([]AgentModel, string)
 	}
 	c.mu.Unlock()
 
-	return models, detail
+	// Hand back a copy as well, so a caller cannot mutate the cached entry (or a
+	// probe's shared catalog) through the slice it receives.
+	return cloneModels(models), detail
 }
 
 // invalidate drops one backend's cached result, forcing the next lookup to
@@ -312,42 +352,36 @@ func safeDiscover(src ModelSource) (models []AgentModel, detail string) {
 func ResolveModels(cliModels, acpModels []AgentModel, currentModelID string) []AgentModel {
 	acpByID, acpOrder := indexACPModels(acpModels)
 
+	// Split the ACP list into tier aliases and concrete models. The two behave
+	// differently: a concrete ACP list is authoritative for membership, while an
+	// alias list cannot be, because its IDs never match a CLI model ID.
+	aliasNames, concreteACP := splitTierAliases(acpByID)
+
 	seen := make(map[string]struct{}, len(cliModels)+len(acpByID))
 	out := make([]AgentModel, 0, len(cliModels)+len(acpByID))
+	usedAliases := make(map[string]struct{})
+
+	// The CLI list supplies order and names; ACP contributes display names and
+	// (when concrete) membership.
 	cliDefaultID := ""
-
 	for _, m := range cliModels {
-		id := strings.TrimSpace(m.ID)
-		if id == "" {
+		entry, ok := resolveCLIEntry(m, acpByID, concreteACP, aliasNames, seen, usedAliases)
+		if !ok {
 			continue
-		}
-		if _, dup := seen[id]; dup {
-			continue
-		}
-		// ACP membership is authoritative when ACP reported anything.
-		if len(acpByID) > 0 {
-			if _, supported := acpByID[id]; !supported {
-				continue
-			}
-		}
-		seen[id] = struct{}{}
-
-		name := m.Name
-		if acp, ok := acpByID[id]; ok && strings.TrimSpace(acp.Name) != "" {
-			name = acp.Name
 		}
 		if m.Default && cliDefaultID == "" {
-			cliDefaultID = id
+			cliDefaultID = strings.TrimSpace(m.ID)
 		}
-		out = append(out, AgentModel{ID: id, Name: name})
+		out = append(out, entry)
 	}
 
+	// ACP-only entries: concrete models, plus tier aliases no CLI entry covered.
 	for _, id := range acpOrder {
-		if _, dup := seen[id]; dup {
+		entry, ok := resolveACPOnlyEntry(id, acpByID, usedAliases, seen)
+		if !ok {
 			continue
 		}
-		seen[id] = struct{}{}
-		out = append(out, AgentModel{ID: id, Name: acpByID[id].Name})
+		out = append(out, entry)
 	}
 
 	if len(out) == 0 {
@@ -359,6 +393,168 @@ func ResolveModels(cliModels, acpModels []AgentModel, currentModelID string) []A
 		out[i].Default = out[i].ID == defaultID
 	}
 	return out
+}
+
+// resolveCLIEntry maps one CLI-discovered model to its resolved entry.
+//
+// It reports false when the model must be dropped: a blank/duplicate ID, or an ID
+// the concrete ACP list does not report (the runtime cannot run it). Tier aliases
+// are handled separately — they name a tier rather than assert membership, so
+// they never cause a drop.
+func resolveCLIEntry(
+	m AgentModel,
+	acpByID map[string]AgentModel,
+	concreteACP map[string]AgentModel,
+	aliasNames map[string]string,
+	seen map[string]struct{},
+	usedAliases map[string]struct{},
+) (AgentModel, bool) {
+	id := strings.TrimSpace(m.ID)
+	if id == "" {
+		return AgentModel{}, false
+	}
+	if _, dup := seen[id]; dup {
+		return AgentModel{}, false
+	}
+	if len(concreteACP) > 0 {
+		if _, supported := concreteACP[id]; !supported {
+			return AgentModel{}, false
+		}
+	}
+	seen[id] = struct{}{}
+
+	name := m.Name
+	switch {
+	case strings.TrimSpace(acpByID[id].Name) != "":
+		// An ACP entry for this exact ID is the most specific name.
+		name = acpByID[id].Name
+	default:
+		// A tier alias names the entry for its tier while the concrete ID stays,
+		// so the user sees the real backing model but the CLI still receives an
+		// ID it understands.
+		if alias, ok := aliasForCLIModel(id, aliasNames); ok {
+			name = aliasNames[alias]
+			usedAliases[alias] = struct{}{}
+		}
+	}
+	return AgentModel{ID: id, Name: name}, true
+}
+
+// resolveACPOnlyEntry maps an ACP entry with no CLI counterpart. A tier alias is
+// still offered (a selectable tier must not be silently lost) except for the meta
+// "default" marker, which is a fallback, not a model.
+func resolveACPOnlyEntry(
+	id string,
+	acpByID map[string]AgentModel,
+	usedAliases map[string]struct{},
+	seen map[string]struct{},
+) (AgentModel, bool) {
+	if _, dup := seen[id]; dup {
+		return AgentModel{}, false
+	}
+	if alias, isAlias := aliasNameFor(id); isAlias {
+		if alias == metaTierDefault {
+			return AgentModel{}, false
+		}
+		if _, used := usedAliases[alias]; used {
+			return AgentModel{}, false
+		}
+	}
+	seen[id] = struct{}{}
+	return AgentModel{ID: id, Name: acpByID[id].Name}, true
+}
+
+// tierAliases are ACP model IDs that name a capability TIER rather than a model.
+// The claude ACP agent uses them to expose a redirected endpoint: the alias ID is
+// what the CLI accepts, and its display name carries the real backing model.
+var tierAliases = map[string]struct{}{
+	"default": {}, "opus": {}, "sonnet": {}, "haiku": {}, "fast": {}, "plan": {},
+}
+
+// metaTierDefault is the fallback marker alias, which is not a selectable model.
+const metaTierDefault = "default"
+
+// isTierAliasID reports whether an ID is a tier alias rather than a model ID.
+// Case and separators are ignored, so "Opus" and "claude-opus" normalize alike.
+func isTierAliasID(id string) bool {
+	_, ok := aliasNameFor(id)
+	return ok
+}
+
+// aliasNameFor normalizes an ID and reports the alias it denotes.
+func aliasNameFor(id string) (string, bool) {
+	normalized := strings.ToLower(id)
+	var b strings.Builder
+	for _, r := range normalized {
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+		}
+	}
+	candidate := b.String()
+	if _, ok := tierAliases[candidate]; ok {
+		return candidate, true
+	}
+	return "", false
+}
+
+// splitTierAliases separates the ACP list into alias display names (keyed by
+// alias) and the concrete models. An alias with no display name is ignored: it
+// would contribute nothing.
+func splitTierAliases(acpByID map[string]AgentModel) (map[string]string, map[string]AgentModel) {
+	aliasNames := make(map[string]string)
+	concrete := make(map[string]AgentModel, len(acpByID))
+
+	for id, m := range acpByID {
+		alias, isAlias := aliasNameFor(id)
+		if !isAlias {
+			concrete[id] = m
+			continue
+		}
+		if alias == metaTierDefault {
+			continue
+		}
+		if name := strings.TrimSpace(m.Name); name != "" {
+			aliasNames[alias] = name
+		}
+	}
+	return aliasNames, concrete
+}
+
+// aliasForCLIModel finds the tier alias a concrete CLI model ID belongs to, by
+// looking for the alias as a token of the ID. "claude-sonnet-4-6" matches
+// "sonnet"; "claude-opus-4-5" matches "opus".
+func aliasForCLIModel(cliID string, aliasNames map[string]string) (string, bool) {
+	if len(aliasNames) == 0 {
+		return "", false
+	}
+	tokens := tokenizeModelID(cliID)
+	for alias := range aliasNames {
+		if _, ok := tokens[alias]; ok {
+			return alias, true
+		}
+	}
+	return "", false
+}
+
+// tokenizeModelID splits a model ID into lowercase alphabetic tokens.
+func tokenizeModelID(id string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	var b strings.Builder
+	for _, r := range strings.ToLower(id) {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		default:
+			if b.Len() > 0 {
+				tokens[b.String()] = struct{}{}
+				b.Reset()
+			}
+		}
+	}
+	if b.Len() > 0 {
+		tokens[b.String()] = struct{}{}
+	}
+	return tokens
 }
 
 // indexACPModels builds a lookup and a stable ordering for the ACP list, dropping
@@ -565,6 +761,10 @@ func (s *pluginSource) Discover() ([]AgentModel, string) {
 	if len(models) == 0 {
 		return nil, detail
 	}
+	// Copy before flagging the default: probes commonly return a package-level
+	// catalog by reference (e.g. ClaudeCatalog), and writing into it would mutate
+	// shared state that other callers read concurrently.
+	models = cloneModels(models)
 	markFirstDefault(models)
 	slog.Info("model discovery succeeded (plugin)", "backend", s.backend, "models", len(models))
 	return models, ""

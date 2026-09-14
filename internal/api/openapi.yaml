@@ -2405,9 +2405,11 @@ paths:
         `/api/ai/commands`。
 
         **模型列表由服务端合并**：`agents[].models` 是已解析的最终列表——CLI 发现的
-        列表提供顺序与名称，ACP 上报的列表在存在时对成员资格有权威性（ACP 未上报的
-        CLI 模型会被剔除）。`agents[].cliModels` 是未经合并的纯 CLI 列表，供客户端在
-        切换到 CLI 传输时直接渲染，无需自行保留基线并重新合并。
+        列表提供顺序与名称，ACP 上报的**具体**模型列表在存在时对成员资格有权威性
+        （ACP 未上报的 CLI 模型会被剔除）。ACP 若上报的是 `opus`/`sonnet`/`haiku`
+        这类**档位别名**，则不参与成员资格判定，而是对齐到对应的 CLI 条目并只取其
+        显示名（保留具体 ID，CLI 仍能识别）。`agents[].cliModels` 是未经合并的纯 CLI
+        列表，供客户端在切换到 CLI 传输时直接渲染，无需自行保留基线并重新合并。
 
         同一对列表也挂在 `acpStates[].modelListState` 的 `resolvedModels` /
         `cliModels` 字段上，便于客户端仅凭 ACP 状态缓存刷新视图。

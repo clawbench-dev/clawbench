@@ -58,9 +58,10 @@ flowchart TD
 
   发现结果由 `DiscoveryCache` 按后端缓存 5 分钟；显式刷新（`refresh-models` / `rescan`）会先失效缓存再重新探测。内置清单集中在 `internal/model/catalogs.go`，更新清单是单文件改动
 - **模型列表由服务端合并**：`ResolveModels`（`internal/model/modelcatalog.go`）是唯一的合并点。规则：
-  - **ACP 列表在存在时对成员资格有权威性** —— agent 最清楚自己能跑哪些模型；CLI 列表可能过时（端点被重定向、模型在服务端下线），ACP 未上报的 CLI 模型会被剔除
-  - **CLI 列表提供顺序与名称**；同名 ID 时 ACP 的显示名优先（反映重定向后的真实模型）
-  - ACP 独有的模型按 ACP 顺序追加
+  - **具体 ACP 列表在存在时对成员资格有权威性** —— agent 最清楚自己能跑哪些模型；CLI 列表可能过时（端点被重定向、模型在服务端下线），ACP 未上报的 CLI 模型会被剔除
+  - **档位别名（tier alias）不参与成员资格判定**。claude 经 ACP 上报的是 `opus`/`sonnet`/`haiku` 这类**档位** ID，其显示名携带被重定向后的真实模型；CLI 发现的是 `claude-sonnet-4-6` 这类具体 ID，两者 ID 永不相等。若把别名列表也当作成员资格依据，会剔掉全部 CLI 模型、只留若干条显示同名真实模型的别名条目（这正是历史上 Issue #404 的问题）。因此别名改为**对齐到对应的 CLI 骨架条目**：保留具体 ID（CLI 仍能识别），仅取其显示名。CLI 骨架无法代表的别名仍会追加，避免用户可选档位静默丢失；元档位 `default` 是回退标记而非模型，始终跳过
+  - **CLI 列表提供顺序与名称**；同名 ID 时 ACP 的显示名优先
+  - ACP 独有的具体模型按 ACP 顺序追加
   - 恰好一个模型是默认：会话当前模型 > CLI 默认标记 > 列表首项
 
   前端不再做任何合并，只渲染 `/api/agents` 返回的 `agents[].models`。未经合并的纯 CLI 列表通过 `agents[].cliModels` 提供，供切换到 CLI 传输时直接渲染

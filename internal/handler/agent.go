@@ -136,8 +136,10 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	connManager := ai.GetACPConnManager()
 
 	// Resolve each agent's model list here, in the backend, so the frontend just
-	// renders what it is given. The CLI list supplies order and names; the ACP
-	// list is authoritative for membership when present (see model.ResolveModels).
+	// renders what it is given. The CLI list supplies order and names; a concrete
+	// ACP list is authoritative for membership when present. ACP lists made of
+	// tier aliases (claude) are handled differently — see model.ResolveModels,
+	// which is the single place this rule lives.
 	//
 	// The resolved list goes on a COPY of the agent. Mutating the shared *Agent
 	// would overwrite the stored CLI-discovered list with a merged one, and the

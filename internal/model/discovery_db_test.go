@@ -71,23 +71,39 @@ func isolateAgentGlobals(t *testing.T) {
 	AgentList = nil
 }
 
+// withBackendSpec registers an extra BackendSpec for the duration of a test.
+//
+// The registry is built lazily by a sync.Once, so appending before the first
+// GetBackendRegistry() call would be discarded when the once fires. Calling
+// GetBackendRegistry() first forces initialization, making the append reliable
+// regardless of which test ran before.
+func withBackendSpec(t *testing.T, spec BackendSpec) {
+	t.Helper()
+	orig := GetBackendRegistry()
+	BackendRegistry = append(append([]BackendSpec{}, orig...), spec)
+	t.Cleanup(func() { BackendRegistry = orig })
+}
+
 // ---------------------------------------------------------------------------
 // RefreshAgents — the single pipeline entry point
 // ---------------------------------------------------------------------------
 
+// The registry is loaded once per process (sync.Once), so a test cannot append to
+// it reliably. Seed the DB directly instead and assert on the derived map, which
+// is what RefreshAgents actually reports.
 func TestRefreshAgents_ReportsPresentCLIs(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 	isolateAgentGlobals(t)
 
+	// A backend that only exists in the database still counts as present.
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend) VALUES ('known', 'Known', 'db-only-backend')`)
+	require.NoError(t, err)
+
 	result, err := RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
 
-	require.NotNil(t, result.PresentCLIs)
-	// Any CLI installed on this machine must be reported present. `ls` is not a
-	// backend, so assert the shape rather than specific backends.
-	for backend := range result.PresentCLIs {
-		assert.NotEmpty(t, backend)
-	}
+	assert.True(t, result.PresentCLIs["db-only-backend"],
+		"a backend with a DB record must be reported present even without a registry entry")
 }
 
 func TestRefreshAgents_InsertsAgentsForPresentBackends(t *testing.T) {
@@ -100,12 +116,7 @@ func TestRefreshAgents_InsertsAgentsForPresentBackends(t *testing.T) {
 	defer restore()
 	RegisterModelSource(StaticSource(backendID, "", []AgentModel{{ID: "m1", Name: "M1"}}))
 
-	origRegistry := BackendRegistry
-	BackendRegistry = append(append([]BackendSpec{}, origRegistry...), BackendSpec{
-		ID: backendID, Backend: backendID, DefaultCmd: "definitely-not-a-real-cli-xyz",
-		Name: "Refresh Test", NoCLI: true,
-	})
-	t.Cleanup(func() { BackendRegistry = origRegistry })
+	withBackendSpec(t, BackendSpec{ID: backendID, Backend: backendID, DefaultCmd: "definitely-not-a-real-cli-xyz", Name: "Refresh Test", NoCLI: true})
 
 	result, err := RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
@@ -126,12 +137,7 @@ func TestRefreshAgents_DoesNotDuplicateExistingAgents(t *testing.T) {
 
 	restore := isolateModelSources(t)
 	defer restore()
-	origRegistry := BackendRegistry
-	BackendRegistry = append(append([]BackendSpec{}, origRegistry...), BackendSpec{
-		ID: "dup", Backend: "dup-backend", DefaultCmd: "definitely-not-a-real-cli-xyz",
-		Name: "Spec Name", NoCLI: true,
-	})
-	t.Cleanup(func() { BackendRegistry = origRegistry })
+	withBackendSpec(t, BackendSpec{ID: "dup", Backend: "dup-backend", DefaultCmd: "definitely-not-a-real-cli-xyz", Name: "Spec Name", NoCLI: true})
 
 	result, err := RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
@@ -153,12 +159,7 @@ func TestRefreshAgents_SyncsACPCommandFromSpec(t *testing.T) {
 
 	restore := isolateModelSources(t)
 	defer restore()
-	origRegistry := BackendRegistry
-	BackendRegistry = append(append([]BackendSpec{}, origRegistry...), BackendSpec{
-		ID: "acp", Backend: "acp-backend", DefaultCmd: "definitely-not-a-real-cli-xyz",
-		Name: "ACP", AcpCommand: "acp-server --stdio",
-	})
-	t.Cleanup(func() { BackendRegistry = origRegistry })
+	withBackendSpec(t, BackendSpec{ID: "acp", Backend: "acp-backend", DefaultCmd: "definitely-not-a-real-cli-xyz", Name: "ACP", AcpCommand: "acp-server --stdio"})
 
 	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
@@ -178,12 +179,8 @@ func TestRefreshAgents_ClearsRemovedACPCommand(t *testing.T) {
 
 	restore := isolateModelSources(t)
 	defer restore()
-	origRegistry := BackendRegistry
-	BackendRegistry = append(append([]BackendSpec{}, origRegistry...), BackendSpec{
-		ID: "gone", Backend: "gone-backend", DefaultCmd: "definitely-not-a-real-cli-xyz",
-		Name: "Gone", NoCLI: true, // no AcpCommand
-	})
-	t.Cleanup(func() { BackendRegistry = origRegistry })
+	// No AcpCommand: the spec withdraws ACP for this backend.
+	withBackendSpec(t, BackendSpec{ID: "gone", Backend: "gone-backend", DefaultCmd: "definitely-not-a-real-cli-xyz", Name: "Gone", NoCLI: true})
 
 	_, err = RefreshAgents(db, RefreshOptions{SkipDiscovery: true})
 	require.NoError(t, err)
@@ -535,4 +532,69 @@ func TestDiscoverAndPersistModels_SkipsUserManagedAgents(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'u'").Scan(&modelsJSON))
 	assert.Contains(t, modelsJSON, "mine")
 	assert.NotContains(t, modelsJSON, "theirs")
+}
+
+// ---------------------------------------------------------------------------
+// Regression: a freshly inserted agent must receive discovered models
+// ---------------------------------------------------------------------------
+
+// A brand-new install inserts agents in step 1 and discovers models in step 3 of
+// the same refresh. The discovery write must therefore also match rows that have
+// an empty list and are not yet flagged auto-managed, or the user sees an empty
+// model picker until they manually refresh.
+//
+// The row is seeded directly rather than through CLI detection: detection depends
+// on what is installed on the machine, and the bug under test is in the
+// persistence predicate, not in detection.
+func TestRefreshAgents_FreshInsertReceivesDiscoveredModels(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	const backendID = "fresh-install"
+	// This is exactly the row shape step 1 writes for a newly detected backend:
+	// empty models, flag 0 (saveAgentToDB leaves ModelsAutoDetected false).
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected)
+		VALUES (?, 'Fresh Install', ?, '[]', 0)`, backendID, backendID)
+	require.NoError(t, err)
+
+	restore := isolateModelSources(t)
+	defer restore()
+	RegisterModelSource(StaticSource(backendID, "", []AgentModel{
+		{ID: "fresh-1", Name: "Fresh 1", Default: true},
+		{ID: "fresh-2", Name: "Fresh 2"},
+	}))
+
+	_, err = RefreshAgents(db, RefreshOptions{})
+	require.NoError(t, err)
+
+	var modelsJSON string
+	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = ?", backendID).Scan(&modelsJSON))
+	assert.Contains(t, modelsJSON, "fresh-1", "a newly inserted agent must get the models discovered in the same refresh")
+	assert.Contains(t, modelsJSON, "fresh-2")
+
+	require.Contains(t, Agents, backendID)
+	assert.NotEmpty(t, Agents[backendID].Models, "the in-memory agent must expose the discovered models")
+}
+
+// A user-chosen list must survive: it is non-empty and flagged user-managed.
+func TestRefreshAgents_EmptyUserListIsNotTreatedAsUserChosen(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	isolateAgentGlobals(t)
+
+	// An empty list with flag 0 carries no user intent — it is the state of a
+	// row nobody has populated yet, so discovery may fill it.
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected)
+		VALUES ('empty-flag0', 'Empty', 'fill-me', '[]', 0)`)
+	require.NoError(t, err)
+
+	restore := isolateModelSources(t)
+	defer restore()
+	RegisterModelSource(StaticSource("fill-me", "", []AgentModel{{ID: "found", Name: "Found"}}))
+
+	_, err = RefreshAgents(db, RefreshOptions{})
+	require.NoError(t, err)
+
+	var modelsJSON string
+	require.NoError(t, db.QueryRow("SELECT models FROM agents WHERE id = 'empty-flag0'").Scan(&modelsJSON))
+	assert.Contains(t, modelsJSON, "found")
 }

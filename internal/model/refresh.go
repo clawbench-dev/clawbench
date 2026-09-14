@@ -268,9 +268,17 @@ func sortedKeys(m map[string]interface{}) []string {
 // discoverAndPersistModels probes every backend that has a model source and
 // writes the result to the agents whose model list is auto-managed.
 //
-// A user-defined model list (models_auto_detected = 0 with a non-empty list) is
-// never touched. An auto-managed agent keeps the same auto-managed status, so the
-// flag is not a one-way latch.
+// Two row shapes are written:
+//
+//   - models_auto_detected = 1 — discovery already owns this list, so refresh it.
+//   - models_auto_detected = 0 with an EMPTY list — nobody has populated the row
+//     yet (a backend detected in this same refresh, or a wizard-created agent
+//     whose discovery never ran). Fill it and mark it auto-managed.
+//
+// A non-empty list with flag 0 is the user's own choice and is never touched.
+// The empty-and-flag-0 case must be included: step 1 inserts agents with an empty
+// list and no flag, so excluding it would leave every freshly installed backend
+// with an empty model picker until a manual refresh.
 func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []string) {
 	discovered := make(map[string][]AgentModel)
 	var updated []string
@@ -288,7 +296,8 @@ func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []stri
 			continue
 		}
 		res, err := db.Exec(
-			"UPDATE agents SET models = ?, models_auto_detected = 1 WHERE backend = ? AND models_auto_detected = 1",
+			`UPDATE agents SET models = ?, models_auto_detected = 1
+			 WHERE backend = ? AND (models_auto_detected = 1 OR models IS NULL OR models = '[]' OR models = 'null')`,
 			string(modelsJSON), backend,
 		)
 		if err != nil {

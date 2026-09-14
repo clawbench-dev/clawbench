@@ -2,6 +2,8 @@ package model
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -475,27 +477,67 @@ func TestDiscoveryCache_ReturnsDefensiveCopy(t *testing.T) {
 	assert.Equal(t, "M", second[0].Name, "cached entries must not be mutable by callers")
 }
 
-func TestDiscoveryCache_ConcurrentAccess(t *testing.T) {
+func TestDiscoveryCache_ConcurrentFirstCallersProbeOnce(t *testing.T) {
 	c := newDiscoveryCache(time.Minute)
-	var probes int
-	done := make(chan struct{})
+	var probes int32
+	var wg sync.WaitGroup
 
+	// Every caller arrives before any probe finishes, so without per-backend
+	// serialization they would all probe and race to write the cache entry.
+	start := make(chan struct{})
 	for range 16 {
+		wg.Add(1)
 		go func() {
-			defer func() { done <- struct{}{} }()
+			defer wg.Done()
+			<-start
 			models, _ := c.get("shared", func() ([]AgentModel, string) {
-				probes++
-				return []AgentModel{{ID: "m"}}, ""
+				atomic.AddInt32(&probes, 1)
+				time.Sleep(20 * time.Millisecond)
+				return []AgentModel{{ID: "m", Name: "M"}}, ""
 			})
 			assert.Len(t, models, 1)
 		}()
 	}
-	for range 16 {
-		<-done
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), atomic.LoadInt32(&probes),
+		"concurrent first-callers for one backend must share a single probe")
+}
+
+func TestDiscoveryCache_SuccessIsNotOverwrittenByConcurrentFailure(t *testing.T) {
+	c := newDiscoveryCache(time.Minute)
+
+	// One caller succeeds while another fails; whichever probes first, the
+	// cached entry must be the success, because the failure path only runs when
+	// no probe has populated the cache.
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range 2 {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			c.get("racy", func() ([]AgentModel, string) {
+				if i == 0 {
+					return []AgentModel{{ID: "good", Name: "Good"}}, ""
+				}
+				return nil, "transient failure"
+			})
+		}(i)
 	}
-	// Not asserting an exact probe count: concurrent first-callers may all miss.
-	// The point is that the cache must not race (run with -race).
-	assert.GreaterOrEqual(t, probes, 1)
+	close(start)
+	wg.Wait()
+
+	// The serialized probe means exactly one of the two ran; assert the cache is
+	// self-consistent rather than depending on scheduling order.
+	models, detail := c.get("racy", func() ([]AgentModel, string) { return nil, "should not probe again" })
+	if len(models) > 0 {
+		assert.Empty(t, detail, "a cached success must not carry a failure detail")
+		assert.Equal(t, "good", models[0].ID)
+	} else {
+		assert.Equal(t, "transient failure", detail)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -619,4 +661,131 @@ func TestPluginSource_NilProbe(t *testing.T) {
 
 	assert.Nil(t, models)
 	assert.Empty(t, detail)
+}
+
+// ---------------------------------------------------------------------------
+// Tier aliases (claude via ACP)
+// ---------------------------------------------------------------------------
+
+// The claude agent reports TIER aliases over ACP ("opus"/"sonnet"/"haiku") whose
+// display names carry the real backing model, while CLI discovery produces
+// concrete IDs ("claude-sonnet-4-6"). No ID matches, so a naive membership filter
+// would drop every CLI model and leave the user with alias entries that all
+// display the same redirected name.
+//
+// The rule: an alias aligns onto the CLI skeleton entry whose ID mentions that
+// tier, contributing its display name but keeping the concrete ID.
+func TestResolveModels_TierAliasNamesLandOnConcreteCLIModels(t *testing.T) {
+	cli := []AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
+		{ID: "claude-haiku-3-5", Name: "Claude Haiku 3.5"},
+	}
+	acp := []AgentModel{
+		{ID: "opus", Name: "glm-5.3[1m]"},
+		{ID: "sonnet", Name: "deepseek-v3"},
+		{ID: "haiku", Name: "qwen-max"},
+	}
+
+	got := ResolveModels(cli, acp, "")
+
+	require.Len(t, got, 3, "the concrete CLI IDs must survive, not be replaced by aliases")
+	assert.Equal(t, "claude-sonnet-4-6", got[0].ID)
+	assert.Equal(t, "deepseek-v3", got[0].Name, "the sonnet alias names the sonnet entry")
+	assert.Equal(t, "claude-opus-4-5", got[1].ID)
+	assert.Equal(t, "glm-5.3[1m]", got[1].Name)
+	assert.Equal(t, "claude-haiku-3-5", got[2].ID)
+	assert.Equal(t, "qwen-max", got[2].Name)
+}
+
+// The meta "default" tier is a fallback marker, not a selectable model, so it
+// must not become an entry.
+func TestResolveModels_MetaDefaultTierIsIgnored(t *testing.T) {
+	cli := []AgentModel{{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true}}
+	acp := []AgentModel{
+		{ID: "default", Name: "claude-sonnet-4-6"},
+		{ID: "sonnet", Name: "deepseek-v3"},
+	}
+
+	got := ResolveModels(cli, acp, "")
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "claude-sonnet-4-6", got[0].ID)
+	assert.Equal(t, "deepseek-v3", got[0].Name)
+}
+
+// An alias the CLI skeleton cannot represent is appended, so a tier the user can
+// still select is not silently lost.
+func TestResolveModels_UnmatchedTierAliasIsAppended(t *testing.T) {
+	cli := []AgentModel{{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"}}
+	acp := []AgentModel{
+		{ID: "opus", Name: "glm-5.3"},
+		{ID: "sonnet", Name: "deepseek-v3"},
+	}
+
+	got := ResolveModels(cli, acp, "")
+
+	require.Len(t, got, 2)
+	assert.Equal(t, "claude-opus-4-5", got[0].ID)
+	assert.Equal(t, "glm-5.3", got[0].Name)
+	assert.Equal(t, "sonnet", got[1].ID, "an alias with no matching tier in the CLI list is still offered")
+	assert.Equal(t, "deepseek-v3", got[1].Name)
+}
+
+// A real (non-alias) ACP list must still drive membership: this is the stale-CLI
+// protection the merge exists for.
+func TestResolveModels_RealACPMembershipStillDropsStaleCLIModels(t *testing.T) {
+	cli := []AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Sonnet", Default: true},
+		{ID: "retired-model", Name: "Retired"},
+	}
+	acp := []AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Sonnet (live)"},
+		{ID: "claude-opus-4-5", Name: "Opus (live)"},
+	}
+
+	got := ResolveModels(cli, acp, "")
+
+	require.Len(t, got, 2)
+	ids := []string{got[0].ID, got[1].ID}
+	assert.NotContains(t, ids, "retired-model", "a concrete ACP list still removes a model the runtime does not report")
+	assert.Contains(t, ids, "claude-opus-4-5")
+}
+
+func TestIsTierAliasID(t *testing.T) {
+	for _, id := range []string{"opus", "sonnet", "haiku", "default", "fast", "plan", "Opus", "SONNET"} {
+		assert.True(t, isTierAliasID(id), "%q should be recognized as a tier alias", id)
+	}
+	for _, id := range []string{"claude-opus-4-5", "glm-5.3", "", "gpt-4o"} {
+		assert.False(t, isTierAliasID(id), "%q is a concrete model, not an alias", id)
+	}
+}
+
+// A probe that returns a package-level catalog by reference must not have that
+// catalog mutated by the default-marking step.
+func TestPluginSource_DoesNotMutateProbeReturnedSlice(t *testing.T) {
+	shared := []AgentModel{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}
+	src := PluginSource("shared-catalog", func() ([]AgentModel, string) {
+		return shared, ""
+	})
+
+	models, _ := src.Discover()
+	require.Len(t, models, 2)
+	assert.True(t, models[0].Default, "the returned copy is marked")
+
+	assert.False(t, shared[0].Default, "the probe's own slice must not be mutated")
+}
+
+func TestDiscoveryCache_ProbeResultIsCopied(t *testing.T) {
+	c := newDiscoveryCache(time.Minute)
+	c.now = func() time.Time { return time.Unix(1000, 0) }
+
+	shared := []AgentModel{{ID: "m", Name: "M"}}
+	first, _ := c.get("b", func() ([]AgentModel, string) { return shared, "" })
+	first[0].Name = "mutated"
+
+	second, _ := c.get("b", func() ([]AgentModel, string) { return nil, "" })
+	require.Len(t, second, 1)
+	assert.Equal(t, "M", second[0].Name)
+	assert.Equal(t, "M", shared[0].Name, "the probe's slice must not be reachable from the caller")
 }

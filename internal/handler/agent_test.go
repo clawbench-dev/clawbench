@@ -1837,3 +1837,52 @@ func TestServeAgentsGet_NoACPStateKeepsCLIModels(t *testing.T) {
 	}
 	t.Fatal("cli-only agent missing from response")
 }
+
+// The claude ACP agent reports tier aliases whose names carry the redirected real
+// model. GET /api/agents must surface the concrete CLI IDs with those names, not
+// a list of alias entries all showing the same name.
+func TestAgentGet_ClaudeTierAliasesAlignOntoConcreteModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	claudeAgent := model.Agents["claude"]
+	claudeAgent.AcpCommand = "claude --acp"
+	claudeAgent.Models = []model.AgentModel{
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Default: true},
+		{ID: "claude-opus-4-5", Name: "Claude Opus 4.5"},
+	}
+	t.Cleanup(func() { claudeAgent.AcpCommand = "" })
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels("claude", []model.AgentModel{
+		{ID: "opus", Name: "glm-5.3[1m]"},
+		{ID: "sonnet", Name: "glm-5.3[1m]"},
+		{ID: "default", Name: "claude-sonnet-4-6"},
+	})
+	t.Cleanup(func() { reg.UpdateModels("claude", nil) })
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Agents []struct {
+			ID     string             `json:"id"`
+			Models []model.AgentModel `json:"models"`
+		} `json:"agents"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	for _, a := range resp.Agents {
+		if a.ID != "claude" {
+			continue
+		}
+		require.Len(t, a.Models, 2, "the concrete CLI models must survive; the meta 'default' tier must not appear")
+		assert.Equal(t, "claude-sonnet-4-6", a.Models[0].ID)
+		assert.Equal(t, "glm-5.3[1m]", a.Models[0].Name)
+		assert.Equal(t, "claude-opus-4-5", a.Models[1].ID)
+		assert.Equal(t, "glm-5.3[1m]", a.Models[1].Name)
+		return
+	}
+	t.Fatal("claude agent missing from response")
+}
