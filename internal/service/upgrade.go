@@ -135,12 +135,16 @@ type UpgradeInfo struct {
 	Integrity      string // SRI string, e.g. "sha512-abcdef..."
 	Shasum         string // legacy hex-encoded sha1, used when Integrity is absent
 	HasUpgrade     bool
-	// VerificationWarning is non-empty when this release cannot be fully
-	// verified, listing every reason (an uncheckable signature, a missing
-	// integrity hash). It is surfaced to the user, who decides whether to
-	// proceed; the same value is echoed back on start and compared, so it must
-	// depend only on the metadata and be byte-stable between two fetches.
+	// VerificationWarning is the human-readable text shown to the user when this
+	// release cannot be fully verified, or "" when it verifies. Presentation
+	// only — it embeds the registry base and error detail, so it must never be
+	// used as an identity.
 	VerificationWarning string
+	// VerificationIssues is the stable identity of the same problems, as
+	// sorted issue codes. This is what the client echoes back and the service
+	// compares, because it is independent of wording, registry routing and
+	// failure mode. Empty when the release verifies.
+	VerificationIssues string
 }
 
 // getPlatformPkg returns the npm platform package name for the current OS/arch.
@@ -321,10 +325,10 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 	// malicious registry, because it supplies the hash and the tarball URL from
 	// the same response.
 	//
-	// A failed check yields a warning rather than an error — the upgrade
-	// proceeds with the integrity check alone, and the warning is surfaced to
-	// the user. See verifyRegistrySignature for why this does not abort.
-	sigWarning := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
+	// A failed check yields issues rather than an error — the upgrade proceeds
+	// with the integrity check alone, and the messages are surfaced to the user.
+	// See verifyRegistrySignature for why this does not abort.
+	sigIssues := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
 		npmResp.Dist.Signatures, registryBase)
 
 	// Resolve the hash here too, even though the download happens later. Both
@@ -336,7 +340,13 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 	// A malformed hash yields an error here and is ignored: performUpgrade
 	// resolves it again at the point of use and aborts there, which keeps this
 	// endpoint from failing on metadata the upgrade will reject anyway.
-	_, digestWarning, _ := parseExpectedDigest(npmResp.Dist.Integrity, npmResp.Dist.Shasum)
+	_, digestIssues, _ := parseExpectedDigest(npmResp.Dist.Integrity, npmResp.Dist.Shasum)
+
+	// Build a fresh slice rather than appending to sigIssues: append may write
+	// into that slice's backing array, which both aliases and mutates it.
+	issues := make([]verificationIssue, 0, len(sigIssues)+len(digestIssues))
+	issues = append(issues, sigIssues...)
+	issues = append(issues, digestIssues...)
 
 	return &UpgradeInfo{
 		CurrentVersion:      currentVer,
@@ -345,7 +355,8 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 		Integrity:           npmResp.Dist.Integrity,
 		Shasum:              npmResp.Dist.Shasum,
 		HasUpgrade:          hasUpgrade,
-		VerificationWarning: joinWarnings(sigWarning, digestWarning),
+		VerificationWarning: verificationMessages(issues),
+		VerificationIssues:  verificationFingerprint(issues),
 	}, nil
 }
 
@@ -392,16 +403,16 @@ func rewriteTarballURL(tarball, base string) string {
 
 // PerformUpgrade executes the full upgrade flow in a background goroutine.
 //
-// acknowledgedWarning is the verification warning the client showed the user
-// and received consent for, or "" when the client saw none. performUpgrade
-// recomputes the warning from the registry and refuses the upgrade when it
-// differs, so an unverified install cannot proceed without a decision that
-// matches the metadata actually being installed. Pass the warning verbatim;
-// it is compared by exact value.
-func PerformUpgrade(acknowledgedWarning string) {
+// acknowledgedIssues is the verification issue fingerprint the client showed
+// the user and received consent for, or "" when the client saw none.
+// performUpgrade recomputes it from the registry and refuses the upgrade when
+// it differs, so an unverified install cannot proceed without a decision that
+// matches the metadata actually being installed. Compared by exact value; the
+// value is a sorted list of issue codes, not user-facing text.
+func PerformUpgrade(acknowledgedIssues string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	upgradeCancel = cancel
-	go performUpgrade(ctx, acknowledgedWarning)
+	go performUpgrade(ctx, acknowledgedIssues)
 }
 
 // CancelUpgrade cancels the current upgrade process.
@@ -411,7 +422,7 @@ func CancelUpgrade() {
 	}
 }
 
-func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:gocyclo // upgrade flow is inherently multi-step
+func performUpgrade(ctx context.Context, acknowledgedIssues string) { //nolint:gocyclo // upgrade flow is inherently multi-step
 	ResetUpgradeState()
 
 	// 1. Check for upgrade (single registry query)
@@ -432,7 +443,7 @@ func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:
 	// not just the /check response. This covers both reasons an install can be
 	// unverified: an uncheckable signature and a missing hash.
 	if info.VerificationWarning != "" {
-		SetUpgradeVerificationWarning(info.VerificationWarning)
+		SetUpgradeVerificationWarning(info.VerificationWarning, info.VerificationIssues)
 	}
 
 	// "Nothing to upgrade" is checked before the acknowledgment: when there is
@@ -445,13 +456,20 @@ func performUpgrade(ctx context.Context, acknowledgedWarning string) { //nolint:
 	}
 
 	// Refuse an unverified install the user was not asked about for *this*
-	// metadata. The client sends back the warning it displayed; recomputing it
-	// here from the same single fetch means the two can only disagree when the
-	// registry changed in between, in which case the decision no longer applies.
-	// Comparing against a fresh second query instead would just move the race.
-	if info.VerificationWarning != acknowledgedWarning {
+	// metadata. The client sends back the issue fingerprint it displayed;
+	// recomputing it here from the same single fetch means the two can only
+	// disagree when the registry changed in between, in which case the decision
+	// no longer applies. Comparing against a fresh second query would just move
+	// the race.
+	//
+	// The comparison is on codes, not on the message: the message embeds the
+	// registry base and error detail, so identical problems can render
+	// differently across two fetches and would otherwise make the confirmation
+	// impossible to satisfy.
+	if info.VerificationIssues != acknowledgedIssues {
 		slog.Warn("upgrade: refusing unverified upgrade without matching acknowledgment",
-			"registry_warning", info.VerificationWarning, "acknowledged", acknowledgedWarning)
+			"registry_issues", info.VerificationIssues, "acknowledged", acknowledgedIssues,
+			"warning", info.VerificationWarning)
 		SetUpgradeErrorCode(UpgradeErrUnverifiedNotConfirmed,
 			"This release cannot be fully verified, and the confirmation did not match what "+
 				"the registry currently reports. Re-run the check and confirm again.")
@@ -866,25 +884,25 @@ func truncateForLog(s string) string {
 //
 // A *malformed* hash is an error: the registry claimed to provide one and it
 // cannot be parsed, so the metadata is broken and its value cannot be trusted.
-// A *missing* hash yields an unverified digest plus a warning string, so the
-// upgrade proceeds unverified rather than being refused.
-func resolveExpectedDigest(integrity, shasum string) (expectedDigest, string, error) {
-	digest, warning, err := parseExpectedDigest(integrity, shasum)
+// A *missing* hash yields an unverified digest plus an issue, so the upgrade
+// proceeds unverified rather than being refused.
+func resolveExpectedDigest(integrity, shasum string) (expectedDigest, []verificationIssue, error) {
+	digest, issues, err := parseExpectedDigest(integrity, shasum)
 	if digest.unverified && err == nil {
 		slog.Warn("upgrade: registry supplied no integrity hash — installing without verification")
 	}
-	return digest, warning, err
+	return digest, issues, err
 }
 
 // parseExpectedDigest is the side-effect-free core of resolveExpectedDigest,
 // shared with fetchUpgradeInfo so /api/upgrade/check can report a missing hash
 // before the user starts. Splitting it out keeps that probe from logging the
 // warning a second time.
-func parseExpectedDigest(integrity, shasum string) (expectedDigest, string, error) {
+func parseExpectedDigest(integrity, shasum string) (expectedDigest, []verificationIssue, error) {
 	if integrity = strings.TrimSpace(integrity); integrity != "" {
 		algorithm, encoded, ok := strings.Cut(integrity, "-")
 		if !ok {
-			return expectedDigest{}, "", fmt.Errorf("malformed integrity string %q: missing algorithm prefix",
+			return expectedDigest{}, nil, fmt.Errorf("malformed integrity string %q: missing algorithm prefix",
 				truncateForLog(integrity))
 		}
 
@@ -895,37 +913,40 @@ func parseExpectedDigest(integrity, shasum string) (expectedDigest, string, erro
 		case sha1Name:
 			size = sha1.Size
 		default:
-			return expectedDigest{}, "", fmt.Errorf("unsupported integrity algorithm %q: only sha512 and sha1 can be verified",
+			return expectedDigest{}, nil, fmt.Errorf("unsupported integrity algorithm %q: only sha512 and sha1 can be verified",
 				algorithm)
 		}
 
 		decoded, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
-			return expectedDigest{}, "", fmt.Errorf("failed to decode integrity hash: %w", err)
+			return expectedDigest{}, nil, fmt.Errorf("failed to decode integrity hash: %w", err)
 		}
 		if len(decoded) != size {
-			return expectedDigest{}, "", fmt.Errorf("integrity hash for %s is %d bytes, want %d", algorithm, len(decoded), size)
+			return expectedDigest{}, nil, fmt.Errorf("integrity hash for %s is %d bytes, want %d", algorithm, len(decoded), size)
 		}
-		return expectedDigest{algorithm: algorithm, hash: decoded}, "", nil
+		return expectedDigest{algorithm: algorithm, hash: decoded}, nil, nil
 	}
 
 	if shasum = strings.TrimSpace(shasum); shasum != "" {
 		decoded, err := hex.DecodeString(shasum)
 		if err != nil {
-			return expectedDigest{}, "", fmt.Errorf("failed to decode shasum %q: %w", truncateForLog(shasum), err)
+			return expectedDigest{}, nil, fmt.Errorf("failed to decode shasum %q: %w", truncateForLog(shasum), err)
 		}
 		if len(decoded) != sha1.Size {
-			return expectedDigest{}, "", fmt.Errorf("shasum is %d bytes, want %d", len(decoded), sha1.Size)
+			return expectedDigest{}, nil, fmt.Errorf("shasum is %d bytes, want %d", len(decoded), sha1.Size)
 		}
-		return expectedDigest{algorithm: sha1Name, hash: decoded}, "", nil
+		return expectedDigest{algorithm: sha1Name, hash: decoded}, nil, nil
 	}
 
 	// No hash at all. Proceed unverified and warn: the download cannot be
 	// checked, but refusing would block upgrades from registries that omit
 	// these fields entirely.
 	return expectedDigest{algorithm: "sha512", unverified: true},
-		"The registry supplied no integrity hash for this release, so the download could not be " +
-			"checked for corruption or tampering before installing.", nil
+		[]verificationIssue{{
+			Code: VerifyIssueNoIntegrityHash,
+			Message: "The registry supplied no integrity hash for this release, so the download could not be " +
+				"checked for corruption or tampering before installing.",
+		}}, nil
 }
 
 func equalHashes(a, b []byte) bool {
@@ -937,20 +958,6 @@ func equalHashes(a, b []byte) bool {
 		result |= a[i] ^ b[i]
 	}
 	return result == 0
-}
-
-// joinWarnings combines distinct non-empty warning sentences into one message.
-// A release can be unauthenticated for more than one reason (an unverifiable
-// signature and a missing integrity hash, say), and the user should see all of
-// them rather than whichever happened to be computed last.
-func joinWarnings(warnings ...string) string {
-	var parts []string
-	for _, w := range warnings {
-		if w = strings.TrimSpace(w); w != "" {
-			parts = append(parts, w)
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 // throttledProgress wraps an onProgress callback to only call it when the

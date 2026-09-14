@@ -56,6 +56,7 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
 	assert.Equal(t, false, resp["is_docker"])
 	assert.Equal(t, "", resp["verification_warning"], "a verified release must carry no warning")
+	assert.Equal(t, "", resp["verification_issues"], "a verified release must carry no fingerprint")
 }
 
 // TestServeUpgradeCheck_VerificationWarning guards that a downgraded signature
@@ -76,11 +77,13 @@ func TestServeUpgradeCheck_VerificationWarning(t *testing.T) {
 	upgradeIsDevBuild = func(v string) bool { return false }
 
 	const warning = "The release signature could not be verified because npm's signing keys were unreachable."
+	const issues = "signature_keys_unreachable"
 	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
 		return &service.UpgradeInfo{
 			CurrentVersion:      "1.0.0",
 			LatestVersion:       "1.1.0",
 			VerificationWarning: warning,
+			VerificationIssues:  issues,
 		}, nil
 	}
 
@@ -93,6 +96,9 @@ func TestServeUpgradeCheck_VerificationWarning(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, warning, resp["verification_warning"])
+	// The fingerprint is the value the client echoes back, so it must be exposed
+	// alongside the message the user reads.
+	assert.Equal(t, issues, resp["verification_issues"])
 	assert.Equal(t, true, resp["has_upgrade"], "a signature warning must not block the upgrade")
 }
 
@@ -301,17 +307,17 @@ func TestServeUpgradeStart_AlreadyInProgress(t *testing.T) {
 func TestServeUpgradeStart_PassesAcknowledgmentThrough(t *testing.T) {
 	defer func() { upgradePerformUpgrade = service.PerformUpgrade }()
 
-	const warning = "The registry supplied no integrity hash for this release."
+	const issues = "signature_missing,no_integrity_hash"
 	var got string
 	upgradePerformUpgrade = func(ack string) { got = ack }
 
 	req := newRequest(t, http.MethodPost, "/api/upgrade/start",
-		map[string]string{"verification_warning": warning})
+		map[string]string{"verification_issues": issues})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeUpgradeStart, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, warning, got)
+	assert.Equal(t, issues, got)
 }
 
 // An absent body is the normal case for a fully verified release, not a

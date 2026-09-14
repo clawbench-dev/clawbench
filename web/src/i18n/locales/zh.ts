@@ -2646,6 +2646,7 @@ export default {
     unverifiedNotConfirmedBody: '本次升级无法完全校验，而 registry 当前报告的情况与确认时不一致，因此没有继续。通常是元数据在检查之后发生了变化。',
     unverifiedNotConfirmedHint: '请重试：界面会重新检查并让你确认最新的情况。',
     checkFailedRetry: '无法获取版本信息，升级未开始。请检查网络后重试。',
+    checkFailedTitle: '升级未开始',
   },
   share: {
     loading: '加载中...',
