@@ -87,23 +87,233 @@ func TestForgeTaskTrigger_FiresMatchingTask(t *testing.T) {
 	assert.Equal(t, []int64{1}, fired, "only the subscribed task fires")
 }
 
-// TestForgeRetiredEventTypesNotOffered pins the pipeline_done retirement.
+// TestForgePipelineEventTypeIsOffered pins the change that makes CI events
+// usable: pipeline_done is now a real, derivable event, so it IS offered.
 //
-// Nothing derives a pipeline event, so subscribing would create a trigger that
-// can never fire. It must NOT be offered (absent from the offered set) but MUST
-// stay accepted, so a task already storing it is not rejected on its next edit
-// — the editor has no checkbox to remove it, so rejecting would strand it.
-func TestForgeRetiredEventTypesNotOffered(t *testing.T) {
+// It is offered in its BARE form only. A pipeline belongs to the repository,
+// not to a PR, so "pr.pipeline_done" stays accepted (a task that stored that
+// spelling while the event was retired must not be rejected on its next edit)
+// but is not presented as a checkbox.
+func TestForgePipelineEventTypeIsOffered(t *testing.T) {
 	offered := service.OfferedForgeEventTypesForTest()
-	assert.NotContains(t, offered, "pr.pipeline_done", "a retired type must not be offered")
-	assert.NotContains(t, offered, "issue.pipeline_done")
+	assert.Contains(t, offered, "pipeline_done", "the repository-level event must be offered")
+	assert.NotContains(t, offered, "pr.pipeline_done", "the PR-scoped spelling must not be offered")
+	assert.NotContains(t, offered, "issue.pipeline_done", "an issue has no CI")
 
-	// Still valid, so an existing task survives an edit.
-	assert.NoError(t, service.ValidateEventSubscription("pr.pipeline_done"))
+	// Bare form is valid (the offered one).
 	assert.NoError(t, service.ValidateEventSubscription("pipeline_done"))
+	// The legacy PR-scoped spelling stays valid so an existing task survives an
+	// edit, since the editor renders no checkbox to remove it.
+	assert.NoError(t, service.ValidateEventSubscription("pr.pipeline_done"))
+	// An issue can never have a pipeline.
+	assert.Error(t, service.ValidateEventSubscription("issue.pipeline_done"))
 
-	// An unknown type is still rejected.
+	// Unknown types are still rejected.
 	assert.Error(t, service.ValidateEventSubscription("pr.bogus"))
+}
+
+// TestForgeTaskTrigger_PipelineEventFiresTask covers the subscription match for
+// a repository-level event: the bare key matches.
+func TestForgeTaskTrigger_PipelineEventFiresTask(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+
+	var fired []int64
+	var mu sync.Mutex
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "pipeline_done")}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, _ service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, taskID)
+		mu.Unlock()
+		return true
+	})
+
+	tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
+		forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, PipelineStatus: "failure"})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 1
+	}, 2*time.Second, 10*time.Millisecond, "a pipeline_done subscription must fire")
+}
+
+// TestForgeTaskTrigger_PipelineDoesNotFireIssueOrPRTask is the cross-kind
+// guard: a repository-level event must not wake a task that only watches
+// issues or PRs.
+func TestForgeTaskTrigger_PipelineDoesNotFireIssueOrPRTask(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+
+	for _, subscribed := range []string{"issue.opened", "pr.opened", "commented"} {
+		t.Run(subscribed, func(t *testing.T) {
+			var fired int
+			var mu sync.Mutex
+			tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+			tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+				return []model.ScheduledTask{forgeTriggerTask(1, subscribed)}, nil
+			})
+			tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
+				mu.Lock()
+				fired++
+				mu.Unlock()
+				return true
+			})
+
+			tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
+				forge.Change{Type: forge.EventPipeline, PipelineRunID: 42})
+
+			time.Sleep(120 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Zero(t, fired, "a pipeline event must not fire an issue/PR task")
+		})
+	}
+}
+
+// TestForgeTaskTrigger_PipelineNotSuppressedAsSelfAuthored is the user-facing
+// requirement: a pipeline succeeding or failing is NOT a user-initiated action,
+// so the anti-recursion guard must not swallow the user's own pipelines.
+//
+// Suppressing them would break the most valuable loop there is — the AI pushes
+// a fix, CI fails, and the repair task never runs.
+func TestForgeTaskTrigger_PipelineNotSuppressedAsSelfAuthored(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+
+	var fired int
+	var mu sync.Mutex
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg },
+		func(service.ForgeRepoRef) string { return "ai-bot" })
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "pipeline_done")}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired++
+		mu.Unlock()
+		return true
+	})
+
+	// The credential's OWN account triggered the run, and it still must fire.
+	item := pipelineTriggerItem()
+	item.Author = forge.Author{Login: "ai-bot"}
+	tr.HandleChange(context.Background(), triggerRepo(), item,
+		forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, Actor: "ai-bot"})
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return fired == 1
+	}, 2*time.Second, 10*time.Millisecond,
+		"a self-triggered pipeline must still fire; the prompt decides what to do")
+}
+
+// TestForgeTaskTrigger_PipelineDebounceIsPerRun: two different runs finishing
+// inside the debounce window are separate events. Keying the debounce by
+// repo+kind+type (as issue/PR events do) would collapse them and silently drop
+// every run but the first.
+func TestForgeTaskTrigger_PipelineDebounceIsPerRun(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+
+	var fired []int64
+	var mu sync.Mutex
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	// A window far longer than the test, so only the run-id key can save us.
+	tr.SetDebounceWindowForTest(time.Hour)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "pipeline_done")}, nil
+	})
+	tr.SetFireForTest(func(taskID int64, ev service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired = append(fired, ev.PipelineRunIDForTest())
+		mu.Unlock()
+		return true
+	})
+
+	for _, runID := range []int64{100, 101} {
+		tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
+			forge.Change{Type: forge.EventPipeline, PipelineRunID: runID, PipelineStatus: "success"})
+	}
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired) == 2
+	}, 2*time.Second, 10*time.Millisecond, "each run must fire separately")
+	assert.ElementsMatch(t, []int64{100, 101}, fired)
+}
+
+// TestForgeTaskTrigger_PipelineDebounceStillCollapsesSameRun guards the other
+// side: the SAME run re-delivered (a re-derivation) must not fire twice.
+func TestForgeTaskTrigger_PipelineDebounceStillCollapsesSameRun(t *testing.T) {
+	cfg := fullNotifyConfig()
+	bindProjectRepo(t, triggerRepo())
+
+	var fired int
+	var mu sync.Mutex
+	tr := service.NewForgeTaskTrigger(nil, func() model.Config { return cfg }, nil)
+	tr.SetDebounceWindowForTest(time.Hour)
+	tr.SetListTasksForTest(func() ([]model.ScheduledTask, error) {
+		return []model.ScheduledTask{forgeTriggerTask(1, "pipeline_done")}, nil
+	})
+	tr.SetFireForTest(func(int64, service.ForgeQueuedEvent) bool {
+		mu.Lock()
+		fired++
+		mu.Unlock()
+		return true
+	})
+
+	for range 3 {
+		tr.HandleChange(context.Background(), triggerRepo(), pipelineTriggerItem(),
+			forge.Change{Type: forge.EventPipeline, PipelineRunID: 42, PipelineStatus: "success"})
+	}
+
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, fired, "the same run must fire once")
+}
+
+// pipelineTriggerItem builds the synthetic item a CI event travels on.
+func pipelineTriggerItem() forge.Item {
+	return forge.Item{
+		Platform: forge.PlatformGitHub, Type: forge.ItemTypePipeline, Number: 0,
+		Title: "CI", State: forge.State("failure"),
+		URL: "https://github.com/acme/widgets/actions/runs/42",
+	}
+}
+
+// TestValidateEventSubscription_KindScopedKeys covers the accepted vocabulary.
+func TestValidateEventSubscription_KindScopedKeys(t *testing.T) {
+	valid := []string{
+		"issue.opened", "pr.opened", "pr.merged", "issue.commented",
+		"issue.opened,pr.merged",
+		"opened", // bare legacy key still accepted
+		// The repository-level pipeline event, in its offered bare form.
+		"pipeline_done",
+		// The PR-scoped spelling predates the bare form and stays accepted so an
+		// existing task is not rejected on its next edit (the editor renders no
+		// checkbox for it).
+		"pr.pipeline_done",
+	}
+	for _, v := range valid {
+		assert.NoError(t, service.ValidateEventSubscription(v), "expected %q to be valid", v)
+	}
+
+	invalid := []string{
+		"issue.merged",        // an issue can never be merged
+		"issue.pipeline_done", // issues have no CI
+		"bogus.opened",
+		"pr.bogus",
+	}
+	for _, v := range invalid {
+		assert.Error(t, service.ValidateEventSubscription(v), "expected %q to be rejected", v)
+	}
 }
 
 // TestForgeTaskTrigger_SplitsIssueAndPR verifies that "a new issue" and "a new
@@ -236,33 +446,6 @@ func TestForgeTaskTrigger_DebounceIsPerKind(t *testing.T) {
 		defer mu.Unlock()
 		return len(fired) == 2
 	}, 2*time.Second, 10*time.Millisecond, "the issue event must not be debounced away by the PR event")
-}
-
-// TestValidateEventSubscription_KindScopedKeys covers the accepted vocabulary.
-func TestValidateEventSubscription_KindScopedKeys(t *testing.T) {
-	valid := []string{
-		"issue.opened", "pr.opened", "pr.merged", "issue.commented",
-		"issue.opened,pr.merged",
-		"opened", // bare legacy key still accepted
-		// Retired: nothing derives a pipeline event, so it is no longer offered,
-		// but a task that already stores one must not be rejected on its next
-		// edit (the editor cannot render a checkbox to remove it).
-		"pr.pipeline_done",
-		"pipeline_done",
-	}
-	for _, v := range valid {
-		assert.NoError(t, service.ValidateEventSubscription(v), "expected %q to be valid", v)
-	}
-
-	invalid := []string{
-		"issue.merged",        // an issue can never be merged
-		"issue.pipeline_done", // issues have no CI
-		"bogus.opened",
-		"pr.bogus",
-	}
-	for _, v := range invalid {
-		assert.Error(t, service.ValidateEventSubscription(v), "expected %q to be rejected", v)
-	}
 }
 
 func TestForgeTaskTrigger_KillSwitchSuppresses(t *testing.T) {

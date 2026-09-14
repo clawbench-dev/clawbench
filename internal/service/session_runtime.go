@@ -444,7 +444,17 @@ func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
 			}
 		}
 		updatedContent, _ := json.Marshal(contentMap)
-		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+		// completed_at mirrors FinalizeStreamingMessage's rule: a normal
+		// finalize records when the reply landed, while a user cancel leaves it
+		// NULL so the unread query falls back to created_at. The user was
+		// watching the session when they cancelled, and the frontend marked it
+		// read before this finalize ran — stamping the landing time would flip it
+		// back to unread. See FinalizeCancelledStreamingMessage.
+		completedAtSet := "completed_at = CURRENT_TIMESTAMP"
+		if cancelReason == cancelReasonUser {
+			completedAtSet = "completed_at = NULL"
+		}
+		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, "+completedAtSet+" WHERE id = ?", string(updatedContent), m.id); err != nil {
 			slog.Error("failed to finalize orphaned streaming message on session stop",
 				slog.Int64("id", m.id),
 				slog.String("session", sessionID),

@@ -12,6 +12,9 @@ const mockSetType = vi.fn()
 const mockSetState = vi.fn()
 const mockSetMineFilter = vi.fn()
 const mockSetQuery = vi.fn()
+const mockPipelinesLoad = vi.fn()
+const mockPipelinesLoadMore = vi.fn()
+const mockPipelinesSetFilter = vi.fn()
 
 const state = {
   items: { value: [] as unknown[] },
@@ -36,10 +39,31 @@ const state = {
   setMineFilter: mockSetMineFilter,
   setQuery: mockSetQuery,
   reset: vi.fn(),
+  markItemRead: vi.fn(),
+  markAllRead: vi.fn(),
+}
+
+/** Mirrors the real useForgePipelines shape closely enough for the panel. */
+const pipelineState = {
+  pipelines: { value: [] as unknown[] },
+  loading: { value: false },
+  loadingMore: { value: false },
+  error: { value: null as unknown },
+  filter: { value: 'failure' as const },
+  hasMore: { value: false },
+  nextPage: { value: 1 },
+  load: mockPipelinesLoad,
+  loadMore: mockPipelinesLoadMore,
+  setFilter: mockPipelinesSetFilter,
+  reset: vi.fn(),
+  markItemRead: vi.fn(),
+  markAllRead: vi.fn(),
 }
 
 vi.mock('@/composables/useForge', () => ({
   useForgeItems: () => state,
+  useForgePipelines: () => pipelineState,
+  FORGE_PIPELINE_FILTERS: ['failure', 'running', 'all'],
   useForgeDetail: () => ({
     item: { value: null },
     comments: { value: [] },
@@ -51,7 +75,32 @@ vi.mock('@/composables/useForge', () => ({
     loadOlderComments: vi.fn(),
     close: vi.fn(),
   }),
+  useForgePipelineDetail: () => ({
+    run: { value: null },
+    jobs: { value: [] },
+    loading: { value: false },
+    error: { value: null },
+    open: vi.fn(),
+    close: vi.fn(),
+  }),
 }))
+
+// A real ref, not a {value} literal: templates only auto-unwrap actual refs, and
+// the button's disabled state compares against the unwrapped number.
+const unreadCount = vi.hoisted(() => ({ current: null as null | { value: number } }))
+vi.mock('@/composables/useForgeUnread', async () => {
+  const { ref } = await import('vue')
+  const count = ref(0)
+  unreadCount.current = count
+  return {
+    useForgeUnread: () => ({
+      forgeUnreadCount: count,
+      refresh: vi.fn(),
+      onForgeEvent: vi.fn(),
+      markRead: vi.fn(),
+    }),
+  }
+})
 
 const mockFetchRemotes = vi.fn(async () => ({ remotes: [] }))
 const mockSetBinding = vi.fn(async () => ({ binding: {} }))
@@ -74,13 +123,34 @@ function makeI18n() {
       en: {
         nav: { refresh: 'Refresh' },
         forge: {
-          type: { issues: 'Issues', prs: 'Pull Requests' },
+          type: { issues: 'Issues', prs: 'Pull Requests', pipelines: 'Pipelines' },
           state: { open: 'Open', closed: 'Closed', all: 'All', merged: 'Merged' },
           mine: { all: 'All', assigned: 'Assigned to me', created: 'Created by me', review: 'Awaiting my review' },
           searchPlaceholder: 'Search',
           loading: 'Loading',
           emptyList: 'No matching issues or PRs',
+          markAllRead: 'Mark all read',
+          unreadItem: 'New activity',
           retry: 'Retry',
+          pipeline: {
+            status: { success: 'Success', failure: 'Failed', running: 'Running', cancelled: 'Cancelled', skipped: 'Skipped', unknown: 'Unknown' },
+            filter: { failure: 'Failures only', running: 'Running', all: 'All' },
+            emptyList: 'No matching pipelines',
+            emptyJobs: 'No job information',
+            noPlatform: 'This platform does not expose pipelines',
+            loadFailed: 'Failed to load',
+            jobName: 'Job',
+            jobStage: 'Stage',
+            jobStatus: 'Status',
+            jobDuration: 'Duration',
+            runNumber: 'Run',
+            event: 'Trigger',
+            duration: 'Duration',
+            jobs: 'Jobs',
+            openRun: 'Open in browser',
+            quote: 'Quote in chat',
+            detail: { back: 'Back' },
+          },
           empty: {
             noProjectHeader: 'Which project?',
             noProjectBody: 'Pick a project.',
@@ -210,13 +280,76 @@ describe('ForgePanelContent', () => {
       global: globalOpts,
     })
     await new Promise(r => setTimeout(r, 0))
-    // Two connected page tabs, matching the stats panel tab bar.
+    // Three connected page tabs, matching the stats panel tab bar. Pipelines is
+    // a peer of Issues and PRs: a CI run is neither, and it needs its own
+    // filters, so it cannot be a chip or a filter inside another tab.
     expect(wrapper.find('.forge-tabs').exists()).toBe(true)
     const tabs = wrapper.findAll('.forge-tab')
-    expect(tabs).toHaveLength(2)
+    expect(tabs).toHaveLength(3)
     // The retired segmented-control markup must be gone.
     expect(wrapper.find('.forge-segment').exists()).toBe(false)
     expect(wrapper.find('.forge-segment-btn').exists()).toBe(false)
+  })
+
+  it('switches to the pipelines tab and loads its data', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const tabs = wrapper.findAll('.forge-tab')
+    await tabs[2].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(tabs[2].classes()).toContain('active')
+    // The pipeline list has its own loader; the issue/PR list must not be
+    // reloaded as a side effect of switching.
+    expect(mockPipelinesLoad).toHaveBeenCalled()
+    expect(mockSetType).not.toHaveBeenCalled()
+  })
+
+  it('shows the pipeline status filters instead of the issue state/mine chips', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.findAll('.forge-tab')[2].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    // A run has no open/closed state and no assignee, so those chips must be
+    // replaced rather than shown and silently ignored.
+    const chips = wrapper.findAll('.forge-chip')
+    const labels = chips.map(c => c.text())
+    expect(labels).toEqual(['Failures only', 'Running', 'All'])
+    expect(labels).not.toContain('Assigned to me')
+    expect(labels).not.toContain('Open')
+  })
+
+  it('defaults the pipeline list to failures', async () => {
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.findAll('.forge-tab')[2].trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    // A busy repository produces far more green runs than anyone wants to
+    // scroll, and the reason to open this tab is usually "what broke".
+    expect(pipelineState.filter.value).toBe('failure')
+    const active = wrapper.findAll('.forge-chip').find(c => c.classes().includes('active'))
+    expect(active?.text()).toBe('Failures only')
   })
 
   it('marks only the active type tab', async () => {
@@ -232,6 +365,7 @@ describe('ForgePanelContent', () => {
     let tabs = wrapper.findAll('.forge-tab')
     expect(tabs[0].classes()).toContain('active')
     expect(tabs[1].classes()).not.toContain('active')
+    expect(tabs[2].classes()).not.toContain('active')
 
     // setType is a spy in this harness (it does not mutate state), so assert
     // the click is routed to the right setter rather than the resulting state.
@@ -241,9 +375,9 @@ describe('ForgePanelContent', () => {
 
   it('uses the GitHub brand icon for the panel identity, semantic glyphs for the type tabs', async () => {
     // The panel header keeps the GitHub brand mark (the forge integration is
-    // GitHub-flavoured), but the issue/PR switch carries distinct semantic
-    // glyphs: a circled question mark for issues (the "what's the problem?"
-    // reading), the merge arrow for pull/merge requests.
+    // GitHub-flavoured), but the switch carries distinct semantic glyphs: a
+    // circled question mark for issues (the "what's the problem?" reading), the
+    // merge arrow for pull/merge requests, and an activity trace for CI runs.
     state.binding.value = { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets' }
     state.isBound.value = true
     state.items.value = []
@@ -258,9 +392,11 @@ describe('ForgePanelContent', () => {
     // Each tab gets its own semantic icon, not a shared generic one.
     expect(html).toContain('lucide-circle-question-mark')
     expect(html).toContain('lucide-git-pull-request')
+    expect(html).toContain('lucide-activity')
     const tabs = wrapper.findAll('.forge-tab')
     expect(tabs[0].find('.lucide-circle-question-mark').exists(), 'issues tab uses the question-mark glyph').toBe(true)
     expect(tabs[1].find('.lucide-git-pull-request').exists(), 'PR tab uses the pull-request glyph').toBe(true)
+    expect(tabs[2].find('.lucide-activity').exists(), 'pipelines tab uses the activity glyph').toBe(true)
   })
 
   it('shows the GitHub icon in the unbound fallback card too', async () => {
@@ -517,5 +653,82 @@ describe('ForgePanelContent', () => {
     const emitted = wrapper.emitted('quote')
     expect(emitted).toBeTruthy()
     expect(emitted![0][0]).toEqual({ item: { type: 'issue', number: 7, title: 'A bug', url: 'u', slug: 'acme/widgets' } })
+  })
+})
+
+describe('ForgePanelContent unread rows', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    unreadCount.current!.value = 0
+    state.binding.value = { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', slug: 'a/b' }
+    state.isBound.value = true
+    state.error.value = null
+  })
+
+  it('marks only the unread rows and gives them an unread dot', async () => {
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 7, title: 'Seen', state: 'open', author: 'alice', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: false },
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const rows = wrapper.findAll('.forge-row')
+    expect(rows).toHaveLength(2)
+    // The user must be able to tell WHICH rows are new — that is the whole point
+    // of the change.
+    expect(rows[0].classes()).not.toContain('unread')
+    expect(rows[1].classes()).toContain('unread')
+    expect(rows[0].find('.forge-unread-dot').exists()).toBe(false)
+    expect(rows[1].find('.forge-unread-dot').exists()).toBe(true)
+  })
+
+  it('marks the row read when it is opened', async () => {
+    state.items.value = [
+      { platform: 'github', host: 'github.com', owner: 'a', repo: 'b', type: 'issue', number: 8, title: 'New', state: 'open', author: 'bob', commentCount: 0, url: 'u', createdAt: '', updatedAt: '', slug: 'a/b', unread: true },
+    ]
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    await wrapper.find('.forge-row').trigger('click')
+
+    // Opening the row is what marks it read.
+    expect(state.markItemRead).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables "mark all read" when nothing is unread', async () => {
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const btn = wrapper.find('.clear-unread-btn')
+    expect(btn.exists()).toBe(true)
+    // Nothing unread: the action has nothing to do.
+    expect(btn.attributes('disabled')).toBeDefined()
+  })
+
+  it('enables "mark all read" and calls the list when something is unread', async () => {
+    unreadCount.current!.value = 3
+    state.items.value = []
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await new Promise(r => setTimeout(r, 0))
+
+    const btn = wrapper.find('.clear-unread-btn')
+    expect(btn.attributes('disabled')).toBeUndefined()
+
+    await btn.trigger('click')
+    expect(state.markAllRead).toHaveBeenCalled()
   })
 })

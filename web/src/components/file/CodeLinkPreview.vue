@@ -234,17 +234,11 @@
           <Folder :size="15" />
         </button>
 
-        <!-- Open Full / View Details — primary action -->
+        <!-- Open Full / View Details — primary action. Both cases render the
+             same control: an oversize file opens the same way (the label already
+             reads "Full file"). -->
         <button
-          v-if="preview.errorCode.value === 'too-large'"
-          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
-          @click="handleViewDetails"
-        >
-          <ExternalLink :size="15" />
-          <span>{{ t('file.codePreview.openFileShort') }}</span>
-        </button>
-        <button
-          v-else-if="!isDirView"
+          v-if="!isDirView"
           class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
           @click="preview.openFull()"
         >
@@ -306,9 +300,11 @@
       </Transition>
 
       <!-- Titlebar / Drag Handle: Row 1 (File Path + Copy Path Button).
-           Floating-only. The docked pane is a single-row layout on BOTH desktop
-           and touch (see the meta row), so it never renders this. -->
-      <div v-if="!docked" class="code-preview-header" @pointerdown="onDragPointerDown">
+           Rendered in every non-sheet mode, including docked: the docked pane
+           reuses this row so the tool row below has the full pane width. The
+           only docked difference is that Pin is suppressed (nothing floats to
+           pin — see the guard on that button). -->
+      <div class="code-preview-header" @pointerdown="onDragPointerDown">
         <div
           class="code-preview-title"
           :data-tooltip="fullPathTooltipText"
@@ -355,20 +351,10 @@
         </div>
       </div>
 
-      <!-- Row 2: File Meta & Remaining Action Tools.
-           In the docked pane this is the ONLY row on both desktop and touch:
-           the file name on the left, tools + Close on the right. The line/size
-           summary is omitted there — the name is what identifies the pane. -->
+      <!-- Row 2: File Meta & Remaining Action Tools. -->
       <div class="code-preview-meta" @pointerdown="onDragPointerDown">
         <div class="code-preview-meta-info">
-          <!-- Docked carries the file name here, since the title row is gone.
-               One shared markup for both platforms: the docked layout must not
-               differ between a PC and a touch device. -->
-          <template v-if="docked">
-            <span class="code-preview-compact-name">{{ fileBaseName }}</span>
-            <span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
-          </template>
-          <span v-else>{{ contextMeta || t('file.codePreview.title') }}</span>
+          <span>{{ contextMeta || t('file.codePreview.title') }}</span>
         </div>
 
         <div class="code-preview-actions" @pointerdown.stop>
@@ -500,45 +486,27 @@
           >
             <Folder :size="12" />
           </button>
-          <!-- Open File / View Details -->
+          <!-- Open File / View Details.
+               A too-large file used to swap this for a wide text button reading
+               "View details / Download", which was 4x the width of every other
+               control in the row (111px vs 26px) and broke the icon strip. It
+               also did nothing different: it called the same openFull() as the
+               normal case. So the icon is used in both cases, and only the
+               tooltip changes — it carries the "download" affordance for an
+               oversize file. -->
           <button
-            v-if="preview.errorCode.value === 'too-large'"
+            v-if="!isDirView"
             class="code-preview-btn"
-            :title="t('file.codePreview.viewDetails')"
-            :aria-label="t('file.codePreview.viewDetails')"
-            :data-tooltip="t('file.codePreview.viewDetails')"
-            @pointerenter="showTooltip($event, t('file.codePreview.viewDetails'))"
-            @pointerleave="hideTooltip()"
-            @click="handleViewDetails"
-          >
-            {{ t('file.codePreview.viewDetails') }}
-          </button>
-          <button
-            v-else-if="!isDirView"
-            class="code-preview-btn"
-            :title="t('file.codePreview.openFull')"
-            :aria-label="t('file.codePreview.openFull')"
-            :data-tooltip="t('file.codePreview.openFull')"
-            @pointerenter="showTooltip($event, t('file.codePreview.openFull'))"
+            :title="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            :aria-label="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            :data-tooltip="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
+            @pointerenter="showTooltip($event, tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull'))"
             @pointerleave="hideTooltip()"
             @click="preview.openFull()"
           >
             <ExternalLink :size="12" />
           </button>
         </div>
-
-        <!-- Docked pane: the title row is gone, so Close sits at the end of
-             this same row. It is a sibling of the (scrollable) tool strip so a
-             long tool set can never scroll it out of reach. -->
-        <button
-          v-if="docked"
-          class="code-preview-btn close"
-          :title="t('file.codePreview.close')"
-          :aria-label="t('file.codePreview.close')"
-          @click="handleClose()"
-        >
-          <X :size="13" />
-        </button>
       </div>
 
       <!-- Desktop In-Preview Search Bar -->
@@ -705,22 +673,19 @@ const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
 
 /**
- * The docked pane is ONE row on every platform — no desktop/touch split.
+ * The docked pane reuses the floating card's chrome — the same header row
+ * (directory path + Pin + Close) and the same meta row (line/size summary +
+ * tools). Only Pin is suppressed, because there is nothing to float or pin.
  *
- * It used to render a two-row desktop chrome (a title row spending its width on
- * the full directory path, plus a meta row) and collapse to one row only on
- * touch. That meant the same pane had two different shapes depending on the
- * device, and on a PC it burned ~68px of a ~300px pane on chrome. The single
- * row now carries the file name on the left and the tools plus Close on the
- * right on both:
- * - the title row (and its directory path) is not rendered at all — the file
- *   manager's own breadcrumb sits directly above the pane and already shows the
- *   directory;
- * - the line/size summary is dropped: the name is what identifies the pane;
- * - the tool strip scrolls horizontally when it cannot fit, so the full tool set
- *   is available at any pane width.
+ * It previously rendered a special ONE-row layout: the header was hidden and
+ * the file name, tool strip and Close were all crammed into the meta row, with
+ * the strip scrolling horizontally when it could not fit. That existed to save
+ * ~27px in a short pane, but it forced the tool row to compete with the file
+ * name for width and made the tool set reachable only by sideways scrolling.
+ * With a full header row the tool row gets the whole pane width instead.
  *
- * This is a template/CSS distinction (see `docked` usages), not a computed one.
+ * The shape is identical on every platform — do NOT reintroduce a
+ * `(pointer: coarse)` / `is-compact` split.
  */
 
 const emit = defineEmits<{
@@ -1286,6 +1251,13 @@ const errorMessageText = computed(() => {
   return props.preview.errorMessage.value || t('file.codePreview.loadError')
 })
 
+/**
+ * The file exceeded the preview size cap. The open control still opens the file
+ * the same way, but its tooltip says "View details / Download" so the user knows
+ * that path is also where the download lives.
+ */
+const tooLarge = computed(() => props.preview.errorCode.value === 'too-large')
+
 const isTargetLine = (lineNum: number): boolean => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return false
@@ -1481,11 +1453,6 @@ const handleCopy = async () => {
   } catch {
     // ignore
   }
-}
-
-const handleViewDetails = () => {
-  // If file is too large, trigger full open which in Clawbench leads to details/download
-  props.preview.openFull()
 }
 
 // Media bodies (image/video/audio/PDF) size themselves from the file's own

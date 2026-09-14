@@ -15,8 +15,18 @@ export const FORGE_EVENT_TRANSITIONS: Record<string, string[]> = {
     pr: ['opened', 'closed', 'merged', 'reopened', 'commented'],
 }
 
+/**
+ * Transitions that belong to the REPOSITORY rather than to an issue or PR.
+ *
+ * A pipeline run is triggered by a push, a tag, or a schedule — none of which
+ * is an item. These are subscribed with their BARE key (no kind prefix), which
+ * is also how the backend matches them, so they must NOT be expanded into a
+ * "<kind>.<transition>" form.
+ */
+export const FORGE_REPO_TARGETED_TRANSITIONS: string[] = ['pipeline_done']
+
 /** Transitions that are still accepted but no longer offered (nothing derives them). */
-export const FORGE_RETIRED_TRANSITIONS = ['pipeline_done']
+export const FORGE_RETIRED_TRANSITIONS: string[] = []
 
 const TRANSITION_LABEL_KEYS: Record<string, string> = {
     opened: 'task.form.eventOpened',
@@ -30,6 +40,9 @@ const TRANSITION_LABEL_KEYS: Record<string, string> = {
 const KIND_LABEL_KEYS: Record<string, string> = {
     issue: 'task.form.eventKindIssue',
     pr: 'task.form.eventKindPr',
+    // The pseudo-kind used for repository-targeted events in the form's
+    // grouping. It is NOT a subscription prefix: the stored key stays bare.
+    repo: 'task.form.eventKindRepo',
 }
 
 /** Split a stored subscription into clean, non-empty keys. */
@@ -39,19 +52,27 @@ export function splitEventTypes(raw: string | undefined | null): string[] {
 }
 
 /**
- * Expand a stored subscription into the kind-scoped keys the checkboxes
- * represent.
+ * Expand a stored subscription into the keys the checkboxes represent.
  *
  * A bare key is the pre-split spelling. The backend treats it as "either kind",
  * so it maps to EVERY kind that supports that transition (bare `opened` means
  * both issue.opened and pr.opened; bare `merged` means pr.merged only). An
  * unrecognized key is kept verbatim rather than dropped, so a retired
  * subscription survives an edit untouched.
+ *
+ * A repository-targeted transition (pipeline_done) is the exception: it is
+ * offered BARE, so it must pass through unchanged. Expanding it to
+ * "pipeline.pipeline_done" would produce a key the backend never matches, and
+ * the checkbox would silently stop working.
  */
 export function expandStoredEventTypes(raw: string | undefined | null): string[] {
     const out: string[] = []
     for (const key of splitEventTypes(raw)) {
         if (key.includes('.')) {
+            out.push(key)
+            continue
+        }
+        if (FORGE_REPO_TARGETED_TRANSITIONS.includes(key)) {
             out.push(key)
             continue
         }
@@ -64,12 +85,14 @@ export function expandStoredEventTypes(raw: string | undefined | null): string[]
     return out
 }
 
-/** Every kind-scoped value the form checkboxes can represent. */
+/** Every value the form checkboxes can represent. */
 export function offeredEventValues(): Set<string> {
-    return new Set(
-        Object.entries(FORGE_EVENT_TRANSITIONS)
+    return new Set([
+        ...Object.entries(FORGE_EVENT_TRANSITIONS)
             .flatMap(([kind, transitions]) => transitions.map(tr => `${kind}.${tr}`)),
-    )
+        // Repository-targeted events are offered bare.
+        ...FORGE_REPO_TARGETED_TRANSITIONS,
+    ])
 }
 
 /**
@@ -95,9 +118,13 @@ export function eventKindLabel(kind: string): string {
 }
 
 export interface EventChip {
-    /** Raw stored key, e.g. "pr.merged". */
+    /** Raw stored key, e.g. "pr.merged" or a bare "pipeline_done". */
     key: string
-    /** Item kind ("issue" / "pr"), empty for a bare legacy key. */
+    /**
+     * Item kind ("issue" / "pr"). Repository-targeted events use the pseudo-kind
+     * "repo" so they group and label correctly even though their stored key has
+     * no prefix. Empty only for an unrecognized key.
+     */
     kind: string
     transition: string
     /** Localized transition label. */
@@ -108,11 +135,18 @@ export interface EventChip {
  * Turn a stored subscription into display chips. Legacy bare keys produce a
  * chip per matching kind so "opened" shows both "Issues · Opened" and
  * "Pull requests · Opened" — which is what the backend will actually match.
+ *
+ * A repository-targeted transition keeps its bare key (the backend matches it
+ * that way) but is labelled with the "repo" pseudo-kind so the UI can group it
+ * under its own heading instead of showing an unlabelled chip.
  */
 export function eventChips(raw: string | undefined | null): EventChip[] {
     return expandStoredEventTypes(raw).map(key => {
         const { kind, transition } = parseEventKey(key)
-        return { key, kind, transition, label: eventTransitionLabel(transition) }
+        const displayKind = !kind && FORGE_REPO_TARGETED_TRANSITIONS.includes(transition)
+            ? 'repo'
+            : kind
+        return { key, kind: displayKind, transition, label: eventTransitionLabel(transition) }
     })
 }
 

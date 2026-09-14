@@ -816,10 +816,10 @@ const browseFileSession = ref(false)
 const directoryReturn = useDirectoryReturn(browseFileSession)
 
 function switchTab(tab: string, force = false) {
-  // Opening the Issues & PRs tab clears its unread badge.
-  if (tab === 'forge') {
-    void markForgeRead()
-  }
+  // Opening the Issues & PRs tab does NOT clear its unread badge. Read state is
+  // per item now: opening a row clears that row, and the "mark all read" button
+  // clears the rest. Clearing on tab open is what made the badge number
+  // meaningless — it vanished before the user could find what it referred to.
   // The user reached the surface a jump started from without using Back, so
   // the return target is spent — settle it (skip when returnToOrigin() is
   // driving the switch). Single implementation: useNavigationCoordinator.
@@ -848,9 +848,11 @@ function switchTab(tab: string, force = false) {
     loadSessionsOnce()
   }
   if (tab === 'tasks') {
-    // Only stop dock button flash — don't clear per-task unread badges.
-    // Per-task badges are cleared when the user enters that task's execution history.
-    store.state.taskUnreadCount = 0
+    // Opening the tab deliberately does NOT zero the badge. Read state is per
+    // execution now: opening a run clears that run, and "mark all read" clears
+    // the rest. Zeroing here also stuck permanently whenever loadTasks() failed
+    // (it returns early on a non-OK response), leaving a badge that said "all
+    // read" while unread runs were still there.
     loadTasks()
   }
   // Close overflow menu on any tab switch
@@ -2025,7 +2027,9 @@ registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
     if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
-    if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
+    // No zeroing here: see the narrow-mode switchTab note. The badge is
+    // re-derived from the server by loadTasks().
+    if (tab === 'tasks') loadTasks()
   },
 })
 
@@ -2049,7 +2053,7 @@ function handleWideDockTabClick(tab: string) {
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
 const { addAttachedFile } = useChatContext()
-const { forgeUnreadCount, refresh: refreshForgeUnread, markRead: markForgeRead } = useForgeUnread()
+const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
 
@@ -2058,12 +2062,14 @@ const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBindi
 // default — the user selects the part they care about, then types their message.
 // The bar is global (position: fixed), so no tab switch is needed on open; the
 // add path switches to chat via onAdd.
-function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number } } | null) {
+function handleForgeQuote(payload: { item?: { url?: string; slug?: string; number?: number; label?: string } } | null) {
   const it = payload?.item
   if (!it) return
   quoteQuestion.openComposer({
     url: it.url,
-    label: `${it.slug}#${it.number}`,
+    // A pipeline run has no issue/PR number, so its caller supplies a label
+    // that names the run; otherwise `slug#number` would read like a PR number.
+    label: it.label ?? `${it.slug}#${it.number}`,
     onAdd: () => switchTab('chat'),
   })
 }
@@ -2539,6 +2545,14 @@ function playQuoteEmitAnimation(e?: Event) {
   }
   requestAnimationFrame(animate)
 }
+
+// The forge badge is scoped to the project's bound repository, so it must be
+// re-derived when the project changes — otherwise the previous project's count
+// would linger over a panel showing a different repository.
+watch(() => store.state.projectRoot, () => {
+    void refreshForgeUnread()
+    void refreshForgePlatform()
+})
 
 onMounted(async () => {
     applyTheme(theme.value)

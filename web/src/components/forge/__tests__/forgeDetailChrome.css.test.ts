@@ -1,0 +1,178 @@
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+/**
+ * Regression guard: the forge drill-down chrome must be declared GLOBALLY.
+ *
+ * Why this test exists: ForgePipelineDetail originally reused the class names of
+ * ForgeDetail's drill-down chrome (header, back button, icon buttons, status
+ * dots, error card, title block) but those rules lived in ForgeDetail's
+ * `<style scoped>` block. A scoped rule only applies to the component that
+ * declares it, so the whole pipeline detail page rendered unstyled — no header
+ * bar, uncoloured back button, 0x0 status dots. Unit tests passed because they
+ * asserted text content only, so nothing caught it.
+ *
+ * The check is deliberately narrow and robust: it asserts that the shared class
+ * names appear as the SUBJECT of a global rule (in web/css/*.css), and that they
+ * are NOT left behind in a component's scoped block. It does not attempt to
+ * fully resolve every class a template mentions.
+ */
+
+/** Classes whose styling is shared by more than one forge view. */
+const SHARED_CHROME = [
+  // Drill-down shell + header
+  'forge-detail',
+  'forge-detail-header',
+  'forge-back',
+  'forge-detail-actions',
+  'forge-icon-btn',
+  // Body / title block
+  'forge-detail-body',
+  'forge-detail-title-row',
+  'forge-detail-title',
+  'forge-detail-meta',
+  'forge-detail-number',
+  'forge-meta-sep',
+  // Status affordances
+  'forge-state-dot',
+  'forge-state-badge',
+  // Async states
+  'forge-loading',
+  'forge-error-card',
+  'forge-error-icon',
+  'forge-error-text',
+  'forge-error-title',
+  'forge-error-body',
+  // CI row metadata
+  'forge-pipeline-ref',
+  'forge-pipeline-sha',
+  'forge-pipeline-event',
+]
+
+/** `pipeline-<status>` modifiers, used by both the dot and the badge. */
+const STATUS_MODIFIERS = ['success', 'failure', 'running', 'cancelled', 'skipped', 'unknown']
+
+/**
+ * Classes a stylesheet DECLARES (i.e. gives the element its own styling).
+ *
+ * Two cases must be told apart, and the difference is whitespace:
+ *
+ *   `.forge-state-dot.pipeline-success { }`  — a single compound subject: this
+ *       rule styles both classes, so both count.
+ *   `html.wallpaper-active .forge-detail-header { }` — a descendant override:
+ *       it only re-tints the element under a condition, so it must NOT count as
+ *       declaring the class. Counting it would hide a missing base rule, which
+ *       is precisely the false negative this guard exists to prevent.
+ *
+ * So: only a selector with NO ancestor part (one whitespace-free compound) is
+ * treated as declaring its classes.
+ */
+function declaredSubjects(source: string): Set<string> {
+  const out = new Set<string>()
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, '')
+  for (const m of css.matchAll(/([^{}]+)\{/g)) {
+    for (const selector of m[1].split(',')) {
+      const trimmed = selector.trim()
+      if (!trimmed) continue
+      // Any combinator means this is a conditional override, not a declaration.
+      if (/[\s>+~]/.test(trimmed)) continue
+      for (const cls of trimmed.matchAll(/\.([a-z][a-z0-9-]*)/g)) out.add(cls[1])
+    }
+  }
+  return out
+}
+
+function read(rel: string): string {
+  for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(join(base, rel), 'utf8')
+    } catch {
+      // try the next candidate root
+    }
+  }
+  throw new Error(`${rel} not found from cwd: ${process.cwd()}`)
+}
+
+const GLOBAL_STYLESHEETS = [
+  'css/components.css',
+  'css/base.css',
+  'css/layout.css',
+  'css/content.css',
+  'css/markdown-common.css',
+  'css/wide-screen.css',
+]
+
+const SCOPED_COMPONENTS = [
+  'src/components/forge/ForgeDetail.vue',
+  'src/components/forge/ForgePanelContent.vue',
+  'src/components/forge/ForgePipelineDetail.vue',
+]
+
+describe('forge drill-down chrome is declared globally', () => {
+  const globalSubjects = (() => {
+    const out = new Set<string>()
+    for (const rel of GLOBAL_STYLESHEETS) {
+      try {
+        for (const c of declaredSubjects(read(rel))) out.add(c)
+      } catch {
+        // optional stylesheet
+      }
+    }
+    return out
+  })()
+
+  it('declares every shared chrome class in a global stylesheet', () => {
+    const missing = SHARED_CHROME.filter(c => !globalSubjects.has(c))
+    expect(missing, `these must be declared globally, not scoped: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('declares every CI status modifier globally', () => {
+    // Both the dot and the badge are driven by `pipeline-<status>`; a missing
+    // variant renders an invisible dot / untinted pill.
+    const missing = STATUS_MODIFIERS.filter(s => !globalSubjects.has(`pipeline-${s}`))
+    expect(missing, `unstyled CI statuses: ${missing.join(', ')}`).toEqual([])
+  })
+
+  it('does not leave a full copy of the shared chrome in a scoped block', () => {
+    // A scoped declaration only applies to its own component, which is exactly
+    // how ForgePipelineDetail ended up unstyled.
+    //
+    // The check is limited to the properties that DEFINE the shared chrome's
+    // geometry. A deliberate local override (the list panel wanting a tighter
+    // error-card margin) is legitimate and must not be flagged, and other
+    // classes that happen to share a property value (.forge-header also uses
+    // --header-height) are their own rules, not copies.
+    //
+    // Anchored per-class so only a re-declaration OF THAT CLASS trips it.
+    const mustBeGlobal: Array<{ cls: string; props: string[] }> = [
+      { cls: 'forge-detail-header', props: ['justify-content: space-between', 'height: var(--header-height)'] },
+      { cls: 'forge-back', props: ['color: var(--accent-color)'] },
+      { cls: 'forge-icon-btn', props: ['width: 28px', 'border-radius: var(--radius-lg)'] },
+      { cls: 'forge-detail-body', props: ['overflow-y: auto'] },
+      { cls: 'forge-state-dot', props: ['border-radius: 50%'] },
+      { cls: 'forge-state-badge', props: ['border-radius: var(--radius-full)'] },
+      { cls: 'forge-error-card', props: ['align-items: center'] },
+      { cls: 'forge-loading', props: ['justify-content: center'] },
+    ]
+
+    for (const rel of SCOPED_COMPONENTS) {
+      const src = read(rel)
+      const marker = '<style scoped>'
+      if (!src.includes(marker)) continue
+      const after = src.slice(src.indexOf(marker) + marker.length)
+      const block = after.includes('</style>') ? after.slice(0, after.indexOf('</style>')) : after
+
+      for (const { cls, props } of mustBeGlobal) {
+        const rule = block.match(new RegExp(`\\.${cls}\\s*\\{([\\s\\S]*?)\\}`))
+        if (!rule) continue
+        for (const prop of props) {
+          expect(
+            rule[1].includes(prop),
+            `${rel} re-declares .${cls} (${prop}) — it belongs to the shared chrome`,
+          ).toBe(false)
+        }
+      }
+    }
+  })
+})

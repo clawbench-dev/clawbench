@@ -115,21 +115,28 @@ func TestForgeDispatcher_UnreadIndependentOfToggles(t *testing.T) {
 	d := service.NewForgeEventDispatcher(func() model.Config { return cfg }, nil, nil)
 
 	ref := service.ForgeRepoRef{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"}
+	// The unread count is per-repository, so the key must match the repo the
+	// event was persisted under.
+	repoKey := service.ForgeRepoKey{Platform: "github", Host: "github.com", Owner: "a", Repo: "b"}
 
-	// Simulate what the syncer does: persist the event, then dispatch.
+	// Simulate what the syncer does: persist the event, then dispatch. The
+	// item_key is built the same way the syncer builds it, so the row is
+	// countable by the unread badge.
 	_, err := service.InsertForgeEvent(service.ForgeEvent{
 		Platform: "github", Host: "github.com", Owner: "a", Repo: "b",
-		ItemType: "issue", Number: 1, EventType: "closed", DedupeKey: "k1",
+		ItemType: "issue", Number: 1,
+		ItemKey:   forge.ItemKeyForNumber(forge.ItemTypeIssue, 1),
+		EventType: "closed", DedupeKey: "k1",
 	})
 	require.NoError(t, err)
 	d.HandleChange(context.Background(), ref, testItem(), forge.Change{Type: forge.EventClosed, Number: 1})
 
-	n, err := service.CountUnreadForgeEvents()
+	n, err := service.CountUnreadForgeEvents(repoKey)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "unread must accrue even when notifications are disabled")
 
-	require.NoError(t, service.MarkForgeEventsRead())
-	n, err = service.CountUnreadForgeEvents()
+	require.NoError(t, service.MarkForgeEventsRead(repoKey, ""))
+	n, err = service.CountUnreadForgeEvents(repoKey)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -198,4 +205,28 @@ func TestFormatForgeEventMessage_UnknownEventTypeFallsBack(t *testing.T) {
 	item := forge.Item{Number: 1, Title: "t"}
 	title, _ := service.FormatForgeEventMessage(event, item)
 	assert.Contains(t, title, "weird", "an unrecognized event type must still render, not panic or blank out")
+}
+
+// TestFormatForgeEventMessage_PipelineOmitsItemNumber: a CI run belongs to the
+// repository, not to an item, so the message must not claim "合并请求 #0".
+func TestFormatForgeEventMessage_PipelineOmitsItemNumber(t *testing.T) {
+	event := service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: string(forge.ItemTypePipeline), Number: 0, EventType: "pipeline_done",
+	}
+	item := forge.Item{
+		Type: forge.ItemTypePipeline, Number: 0, Title: "CI",
+		URL: "https://github.com/acme/widgets/actions/runs/42",
+	}
+
+	title, body := service.FormatForgeEventMessage(event, item)
+
+	assert.Contains(t, title, "仓库流水线")
+	assert.Contains(t, title, "流水线完成")
+	assert.NotContains(t, title, "#0", "a pipeline has no item number to show")
+	assert.NotContains(t, title, "合并请求")
+	assert.NotContains(t, body, "#0")
+	assert.Contains(t, body, "仓库流水线")
+	assert.Contains(t, body, "CI", "the workflow name is the run's title")
+	assert.Contains(t, body, "https://github.com/acme/widgets/actions/runs/42")
 }

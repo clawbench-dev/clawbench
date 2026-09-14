@@ -11,6 +11,10 @@ type ItemType string
 const (
 	ItemTypeIssue         ItemType = "issue"
 	ItemTypeChangeRequest ItemType = "pr"
+	// ItemTypePipeline is a synthetic item type for CI runs, which have no
+	// issue/PR identity of their own. It exists so a pipeline event can travel
+	// the same dispatch path as other events, which is item-shaped.
+	ItemTypePipeline ItemType = "pipeline"
 )
 
 // State is the normalized lifecycle state of an item.

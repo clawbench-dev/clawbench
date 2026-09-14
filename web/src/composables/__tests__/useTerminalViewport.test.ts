@@ -541,6 +541,123 @@ describe('useTerminalViewport', () => {
     vi.useRealTimers()
   })
 
+  it('watches a container that is mounted after startWatching', async () => {
+    // TerminalPanelContent calls startWatching() BEFORE mountTabToContainer(),
+    // so on first activation the container ref is still null. The observer must
+    // still end up attached once the element appears, otherwise no layout-driven
+    // refit ever happens (dragging the divider leaves the PTY at stale cols).
+    vi.useFakeTimers()
+    const originalRO = globalThis.ResizeObserver
+    const observeSpy = vi.fn()
+    const mockRO = class {
+      static cb: ResizeObserverCallback | null = null
+      constructor(cb: ResizeObserverCallback) { mockRO.cb = cb }
+      observe(el: Element) { observeSpy(el) }
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = mockRO as unknown as typeof ResizeObserver
+
+    const mockTerminal = createMockTerminal()
+    const terminal = ref(mockTerminal)
+    const containerRef = ref<HTMLElement | null>(null)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 800,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    // Container not mounted yet → nothing to observe, no fit scheduled.
+    expect(observeSpy).not.toHaveBeenCalled()
+
+    // The tab container mounts after startWatching (real call order).
+    containerRef.value = container
+    await nextTick()
+    expect(observeSpy).toHaveBeenCalledWith(container)
+
+    // A later layout change (divider drag) must now refit.
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    vi.advanceTimersByTime(100)
+    expect(mockTerminal.fitAddon.fit).toHaveBeenCalledTimes(1)
+
+    // Switching tabs moves the observer to the new container.
+    const other = document.createElement('div')
+    document.body.appendChild(other)
+    containerRef.value = other
+    await nextTick()
+    expect(observeSpy).toHaveBeenLastCalledWith(other)
+    document.body.removeChild(other)
+
+    viewport.stopWatching()
+    globalThis.ResizeObserver = originalRO
+    vi.useRealTimers()
+  })
+
+  it('does not attach the observer when the container appears before startWatching', async () => {
+    // Symmetric case: switching back to an already-mounted tab must also attach.
+    vi.useFakeTimers()
+    const originalRO = globalThis.ResizeObserver
+    const observeSpy = vi.fn()
+    const mockRO = class {
+      static cb: ResizeObserverCallback | null = null
+      constructor(cb: ResizeObserverCallback) { mockRO.cb = cb }
+      observe(el: Element) { observeSpy(el) }
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = mockRO as unknown as typeof ResizeObserver
+
+    const mockTerminal = createMockTerminal()
+    const terminal = ref(mockTerminal)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 800,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    // Container already present → startWatching must observe it immediately.
+    viewport.startWatching()
+    expect(observeSpy).toHaveBeenCalledWith(container)
+
+    // Detaching the container (all tabs closed) must disconnect, not leak.
+    containerRef.value = null
+    await nextTick()
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    vi.advanceTimersByTime(100)
+    // fit() is skipped because fitTerminal() bails on a null container.
+    expect(mockTerminal.fitAddon.fit).not.toHaveBeenCalled()
+
+    viewport.stopWatching()
+    globalThis.ResizeObserver = originalRO
+    vi.useRealTimers()
+  })
+
   it('cancels pending fit debounce on stopWatching', () => {
     vi.useFakeTimers()
     const mockTerminal = createMockTerminal()

@@ -147,6 +147,18 @@ const sampleKind = computed<'issue' | 'pr'>(() => {
 
 const sampleItemPath = computed(() => (sampleKind.value === 'pr' ? 'pull' : 'issues'))
 
+/**
+ * True when every subscribed transition is repository-targeted (a pipeline).
+ *
+ * Such a task never receives an item, so the sample block must not promise an
+ * `ITEM_TYPE #ITEM_NUMBER` row — that would describe a payload the task can
+ * never get.
+ */
+const repoTargetedOnly = computed(() => {
+    const chips = eventChips(eventTypes.value)
+    return chips.length > 0 && chips.every(c => c.kind === 'repo')
+})
+
 const sampleState = computed(() => {
     const transitions = subscribedTransitions.value
     if (transitions.has('merged')) return 'merged'
@@ -171,18 +183,25 @@ const contextRows = computed<ContextRow[]>(() => {
     const rows: ContextRow[] = [
         { label: t('task.form.varEventType'), placeholder: 'EVENT_TYPE', value: sampleEventType.value },
         { label: t('task.form.varRepo'), placeholder: 'REPO', value: sampleRepo.value },
-        { label: t('task.form.varItem'), placeholder: 'ITEM_TYPE #ITEM_NUMBER', value: `${sampleKind.value} #123` },
+    ]
+    if (!repoTargetedOnly.value) {
+        rows.push({ label: t('task.form.varItem'), placeholder: 'ITEM_TYPE #ITEM_NUMBER', value: `${sampleKind.value} #123` })
+    }
+    rows.push(
         { label: t('task.form.varTitle'), placeholder: 'TITLE', value: t('task.overview.eventSampleTitle') },
         { label: t('task.form.varUrl'), placeholder: 'URL', value: `https://${sampleRepo.value}/${sampleItemPath.value}/123` },
         { label: t('task.form.varAuthor'), placeholder: 'AUTHOR', value: 'octocat' },
         { label: t('task.form.varState'), placeholder: 'STATE', value: sampleState.value },
-    ]
+    )
     if (show('commented')) {
         rows.push({ label: t('task.form.varCommentBody'), placeholder: 'COMMENT_BODY', value: t('task.overview.eventSampleComment') })
     }
     if (show('pipeline_done')) {
         rows.push({ label: t('task.form.varPipelineStatus'), placeholder: 'PIPELINE_STATUS', value: 'success' })
         rows.push({ label: t('task.form.varPipelineUrl'), placeholder: 'PIPELINE_URL', value: 'https://ci.example.com/run/42' })
+        // The value is the backend's literal rendering (是 / 否), not a
+        // translated string: the sample mirrors exactly what will be injected.
+        rows.push({ label: t('task.form.varActorIsSelf'), placeholder: 'ACTOR_IS_SELF', value: '否' })
     }
     return rows
 })

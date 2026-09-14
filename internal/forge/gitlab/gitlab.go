@@ -456,14 +456,6 @@ func perPageOrDefault(n int) int {
 // listResult derives pagination state from GitLab's X-Next-Page header.
 func listResult(items []forge.Item, hdr http.Header) forge.ListResult {
 	res := forge.ListResult{Items: items}
-	if hdr == nil {
-		return res
-	}
-	if next := hdr.Get("X-Next-Page"); next != "" {
-		if n, err := strconv.Atoi(next); err == nil && n > 0 {
-			res.HasMore = true
-			res.NextPage = n
-		}
-	}
+	res.HasMore, res.NextPage = paginationFromHeader(hdr)
 	return res
 }

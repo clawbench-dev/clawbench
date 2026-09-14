@@ -259,7 +259,7 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
 import { useForgeBinding } from '@/composables/useForgeBinding'
-import { FORGE_EVENT_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels'
+import { FORGE_EVENT_TRANSITIONS, FORGE_REPO_TARGETED_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels' 
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
 
@@ -307,17 +307,31 @@ const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
 // independent triggers. merged is PR-only: an issue has no merge, so offering
 // it under Issues would create a subscription that can never fire.
 //
-// pipeline_done is deliberately absent: nothing derives a pipeline event yet,
-// so subscribing would never fire. It stays valid on the backend so a task that
-// already stores one is not rejected, and the shared label map still renders it.
-const eventTypeGroups = computed(() => Object.entries(FORGE_EVENT_TRANSITIONS).map(([kind, transitions]) => ({
-  kind,
-  label: eventKindLabel(kind),
-  options: transitions.map(tr => ({
-    value: `${kind}.${tr}`,
-    label: eventTransitionLabel(tr),
-  })),
-})))
+// A pipeline is a repository-level event: it is triggered by a push, a tag or a
+// schedule, none of which belongs to an issue or a PR. It is therefore offered
+// in its own group under the BARE key "pipeline_done", which is also how the
+// backend matches it.
+const eventTypeGroups = computed(() => {
+  const groups = Object.entries(FORGE_EVENT_TRANSITIONS).map(([kind, transitions]) => ({
+    kind,
+    label: eventKindLabel(kind),
+    options: transitions.map(tr => ({
+      value: `${kind}.${tr}`,
+      label: eventTransitionLabel(tr),
+    })),
+  }))
+  if (FORGE_REPO_TARGETED_TRANSITIONS.length > 0) {
+    groups.push({
+      kind: 'repo',
+      label: eventKindLabel('repo'),
+      options: FORGE_REPO_TARGETED_TRANSITIONS.map(tr => ({
+        value: tr,
+        label: eventTransitionLabel(tr),
+      })),
+    })
+  }
+  return groups
+})
 
 // Every kind-scoped value the checkboxes can represent.
 const OFFERED_EVENT_VALUES = computed(() => offeredEventValues())
@@ -365,19 +379,29 @@ const eventContextTemplate = computed(() => {
   // Keys are kind-scoped ("pr.commented"), so match on the transition suffix
   // (and on the bare legacy form, which a pre-split task may still carry).
   const show = (transition) => showAll || types.some(x => x === transition || x.endsWith('.' + transition))
+  // A pipeline-only subscription never carries an item, so the item line is
+  // omitted rather than advertising an {{ITEM_TYPE}} that can never arrive.
+  const repoTargetedOnly = types.length > 0
+    && types.every(x => FORGE_REPO_TARGETED_TRANSITIONS.includes(x))
+
   const lines = [
     `- ${t('task.form.varEventType')}：{{EVENT_TYPE}}`,
     `- ${t('task.form.varRepo')}：{{REPO}}`,
-    `- ${t('task.form.varItem')}：{{ITEM_TYPE}} #{{ITEM_NUMBER}}`,
+  ]
+  if (!repoTargetedOnly) {
+    lines.push(`- ${t('task.form.varItem')}：{{ITEM_TYPE}} #{{ITEM_NUMBER}}`)
+  }
+  lines.push(
     `- ${t('task.form.varTitle')}：{{TITLE}}`,
     `- ${t('task.form.varUrl')}：{{URL}}`,
     `- ${t('task.form.varAuthor')}：{{AUTHOR}}`,
     `- ${t('task.form.varState')}：{{STATE}}`,
-  ]
+  )
   if (show('commented')) lines.push(`- ${t('task.form.varCommentBody')}：{{COMMENT_BODY}}`)
   if (show('pipeline_done')) {
     lines.push(`- ${t('task.form.varPipelineStatus')}：{{PIPELINE_STATUS}}`)
     lines.push(`- ${t('task.form.varPipelineUrl')}：{{PIPELINE_URL}}`)
+    lines.push(`- ${t('task.form.varActorIsSelf')}：{{ACTOR_IS_SELF}}`)
   }
   return `## ${t('task.form.eventContextHeader')}\n${lines.join('\n')}`
 })
