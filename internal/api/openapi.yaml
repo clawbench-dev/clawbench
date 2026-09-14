@@ -3063,10 +3063,11 @@ paths:
       description: |
         返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
         响应字段：`current_version`、`latest_version`、`has_upgrade`、
-        `install_writable`、`install_dir`、`is_docker`、`signature_warning`。
-        `signature_warning` 非空表示发布签名未能验证（npm 签名公钥不可达，
-        或自定义镜像未签名），升级将降级为仅校验完整性哈希，前端须向用户
-        显著提示。
+        `install_writable`、`install_dir`、`is_docker`、`verification_warning`。
+        `verification_warning` 非空表示本次升级有校验无法完成（发布签名未验证，
+        或 registry 未提供完整性哈希）。升级仍会继续，前端须向用户显著提示。
+        唯一会中止升级的校验是「下载内容与已知哈希不符」——那是文件损坏或
+        下载错误，而非仅仅无法校验。
       operationId: upgradeCheck
       responses:
         "200":

@@ -224,21 +224,21 @@ describe('useUpgrade', () => {
       expect(upgrade.isDocker.value).toBe(false)
     })
 
-    it('records signature_warning from the response', async () => {
+    it('records verification_warning from the response', async () => {
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
         has_upgrade: true,
-        signature_warning: 'npm signing keys were unreachable',
+        verification_warning: 'npm signing keys were unreachable',
       })
 
       const upgrade = useUpgrade()
       await upgrade.checkUpgrade()
 
-      expect(upgrade.signatureWarning.value).toBe('npm signing keys were unreachable')
+      expect(upgrade.verificationWarning.value).toBe('npm signing keys were unreachable')
     })
 
-    it('defaults signature_warning to empty when absent (older server)', async () => {
+    it('defaults verification_warning to empty when absent (older server)', async () => {
       mockApiGet.mockResolvedValue({
         current_version: 'v1.0.0',
         latest_version: 'v1.1.0',
@@ -248,7 +248,7 @@ describe('useUpgrade', () => {
       const upgrade = useUpgrade()
       await upgrade.checkUpgrade()
 
-      expect(upgrade.signatureWarning.value).toBe('')
+      expect(upgrade.verificationWarning.value).toBe('')
     })
   })
 

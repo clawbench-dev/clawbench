@@ -53,13 +53,13 @@ func TestServeUpgradeCheck_Success(t *testing.T) {
 	assert.Equal(t, true, resp["install_writable"])
 	assert.Equal(t, "/usr/local/bin", resp["install_dir"])
 	assert.Equal(t, false, resp["is_docker"])
-	assert.Equal(t, "", resp["signature_warning"], "a verified release must carry no warning")
+	assert.Equal(t, "", resp["verification_warning"], "a verified release must carry no warning")
 }
 
-// TestServeUpgradeCheck_SignatureWarning guards that a downgraded signature
+// TestServeUpgradeCheck_VerificationWarning guards that a downgraded signature
 // check is reported to the UI. The user must learn before starting that the
 // download will only be integrity-checked.
-func TestServeUpgradeCheck_SignatureWarning(t *testing.T) {
+func TestServeUpgradeCheck_VerificationWarning(t *testing.T) {
 	defer func() {
 		upgradeCheckForUpgradeInfo = service.CheckForUpgradeInfo
 		upgradeCompareVersions = version.CompareVersions
@@ -76,9 +76,9 @@ func TestServeUpgradeCheck_SignatureWarning(t *testing.T) {
 	const warning = "The release signature could not be verified because npm's signing keys were unreachable."
 	upgradeCheckForUpgradeInfo = func() (*service.UpgradeInfo, error) {
 		return &service.UpgradeInfo{
-			CurrentVersion:   "1.0.0",
-			LatestVersion:    "1.1.0",
-			SignatureWarning: warning,
+			CurrentVersion:      "1.0.0",
+			LatestVersion:       "1.1.0",
+			VerificationWarning: warning,
 		}, nil
 	}
 
@@ -90,7 +90,7 @@ func TestServeUpgradeCheck_SignatureWarning(t *testing.T) {
 
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, warning, resp["signature_warning"])
+	assert.Equal(t, warning, resp["verification_warning"])
 	assert.Equal(t, true, resp["has_upgrade"], "a signature warning must not block the upgrade")
 }
 

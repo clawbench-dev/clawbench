@@ -59,10 +59,10 @@ func ServeUpgradeCheck(w http.ResponseWriter, r *http.Request) {
 		// recommending an image-based upgrade. Self-replace still works in a
 		// container, but a later rebuild from the unchanged image reverts it.
 		"is_docker": upgradeIsDocker(),
-		// signature_warning is non-empty when the release signature could not
+		// verification_warning is non-empty when the release signature could not
 		// be verified and the download will only be integrity-checked. The UI
 		// surfaces it before the user commits to the upgrade.
-		"signature_warning": info.SignatureWarning,
+		"verification_warning": info.VerificationWarning,
 	})
 }
 

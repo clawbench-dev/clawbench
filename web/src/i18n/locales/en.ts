@@ -188,6 +188,7 @@ export default {
     serverUnreachableWeb: 'Cannot connect to server, please check if the backend service is running',
     serverError: 'Server error, backend service may not be running properly',
     projectLoadFailed: 'Project load failed, backend service may not be running properly',
+    initFailed: 'App initialization failed, please retry or check the backend service',
     fileListLoadFailed: 'File list load failed',
     sendFailed: 'Send failed, please retry',
     swipeAgainToExit: 'Swipe again to exit',
@@ -2636,8 +2637,8 @@ export default {
     dockerHintTitle: 'Running in Docker',
     dockerHintBody: 'The in-place upgrade still works, but rebuilding the container from the unchanged image will revert it. Prefer updating the image instead:',
     dockerHintRestart: 'The container must use --restart always or --restart unless-stopped, otherwise the service will not come back after an in-place upgrade. Do not use --restart on-failure: the server exits with code 0, so it would never restart.',
-    signatureWarningTitle: 'Release signature not verified',
-    signatureWarningHint: 'The download will still be checked against its integrity hash, which detects corrupted or altered downloads, but it cannot prove the package came from the publisher. If you did not expect this, check your network or registry settings before upgrading.',
+    verificationWarningTitle: 'This upgrade could not be fully verified',
+    verificationWarningHint: 'This does not block the upgrade, but the text above explains which checks could not be completed. For an internal mirror, proxy, or a registry that omits hashes this is usually normal; on the official registry it is worth a closer look.',
   },
   share: {
     loading: 'Loading...',

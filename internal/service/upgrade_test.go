@@ -392,7 +392,7 @@ func TestResolveExpectedDigest_SHA512SRI(t *testing.T) {
 	sum := sha512.Sum512([]byte("hello world"))
 	integrity := "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	digest, err := resolveExpectedDigest(integrity, "")
+	digest, _, err := resolveExpectedDigest(integrity, "")
 	require.NoError(t, err)
 	assert.Equal(t, "sha512", digest.algorithm)
 	assert.Equal(t, sum[:], digest.hash)
@@ -402,7 +402,7 @@ func TestResolveExpectedDigest_SHA1SRI(t *testing.T) {
 	sum := sha1.Sum([]byte("hello world"))
 	integrity := "sha1-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	digest, err := resolveExpectedDigest(integrity, "")
+	digest, _, err := resolveExpectedDigest(integrity, "")
 	require.NoError(t, err)
 	assert.Equal(t, "sha1", digest.algorithm)
 	assert.Equal(t, sum[:], digest.hash)
@@ -416,7 +416,7 @@ func TestResolveExpectedDigest_FallsBackToShasum(t *testing.T) {
 	sum := sha1.Sum([]byte("legacy package"))
 	shasum := hex.EncodeToString(sum[:])
 
-	digest, err := resolveExpectedDigest("", shasum)
+	digest, _, err := resolveExpectedDigest("", shasum)
 	require.NoError(t, err)
 	assert.Equal(t, "sha1", digest.algorithm)
 	assert.Equal(t, sum[:], digest.hash)
@@ -426,7 +426,7 @@ func TestResolveExpectedDigest_IntegrityWinsOverShasum(t *testing.T) {
 	sri := sha512.Sum512([]byte("real"))
 	legacy := sha1.Sum([]byte("real"))
 
-	digest, err := resolveExpectedDigest(
+	digest, _, err := resolveExpectedDigest(
 		"sha512-"+base64.StdEncoding.EncodeToString(sri[:]),
 		hex.EncodeToString(legacy[:]),
 	)
@@ -434,20 +434,33 @@ func TestResolveExpectedDigest_IntegrityWinsOverShasum(t *testing.T) {
 	assert.Equal(t, "sha512", digest.algorithm)
 }
 
-// The core of the fix: a response with no hash at all must be refused, not
-// silently accepted. Previously this reached downloadAndExtract and skipped
-// verification entirely.
-func TestResolveExpectedDigest_NeitherField_Errors(t *testing.T) {
-	digest, err := resolveExpectedDigest("", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "neither dist.integrity nor dist.shasum")
+// A response with no hash at all no longer aborts: it yields an unverified
+// digest plus a warning. The upgrade proceeds, but nothing is checked, so the
+// user must be told.
+func TestResolveExpectedDigest_NeitherField_WarnsAndProceeds(t *testing.T) {
+	digest, warning, err := resolveExpectedDigest("", "")
+	require.NoError(t, err, "a missing hash must not block the upgrade")
+	assert.True(t, digest.unverified, "the digest must be marked unverified")
 	assert.Nil(t, digest.hash)
+	assert.Contains(t, warning, "no integrity hash")
 }
 
-func TestResolveExpectedDigest_WhitespaceOnly_Errors(t *testing.T) {
-	_, err := resolveExpectedDigest("   ", "\t")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "neither dist.integrity nor dist.shasum")
+// The unverified digest must pass verification unconditionally — there is
+// nothing to compare against, and the warning already covered the gap.
+func TestExpectedDigest_UnverifiedAlwaysPasses(t *testing.T) {
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+
+	hasher := digest.newHasher()
+	_, _ = hasher.Write([]byte("arbitrary bytes"))
+	assert.NoError(t, digest.verify(hasher), "an unverified digest has nothing to check")
+}
+
+func TestResolveExpectedDigest_WhitespaceOnly_WarnsAndProceeds(t *testing.T) {
+	digest, warning, err := resolveExpectedDigest("   ", "\t")
+	require.NoError(t, err)
+	assert.True(t, digest.unverified)
+	assert.Contains(t, warning, "no integrity hash")
 }
 
 // An algorithm we cannot compute must fail closed instead of skipping.
@@ -458,7 +471,7 @@ func TestResolveExpectedDigest_UnsupportedAlgorithm_Errors(t *testing.T) {
 		"blake2b-abc123",
 	} {
 		t.Run(integrity, func(t *testing.T) {
-			_, err := resolveExpectedDigest(integrity, "")
+			_, _, err := resolveExpectedDigest(integrity, "")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unsupported integrity algorithm")
 		})
@@ -466,13 +479,13 @@ func TestResolveExpectedDigest_UnsupportedAlgorithm_Errors(t *testing.T) {
 }
 
 func TestResolveExpectedDigest_MissingPrefix_Errors(t *testing.T) {
-	_, err := resolveExpectedDigest("abcdef123456", "")
+	_, _, err := resolveExpectedDigest("abcdef123456", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing algorithm prefix")
 }
 
 func TestResolveExpectedDigest_MalformedBase64_Errors(t *testing.T) {
-	_, err := resolveExpectedDigest("sha512-!!!not-base64!!!", "")
+	_, _, err := resolveExpectedDigest("sha512-!!!not-base64!!!", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode integrity hash")
 }
@@ -481,19 +494,19 @@ func TestResolveExpectedDigest_WrongHashLength_Errors(t *testing.T) {
 	// Valid base64, but not the 64 bytes a sha512 digest must be.
 	short := base64.StdEncoding.EncodeToString([]byte("too short"))
 
-	_, err := resolveExpectedDigest("sha512-"+short, "")
+	_, _, err := resolveExpectedDigest("sha512-"+short, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "want 64")
 }
 
 func TestResolveExpectedDigest_MalformedShasum_Errors(t *testing.T) {
-	_, err := resolveExpectedDigest("", "not-hex-zzzz")
+	_, _, err := resolveExpectedDigest("", "not-hex-zzzz")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode shasum")
 }
 
 func TestResolveExpectedDigest_ShortShasum_Errors(t *testing.T) {
-	_, err := resolveExpectedDigest("", "abcd")
+	_, _, err := resolveExpectedDigest("", "abcd")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "want 20")
 }
@@ -584,6 +597,30 @@ func TestEqualHashes_DifferentContent(t *testing.T) {
 
 func TestEqualHashes_Empty(t *testing.T) {
 	assert.True(t, equalHashes([]byte{}, []byte{}))
+}
+
+// --- joinWarnings ---
+
+// A release can be unauthenticated for more than one reason at once; the user
+// must see all of them, not just the last one computed.
+func TestJoinWarnings_CombinesDistinctReasons(t *testing.T) {
+	got := joinWarnings("signature could not be verified", "no integrity hash")
+	assert.Equal(t, "signature could not be verified no integrity hash", got)
+}
+
+func TestJoinWarnings_SkipsEmptyParts(t *testing.T) {
+	assert.Equal(t, "only this", joinWarnings("", "only this"))
+	assert.Equal(t, "only this", joinWarnings("only this", ""))
+	assert.Equal(t, "only this", joinWarnings("  ", "only this"))
+}
+
+func TestJoinWarnings_AllEmpty(t *testing.T) {
+	assert.Equal(t, "", joinWarnings("", ""))
+	assert.Equal(t, "", joinWarnings())
+}
+
+func TestJoinWarnings_TrimsParts(t *testing.T) {
+	assert.Equal(t, "a b", joinWarnings("  a  ", "  b  "))
 }
 
 // --- throttledProgress ---
@@ -1180,7 +1217,7 @@ func TestDownloadAndExtract_DestNotWritable(t *testing.T) {
 // failing the test if they are unusable.
 func mustDigest(t *testing.T, integrity, shasum string) expectedDigest {
 	t.Helper()
-	digest, err := resolveExpectedDigest(integrity, shasum)
+	digest, _, err := resolveExpectedDigest(integrity, shasum)
 	require.NoError(t, err, "resolveExpectedDigest(%q, %q)", integrity, shasum)
 	return digest
 }
@@ -1369,7 +1406,10 @@ func TestExpectedDigest_VerifyRealSHA512(t *testing.T) {
 // dist.integrity nor dist.shasum must abort the whole upgrade before anything
 // is downloaded. Previously the empty integrity string caused verification to
 // be skipped and the binary was installed unverified.
-func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
+// A registry that supplies no hash no longer blocks the upgrade: it proceeds
+// unverified and records a warning. The download is still attempted, which is
+// the behavior change this test pins down.
+func TestPerformUpgrade_NoUsableHashProceedsWithWarning(t *testing.T) {
 	dir := withTempDataDir(t)
 
 	// A real file stands in for the on-disk binary, and a version behind the
@@ -1384,19 +1424,23 @@ func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
 	t.Cleanup(func() { selfBinaryVersion = origVer })
 
 	// The default registry is unreachable, so the user's mirror supplies the
-	// metadata. A custom mirror is not required to sign, which is what lets
-	// this test reach the digest-resolution step under examination.
+	// metadata.
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(failServer.Close)
 
-	// The mirror advertises an upgrade but supplies no hash at all.
+	// The mirror advertises an upgrade but supplies no hash at all, and serves
+	// a real tarball so the download can complete.
+	binContent := []byte("#!/bin/sh\necho clawbench")
+	tarball, _ := buildTarball(t, binContent)
+
 	var tarballHits int32
 	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
 			atomic.AddInt32(&tarballHits, 1)
-			http.Error(w, "must not be downloaded", http.StatusInternalServerError)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+			_, _ = w.Write(tarball)
 			return
 		}
 		resp := npmRegistryResponse{}
@@ -1423,20 +1467,31 @@ func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
 	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
 	t.Cleanup(func() { os.Setenv("NPM_CONFIG_REGISTRY", origEnv) })
 
+	// Stub the restart so the flow stops before exec'ing the fake binary.
+	origRestart := upgradeRestartFunc
+	upgradeRestartFunc = func() error { return nil }
+	t.Cleanup(func() { upgradeRestartFunc = origRestart })
+
 	ResetUpgradeState()
 	t.Cleanup(ResetUpgradeState)
 
 	performUpgrade(context.Background())
 
 	s := GetUpgradeState()
-	require.Equal(t, UpgradePhaseFailed, s.Phase, "an unverifiable upgrade must fail, not proceed")
-	assert.Contains(t, s.Error, "unverified binary")
-	assert.Equal(t, int32(0), atomic.LoadInt32(&tarballHits),
-		"no tarball may be fetched when the registry supplied no usable hash")
+	assert.Contains(t, s.VerificationWarning, "no integrity hash",
+		"the unverified install must be reported to the user")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tarballHits),
+		"the download must proceed when no hash is available")
+
+	// The upgrade may still fail later (the fake binary cannot be exec'd), but
+	// it must not fail for lack of verification. Asserting on the reason rather
+	// than the phase keeps this test about the policy change.
+	assert.NotContains(t, s.Error, "unverified",
+		"the upgrade must no longer be refused for a missing hash")
 }
 
-// downloadAndExtract itself always verifies: there is no longer a code path
-// that reaches extraction without a digest.
+// downloadAndExtract verifies whenever the digest carries a hash. An unverified
+// digest (no hash available) is the only case that skips the comparison.
 func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
@@ -1710,26 +1765,26 @@ func TestSetUpgradeState_SetsAllFields(t *testing.T) {
 	assert.Equal(t, "Halfway there", s.Message)
 }
 
-// --- SetUpgradeSignatureWarning ---
+// --- SetUpgradeVerificationWarning ---
 
-func TestSetUpgradeSignatureWarning_RecordsWarning(t *testing.T) {
+func TestSetUpgradeVerificationWarning_RecordsWarning(t *testing.T) {
 	ResetUpgradeState()
 	defer ResetUpgradeState()
 
 	const warning = "The release signature could not be verified."
-	SetUpgradeSignatureWarning(warning)
+	SetUpgradeVerificationWarning(warning)
 
-	assert.Equal(t, warning, GetUpgradeState().SignatureWarning)
+	assert.Equal(t, warning, GetUpgradeState().VerificationWarning)
 }
 
 // ResetUpgradeState must clear the warning, otherwise a retry would keep
 // showing a stale downgrade notice after a successful verified check.
-func TestSetUpgradeSignatureWarning_ClearedByReset(t *testing.T) {
-	SetUpgradeSignatureWarning("stale warning")
+func TestSetUpgradeVerificationWarning_ClearedByReset(t *testing.T) {
+	SetUpgradeVerificationWarning("stale warning")
 	ResetUpgradeState()
 	defer ResetUpgradeState()
 
-	assert.Empty(t, GetUpgradeState().SignatureWarning)
+	assert.Empty(t, GetUpgradeState().VerificationWarning)
 }
 
 // --- ResetUpgradeState clears everything ---

@@ -34,10 +34,10 @@ type UpgradeState struct {
 	// survive a retry and mislabel an unrelated failure.
 	ErrorCode string `json:"error_code"`
 	Error     string `json:"error,omitempty"`
-	// SignatureWarning is non-empty when the release signature could not be
+	// VerificationWarning is non-empty when the release signature could not be
 	// verified and the upgrade was downgraded to the integrity check alone.
 	// Surfaced to the user because an unauthenticated install is weaker.
-	SignatureWarning string `json:"signature_warning"`
+	VerificationWarning string `json:"verification_warning"`
 }
 
 var (
@@ -113,13 +113,13 @@ func SetUpgradeVersions(current, latest string) {
 	upgradeState.LatestVer = latest
 }
 
-// SetUpgradeSignatureWarning records that the release signature could not be
+// SetUpgradeVerificationWarning records that the release signature could not be
 // verified, so the UI can warn the user that the download will only be checked
 // against its integrity hash.
-func SetUpgradeSignatureWarning(warning string) {
+func SetUpgradeVerificationWarning(warning string) {
 	upgradeMu.Lock()
 	defer upgradeMu.Unlock()
-	upgradeState.SignatureWarning = warning
+	upgradeState.VerificationWarning = warning
 }
 
 // SetUpgradeBackupPath records the backup file path.

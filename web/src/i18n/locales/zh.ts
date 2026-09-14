@@ -188,6 +188,7 @@ export default {
     serverUnreachableWeb: '无法连接到服务器，请检查后端服务是否启动',
     serverError: '服务器响应异常，后端服务可能未正确启动',
     projectLoadFailed: '项目加载失败，后端服务可能未正确启动',
+    initFailed: '应用初始化失败，请重试或检查后端服务',
     fileListLoadFailed: '文件列表加载失败',
     sendFailed: '发送失败，请重试',
     swipeAgainToExit: '再滑一次退出应用',
@@ -2636,8 +2637,8 @@ export default {
     dockerHintTitle: '当前运行在 Docker 中',
     dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。建议改用镜像更新：',
     dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
-    signatureWarningTitle: '未能验证发布签名',
-    signatureWarningHint: '下载内容仍会做完整性校验，可发现传输损坏或被篡改的文件，但无法证明该软件包确实来自发布者。如果你没预期看到此提示，请先检查网络或 registry 配置再升级。',
+    verificationWarningTitle: '本次升级未能完全验证',
+    verificationWarningHint: '这不影响继续升级，但上面的内容说明了哪些校验无法完成。内网镜像、代理或 registry 未提供哈希时通常属正常情况；如果你在官方源上看到此提示，请留意。',
   },
   share: {
     loading: '加载中...',
