@@ -194,7 +194,15 @@ async function save() {
   if (!props.sessionId) return
   saving.value = true
   try {
-    const tags = selected.value.map(name => ({ name, scope: scopeFor(name) }))
+    // A name typed into the input but not yet committed with the 创建 button
+    // must not be silently dropped: the user filled the field and pressed
+    // 确定, so saving without it looks like the tag was lost. Fold it into the
+    // payload (and mark it selected) before sending.
+    const pending = normalizeTagName(newTagName.value)
+    const names = pending && !selected.value.includes(pending)
+      ? [...selected.value, pending]
+      : selected.value
+    const tags = names.map(name => ({ name, scope: scopeFor(name) }))
     await apiPatch(
       `/api/ai/session/update?session_id=${encodeURIComponent(props.sessionId)}`,
       { tags }

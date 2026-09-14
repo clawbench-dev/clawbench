@@ -380,4 +380,74 @@ describe('SessionTagDialog', () => {
       expect(rule).toMatch(/padding:/)
     })
   })
+
+  // Regression: the 创建 button was the only way to commit a typed name, so
+  // typing a name and pressing 确定 saved nothing — the field was cleared and
+  // the tag silently vanished, with no error shown.
+  it('saves a name typed in the input even when 创建 was never pressed', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    mockPatch.mockResolvedValue({})
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('  Needs   Review  ')
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPatch).toHaveBeenCalledTimes(1)
+    // Normalized the same way the backend does (collapse + lowercase).
+    expect(mockPatch.mock.calls[0][1]).toEqual({
+      tags: [{ name: 'needs review', scope: 'project' }],
+    })
+  })
+
+  it('keeps checked tags AND the pending input name when saving', async () => {
+    mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+    mockPatch.mockResolvedValue({})
+    const wrapper = await mountDialog({ initialTags: ['bug'] })
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('urgent')
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+
+    // The pending name must be additive, not a replacement for the selection.
+    expect(mockPatch.mock.calls[0][1]).toEqual({
+      tags: [
+        { name: 'bug', scope: 'project' },
+        { name: 'urgent', scope: 'project' },
+      ],
+    })
+  })
+
+  it('does not duplicate the pending name when it is already selected', async () => {
+    mockGet.mockResolvedValue({ tags: [] })
+    mockPatch.mockResolvedValue({})
+    const wrapper = await mountDialog()
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('bug')
+    await wrapper.find('.st-add-btn').trigger('click')  // commit → now selected
+    await wrapper.find('.st-input').setValue('bug')     // retype the same name
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+
+    expect(mockPatch.mock.calls[0][1]).toEqual({
+      tags: [{ name: 'bug', scope: 'project' }],
+    })
+  })
+
+  it('sends an empty tag list when nothing is selected and the input is blank', async () => {
+    mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+    mockPatch.mockResolvedValue({})
+    const wrapper = await mountDialog({ initialTags: [] })
+    await flushPromises()
+
+    await wrapper.find('.st-input').setValue('   ')
+    await wrapper.find('.fbtn-primary').trigger('click')
+    await flushPromises()
+
+    // Whitespace-only input is not a tag; clearing the selection still works.
+    expect(mockPatch.mock.calls[0][1]).toEqual({ tags: [] })
+  })
 })
