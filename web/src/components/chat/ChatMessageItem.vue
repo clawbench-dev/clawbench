@@ -677,6 +677,28 @@ function handleCopyMessage() {
     contain: style;
 }
 
+/* ── Leaked form/XML control wrapping guard ──
+   A malformed <ask-question> payload (e.g. an <option> without a <question>)
+   fails isValidAskContent, so detectAskQuestion() reports not-found and the raw
+   XML is NOT stripped — it falls through to markdown, where marked passes the
+   tags through and DOMPurify keeps them. Those become REAL form elements in the
+   bubble.
+
+   The problem: the UA stylesheet gives <option> `white-space: nowrap` (and
+   <select> `pre`). With no way to wrap, one long option label lays out as a
+   single line — measured 485px past the bubble for a prose label and 5394px for
+   a 600-char URL — and .chat-message.assistant's `overflow: hidden` then clips
+   it silently with no way to scroll. Resetting white-space restores normal
+   wrapping; overflow-wrap guarantees even an unbreakable token breaks.
+
+   Scoped to .chat-message (both roles) and to exactly the tags DOMPurify
+   preserves from a leaked payload. None of them is legitimately rendered as
+   content in a chat bubble, so this cannot affect real markdown output. */
+.chat-message :is(option, optgroup, select, textarea, label, fieldset, legend, header) {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ⚠️  CRITICAL — Android WebView GPU Ghost Artifact Fix
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

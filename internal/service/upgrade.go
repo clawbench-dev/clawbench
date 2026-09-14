@@ -120,9 +120,10 @@ var npmPlatformPkg = map[string]string{
 type npmRegistryResponse struct {
 	Version string `json:"version"`
 	Dist    struct {
-		Tarball   string `json:"tarball"`
-		Integrity string `json:"integrity"`
-		Shasum    string `json:"shasum"`
+		Tarball    string         `json:"tarball"`
+		Integrity  string         `json:"integrity"`
+		Shasum     string         `json:"shasum"`
+		Signatures []npmSignature `json:"signatures"`
 	} `json:"dist"`
 }
 
@@ -134,6 +135,11 @@ type UpgradeInfo struct {
 	Integrity      string // SRI string, e.g. "sha512-abcdef..."
 	Shasum         string // legacy hex-encoded sha1, used when Integrity is absent
 	HasUpgrade     bool
+	// SignatureWarning is non-empty when the release signature could not be
+	// verified and the upgrade was downgraded to the integrity check alone. It
+	// is surfaced to the user, since an unauthenticated install is materially
+	// weaker than a verified one.
+	SignatureWarning string
 }
 
 // getPlatformPkg returns the npm platform package name for the current OS/arch.
@@ -238,6 +244,14 @@ func CheckForUpgrade() (string, string, error) {
 	return info.CurrentVersion, info.LatestVersion, nil
 }
 
+// CheckForUpgradeInfo queries the registry and returns the full result,
+// including SignatureWarning when the release signature could not be verified.
+// The warning lets the UI tell the user before they start an upgrade that the
+// download will only be checked against its integrity hash.
+func CheckForUpgradeInfo() (*UpgradeInfo, error) {
+	return fetchUpgradeInfo()
+}
+
 // fetchUpgradeInfo queries the npm registry for upgrade info, trying the
 // default registry base first and falling back to the user's configured mirror
 // if the default cannot be reached.
@@ -301,13 +315,26 @@ func fetchUpgradeInfoFromBase(registryBase, pkg, currentVer string) (*UpgradeInf
 
 	hasUpgrade := version.CompareVersions(currentVer, npmResp.Version) < 0 || version.IsDevBuild(currentVer)
 
+	// Verify npm's registry signature before trusting any of the metadata
+	// above. This is the trust anchor: integrity alone is useless against a
+	// malicious registry, because it supplies the hash and the tarball URL from
+	// the same response. The signature is checked for every candidate, even
+	// when no upgrade is available, so a tampered response is rejected rather
+	// than silently reported as "already up to date".
+	sigWarning, sigErr := verifyRegistrySignature(ctx, pkg, npmResp.Version, npmResp.Dist.Integrity,
+		npmResp.Dist.Signatures, registryBase)
+	if sigErr != nil {
+		return nil, sigErr
+	}
+
 	return &UpgradeInfo{
-		CurrentVersion: currentVer,
-		LatestVersion:  npmResp.Version,
-		TarballURL:     tarballURL,
-		Integrity:      npmResp.Dist.Integrity,
-		Shasum:         npmResp.Dist.Shasum,
-		HasUpgrade:     hasUpgrade,
+		CurrentVersion:   currentVer,
+		LatestVersion:    npmResp.Version,
+		TarballURL:       tarballURL,
+		Integrity:        npmResp.Dist.Integrity,
+		Shasum:           npmResp.Dist.Shasum,
+		HasUpgrade:       hasUpgrade,
+		SignatureWarning: sigWarning,
 	}, nil
 }
 
@@ -382,6 +409,12 @@ func performUpgrade(ctx context.Context) { //nolint:gocyclo // upgrade flow is i
 	SetUpgradeVersions(info.CurrentVersion, info.LatestVersion)
 	slog.Info("upgrade: version check", "current", info.CurrentVersion, "latest", info.LatestVersion,
 		"compare", version.CompareVersions(info.CurrentVersion, info.LatestVersion), "isDev", version.IsDevBuild(info.CurrentVersion))
+
+	// Record a signature-verification downgrade so the WS update stream carries
+	// it too, not just the /check response.
+	if info.SignatureWarning != "" {
+		SetUpgradeSignatureWarning(info.SignatureWarning)
+	}
 
 	if !info.HasUpgrade {
 		SetUpgradeError("Already on the latest version")

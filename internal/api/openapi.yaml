@@ -3092,7 +3092,13 @@ paths:
     get:
       tags: [Upgrade]
       summary: 检查新版本
-      description: 返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+      description: |
+        返回是否有可用升级；`is_docker` 指示容器部署（容器内自升级改为提示）。
+        响应字段：`current_version`、`latest_version`、`has_upgrade`、
+        `install_writable`、`install_dir`、`is_docker`、`signature_warning`。
+        `signature_warning` 非空表示发布签名未能验证（npm 签名公钥不可达，
+        或自定义镜像未签名），升级将降级为仅校验完整性哈希，前端须向用户
+        显著提示。
       operationId: upgradeCheck
       responses:
         "200":

@@ -2636,6 +2636,8 @@ export default {
     dockerHintTitle: '当前运行在 Docker 中',
     dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。建议改用镜像更新：',
     dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
+    signatureWarningTitle: '未能验证发布签名',
+    signatureWarningHint: '下载内容仍会做完整性校验，可发现传输损坏或被篡改的文件，但无法证明该软件包确实来自发布者。如果你没预期看到此提示，请先检查网络或 registry 配置再升级。',
   },
   share: {
     loading: '加载中...',

@@ -1,8 +1,8 @@
 <template>
   <div
     ref="dividerRef"
-    class="split-view__divider"
-    :class="[`split-view__divider--${orientation}`, { 'split-view__divider--dragging': dragging }]"
+    class="split-view__divider resize-divider"
+    :class="[`split-view__divider--${orientation}`, { 'resize-divider--expanded': dragging }]"
     role="separator"
     :aria-orientation="ariaOrientation"
     :aria-valuenow="ariaValueNow"
@@ -11,7 +11,7 @@
     :title="title"
     @pointerdown="onDividerPointerDown"
   >
-    <div class="split-view__gutter-line" />
+    <div class="resize-divider__line" />
   </div>
 </template>
 
@@ -97,7 +97,12 @@ onBeforeUnmount(() => {
 <style scoped>
 /* Divider: a single 1px line by default — no visible gap. On hover/drag it
    expands (via negative margins so layout does NOT shift) into a grab-able
-   gap with an accent highlight. */
+   gap with an accent highlight.
+
+   The line itself (resting thickness, the expanded 2px centre stripe, the
+   accent colour and its hover/drag triggers) lives in the shared
+   `assets/resize-divider.css` — the same file TocDock.vue consumes. Only the
+   host geometry stays here, because it differs per consumer. */
 .split-view__divider {
   position: relative;
   flex: 0 0 auto;
@@ -122,19 +127,31 @@ onBeforeUnmount(() => {
   left: -6px;
   right: -6px;
 }
-/* Expanded highlight. `:active` covers mouse press; `--dragging` covers the
-   whole pointer session, which is what touch needs (see the `dragging` ref). */
+/* Expanded highlight. `:active` covers mouse press; `--expanded` covers the
+   whole pointer session, which is what touch needs (see the `dragging` ref).
+   This block must stay in lockstep with the `(hover: hover)` block below —
+   both are host geometry, the line's own rules are shared.
+
+   The tint is mixed into the PANEL colour, not into `transparent`. A
+   translucent band composites with whatever sits behind it, and the pane
+   content can be accent-coloured itself: the file manager's selected row is
+   `background: var(--accent-color)` and ends exactly at the divider, so
+   12%-accent-over-accent stayed fully accent while the half hanging over the
+   white pane below was a pale tint. The band then read as a solid accent block
+   on one side only — the "solid bar that pops out at a certain position"
+   report. Mixing into `--bg-primary` makes the band opaque, so it renders
+   identically regardless of what is behind it. */
 .split-view__divider--horizontal:active,
-.split-view__divider--horizontal.split-view__divider--dragging {
+.split-view__divider--horizontal.resize-divider--expanded {
   width: 12px;
   margin: 0 -5.5px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
 }
 @media (hover: hover) {
   .split-view__divider--horizontal:hover {
     width: 12px;
     margin: 0 -5.5px;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
   }
 }
 
@@ -172,57 +189,19 @@ onBeforeUnmount(() => {
   }
 }
 .split-view__divider--vertical:active,
-.split-view__divider--vertical.split-view__divider--dragging {
+.split-view__divider--vertical.resize-divider--expanded {
   height: 12px;
   margin: -5.5px 0;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
 }
 @media (hover: hover) {
   .split-view__divider--vertical:hover {
     height: 12px;
     margin: -5.5px 0;
-    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
   }
 }
 
-.split-view__gutter-line {
-  position: absolute;
-  background: var(--border-color, rgba(0, 0, 0, 0.12));
-  transition: background var(--duration-base) ease;
-}
-/* The line fills the divider, so its thickness is the divider's: 1px on
-   desktop, 3px under `pointer: coarse` (which widens the divider precisely so
-   the resting line reads as draggable on touch). Centring a 1px line inside a
-   3px divider left a 1px gap on either side, which read as stray padding.
-   `inset: 0` also keeps it on the pixel grid for both widths. */
-.split-view__divider--horizontal .split-view__gutter-line,
-.split-view__divider--vertical .split-view__gutter-line {
-  inset: 0;
-}
-/* While dragging, the divider widens into a tinted band and the line narrows to
-   a crisp centre stripe instead of filling that band. 2px rather than 1px
-   because a 12px band cannot centre a 1px line on a whole pixel. */
-.split-view__divider--horizontal:active .split-view__gutter-line,
-.split-view__divider--horizontal.split-view__divider--dragging .split-view__gutter-line {
-  right: auto;
-  left: calc((100% - 2px) / 2);
-  width: 2px;
-}
-.split-view__divider--vertical:active .split-view__gutter-line,
-.split-view__divider--vertical.split-view__divider--dragging .split-view__gutter-line {
-  bottom: auto;
-  top: calc((100% - 2px) / 2);
-  height: 2px;
-}
-.split-view__divider:active .split-view__gutter-line,
-.split-view__divider--dragging .split-view__gutter-line {
-  background: var(--accent-color, #0066cc);
-}
-@media (hover: hover) {
-  .split-view__divider:hover .split-view__gutter-line {
-    background: var(--accent-color, #0066cc);
-  }
-}
 :global(body.split-view-dragging) {
   user-select: none;
 }
@@ -232,4 +211,11 @@ onBeforeUnmount(() => {
 :global(body.split-view-dragging--vertical) {
   cursor: row-resize;
 }
+</style>
+
+<style>
+/* Shared with TocDock.vue — NOT scoped, so the class names stay literal
+   instead of getting a per-component data-v attribute. Both dividers must
+   receive the identical line rules. */
+@import '@/assets/resize-divider.css';
 </style>

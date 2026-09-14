@@ -41,7 +41,7 @@ describe('SplitDivider', () => {
     const el = wrapper!.find('.split-view__divider').element as HTMLElement
     expect(el.getAttribute('role')).toBe('separator')
     expect(el.getAttribute('aria-orientation')).toBe('vertical')
-    expect(wrapper!.find('.split-view__gutter-line').exists()).toBe(true)
+    expect(wrapper!.find('.resize-divider__line').exists()).toBe(true)
   })
 
   it('applies aria-value attributes when provided', () => {
@@ -160,20 +160,20 @@ describe('SplitDivider — drag highlight survives touch', () => {
     div.setPointerCapture = vi.fn()
     div.releasePointerCapture = vi.fn()
 
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(false)
 
     div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true, clientX: 300 }))
     await nextTick()
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(true)
 
     // Still marked mid-drag — this is the part `:active` failed to guarantee.
     window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 200 }))
     await nextTick()
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(true)
 
     window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
     await nextTick()
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(false)
   })
 
   it('clears the dragging mark on pointercancel', async () => {
@@ -183,65 +183,34 @@ describe('SplitDivider — drag highlight survives touch', () => {
     div.releasePointerCapture = vi.fn()
     div.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, bubbles: true }))
     await nextTick()
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(true)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(true)
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }))
     await nextTick()
-    expect(div.classList.contains('split-view__divider--dragging')).toBe(false)
+    expect(div.classList.contains('resize-divider--expanded')).toBe(false)
   })
 
-  it('styles the expanded state for both :active and --dragging', () => {
-    // The source must pair the two selectors; styling only `:active` is the
-    // bug this guards against.
+  it('styles the expanded host band for both :active and --expanded', () => {
+    // The host geometry is SplitDivider's own (the line rules are shared — see
+    // resizeDivider.css.test.ts). Styling only `:active` is the bug this guards
+    // against: touch loses `:active` mid-swipe.
     const src = readSource()
     const style = src.slice(src.indexOf('<style'))
     for (const dir of ['horizontal', 'vertical']) {
       expect(style).toMatch(
         new RegExp(
-          `\\.split-view__divider--${dir}:active,\\s*\\.split-view__divider--${dir}\\.split-view__divider--dragging`,
+          `\\.split-view__divider--${dir}:active,\\s*\\.split-view__divider--${dir}\\.resize-divider--expanded`,
         ),
       )
     }
-    // The inner line highlight must follow the drag too, not just :active.
-    expect(style).toMatch(
-      /\.split-view__divider--dragging \.split-view__gutter-line/,
-    )
   })
 
-  it('fills the divider with the line at rest (no stray gap, no half pixel)', () => {
-    // The divider is 1px wide on desktop and 3px under `pointer: coarse`, where
-    // the widening exists so the line reads as draggable on touch. Centring a
-    // 1px line inside a 3px divider leaves a 1px gap either side — which reads
-    // as stray padding. Filling the box gives the line the divider's own width
-    // and keeps it on the pixel grid at both widths.
-    const src = readSource()
-    const style = src.slice(src.indexOf('<style'))
-
-    // The two orientations share one rule (they differ only in which axis
-    // `inset` covers), so match the combined selector.
-    const m = style.match(
-      /\.split-view__divider--horizontal \.split-view__gutter-line,\s*\.split-view__divider--vertical \.split-view__gutter-line \{([^}]*)\}/,
-    )
-    expect(m, 'resting gutter-line rule must exist').not.toBeNull()
-    const resting = m![1]
-    expect(resting, 'resting line must fill the divider').toContain('inset: 0')
-    expect(resting, 'resting line must not use 50%').not.toContain('50%')
-    expect(resting, 'resting line must not be transformed').not.toContain('transform')
-    // A fixed width/height would reintroduce the gap on touch.
-    expect(resting, 'resting line must not hard-code its thickness').not.toMatch(
-      /\b(width|height):\s*1px/,
-    )
-  })
-
-  it('centres the drag stripe on a whole pixel', () => {
-    // While dragging the divider widens to 12px; a 1px stripe cannot be centred
-    // there on a whole pixel, so the rule widens it to 2px.
-    const src = readSource()
-    const style = src.slice(src.indexOf('<style'))
-    expect(style).toMatch(
-      /\.split-view__divider--horizontal\.split-view__divider--dragging \.split-view__gutter-line \{[^}]*calc\(\(100% - 2px\) \/ 2\)/,
-    )
-    expect(style).toMatch(
-      /\.split-view__divider--vertical\.split-view__divider--dragging \.split-view__gutter-line \{[^}]*calc\(\(100% - 2px\) \/ 2\)/,
-    )
+  it('consumes the shared line element instead of its own', () => {
+    // The inner line moved to assets/resize-divider.css so both dividers share
+    // one definition. A leftover local class would silently reintroduce the
+    // duplicated (and drift-prone) copy.
+    mountDivider()
+    expect(wrapper!.find('.resize-divider__line').exists()).toBe(true)
+    expect(wrapper!.find('.split-view__gutter-line').exists()).toBe(false)
+    expect(wrapper!.find('.split-view__divider').classes()).toContain('resize-divider')
   })
 })
