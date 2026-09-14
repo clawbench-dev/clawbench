@@ -29,11 +29,17 @@ export interface UpgradeState {
   error_code: string
   error: string
   /**
-   * Non-empty when the release signature could not be verified and the
-   * download will only be checked against its integrity hash. Shown to the
-   * user because an unauthenticated install is materially weaker.
+   * Human-readable text shown when this release cannot be fully verified, or
+   * empty when it verifies. Display only — see verification_issues.
    */
   verification_warning?: string
+  /**
+   * The stable identity of the same problems, as sorted issue codes. Echoed
+   * back on start and compared by the service, because the message embeds the
+   * registry base and error detail and so can differ between two fetches of an
+   * identical situation.
+   */
+  verification_issues?: string
 }
 
 /** Failure id emitted when the install directory is not writable. */
@@ -75,6 +81,7 @@ const state = reactive<UpgradeState>({
   error_code: '',
   error: '',
   verification_warning: '',
+  verification_issues: '',
 })
 
 const checking = ref(false)
@@ -94,11 +101,16 @@ const installDir = ref('')
 // `docker pull`. Kept outside `state` for the same reason as installWritable.
 const isDocker = ref(false)
 
-// Non-empty when the release signature could not be verified, so the download
-// will only be integrity-checked. Reported by /api/upgrade/check and also
-// carried by upgrade_update events; kept as a ref so the pre-upgrade check
-// response can set it directly.
+// Non-empty when this release cannot be fully verified. Human-readable text,
+// for display only. Reported by /api/upgrade/check and also carried by
+// upgrade_update events; kept as a ref so the check response can set it.
 const verificationWarning = ref('')
+
+// The stable identity of the same problems, as sorted issue codes. This — not
+// the message — is echoed back on start and compared by the service, because
+// the message embeds the registry base and error detail and so can differ
+// between two fetches of an identical situation.
+const verificationIssues = ref('')
 
 let wsUnsubscribe: (() => void) | null = null
 let reconnectPollTimer: ReturnType<typeof setInterval> | null = null
@@ -116,6 +128,7 @@ function ensureWsListener() {
     // Mirror the warning into its ref so both the check response and the WS
     // stream drive the same piece of UI state.
     verificationWarning.value = d.verification_warning ?? ''
+    verificationIssues.value = d.verification_issues ?? ''
   })
 }
 
@@ -251,8 +264,14 @@ export function useUpgrade() {
   ensureWsWatch()
   ensureCompletionWatch()
 
-  /** Check for available upgrade */
-  async function checkUpgrade(): Promise<void> {
+  /**
+   * Check for available upgrade.
+   *
+   * Returns false when the check itself failed, which the caller must not
+   * treat as "nothing to upgrade" — it means the verification warning is
+   * unknown, so no upgrade may start.
+   */
+  async function checkUpgrade(): Promise<boolean> {
     checking.value = true
     try {
       const data = await apiGet<{
@@ -263,6 +282,7 @@ export function useUpgrade() {
         install_dir?: string
         is_docker?: boolean
         verification_warning?: string
+        verification_issues?: string
       }>('/api/upgrade/check')
       state.current_version = data.current_version
       state.latest_version = data.latest_version
@@ -274,9 +294,12 @@ export function useUpgrade() {
       isDocker.value = data.is_docker === true
       // Absent on older servers — default to empty (no warning).
       verificationWarning.value = data.verification_warning ?? ''
+      verificationIssues.value = data.verification_issues ?? ''
+      return true
     } catch (e) {
       appLog.w(TAG, 'Check failed', e)
       hasUpgrade.value = false
+      return false
     } finally {
       checking.value = false
     }
@@ -304,7 +327,29 @@ export function useUpgrade() {
     // reuse whatever warning the previous attempt happened to leave behind —
     // possibly none, from the reset broadcast at the start of that attempt.
     // Re-checking means the user is always asked about the metadata in play.
-    await checkUpgrade()
+    if (!(await checkUpgrade())) {
+      // The issue fingerprint is unknown, so there is nothing to confirm against
+      // and the upgrade must not start. checkUpgrade sets hasUpgrade=false on
+      // failure, which hides the retry button, but a failed check says nothing
+      // about whether an upgrade exists — restore the last known answer so a
+      // transient blip does not strand the user. Guarded on latest_version
+      // because that is only set by a successful check.
+      if (state.latest_version) hasUpgrade.value = state.latest_version !== state.current_version
+      state.error_code = ''
+      // state.error only renders inside the failure block, which requires
+      // phase === 'failed'. That holds when the dialog is the entry point, but
+      // not when the startup prompt called us — there the overlay has already
+      // closed itself, so without a dialog the user would see nothing at all.
+      if (state.phase === 'failed') {
+        state.error = gt('upgrade.checkFailedRetry')
+      } else {
+        state.error = ''
+        await useDialog().alert(gt('upgrade.checkFailedRetry'), {
+          title: gt('upgrade.checkFailedTitle'),
+        })
+      }
+      return
+    }
 
     if (!(await confirmUnverifiedUpgrade())) return
 
@@ -318,7 +363,7 @@ export function useUpgrade() {
     state.error_code = ''
     try {
       await apiPost('/api/upgrade/start', {
-        verification_warning: verificationWarning.value,
+        verification_issues: verificationIssues.value,
       })
     } catch (e) {
       appLog.e(TAG, 'Start failed', e)
@@ -418,6 +463,7 @@ export function useUpgrade() {
     installDir,
     isDocker,
     verificationWarning,
+    verificationIssues,
     isInProgress,
     isRestarting,
     isCompleted,

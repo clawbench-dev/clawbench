@@ -243,7 +243,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	// --- Session ---
 	if cfg.Session.MaxCount <= 0 {
-		cfg.Session.MaxCount = 20
+		cfg.Session.MaxCount = 15
 	}
 	// ArchiveRetentionEnabled: bool zero-value (false) is intentional default.
 	// Use presence map to distinguish "user wrote false" from "user omitted the field".

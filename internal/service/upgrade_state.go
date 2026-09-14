@@ -34,10 +34,14 @@ type UpgradeState struct {
 	// survive a retry and mislabel an unrelated failure.
 	ErrorCode string `json:"error_code"`
 	Error     string `json:"error,omitempty"`
-	// VerificationWarning is non-empty when the release signature could not be
-	// verified and the upgrade was downgraded to the integrity check alone.
-	// Surfaced to the user because an unauthenticated install is weaker.
+	// VerificationWarning is the human-readable text shown to the user when this
+	// release cannot be fully verified, listing every reason (an uncheckable
+	// signature, a missing integrity hash). Presentation only.
 	VerificationWarning string `json:"verification_warning"`
+	// VerificationIssues is the stable identity of the same problems, as sorted
+	// issue codes. This is what the client echoes back and the service compares,
+	// so it must not vary with wording, registry routing or failure mode.
+	VerificationIssues string `json:"verification_issues"`
 }
 
 var (
@@ -121,13 +125,14 @@ func SetUpgradeVersions(current, latest string) {
 	upgradeState.LatestVer = latest
 }
 
-// SetUpgradeVerificationWarning records that the release signature could not be
-// verified, so the UI can warn the user that the download will only be checked
-// against its integrity hash.
-func SetUpgradeVerificationWarning(warning string) {
+// SetUpgradeVerificationWarning records that this release cannot be fully
+// verified, so the UI can tell the user before they commit. The message is for
+// display; the fingerprint is what an acknowledgment is later compared against.
+func SetUpgradeVerificationWarning(warning, issues string) {
 	upgradeMu.Lock()
 	defer upgradeMu.Unlock()
 	upgradeState.VerificationWarning = warning
+	upgradeState.VerificationIssues = issues
 }
 
 // SetUpgradeBackupPath records the backup file path.

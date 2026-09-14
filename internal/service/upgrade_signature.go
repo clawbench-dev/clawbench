@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -69,9 +70,87 @@ func isOfficialRegistry(base string) bool {
 	return base == npmjsRegistryBase || base == npmMirrorRegistryBase
 }
 
+// Verification issue codes.
+//
+// These codes, not the human-readable messages, are the identity of a
+// verification problem: the client echoes them back on start and the service
+// compares them to decide whether the user consented to *this* situation.
+//
+// Codes must therefore be stable across two independent registry fetches for
+// the same logical problem. That rules out encoding anything transport- or
+// routing-dependent — the raw error text, the registry base that answered, and
+// which of several equivalent branches matched. Those belong in the message,
+// which is presentation only and may change freely.
+const (
+	// The registry supplied a signature but no integrity hash, so the signed
+	// payload cannot be reconstructed.
+	VerifyIssueSignatureWithoutIntegrity = "signature_without_integrity"
+
+	// The registry returned neither a signature nor an integrity hash.
+	VerifyIssueNeitherSignatureNorIntegrity = "neither_signature_nor_integrity"
+
+	// The registry did not sign this release. Deliberately not split by whether
+	// the registry is official: which registry answered depends on the fallback
+	// order and on transient reachability, so splitting would make the code
+	// unstable. The message still says which case it was.
+	VerifyIssueSignatureMissing = "signature_missing"
+
+	// npm's signing keys could not be fetched, so the signature could not be
+	// checked at all.
+	VerifyIssueSignatureKeysUnreachable = "signature_keys_unreachable"
+
+	// A signature was present and did not verify against npm's published keys.
+	VerifyIssueSignatureInvalid = "signature_invalid"
+
+	// The registry supplied no integrity hash, so the download cannot be
+	// checked for corruption or tampering.
+	VerifyIssueNoIntegrityHash = "no_integrity_hash"
+)
+
+// verificationIssue pairs a stable code with the message shown to the user.
+type verificationIssue struct {
+	Code    string
+	Message string
+}
+
+// verificationFingerprint renders issues as the value the client echoes back
+// and the service compares. Sorting and de-duplicating makes it independent of
+// the order issues were discovered in, so adding a check later cannot silently
+// invalidate existing acknowledgments.
+func verificationFingerprint(issues []verificationIssue) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	codes := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		codes = append(codes, issue.Code)
+	}
+	sort.Strings(codes)
+
+	unique := codes[:0]
+	for i, code := range codes {
+		if i == 0 || code != codes[i-1] {
+			unique = append(unique, code)
+		}
+	}
+	return strings.Join(unique, ",")
+}
+
+// verificationMessages joins the human-readable messages, in the order the
+// checks produced them.
+func verificationMessages(issues []verificationIssue) string {
+	msgs := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if msg := strings.TrimSpace(issue.Message); msg != "" {
+			msgs = append(msgs, msg)
+		}
+	}
+	return strings.Join(msgs, " ")
+}
+
 // verifyRegistrySignature checks npm's registry signature over the package
-// identity and integrity hash, and returns a human-readable warning describing
-// why verification could not be completed.
+// identity and integrity hash, and returns the issues that prevented
+// verification (empty when the signature verified).
 //
 // It never fails the upgrade. This makes the signature an advisory check, not a
 // gate, and the consequence should be stated plainly: a registry that omits the
@@ -81,10 +160,12 @@ func isOfficialRegistry(base string) bool {
 // does carry a signature (for example a proxy that passes npm's signatures
 // through), and a stale signature that a naive mirror failed to strip.
 //
-// The warning is what keeps the downgrade visible: the caller surfaces it and
-// the user decides whether to proceed. Refusing outright would strand users
-// whose network cannot reach npmjs, or whose mirror legitimately repackages
-// tarballs.
+// The messages keep the downgrade visible: the caller surfaces them and the
+// user decides whether to proceed. Refusing outright would strand users whose
+// network cannot reach npmjs, or whose mirror legitimately repackages tarballs.
+//
+// The returned codes are what the acknowledgment is compared against, so they
+// must not vary with how the request happened to fail — see the codes above.
 //
 // An empty return means the signature was verified. The one check that does
 // still abort an upgrade lives in downloadAndExtract: a tarball whose bytes do
@@ -93,49 +174,63 @@ func isOfficialRegistry(base string) bool {
 //
 // Integrity is required to reconstruct the signed payload; without it the
 // signature cannot be checked at all.
-func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string, sigs []npmSignature, registryBase string) string {
+func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string, sigs []npmSignature, registryBase string) []verificationIssue {
 	if integrity == "" {
 		if len(sigs) > 0 {
 			slog.Warn("upgrade: signatures present but dist.integrity missing",
 				"registry", registryBase, "package", pkg, "version", version)
-			return fmt.Sprintf("The registry %s supplied a signature but no integrity hash, so the "+
-				"release could not be authenticated.", registryBase)
+			return []verificationIssue{{
+				Code: VerifyIssueSignatureWithoutIntegrity,
+				Message: fmt.Sprintf("The registry %s supplied a signature but no integrity hash, so the "+
+					"release could not be authenticated.", registryBase),
+			}}
 		}
 		if isOfficialRegistry(registryBase) {
 			slog.Warn("upgrade: official registry returned neither signature nor integrity",
 				"registry", registryBase, "package", pkg, "version", version)
-			return fmt.Sprintf("The registry %s returned neither a signature nor an integrity hash, so "+
-				"this release could not be authenticated.", registryBase)
+			return []verificationIssue{{
+				Code: VerifyIssueNeitherSignatureNorIntegrity,
+				Message: fmt.Sprintf("The registry %s returned neither a signature nor an integrity hash, so "+
+					"this release could not be authenticated.", registryBase),
+			}}
 		}
-		return ""
+		return nil
 	}
 
 	if len(sigs) == 0 {
 		slog.Warn("upgrade: registry provided no signature",
 			"registry", registryBase, "package", pkg, "version", version)
+		msg := fmt.Sprintf("The registry %s did not sign this release, so it could not be "+
+			"authenticated against npm's signing keys.", registryBase)
 		if isOfficialRegistry(registryBase) {
 			// npm signs everything it publishes, so this is anomalous for an
-			// official registry and worth saying so plainly.
-			return fmt.Sprintf("The official registry %s returned no signature for this release. npm signs "+
+			// official registry and worth saying so plainly. The code stays the
+			// same either way — which registry answered is routing, not reason.
+			msg = fmt.Sprintf("The official registry %s returned no signature for this release. npm signs "+
 				"every published version, so this is unexpected — the release could not be authenticated.",
 				registryBase)
 		}
-		return fmt.Sprintf("The registry %s did not sign this release, so it could not be "+
-			"authenticated against npm's signing keys.", registryBase)
+		return []verificationIssue{{Code: VerifyIssueSignatureMissing, Message: msg}}
 	}
 
 	keys, err := fetchNpmSigningKeys(ctx)
 	if err != nil {
 		slog.Warn("upgrade: cannot reach npm signing keys — signature not verified",
 			"error", err, "package", pkg, "version", version)
-		return fmt.Sprintf("The release signature could not be verified because npm's signing keys were "+
-			"unreachable (%v), so the release could not be authenticated.", err)
+		// Deliberately excludes the underlying error text: the code is compared
+		// across two separate requests, and a transport error's message varies
+		// between attempts (timeout, refused, DNS). The detail is in the log.
+		return []verificationIssue{{
+			Code: VerifyIssueSignatureKeysUnreachable,
+			Message: "The release signature could not be verified because npm's signing keys were " +
+				"unreachable, so the release could not be authenticated.",
+		}}
 	}
 
 	payload := fmt.Sprintf("%s@%s:%s", pkg, version, integrity)
 
 	// sigs is non-empty here, so the loop always runs and every iteration
-	// either records a failure or returns "" — lastErr is set if we fall out.
+	// either records a failure or returns nil — lastErr is set if we fall out.
 	var lastErr error
 	for _, sig := range sigs {
 		key, ok := findSigningKey(keys, sig.KeyID)
@@ -148,15 +243,18 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 			continue
 		}
 		slog.Info("upgrade: registry signature verified", "keyid", key.KeyID, "package", pkg, "version", version)
-		return ""
+		return nil
 	}
 
 	slog.Warn("upgrade: registry signature verification failed",
 		"registry", registryBase, "package", pkg, "version", version, "error", lastErr)
-	return fmt.Sprintf("The release signature from %s did not verify (%v), so the release could not be "+
-		"authenticated. A mirror that repackages the tarball changes its integrity hash and thereby "+
-		"invalidates the original signature, but a tampered or substituted release produces the same "+
-		"result — the two cannot be told apart from here.", registryBase, lastErr)
+	return []verificationIssue{{
+		Code: VerifyIssueSignatureInvalid,
+		Message: fmt.Sprintf("The release signature from %s did not verify (%v), so the release could not be "+
+			"authenticated. A mirror that repackages the tarball changes its integrity hash and thereby "+
+			"invalidates the original signature, but a tampered or substituted release produces the same "+
+			"result — the two cannot be told apart from here.", registryBase, lastErr),
+	}}
 }
 
 // findSigningKey returns the key matching keyid.

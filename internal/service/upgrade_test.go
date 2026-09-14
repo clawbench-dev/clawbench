@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -438,11 +439,12 @@ func TestResolveExpectedDigest_IntegrityWinsOverShasum(t *testing.T) {
 // digest plus a warning. The upgrade proceeds, but nothing is checked, so the
 // user must be told.
 func TestResolveExpectedDigest_NeitherField_WarnsAndProceeds(t *testing.T) {
-	digest, warning, err := resolveExpectedDigest("", "")
+	digest, issues, err := resolveExpectedDigest("", "")
 	require.NoError(t, err, "a missing hash must not block the upgrade")
 	assert.True(t, digest.unverified, "the digest must be marked unverified")
 	assert.Nil(t, digest.hash)
-	assert.Contains(t, warning, "no integrity hash")
+	assert.Contains(t, verificationMessages(issues), "no integrity hash")
+	assert.Equal(t, VerifyIssueNoIntegrityHash, verificationFingerprint(issues))
 }
 
 // The unverified digest must pass verification unconditionally — there is
@@ -475,10 +477,11 @@ func TestExpectedDigest_UnverifiedPassesWhereVerifiedWouldFail(t *testing.T) {
 }
 
 func TestResolveExpectedDigest_WhitespaceOnly_WarnsAndProceeds(t *testing.T) {
-	digest, warning, err := resolveExpectedDigest("   ", "\t")
+	digest, issues, err := resolveExpectedDigest("   ", "\t")
 	require.NoError(t, err)
 	assert.True(t, digest.unverified)
-	assert.Contains(t, warning, "no integrity hash")
+	assert.Contains(t, verificationMessages(issues), "no integrity hash")
+	assert.Equal(t, VerifyIssueNoIntegrityHash, verificationFingerprint(issues))
 }
 
 // An algorithm we cannot compute must fail closed instead of skipping.
@@ -617,28 +620,54 @@ func TestEqualHashes_Empty(t *testing.T) {
 	assert.True(t, equalHashes([]byte{}, []byte{}))
 }
 
-// --- joinWarnings ---
+// --- verification issues ---
 
 // A release can be unauthenticated for more than one reason at once; the user
 // must see all of them, not just the last one computed.
-func TestJoinWarnings_CombinesDistinctReasons(t *testing.T) {
-	got := joinWarnings("signature could not be verified", "no integrity hash")
+func TestVerificationMessages_CombinesDistinctReasons(t *testing.T) {
+	got := verificationMessages([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "signature could not be verified"},
+		{Code: VerifyIssueNoIntegrityHash, Message: "no integrity hash"},
+	})
 	assert.Equal(t, "signature could not be verified no integrity hash", got)
 }
 
-func TestJoinWarnings_SkipsEmptyParts(t *testing.T) {
-	assert.Equal(t, "only this", joinWarnings("", "only this"))
-	assert.Equal(t, "only this", joinWarnings("only this", ""))
-	assert.Equal(t, "only this", joinWarnings("  ", "only this"))
+func TestVerificationMessages_SkipsEmptyMessages(t *testing.T) {
+	assert.Equal(t, "only this", verificationMessages([]verificationIssue{
+		{Code: "a", Message: ""}, {Code: "b", Message: "only this"},
+	}))
+	assert.Equal(t, "", verificationMessages(nil))
 }
 
-func TestJoinWarnings_AllEmpty(t *testing.T) {
-	assert.Equal(t, "", joinWarnings("", ""))
-	assert.Equal(t, "", joinWarnings())
+// The fingerprint is what the acknowledgment is compared against, so it must be
+// independent of the order issues happened to be discovered in — otherwise
+// reordering two checks would silently invalidate every outstanding consent.
+func TestVerificationFingerprint_IsOrderIndependent(t *testing.T) {
+	a := verificationFingerprint([]verificationIssue{{Code: "zz"}, {Code: "aa"}})
+	b := verificationFingerprint([]verificationIssue{{Code: "aa"}, {Code: "zz"}})
+	assert.Equal(t, "aa,zz", a)
+	assert.Equal(t, a, b)
 }
 
-func TestJoinWarnings_TrimsParts(t *testing.T) {
-	assert.Equal(t, "a b", joinWarnings("  a  ", "  b  "))
+func TestVerificationFingerprint_Deduplicates(t *testing.T) {
+	got := verificationFingerprint([]verificationIssue{{Code: "aa"}, {Code: "aa"}})
+	assert.Equal(t, "aa", got)
+}
+
+func TestVerificationFingerprint_EmptyWhenVerified(t *testing.T) {
+	assert.Equal(t, "", verificationFingerprint(nil))
+}
+
+// The fingerprint must not embed the message, which carries the registry base
+// and error detail and therefore varies between two fetches of the same state.
+func TestVerificationFingerprint_IgnoresMessageText(t *testing.T) {
+	a := verificationFingerprint([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "The registry https://a.example did not sign this release."},
+	})
+	b := verificationFingerprint([]verificationIssue{
+		{Code: VerifyIssueSignatureMissing, Message: "The official registry https://b.example returned no signature."},
+	})
+	assert.Equal(t, a, b, "the same problem must fingerprint identically regardless of wording")
 }
 
 // --- throttledProgress ---
@@ -1428,6 +1457,7 @@ func TestExpectedDigest_VerifyRealSHA512(t *testing.T) {
 type unverifiedMirrorHarness struct {
 	tarballHits int32
 	warning     string
+	issues      string
 }
 
 func newUnverifiedMirrorHarness(t *testing.T) *unverifiedMirrorHarness {
@@ -1497,6 +1527,8 @@ func newUnverifiedMirrorHarness(t *testing.T) *unverifiedMirrorHarness {
 	require.NoError(t, err)
 	require.NotEmpty(t, probe.VerificationWarning, "precondition: the mirror supplies no hash")
 	h.warning = probe.VerificationWarning
+	h.issues = probe.VerificationIssues
+	require.NotEmpty(t, h.issues, "precondition: the fingerprint must be present too")
 
 	return h
 }
@@ -1506,7 +1538,7 @@ func newUnverifiedMirrorHarness(t *testing.T) *unverifiedMirrorHarness {
 func TestPerformUpgrade_UnverifiedWithAcknowledgmentProceeds(t *testing.T) {
 	h := newUnverifiedMirrorHarness(t)
 
-	performUpgrade(context.Background(), h.warning)
+	performUpgrade(context.Background(), h.issues)
 
 	s := GetUpgradeState()
 	assert.Contains(t, s.VerificationWarning, "no integrity hash",
@@ -1540,7 +1572,7 @@ func TestPerformUpgrade_UnverifiedWithoutAcknowledgmentRefused(t *testing.T) {
 func TestPerformUpgrade_StaleAcknowledgmentRefused(t *testing.T) {
 	h := newUnverifiedMirrorHarness(t)
 
-	performUpgrade(context.Background(), "some other warning the user saw earlier")
+	performUpgrade(context.Background(), "some_other_problem_code")
 
 	s := GetUpgradeState()
 	assert.Equal(t, UpgradePhaseFailed, s.Phase)
@@ -1569,9 +1601,11 @@ func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
 	pkg, err := getPlatformPkg()
 	require.NoError(t, err)
 
+	var tarballHits int32
 	tarball, integrity := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
 	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
+			atomic.AddInt32(&tarballHits, 1)
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
 			_, _ = w.Write(tarball)
 			return
@@ -1616,6 +1650,11 @@ func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
 	performUpgrade(context.Background(), "")
 
 	s := GetUpgradeState()
+	// The download happening is the real signal that the gate let this through.
+	// Asserting only on the error code would pass for any later failure — the
+	// fake binary cannot be exec'd, so a downstream error is the likely outcome.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&tarballHits),
+		"a verified release must reach the download without an acknowledgment")
 	assert.NotEqual(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode,
 		"a verified release must not be refused for a missing acknowledgment")
 }
@@ -1650,10 +1689,26 @@ func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
 }
 
+// captureLogs redirects the default slog logger into a buffer for the duration
+// of the test and returns the accumulated text. Needed because the behavior
+// under test is which log line is emitted, which no return value exposes.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return buf.String
+}
+
 // An unverified digest must not be reported as a successful verification. The
 // regression this guards: verify() returns nil for an unverified digest, so a
 // shared code path would log "integrity verified" alongside a hardcoded
 // algorithm that was never applied.
+//
+// This asserts on the log because that is the entire observable effect of the
+// fix — the return value and the extracted bytes are identical either way, so a
+// test that checked only those would pass with the fix reverted.
 func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
@@ -1672,13 +1727,22 @@ func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, digest.unverified, "precondition: no hash means unverified")
 
+	logs := captureLogs(t)
+
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, digest, destPath),
 		"an unverified install must still complete")
 
-	got, readErr := os.ReadFile(destPath)
+	got := logs()
+	assert.NotContains(t, got, "integrity verified",
+		"an unverified install must never be logged as verified")
+	assert.Contains(t, got, "without integrity verification",
+		"the install must be logged as unverified, not silently accepted")
+
+	// The bytes still land, since an unverified digest is not a failure.
+	installed, readErr := os.ReadFile(destPath)
 	require.NoError(t, readErr)
-	assert.Equal(t, binContent, got)
+	assert.Equal(t, binContent, installed)
 }
 
 // A decompression bomb must not be able to fill the disk. The archive here is
@@ -1963,15 +2027,17 @@ func TestSetUpgradeVerificationWarning_RecordsWarning(t *testing.T) {
 	defer ResetUpgradeState()
 
 	const warning = "The release signature could not be verified."
-	SetUpgradeVerificationWarning(warning)
+	SetUpgradeVerificationWarning(warning, "signature_missing")
 
-	assert.Equal(t, warning, GetUpgradeState().VerificationWarning)
+	st := GetUpgradeState()
+	assert.Equal(t, warning, st.VerificationWarning)
+	assert.Equal(t, "signature_missing", st.VerificationIssues)
 }
 
 // ResetUpgradeState must clear the warning, otherwise a retry would keep
 // showing a stale downgrade notice after a successful verified check.
 func TestSetUpgradeVerificationWarning_ClearedByReset(t *testing.T) {
-	SetUpgradeVerificationWarning("stale warning")
+	SetUpgradeVerificationWarning("stale warning", "")
 	ResetUpgradeState()
 	defer ResetUpgradeState()
 

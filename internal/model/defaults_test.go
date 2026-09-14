@@ -142,8 +142,8 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Chat.PageSize != 20 {
 		t.Errorf("Chat.PageSize = %d, want 20", cfg.Chat.PageSize)
 	}
-	if cfg.Session.MaxCount != 20 {
-		t.Errorf("Session.MaxCount = %d, want 20", cfg.Session.MaxCount)
+	if cfg.Session.MaxCount != 15 {
+		t.Errorf("Session.MaxCount = %d, want 15", cfg.Session.MaxCount)
 	}
 	if !cfg.PortForward.Enabled {
 		t.Error("PortForward.Enabled should default to true when not in config")
