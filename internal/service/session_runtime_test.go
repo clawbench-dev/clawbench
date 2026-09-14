@@ -364,9 +364,20 @@ func TestForceCancelSession(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel("session-force", cancel)
-	SetSessionRunning("session-force", true)
+	// ForceCancelSession clears the session's queued messages, so it needs a DB.
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(drainTestSchema)
+	require.NoError(t, err)
+	cleanup := SetDBForTest(db, db)
+	defer func() {
+		cleanup()
+		_ = db.Close()
+	}()
+
+	ctx, created := SubmitSessionRun("session-force")
+	require.True(t, created)
 
 	ForceCancelSession("session-force")
 

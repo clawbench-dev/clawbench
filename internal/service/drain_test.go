@@ -15,8 +15,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupDrainTest() {
+// setupDrainTest installs a ws manager for the drain tests and restores the
+// previous one when the test ends.
+//
+// The restore is not optional: the manager is a package-level global, and
+// leaving one installed leaks into every later test in the binary. Tests that
+// emit session events (via SetSessionRunning, CancelSession, …) then reach
+// emitSessionEvent → GetSessionTitle with no test DB configured, which
+// dereferences a nil pool and panics — taking down unrelated tests whose
+// failures look like real bugs.
+func setupDrainTest(t *testing.T) {
+	t.Helper()
+	prev := ws.GetManager()
 	ws.SetManagerForTest(ws.NewManagerForTest())
+	t.Cleanup(func() { ws.SetManagerForTest(prev) })
 }
 
 // drainTestSchema is the chat_history/chat_sessions schema used by drain tests
@@ -71,7 +83,7 @@ func setupDrainSession(t *testing.T, sessionID string) {
 }
 
 func TestDrainLoop_UserCancel_ClearsQueueAndEmitsCancel(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-user-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -101,7 +113,7 @@ func TestDrainLoop_UserCancel_ClearsQueueAndEmitsCancel(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancel_WithQueueIDs_EmitsQueueCancel(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-queue-cancel-event"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -129,7 +141,7 @@ func TestDrainLoop_UserCancel_WithQueueIDs_EmitsQueueCancel(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancel_NoQueueIDs_NoQueueCancelEvent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-no-queue-ids"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -153,7 +165,7 @@ func TestDrainLoop_UserCancel_NoQueueIDs_NoQueueCancelEvent(t *testing.T) {
 }
 
 func TestDrainLoop_ErrorResult_EmitsErrorEvent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-error"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -184,7 +196,7 @@ func TestDrainLoop_ErrorResult_EmitsErrorEvent(t *testing.T) {
 }
 
 func TestDrainLoop_EmptyResult_EmitsErrorWithReason(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-empty"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -213,7 +225,7 @@ func TestDrainLoop_EmptyResult_EmitsErrorWithReason(t *testing.T) {
 }
 
 func TestDrainLoop_NonUserCancelReason_EmitsCancelled(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-other-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -236,7 +248,7 @@ func TestDrainLoop_NonUserCancelReason_EmitsCancelled(t *testing.T) {
 }
 
 func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-empty-queue"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -259,7 +271,7 @@ func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
 }
 
 func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-next-msg"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -295,7 +307,7 @@ func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
 // remaining queued messages must be cleared (not left pending forever) and the
 // loop exits with an error event.
 func TestDrainLoop_QueueMessageReturnsError_StopsLoopAndClearsRest(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-msg-error"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -332,7 +344,7 @@ func TestDrainLoop_QueueMessageReturnsError_StopsLoopAndClearsRest(t *testing.T)
 }
 
 func TestDrainLoop_QueueMessageCancelled_StopsLoop(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-msg-cancel"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -357,7 +369,7 @@ func TestDrainLoop_QueueMessageCancelled_StopsLoop(t *testing.T) {
 }
 
 func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-mixed-qids"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -430,7 +442,7 @@ func TestRetireRunner_ExitsWhenIdle(t *testing.T) {
 // it only flipped queued=0, leaving an indistinguishable "no-reply user
 // message" that loadHistory resurrected).
 func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-cancel-delete"
 	setupDrainSession(t, sessionID)
 
@@ -456,7 +468,7 @@ func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
 // TestCancelQueuedMessage_Idempotent verifies canceling a queueId that is no
 // longer queued (already drained or already canceled) is a no-op and harmless.
 func TestCancelQueuedMessage_Idempotent(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-cancel-idempotent"
 	setupDrainSession(t, sessionID)
 
@@ -470,7 +482,7 @@ func TestCancelQueuedMessage_Idempotent(t *testing.T) {
 // TestClearQueuedMessages_DeletesRows verifies clearing the queue (session
 // cancel / force-cancel) deletes the queued rows outright.
 func TestClearQueuedMessages_DeletesRows(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-clear-delete"
 	setupDrainSession(t, sessionID)
 
@@ -491,7 +503,7 @@ func TestClearQueuedMessages_DeletesRows(t *testing.T) {
 }
 
 func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-persistent-err"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -532,7 +544,7 @@ func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
 }
 
 func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-transient-err"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -579,7 +591,7 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 // must NOT emit a terminal event, because the queued message is exactly what
 // should run next. Contrast with the user-cancel branch, which clears the queue.
 func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-interrupt"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
@@ -614,7 +626,7 @@ func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
 // TestDrainHandleTerminal_UserCancelStillClearsQueue pins the contrast: the
 // existing cancel semantics must be unchanged by the interrupt branch above.
 func TestDrainHandleTerminal_UserCancelStillClearsQueue(t *testing.T) {
-	setupDrainTest()
+	setupDrainTest(t)
 	sessionID := "drain-test-cancel-contrast"
 	setupDrainSession(t, sessionID)
 	defer ClearQueuedMessages(sessionID)
