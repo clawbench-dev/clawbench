@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -394,6 +395,14 @@ func withAuthCookie(req *http.Request, token string) *http.Request {
 		Value: token,
 	})
 	return req
+}
+
+// withAIToken adds a freshly signed AI token header to the request, modeling a
+// local AI subprocess calling back into the API. The caller must have set
+// model.CookieToken, since that is the signing key. The request is mutated in
+// place; callers pass the same request on to the handler.
+func withAIToken(req *http.Request) {
+	req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
 }
 
 // withSessionCookie adds the chat_session_id cookie to the request.

@@ -3,7 +3,8 @@ info:
   title: ClawBench API
   description: |
     ClawBench 的完整 HTTP API。所有 `/api/` 路由默认经 `middleware.Auth`
-    鉴权（会话 Cookie），少数端点刻意免鉴权（见各 operation 的 `security: []`）。
+    鉴权（会话 Cookie，或本机 AI 子进程的短时 `aiToken`），少数端点刻意免鉴权
+    （见各 operation 的 `security: []`）。
     聊天流式内容通过 WebSocket 推送（见 `/api/ai/events/ws`），不在本文件建模。
 
     约定：
@@ -72,6 +73,7 @@ tags:
 
 security:
   - cookieAuth: []
+  - aiToken: []
 
 paths:
   # ── Auth ──────────────────────────────────────────────────────────────────
@@ -3342,6 +3344,14 @@ components:
       in: cookie
       name: clawbench_session
       description: 登录后下发的会话 Cookie；CLI 使用 `<DataDir>/cookie-token`。
+    aiToken:
+      type: apiKey
+      in: header
+      name: X-ClawBench-AI-Token
+      description: |
+        本机 AI 子进程使用的短时令牌，由内置斜杠命令（`/cb-task` 等）在注入提示词时签发，
+        有效期 30 分钟，以 `CookieToken` 做 HMAC 签名。仅接受来自回环地址的请求：
+        地址与签名须同时成立。地址单独不再放行——FRP 隧道的 frpc 亦从 `127.0.0.1` 回拨。
 
   parameters:
     Id:

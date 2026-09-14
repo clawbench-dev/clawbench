@@ -26,10 +26,11 @@ const (
 // contract the server implements. Only behavior rules — things that are not
 // part of the HTTP contract — are written by hand here.
 //
-// Placeholders: {{BASE_URL}}, {{PROJECT_PATH}}, {{SESSION_ID}}
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_PATH}}, {{SESSION_ID}}
 const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
-Base URL: {{BASE_URL}} (no authentication needed from localhost)
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
 
 Endpoints:
 {{ENDPOINTS}}
@@ -45,10 +46,11 @@ If no results found, answer based on your own knowledge — do NOT mention the s
 
 // taskInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "/cb-task ".
-// Placeholders: {{BASE_URL}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}
 const taskInjectTemplate = `[You have access to task management for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
-Base URL: {{BASE_URL}} (no authentication needed from localhost)
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
 
 Endpoints:
 {{ENDPOINTS}}
@@ -73,10 +75,11 @@ Rules:
 
 // usageInjectTemplate is the on-demand instruction template injected when the
 // user sends a message starting with "/cb-usage ".
-// Placeholders: {{BASE_URL}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}, {{NOW}}
+// Placeholders: {{BASE_URL}}, {{AI_TOKEN_HEADER}}, {{AI_TOKEN}}, {{PROJECT_COOKIE}}, {{PROJECT_PATH}}, {{NOW}}
 const usageInjectTemplate = `[You have access to token usage statistics for this request. Use the Bash tool to call the local ClawBench HTTP API with curl.]
 
-Base URL: {{BASE_URL}} (no authentication needed from localhost)
+Base URL: {{BASE_URL}}
+Auth: send the header "{{AI_TOKEN_HEADER}}: {{AI_TOKEN}}" on every request. If a request returns 401 the token has expired — tell the user to re-run the command rather than retrying.
 Current time (UTC): {{NOW}}
 
 Endpoints:
@@ -122,9 +125,11 @@ func clawbenchNow() string {
 
 // clawbenchBaseURL is the absolute base URL an AI subprocess must use to reach
 // this server. The AI runs as a child process, so it has no notion of
-// "same origin" — the scheme and port have to be spelled out. localhost is
-// always correct: the child shares this machine, and localhost requests bypass
-// auth unconditionally.
+// "same origin" — the scheme and port have to be spelled out.
+//
+// localhost is always correct: the child shares this machine, and the address
+// is one of the two conditions IsAITokenRequest checks. The token itself (see
+// applyAuthPlaceholders) is what authorizes the call.
 func clawbenchBaseURL() string {
 	scheme := "http"
 	if model.ConfigInstance.ResolveTLSActive() {
@@ -202,6 +207,20 @@ func clawbenchProjectCookie() string {
 	return model.ScopedCookieName("clawbench_project")
 }
 
+// applyAuthPlaceholders substitutes the AI-token header name and a freshly
+// signed token into a rendered template.
+//
+// A new token is signed on every injection rather than cached, so the validity
+// window starts when the prompt is built and the 30-minute TTL covers the AI's
+// first call. Signing returns "" when no cookie token is configured, which is
+// exactly the no-password case where auth is open anyway.
+//
+// Shared by all three commands so a new command cannot ship without auth.
+func applyAuthPlaceholders(tmpl string) string {
+	tmpl = strings.ReplaceAll(tmpl, "{{AI_TOKEN_HEADER}}", model.AITokenHeader)
+	return strings.ReplaceAll(tmpl, "{{AI_TOKEN}}", model.SignAIToken(time.Now()))
+}
+
 func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
 	endpoints, err := api.RenderCommand(api.CommandChatSearch)
 	if err != nil {
@@ -212,7 +231,7 @@ func renderChatSearchTemplate(projectPath, sessionID string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
-	return tmpl, nil
+	return applyAuthPlaceholders(tmpl), nil
 }
 
 func renderTaskTemplate(projectPath string) (string, error) {
@@ -224,7 +243,7 @@ func renderTaskTemplate(projectPath string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{BASE_URL}}", clawbenchBaseURL())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
-	return tmpl, nil
+	return applyAuthPlaceholders(tmpl), nil
 }
 
 func renderUsageTemplate(projectPath string) (string, error) {
@@ -237,5 +256,5 @@ func renderUsageTemplate(projectPath string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_COOKIE}}", clawbenchProjectCookie())
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	tmpl = strings.ReplaceAll(tmpl, "{{NOW}}", clawbenchNow())
-	return tmpl, nil
+	return applyAuthPlaceholders(tmpl), nil
 }

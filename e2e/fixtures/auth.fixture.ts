@@ -15,11 +15,9 @@ const E2E_PORT = process.env.E2E_PORT || '20100'
  * The session cookie (clawbench_session) persists across navigations within
  * the same browser context, so subsequent tests reuse the same session.
  *
- * NOTE: In current E2E setup, the Go server's auth middleware automatically
- * bypasses authentication for localhost requests. Therefore `needsLogin` is
- * always false and the login code path (lines 29-42) is unreachable. This
- * code is kept for future use when localhost bypass may be disabled for
- * proper auth E2E testing. See auth.spec.ts for details.
+ * The server no longer bypasses auth for localhost requests (that bypass also
+ * exposed the API through the FRP tunnel, which dials in from 127.0.0.1), so
+ * this login path is now reachable and exercised on every fresh context.
  *
  * CRITICAL: Many API endpoints (sessions, chat, tasks, files) require the
  * project cookie (clawbench_project) to be set, otherwise they return 403.

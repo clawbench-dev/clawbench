@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 
@@ -430,6 +431,101 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 			assert.Equalf(t, http.StatusOK, w.Code, "%s must not write an error", msg)
 		}
 	})
+}
+
+// --- AI token injection ---
+
+// injectedAIToken extracts the token the template tells the AI to send.
+func injectedAIToken(t *testing.T, prompt string) string {
+	t.Helper()
+	prefix := model.AITokenHeader + ": "
+	idx := strings.Index(prompt, prefix)
+	require.GreaterOrEqual(t, idx, 0, "prompt must carry the %s header", model.AITokenHeader)
+	rest := prompt[idx+len(prefix):]
+	end := strings.IndexByte(rest, '"')
+	require.Greater(t, end, 0, "token must be quoted so the AI knows where it ends")
+	return rest[:end]
+}
+
+// TestProcessClawbenchCommand_InjectsVerifiableToken is the end-to-end guard for
+// the auth change: the token rendered into the prompt must satisfy the exact
+// check the middleware performs. A template that advertises a header the server
+// does not accept would break every built-in command at runtime.
+func TestProcessClawbenchCommand_InjectsVerifiableToken(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.SessionToken = hashPassword("testpass")
+	model.CookieToken = "instance-key"
+	withServerPort(t, 20000)
+
+	for _, msg := range []string{"/cb-chatsearch auth bug", "/cb-task daily", "/cb-usage last week"} {
+		result, err := processClawbenchCommand(msg, "/project", "sess-1")
+		require.NoError(t, err)
+
+		token := injectedAIToken(t, result)
+		req, reqErr := http.NewRequest(http.MethodGet, "/api/tasks", http.NoBody)
+		require.NoError(t, reqErr)
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set(model.AITokenHeader, token)
+
+		assert.Truef(t, middleware.IsAITokenRequest(req),
+			"%s must inject a token the middleware accepts", msg)
+	}
+}
+
+// The token must not be usable from off-machine: the address check is the half
+// of IsAITokenRequest that a leaked token cannot satisfy.
+func TestProcessClawbenchCommand_TokenRejectedOffMachine(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.SessionToken = hashPassword("testpass")
+	model.CookieToken = "instance-key"
+
+	result, err := processClawbenchCommand("/cb-task daily", "/project", "sess-1")
+	require.NoError(t, err)
+	token := injectedAIToken(t, result)
+
+	req, reqErr := http.NewRequest(http.MethodGet, "/api/tasks", http.NoBody)
+	require.NoError(t, reqErr)
+	req.RemoteAddr = "203.0.113.9:12345" // public address
+	req.Header.Set(model.AITokenHeader, token)
+
+	assert.False(t, middleware.IsAITokenRequest(req))
+}
+
+// A fresh token is signed per injection, so the validity window starts when the
+// prompt is built rather than at server start.
+func TestProcessClawbenchCommand_TokenSignedPerInjection(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.SessionToken = hashPassword("testpass")
+	model.CookieToken = "instance-key"
+
+	first, err := processClawbenchCommand("/cb-task a", "/project", "sess-1")
+	require.NoError(t, err)
+
+	// Move past the current second so the encoded expiry must differ.
+	time.Sleep(1100 * time.Millisecond)
+
+	second, err := processClawbenchCommand("/cb-task b", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.NotEqualf(t, injectedAIToken(t, first), injectedAIToken(t, second),
+		"a later injection must carry a later expiry")
+}
+
+// With no configured cookie token there is nothing to sign with; the template
+// must not advertise an empty credential as if it were usable.
+func TestProcessClawbenchCommand_NoCookieTokenInjectsEmpty(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	model.SessionToken = ""
+	model.CookieToken = ""
+
+	result, err := processClawbenchCommand("/cb-task daily", "/project", "sess-1")
+	require.NoError(t, err)
+
+	assert.Contains(t, result, model.AITokenHeader+": \"")
 }
 
 // itoa avoids pulling strconv into the test's import list for one call.

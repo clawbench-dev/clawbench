@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 
@@ -73,34 +74,69 @@ func TestServeAuthCheck(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
-	t.Run("PasswordSet_LocalhostBypass_Returns200", func(t *testing.T) {
+	// Loopback alone is no longer sufficient: /api/me must agree with the Auth
+	// middleware, or the SPA would believe it is logged in while every other
+	// API returns 401.
+	t.Run("PasswordSet_LocalhostWithoutToken_Returns401", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
 		model.SessionToken = hashPassword("testpass")
+		model.CookieToken = "instance-key"
 
 		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
-		// No cookie — should still pass because localhost
+
+		w := callHandler(ServeAuthCheck, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("PasswordSet_LocalhostIPv6WithoutToken_Returns401", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		model.SessionToken = hashPassword("testpass")
+		model.CookieToken = "instance-key"
+
+		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
+		req.RemoteAddr = "[::1]:54321"
+
+		w := callHandler(ServeAuthCheck, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("PasswordSet_LocalhostWithAIToken_Returns200", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		model.SessionToken = hashPassword("testpass")
+		model.CookieToken = "instance-key"
+
+		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
 
 		w := callHandler(ServeAuthCheck, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("PasswordSet_LocalhostIPv6Bypass_Returns200", func(t *testing.T) {
+	t.Run("PasswordSet_RemoteWithAIToken_Returns401", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
 		model.SessionToken = hashPassword("testpass")
+		model.CookieToken = "instance-key"
 
 		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
-		req.RemoteAddr = "[::1]:54321"
-		// No cookie — should still pass because localhost
+		req.RemoteAddr = "192.168.1.50:54321"
+		req.Header.Set(model.AITokenHeader, model.SignAIToken(time.Now()))
 
 		w := callHandler(ServeAuthCheck, req)
 
-		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("LocalhostWithCookie_Returns200", func(t *testing.T) {

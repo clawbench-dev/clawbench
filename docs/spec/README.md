@@ -40,7 +40,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、无条件 localhost 旁路（不可关闭）、隧道场景信任边界限制、按路由认证、API 密钥加密（`agent_api_keys` 已移除）、请求链（含 NoCache）、panic 恢复 |
+| [认证与中间件](infra/auth-and-middleware.md) | SHA-256 密码认证、本机 AI 短时令牌（30 分钟 HMAC，地址+签名双条件）、隧道场景信任边界限制、按路由认证、API 密钥加密（`agent_api_keys` 已移除）、请求链（含 NoCache）、panic 恢复 |
 | [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
 | [SSH 隧道](infra/ssh-tunnel.md) | direct-tcpip 端口映射、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、状态查询走 `/api/ssh/info` |
 | [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |

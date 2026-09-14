@@ -61,6 +61,6 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 - 路由注册的唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`。
 - 字段名与参数名**必须从 handler 代码里抄**：对照 `decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`。**禁止凭路由名望文生义**——这是过去 40+ 处不一致的根因。
 - 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/file/`、`/api/share/`、`/api/chat/quick-send/` 等。
-- 鉴权变化须同步 `security` 标注（默认 `cookieAuth`，免鉴权端点显式写 `security: []`）。
+- 鉴权变化须同步 `security` 标注（默认 `cookieAuth` 或本机 AI 的 `aiToken`，免鉴权端点显式写 `security: []`）。
 - 已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
 - 改完自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。
