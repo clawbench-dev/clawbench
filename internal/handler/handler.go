@@ -275,6 +275,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	registerPublic("/api/health", ServeHealth)
 	registerPublic("/api/me", ServeAuthCheck)
 	register("/api/system/resources", ServeSystemResources)
+	register("/api/ws/delivery-stats", ServeWSDeliveryStats)
 	register("/api/roots", ServeRoots)
 	register("/api/config", ServeConfig)
 	register("/api/config/test", ServeConfigTest)
