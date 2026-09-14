@@ -7,6 +7,8 @@ import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
 import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 // Mock highlightCode
 vi.mock('@/utils/globals', () => ({
@@ -2383,36 +2385,74 @@ describe('CodeLinkPreview.vue — docked outside-click behaviour', () => {
   })
 })
 
-describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
-  it('collapses to a single row: no title row, name+meta and Close in the toolbar row', async () => {
-    _setIsPCForTest(false)
+describe('CodeLinkPreview.vue — docked pane is ONE row on every platform', () => {
+  // The docked pane used to be two rows on desktop (title row + meta row) and
+  // one row only on touch, so the same pane had two different shapes depending
+  // on the device. It is now a single row on both — these tests pin the
+  // platform-independence, because the previous split was keyed off isPC.
+  const FILE = 'android/build.gradle'
+
+  function mountDocked() {
+    const preview = createMockPreviewController({
+      target: ref({ filePath: FILE, anchorEl: document.createElement('span') }),
+    })
+    return mount(CodeLinkPreview, {
+      props: { preview, docked: true },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+  }
+
+  it('renders a single row with no title row (desktop)', async () => {
+    _setIsPCForTest(true)
     try {
-      const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
-      })
-      const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: true },
-        global: { plugins: [i18n] },
-        attachTo: document.body,
-      })
+      const wrapper = mountDocked()
       await flushPromises()
 
-      const card = wrapper.find('.code-link-preview-floating')
-      expect(card.classes()).toContain('is-compact')
-
-      // The desktop title row (with the file path) is not rendered at all, so
-      // the pane has exactly one row of chrome.
+      // The title row (with the file path) is not rendered at all, so the pane
+      // has exactly one row of chrome.
       expect(wrapper.find('.code-preview-header').exists()).toBe(false)
       expect(wrapper.find('.code-preview-title-dir').exists()).toBe(false)
 
-      // The file name is the only thing on the left — the line/size summary
-      // is deliberately omitted in this mode.
+      // The file name is the only thing on the left — the line/size summary is
+      // deliberately omitted; the file manager's breadcrumb already shows the
+      // directory, so the path is not lost.
       expect(wrapper.find('.code-preview-meta .code-preview-compact-name').text()).toBe('build.gradle')
-      expect(wrapper.find('.code-preview-compact-meta').exists()).toBe(false)
       expect(wrapper.find('.code-preview-meta-info').text()).toBe('build.gradle')
 
-      // Close lives in that same row, but OUTSIDE the scrollable tool strip —
-      // as a child it would scroll out of reach for a code file (10 tools).
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('renders the identical single row on touch (no is-compact variant)', async () => {
+    _setIsPCForTest(false)
+    try {
+      const wrapper = mountDocked()
+      await flushPromises()
+
+      // `is-compact` is gone entirely: the docked shape must not depend on the
+      // platform, so there is no second class to diverge.
+      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-header').exists()).toBe(false)
+      expect(wrapper.find('.code-preview-meta .code-preview-compact-name').text()).toBe('build.gradle')
+      expect(wrapper.find('.code-preview-meta-info').text()).toBe('build.gradle')
+
+      wrapper.unmount()
+    } finally {
+      _resetPlatformForTest()
+    }
+  })
+
+  it('puts Close in the row but OUTSIDE the scrollable tool strip', async () => {
+    _setIsPCForTest(true)
+    try {
+      const wrapper = mountDocked()
+      await flushPromises()
+
+      // As a child of the strip it would scroll out of reach for a code file
+      // with ~10 tools.
       const close = wrapper.find('.code-preview-meta > .code-preview-btn.close')
       expect(close.exists()).toBe(true)
       expect(wrapper.find('.code-preview-actions').element.contains(close.element)).toBe(false)
@@ -2423,48 +2463,86 @@ describe('CodeLinkPreview.vue — compact layout (docked on touch)', () => {
     }
   })
 
-  it('keeps the two-row desktop layout when not compact', async () => {
+  it('keeps the two-row layout for a FLOATING card (desktop only)', async () => {
+    // Only the docked pane collapsed. A floating card still needs its title row:
+    // it is a draggable window with no breadcrumb above it. The floating card is
+    // teleported to <body>, so it is queried off the document.
     _setIsPCForTest(true)
     try {
       const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
+        target: ref({ filePath: FILE, anchorEl: document.createElement('span') }),
       })
       const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: true },
+        props: { preview, docked: false },
         global: { plugins: [i18n] },
+        attachTo: document.body,
       })
       await flushPromises()
 
-      const card = wrapper.find('.code-link-preview-floating')
-      expect(card.classes()).not.toContain('is-compact')
-      // Title row present with the directory path; Close in the header.
-      expect(wrapper.find('.code-preview-header').exists()).toBe(true)
-      expect(wrapper.find('.code-preview-title-dir').exists()).toBe(true)
-      expect(wrapper.find('.code-preview-header-actions .close').exists()).toBe(true)
-      // No compact name, and no second close in the meta row.
-      expect(wrapper.find('.code-preview-compact-name').exists()).toBe(false)
-      expect(wrapper.find('.code-preview-meta > .code-preview-btn.close').exists()).toBe(false)
+      expect(document.querySelector('.code-link-preview-floating .code-preview-header')).not.toBeNull()
+      expect(document.querySelector('.code-preview-title-dir')).not.toBeNull()
+      expect(document.querySelector('.code-preview-header-actions .close')).not.toBeNull()
+      // The meta row shows the line/size summary, not the file name.
+      expect(document.querySelector('.code-preview-compact-name')).toBeNull()
+      expect(document.querySelector('.code-preview-meta > .code-preview-btn.close')).toBeNull()
       wrapper.unmount()
     } finally {
       _resetPlatformForTest()
     }
   })
+})
 
-  it('does not use the compact layout for a floating card on touch', async () => {
-    _setIsPCForTest(false)
-    try {
-      const preview = createMockPreviewController({
-        target: ref({ filePath: 'android/build.gradle', anchorEl: document.createElement('span') }),
-      })
-      const wrapper = mount(CodeLinkPreview, {
-        props: { preview, docked: false },
-        global: { plugins: [i18n] },
-      })
-      await flushPromises()
-      expect(wrapper.find('.code-link-preview-floating.is-compact').exists()).toBe(false)
-      wrapper.unmount()
-    } finally {
-      _resetPlatformForTest()
+describe('code-link-preview.css — docked row metrics are platform-independent', () => {
+  // The row height and button size are what make the two platforms look the
+  // same, so they must be keyed off `.is-docked` alone. jsdom does not evaluate
+  // the stylesheet, hence a source contract (same pattern as
+  // dockedPaneStacking.css.test.ts).
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+
+  it('sizes the docked row and its buttons at 28px', () => {
+    // 28px is the smallest comfortable touch target, so one value serves both a
+    // PC and a phone — that is what lets the shape be shared. The docked rules
+    // come after the floating ones, so match the LAST declaration of each
+    // selector (the earlier `.is-docked .code-preview-meta { cursor }` rule must
+    // not be mistaken for the metrics rule).
+    const lastDecls = (selector: string): string => {
+      const re = new RegExp(
+        selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}',
+        'g',
+      )
+      const all = [...css.matchAll(re)].map((m) => m[1])
+      expect(all.length, `${selector} rule must exist`).toBeGreaterThan(0)
+      return all[all.length - 1]
     }
+
+    const row = lastDecls('.code-link-preview-floating.is-docked .code-preview-meta')
+    expect(row).toMatch(/min-height:\s*28px/)
+
+    const btn = lastDecls('.code-link-preview-floating.is-docked .code-preview-btn')
+    expect(btn).toMatch(/height:\s*28px/)
+    expect(btn).toMatch(/min-width:\s*28px/)
+  })
+
+  it('makes the tool strip scroll horizontally (the sideways-drag affordance)', () => {
+    const actions = css.match(/\.code-link-preview-floating\.is-docked \.code-preview-actions \{([^}]*)\}/)
+    expect(actions, 'docked actions rule must exist').not.toBeNull()
+    expect(actions![1]).toMatch(/overflow-x:\s*auto/)
+  })
+
+  it('has no platform-conditional docked rules left', () => {
+    // A `(pointer: coarse)` or `.is-compact` docked rule is exactly the split
+    // this change removed; reintroducing one would silently desync the two
+    // platforms again. Prose in comments may mention them, so compare against
+    // the comment-free source.
+    const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    const dockedBlocks = code.match(/\.code-link-preview-floating\.is-docked[^{]*\{[^}]*\}/g) || []
+    for (const block of dockedBlocks) {
+      expect(block).not.toContain('is-compact')
+    }
+    // And the compact class itself must be gone from the stylesheet entirely.
+    expect(code).not.toContain('.is-compact')
   })
 })

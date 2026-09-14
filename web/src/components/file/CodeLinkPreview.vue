@@ -269,7 +269,6 @@
         'is-dragging': isDraggingCard,
         'is-media': isMediaView,
         'is-docked': docked,
-        'is-compact': compactLayout,
       }"
       role="dialog"
       :aria-label="t('file.codePreview.title')"
@@ -295,9 +294,9 @@
       </Transition>
 
       <!-- Titlebar / Drag Handle: Row 1 (File Path + Copy Path Button).
-           Hidden in the compact layout, where the toolbar row below is the
-           pane's only chrome (see the meta row). -->
-      <div v-if="!compactLayout" class="code-preview-header" @pointerdown="onDragPointerDown">
+           Floating-only. The docked pane is a single-row layout on BOTH desktop
+           and touch (see the meta row), so it never renders this. -->
+      <div v-if="!docked" class="code-preview-header" @pointerdown="onDragPointerDown">
         <div
           class="code-preview-title"
           :data-tooltip="fullPathTooltipText"
@@ -345,13 +344,15 @@
       </div>
 
       <!-- Row 2: File Meta & Remaining Action Tools.
-           In the compact layout this is the pane's ONLY row: the file name on
-           the left, tools + Close on the right. The line/size summary is
-           omitted there — the name is what identifies the pane. -->
+           In the docked pane this is the ONLY row on both desktop and touch:
+           the file name on the left, tools + Close on the right. The line/size
+           summary is omitted there — the name is what identifies the pane. -->
       <div class="code-preview-meta" @pointerdown="onDragPointerDown">
         <div class="code-preview-meta-info">
-          <!-- Compact carries the file name here, since the title row is gone. -->
-          <template v-if="compactLayout">
+          <!-- Docked carries the file name here, since the title row is gone.
+               One shared markup for both platforms: the docked layout must not
+               differ between a PC and a touch device. -->
+          <template v-if="docked">
             <span class="code-preview-compact-name">{{ fileBaseName }}</span>
             <span v-if="lineRangeText" class="code-preview-line-ref">{{ lineRangeText }}</span>
           </template>
@@ -514,11 +515,11 @@
           </button>
         </div>
 
-        <!-- Compact layout: the title row is gone, so Close sits at the end of
+        <!-- Docked pane: the title row is gone, so Close sits at the end of
              this same row. It is a sibling of the (scrollable) tool strip so a
              long tool set can never scroll it out of reach. -->
         <button
-          v-if="compactLayout"
+          v-if="docked"
           class="code-preview-btn close"
           :title="t('file.codePreview.close')"
           :aria-label="t('file.codePreview.close')"
@@ -658,7 +659,6 @@ import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom } from '@/u
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
-import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
@@ -677,21 +677,25 @@ const { t } = useI18n()
 const { localConfig, setLocalConfig } = useSettingsConfig()
 const switchTab = inject<(tab: string) => void>('switchTab', () => {})
 const activeTab = inject<Ref<string> | undefined>('activeTab', undefined)
-const { isPC } = usePlatformDetect()
 
 /**
- * Compact layout: the docked pane on a touch / narrow device.
+ * The docked pane is ONE row on every platform — no desktop/touch split.
  *
- * A phone leaves the pane only ~200-300px, and the desktop chrome does not fit:
- * the title row spends its width on the full directory path, and the toolbar is
- * squeezed against the meta text. Compact mode instead mirrors the mobile
- * (BottomSheet) mode's toolbar — ONE row — so:
- * - the title row (and its directory path) is not rendered at all;
- * - that single row carries the file name on the left and the tools plus Close
- *   on the right;
- * - the line/size summary is dropped: the name is what identifies the pane.
+ * It used to render a two-row desktop chrome (a title row spending its width on
+ * the full directory path, plus a meta row) and collapse to one row only on
+ * touch. That meant the same pane had two different shapes depending on the
+ * device, and on a PC it burned ~68px of a ~300px pane on chrome. The single
+ * row now carries the file name on the left and the tools plus Close on the
+ * right on both:
+ * - the title row (and its directory path) is not rendered at all — the file
+ *   manager's own breadcrumb sits directly above the pane and already shows the
+ *   directory;
+ * - the line/size summary is dropped: the name is what identifies the pane;
+ * - the tool strip scrolls horizontally when it cannot fit, so the full tool set
+ *   is available at any pane width.
+ *
+ * This is a template/CSS distinction (see `docked` usages), not a computed one.
  */
-const compactLayout = computed(() => props.docked && !isPC.value)
 
 const emit = defineEmits<{
   /** Fired after the preview is dismissed. Docked callers use it to collapse

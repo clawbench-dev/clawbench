@@ -235,20 +235,20 @@ describe('TocDock — drag highlight survives touch', () => {
     const divider = wrapper.find('.toc-dock-divider')
     const el = divider.element as HTMLElement
 
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(false)
 
     pressDivider(divider, 300)
     await nextTick()
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(true)
 
     // Still marked mid-drag — the part `:active` failed to guarantee.
     window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, bubbles: true, clientX: 340 }))
     await nextTick()
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(true)
 
     window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }))
     await nextTick()
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(false)
   })
 
   it('clears the dragging mark on pointercancel', async () => {
@@ -257,46 +257,32 @@ describe('TocDock — drag highlight survives touch', () => {
     const el = divider.element as HTMLElement
     pressDivider(divider, 300)
     await nextTick()
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(true)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(true)
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true }))
     await nextTick()
-    expect(el.classList.contains('toc-dock-divider--dragging')).toBe(false)
+    expect(el.classList.contains('resize-divider--expanded')).toBe(false)
   })
 
-  it('styles the expanded state for both :active and --dragging', () => {
-    // Styling only `:active` is the bug this guards against.
+  it('styles the expanded host band for :active, --expanded and hover', () => {
+    // The host geometry is TocDock's own (the line rules are shared — see
+    // resizeDivider.css.test.ts). Styling only `:active` is the bug this guards
+    // against: touch loses `:active` mid-swipe.
     const src = readSource('file/TocDock.vue')
     const style = src.slice(src.indexOf('<style'))
-    expect(style).toMatch(/\.toc-dock-divider:active,\s*\.toc-dock-divider--dragging/)
-    // The inner line highlight must follow the drag too, not just :active.
-    expect(style).toMatch(/\.toc-dock-divider--dragging \.toc-dock-divider__line/)
+    expect(style).toMatch(/\.toc-dock-divider:active,\s*\.toc-dock-divider\.resize-divider--expanded/)
     // Left-docked shift must apply while dragging, or the highlight sits off-centre.
-    expect(style).toMatch(/\.toc-dock--left \.toc-dock-divider--dragging/)
+    expect(style).toMatch(/\.toc-dock--left \.toc-dock-divider\.resize-divider--expanded/)
   })
 
-  it('fills the divider with the line at rest, and narrows it while dragging', () => {
-    // Same two rules as SplitDivider. At rest the line must fill the divider —
-    // centring a 1px line in this 6px box left an uneven gap (2px left, 3px
-    // right) that read as stray padding. While dragging the divider widens to a
-    // 12px tinted band, so the line narrows to a 2px centre stripe (a 1px line
-    // cannot be centred on a whole pixel in 12px).
-    const src = readSource('file/TocDock.vue')
-    const style = src.slice(src.indexOf('<style'))
-
-    const resting = style.match(/\.toc-dock-divider__line \{([^}]*)\}/)
-    expect(resting, 'resting line rule must exist').not.toBeNull()
-    expect(resting![1], 'resting line must fill the divider').toContain('inset: 0')
-    expect(resting![1], 'resting line must not hard-code 1px').not.toMatch(
-      /\b(width|height):\s*1px/,
-    )
-
-    const dragging = style.match(
-      /\.toc-dock-divider--dragging \.toc-dock-divider__line \{([^}]*)\}/,
-    )
-    expect(dragging, 'drag stripe rule must exist').not.toBeNull()
-    expect(dragging![1], 'drag stripe must be centred on a whole pixel').toContain(
-      'calc((100% - 2px) / 2)',
-    )
+  it('consumes the shared line element instead of its own', () => {
+    // The inner line moved to assets/resize-divider.css so both dividers share
+    // one definition. A leftover local class would silently reintroduce the
+    // duplicated (and drift-prone) copy.
+    const wrapper = mountDock()
+    const el = wrapper.find('.toc-dock-divider').element as HTMLElement
+    expect(wrapper.find('.resize-divider__line').exists()).toBe(true)
+    expect(wrapper.find('.toc-dock-divider__line').exists()).toBe(false)
+    expect(el.classList.contains('resize-divider')).toBe(true)
   })
 })
 

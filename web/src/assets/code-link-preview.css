@@ -853,32 +853,51 @@ body.code-preview-dragging * {
   border-radius: 0;
   box-shadow: none;
   background: var(--bg-primary, #ffffff);
+  /* MUST be reset. The floating rule sets `z-index: var(--z-sheet)` (1200) to
+     sit above the app; docked, the pane is an ordinary layout pane and must
+     lose that stacking order. The split divider is `z-index: 2` and, when
+     hovered/dragged, expands from 1px to 12px — growing ~5.5px past its own box
+     on each side. The lower half lands inside this pane's box, so at 1200 the
+     opaque pane painted over it and only the upper half of the highlight band
+     was visible (the "half glow"). Every other divider has nothing stacked
+     above it at a higher z, which is why only the docked-pane divider looked
+     broken. `auto` (not a low number) keeps the pane out of the stacking game
+     entirely, matching its `position: relative` layout role. */
+  z-index: auto;
 }
-/* The docked pane sits under the file list, so the top edge needs no divider —
-   the SplitDivider already draws it. */
-.code-link-preview-floating.is-docked .code-preview-header {
-  cursor: default;
-}
+/* Docked, the pane is laid out by the caller's split — nothing to drag, so the
+   grab cursors the floating card uses are dropped. */
+.code-link-preview-floating.is-docked .code-preview-header,
 .code-link-preview-floating.is-docked .code-preview-meta {
   cursor: default;
 }
 
-/* ── Compact layout: docked pane on a touch / narrow device ─────────────────
-   Mirrors the mobile (BottomSheet) mode's toolbar rather than restyling the
-   desktop card: ONE row, matching `.code-preview-sheet-row2` — the file name on
-   the left, icon tools plus Close on the right. The desktop title row (file
-   path) is not rendered at all in this mode, and neither is the line/size
-   summary: the name is what identifies the pane. */
-.code-link-preview-floating.is-compact .code-preview-meta {
-  /* Exactly the mobile sheet row's metrics (.code-preview-sheet-row2): a 32px
-     row with 28px buttons — the same weight as the 31px desktop meta row, not
-     a thicker bar. The tight paddings/gaps are what let a 10-tool code file
-     fit beside the file name on a 390px screen without the name collapsing. */
+/* ── Docked pane: ONE row, identical on desktop and touch ───────────────────
+   The docked pane is a single-row layout on BOTH platforms. It used to be
+   two rows on desktop (title row + meta row, ~68px) and one row only on touch,
+   so the same pane had two different shapes depending on the device and the PC
+   version burned ~22% of a ~300px pane on chrome.
+
+   The row mirrors the mobile (BottomSheet) mode's `.code-preview-sheet-row2`:
+   the file name on the left, icon tools plus Close on the right. The title row
+   (file path) is not rendered at all — the file manager's breadcrumb sits
+   directly above the pane — and neither is the line/size summary: the name is
+   what identifies the pane.
+
+   Metrics are shared by both platforms, so these rules key off `.is-docked`
+   alone. Do NOT reintroduce a `(pointer: coarse)` / `is-compact` split here:
+   a platform-conditional docked layout is exactly what this replaced. */
+.code-link-preview-floating.is-docked .code-preview-meta {
+  /* A 28px row with 28px buttons. 28px is the smallest comfortable touch
+     target, so one value satisfies both platforms — that is what makes the
+     shared row possible without short-changing touch. The tight paddings/gaps
+     are what let a 10-tool code file fit beside the file name on a 390px
+     screen without the name collapsing. */
   gap: var(--space-3);
-  min-height: 32px;
+  min-height: 28px;
   padding: var(--space-1) var(--space-4);
 }
-.code-link-preview-floating.is-compact .code-preview-meta-info {
+.code-link-preview-floating.is-docked .code-preview-meta-info {
   /* The file name is the only thing on the left. A code file shows up to 10
      tools, which would otherwise crush the name to zero width — so the name
      keeps a floor and the tool row scrolls instead. */
@@ -890,7 +909,7 @@ body.code-preview-dragging * {
   font-size: var(--font-size-xs);
   overflow: hidden;
 }
-.code-link-preview-floating.is-compact .code-preview-compact-name {
+.code-link-preview-floating.is-docked .code-preview-compact-name {
   font-family: var(--font-ui);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
@@ -899,8 +918,9 @@ body.code-preview-dragging * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.code-link-preview-floating.is-compact .code-preview-actions {
-  /* Scrolls rather than shrinking the name away. */
+.code-link-preview-floating.is-docked .code-preview-actions {
+  /* Scrolls rather than shrinking the name away — this is the "drag sideways"
+     affordance: the full tool set stays reachable at any pane width. */
   flex: 0 1 auto;
   min-width: 0;
   gap: var(--space-2);
@@ -910,7 +930,7 @@ body.code-preview-dragging * {
 }
 /* Close ends the row but lives OUTSIDE the scrollable strip, so a long tool set
    cannot scroll it out of reach. */
-.code-link-preview-floating.is-compact .code-preview-meta > .code-preview-btn.close {
+.code-link-preview-floating.is-docked .code-preview-meta > .code-preview-btn.close {
   flex: 0 0 auto;
   min-width: 28px;
   height: 28px;
@@ -918,23 +938,22 @@ body.code-preview-dragging * {
   margin-left: var(--space-1);
   color: var(--text-secondary, #5f6368);
 }
-.code-link-preview-floating.is-compact .code-preview-actions::-webkit-scrollbar {
+.code-link-preview-floating.is-docked .code-preview-actions::-webkit-scrollbar {
   display: none;
 }
-.code-link-preview-floating.is-compact .code-preview-btn {
-  /* Same 28px target as the mobile sheet's `.icon-only` buttons — the desktop
-     24px control is too small to tap, but a bigger row is what made this feel
-     heavy, so match the mobile mode instead of inventing a new size. */
+.code-link-preview-floating.is-docked .code-preview-btn {
+  /* 28px target on both platforms: the desktop 24px control is too small to
+     tap, and matching the touch size is what keeps the row identical. */
   min-width: 28px;
   height: 28px;
   padding: 0;
   flex-shrink: 0;
 }
-.code-link-preview-floating.is-compact .code-preview-btn svg {
+.code-link-preview-floating.is-docked .code-preview-btn svg {
   width: 14px;
   height: 14px;
 }
-.code-link-preview-floating.is-compact .code-preview-actions-divider {
+.code-link-preview-floating.is-docked .code-preview-actions-divider {
   height: 14px;
   margin: 0 1px;
 }
