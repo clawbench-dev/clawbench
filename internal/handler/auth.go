@@ -116,6 +116,17 @@ func (l *loginLimiter) cleanupLoop() {
 	}
 }
 
+// clientIP returns the request's source IP without its port, for per-IP rate
+// limiting. Falls back to the raw RemoteAddr when it has no port (which is what
+// httptest requests and some proxies produce).
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || ip == "" {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
 // --- Auth handlers ---
 
 // ServeAuthCheck returns 200 if the session cookie is valid, 401 otherwise.
@@ -165,10 +176,7 @@ func ServeLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if remoteIP == "" {
-			remoteIP = r.RemoteAddr
-		}
+		remoteIP := clientIP(r)
 
 		// Rate limiting check (ISS-003c)
 		limiter := getLoginLimiter()

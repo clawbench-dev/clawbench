@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,13 +130,20 @@ func TestIsOfficialRegistry(t *testing.T) {
 // empty return means the signature verified; anything else is the warning the
 // caller surfaces to the user.
 
+// sigWarning calls verifyRegistrySignature and returns the joined message text,
+// which is what the user-facing assertions in this file care about. The codes
+// are asserted separately by the fingerprint tests.
+func sigWarning(ctx context.Context, pkg, version, integrity string, sigs []npmSignature, registryBase string) string {
+	return verificationMessages(verifyRegistrySignature(ctx, pkg, version, integrity, sigs, registryBase))
+}
+
 func TestVerifyRegistrySignature_ValidSignature(t *testing.T) {
 	keys := newTestSigningKeys(t)
 	restore := withKeysEndpoint(t, keys.keysJSON(t))
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.Empty(t, warning, "a verified signature must produce no warning")
 }
@@ -150,7 +158,7 @@ func TestVerifyRegistrySignature_WrongKeyWarns(t *testing.T) {
 
 	// The attacker signs correctly but with a key npm does not publish.
 	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{forged}, npmjsRegistryBase)
 	assert.Contains(t, warning, "not among npm's published keys")
 }
@@ -167,7 +175,7 @@ func TestVerifyRegistrySignature_TamperedIntegrityWarns(t *testing.T) {
 	// Signed for the honest hash...
 	honestSig := keys.sign(t, "pkg", "1.2.3", "sha512-honest")
 	// ...but the response now advertises a different one.
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-tampered",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-tampered",
 		[]npmSignature{honestSig}, npmjsRegistryBase)
 	require.NotEmpty(t, warning, "an unverifiable signature must always warn")
 	assert.Contains(t, warning, "did not verify")
@@ -180,7 +188,7 @@ func TestVerifyRegistrySignature_TamperedVersionWarns(t *testing.T) {
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "pkg", "9.9.9", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "9.9.9", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.NotEmpty(t, warning)
 }
@@ -191,7 +199,7 @@ func TestVerifyRegistrySignature_TamperedPackageNameWarns(t *testing.T) {
 	defer restore()
 
 	sig := keys.sign(t, "real-pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "evil-pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "evil-pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.NotEmpty(t, warning)
 }
@@ -201,7 +209,7 @@ func TestVerifyRegistrySignature_MalformedSignatureWarns(t *testing.T) {
 	restore := withKeysEndpoint(t, keys.keysJSON(t))
 	defer restore()
 
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{{KeyID: keys.keyID, Sig: "!!!not-base64!!!"}}, npmjsRegistryBase)
 	assert.NotEmpty(t, warning)
 }
@@ -214,7 +222,7 @@ func TestVerifyRegistrySignature_MalformedSignatureWarns(t *testing.T) {
 func TestVerifyRegistrySignature_OfficialRegistryWithoutSignatureWarns(t *testing.T) {
 	for _, base := range []string{npmjsRegistryBase, npmMirrorRegistryBase} {
 		t.Run(base, func(t *testing.T) {
-			warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, base)
+			warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, base)
 			assert.Contains(t, warning, "no signature")
 			assert.Contains(t, warning, "unexpected")
 		})
@@ -224,7 +232,7 @@ func TestVerifyRegistrySignature_OfficialRegistryWithoutSignatureWarns(t *testin
 // A custom mirror may be a plain proxy with no signing support; the warning is
 // worded as expected behavior rather than an anomaly.
 func TestVerifyRegistrySignature_CustomMirrorWithoutSignatureWarns(t *testing.T) {
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil,
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", nil,
 		"https://my-nexus.internal/npm")
 	assert.Contains(t, warning, "did not sign this release")
 	assert.NotContains(t, warning, "unexpected")
@@ -238,13 +246,13 @@ func TestVerifyRegistrySignature_CustomMirrorWithBadSignatureWarns(t *testing.T)
 	defer restore()
 
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-different",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-different",
 		[]npmSignature{sig}, "https://my-nexus.internal/npm")
 	assert.Contains(t, warning, "did not verify")
 }
 
 func TestVerifyRegistrySignature_OfficialRegistryNoIntegrityWarns(t *testing.T) {
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "", nil, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "", nil, npmjsRegistryBase)
 	assert.Contains(t, warning, "neither a signature nor an integrity hash")
 }
 
@@ -254,7 +262,7 @@ func TestVerifyRegistrySignature_SignatureWithoutIntegrityWarns(t *testing.T) {
 	defer restore()
 
 	// Without integrity the signed payload cannot be reconstructed.
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "",
 		[]npmSignature{keys.sign(t, "pkg", "1.2.3", "")}, npmjsRegistryBase)
 	assert.Contains(t, warning, "no integrity hash")
 }
@@ -270,10 +278,95 @@ func TestVerifyRegistrySignature_KeysEndpointUnreachableWarns(t *testing.T) {
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.Contains(t, warning, "could not be verified")
-	assert.Contains(t, warning, "integrity hash only")
+	// The wording must state the consequence (unauthenticated) rather than
+	// promising an integrity check that may not happen.
+	assert.Contains(t, warning, "could not be authenticated")
+}
+
+// The acknowledgment is compared as a fingerprint of issue codes, so two
+// fetches that hit the same problem through different registries must produce
+// the same value. This is the regression that a text comparison could not
+// survive: the message embeds the registry base, and which base answers depends
+// on the candidate fallback order and on transient reachability.
+func TestVerifyRegistrySignature_FingerprintStableAcrossRegistries(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{keysStatus: http.StatusNotFound}}
+
+	keys := newTestSigningKeys(t)
+	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
+
+	// The official registry and a private mirror both report "no signature",
+	// but render different messages.
+	official := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, npmjsRegistryBase)
+	mirror := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", nil, "https://nexus.corp/npm")
+
+	require.NotEmpty(t, official)
+	require.NotEmpty(t, mirror)
+
+	// Messages legitimately differ...
+	assert.NotEqual(t, verificationMessages(official), verificationMessages(mirror))
+	// ...but the compared value must not.
+	assert.Equal(t, verificationFingerprint(official), verificationFingerprint(mirror),
+		"the same problem must fingerprint identically regardless of which registry answered")
+	assert.Equal(t, VerifyIssueSignatureMissing, verificationFingerprint(official))
+
+	// The keys-unreachable path embeds no base at all, and must be its own code.
+	upgradeHTTPClient = &http.Client{Transport: errorTransport{err: errors.New("connection refused")}}
+	unreachable := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+		[]npmSignature{sig}, npmjsRegistryBase)
+	assert.Equal(t, VerifyIssueSignatureKeysUnreachable, verificationFingerprint(unreachable))
+	assert.NotEqual(t, verificationFingerprint(official), verificationFingerprint(unreachable),
+		"distinct problems must not collide")
+}
+
+// The warning must not vary with *how* the keys request failed. The caller
+// compares it verbatim against the text the user confirmed, and the two come
+// from separate requests, so a failure-mode-dependent message would make the
+// confirmation impossible to satisfy for exactly the users this downgrade
+// exists to serve.
+func TestVerifyRegistrySignature_KeysWarningIsStableAcrossFailureModes(t *testing.T) {
+	keys := newTestSigningKeys(t)
+	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
+
+	// Three different transport-level failures, each producing a different
+	// *url.Error message.
+	modes := []struct {
+		name string
+		err  error
+	}{
+		{"timeout", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: context.DeadlineExceeded}},
+		{"connection", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: errors.New("connection refused")}},
+		{"dns", &url.Error{Op: "Get", URL: "https://registry.npmjs.org/-/npm/v1/keys", Err: errors.New("no such host")}},
+	}
+
+	var warnings []string
+	for _, mode := range modes {
+		t.Run(mode.name, func(t *testing.T) {
+			origClient := upgradeHTTPClient
+			defer func() { upgradeHTTPClient = origClient }()
+			upgradeHTTPClient = &http.Client{Transport: errorTransport{err: mode.err}}
+
+			warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
+				[]npmSignature{sig}, npmjsRegistryBase)
+			require.NotEmpty(t, warning)
+			// The transport detail must not leak into the compared text.
+			assert.NotContains(t, warning, "connection refused")
+			assert.NotContains(t, warning, "no such host")
+			assert.NotContains(t, warning, "deadline exceeded")
+			warnings = append(warnings, warning)
+		})
+	}
+
+	// Every mode must yield byte-identical text.
+	for i := 1; i < len(warnings); i++ {
+		assert.Equal(t, warnings[0], warnings[i],
+			"the warning must not depend on the transport failure mode")
+	}
 }
 
 func TestVerifyRegistrySignature_EmptyKeyListWarns(t *testing.T) {
@@ -283,7 +376,7 @@ func TestVerifyRegistrySignature_EmptyKeyListWarns(t *testing.T) {
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.Contains(t, warning, "could not be verified")
 }
@@ -295,7 +388,7 @@ func TestVerifyRegistrySignature_KeysEndpointInvalidJSONWarns(t *testing.T) {
 	keys := newTestSigningKeys(t)
 	sig := keys.sign(t, "pkg", "1.2.3", "sha512-abc")
 
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.Contains(t, warning, "could not be verified")
 }
@@ -309,7 +402,7 @@ func TestVerifyRegistrySignature_UnknownKeyIDWarns(t *testing.T) {
 	defer restore()
 
 	forged := attacker.sign(t, "pkg", "1.2.3", "sha512-abc")
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{forged}, npmjsRegistryBase)
 	assert.Contains(t, warning, "not among npm's published keys")
 }
@@ -328,7 +421,7 @@ func TestVerifyRegistrySignature_AcceptsAnyValidSignature(t *testing.T) {
 		stale.sign(t, "pkg", "1.2.3", "sha512-abc"),   // key not published
 		trusted.sign(t, "pkg", "1.2.3", "sha512-abc"), // valid
 	}
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-abc", sigs, npmjsRegistryBase)
 	assert.Empty(t, warning, "one valid signature is enough")
 }
 
@@ -341,7 +434,7 @@ func TestVerifyRegistrySignature_AllSignaturesInvalidWarns(t *testing.T) {
 		trusted.sign(t, "pkg", "1.2.3", "sha512-one"),
 		trusted.sign(t, "pkg", "1.2.3", "sha512-two"),
 	}
-	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, npmjsRegistryBase)
+	warning := sigWarning(context.Background(), "pkg", "1.2.3", "sha512-actual", sigs, npmjsRegistryBase)
 	assert.Contains(t, warning, "did not verify")
 }
 
@@ -505,4 +598,75 @@ func TestFetchUpgradeInfo_VerifiedReleaseHasNoWarning(t *testing.T) {
 	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Empty(t, info.VerificationWarning)
+}
+
+// The warning must cover a missing hash, not just signature problems.
+//
+// This is the regression that mattered: the client asks the user to confirm
+// before starting, and it learns what to ask from this endpoint. If a missing
+// hash were only discovered during the download, the install would proceed with
+// no confirmation at all — silently, for exactly the mirror configuration most
+// likely to omit the field.
+func TestFetchUpgradeInfo_MissingHashIsReportedBeforeDownload(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	// A plain proxy: no signature, no integrity, no shasum.
+	const mirror = "https://nexus.corp/repository/npm-proxy"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = mirror + "/x/-/x-99.0.0.tgz"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		mirrorBase: ts.URL,
+		keysStatus: http.StatusNotFound,
+	}}
+
+	info, err := fetchUpgradeInfoFromBase(mirror, pkg, "0.1.0")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, info.VerificationWarning,
+		"a missing hash must be visible to /check, or the confirmation gate cannot fire")
+	assert.Contains(t, info.VerificationWarning, "no integrity hash")
+	assert.Empty(t, info.Integrity)
+	assert.Empty(t, info.Shasum)
+}
+
+// Both reasons can apply at once; the user should see both rather than whichever
+// was computed last.
+func TestFetchUpgradeInfo_ReportsBothReasons(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	// An official registry that returns neither a signature nor a hash trips
+	// both checks.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = npmjsRegistryBase + "/x/-/x-99.0.0.tgz"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+
+	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	require.NoError(t, err)
+
+	// Both reasons appear: the signature check's complaint and the digest
+	// resolution's.
+	assert.Contains(t, info.VerificationWarning, "neither a signature nor an integrity hash")
+	assert.Contains(t, info.VerificationWarning, "no integrity hash for this release")
 }

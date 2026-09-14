@@ -39,7 +39,7 @@ flowchart TD
 ### 功能清单
 
 - **密码认证**：远程访问需要密码，密码存储为 SHA-256 加盐哈希（带前缀标识），使用常量时间比较防止时序攻击。密码可配置，未配置时自动生成 32 位 hex（16 字节 / 128 bit 熵；ISS-269 后从 4 字节升级） 并持久化到 `.clawbench/auto-password`
-- **AI 短时令牌**：内置斜杠命令在注入提示词时签发一个 30 分钟有效的 HMAC 令牌，AI 子进程以 `X-ClawBench-AI-Token` 请求头发回。令牌无状态（`exp` + 签名），不落库、无清理 goroutine。签名密钥复用 `CookieToken`，因此改密码轮换它时所有在途令牌自动失效。回环地址单独**不再**放行
+- **AI 短时令牌**：内置斜杠命令在注入提示词时签发一个 30 分钟有效的 HMAC 令牌，AI 子进程以 `X-ClawBench-AI-Token` 请求头发回。令牌无状态（`exp` + 签名），不落库、无清理 goroutine。签名密钥是**进程内随机生成、不持久化**的独立密钥（不复用 `CookieToken`），故重启后旧令牌失效——AI 收到 401 会提示用户重跑命令。验签同时设上下界：既拒绝已过期，也拒绝 `exp` 超出 TTL 的令牌，因此即使密钥泄露也拿不到长期凭证。回环地址单独**不再**放行
 - **Panic 恢复**：中间件链最外层捕获 panic，返回 500 而不是让进程崩溃。任何 handler 的未处理异常都被优雅地降级为错误响应
 - **请求 ID**：每个请求分配唯一 ID（`X-Request-ID` header），贯穿日志和错误响应。追踪问题时的关键线索
 - **请求日志**：记录方法、路径、状态码、耗时、请求 ID。这是生产环境排查问题的第一入口
@@ -58,13 +58,46 @@ flowchart TD
 - **API 密钥加密与密码联动**：LLM 供应商的 API 密钥使用 AES-256-GCM 加密存储，加密密钥由登录密码经 HKDF-SHA256 派生。`agent_api_keys` 表和 `crypto.go` 已移除，Pi 后端不再运行时注入 API 密钥，模型刷新不再按 provider 过滤
 - **全局链与路由认证分层**：`Chain(A, B, C)` 的执行顺序是 A→B→C→handler→C→B→A；RecoverPanic 位于最外层，NoCache 在全局链最内层（WithLocalizer 之后）。Auth 不在全局链中，由具体路由单独包裹——避免为了少数公开接口在 Auth 内维护例外清单
 
+### 刻意免鉴权的端点清单
+
+`registerPublic` 是例外而非默认，每个都必须在调用点写明理由。当前共 9 个，按风险分为三类：
+
+**必须免鉴权（鉴权前不可达的客户端依赖它）**
+
+| 端点 | 理由 |
+|---|---|
+| `/` | 前端 SPA 入口 |
+| `/login` | 登录本身；有限流与常量时间比较 |
+| `/api/health` | Android 在 WebView 加载**前**做身份探测（`app` 字段）并读取 `version` 驱动版本不匹配对话框——登录需要 WebView，故不能等登录。仅返回 `{app, version}` |
+| `/api/apk` | 登录页安装横幅与原生版本不匹配对话框都需在登录前下载。仅 GET/HEAD；版本号本可从公开 APK 推断 |
+
+**凭证即权限（token 本身是授权）**
+
+| 端点 | 理由 |
+|---|---|
+| `/api/share/{token}` | 分享链接的凭证就是 token；未知/已撤销 token 统一 404，不泄露记录是否存在 |
+| `/share/{token}` | 同上（分享 SPA 外壳） |
+
+**最小状态（无敏感信息）**
+
+| 端点 | 理由 |
+|---|---|
+| `/api/me` | 仅回 200/401；与 `Auth` 的 AI 令牌判据保持一致 |
+| `/api/ssh/info` | 仅 `{enabled, port}`。Android 原生需在连接前发现端口；完整信息（含枚举内网拓扑的 `ssh -L` 命令与指纹）在需鉴权的 `/api/ssh/info/full` |
+| `/api/frp/status` | 仅 `{enabled, running, state}`；完整状态（含公网 IP）在需鉴权的 `/api/frp/info` |
+
+**判据**：一个端点若要免鉴权，必须满足「鉴权前客户端确实需要」或「请求本身携带等价的授权凭证」，且响应体不包含可被匿名者利用的信息。`/api/ssh/info` 与 `/api/frp/status` 都是「同一份数据按受众拆分」的实例——公开版只留最小字段，其余移入需鉴权的 `/full` 或 `/info`。
+
+新增 `registerPublic` 时必须同步：调用点注释说明理由、`internal/api/openapi.yaml` 标注 `security: []`、以及 `internal/handler/handler_routes_test.go` 的 `publicPatterns` 列表（`TestRegisteredRoutes_AuthFlagMatchesSpec` 会校验三者一致）。
+
 ### 已知限制：隧道场景下的信任边界
 
 `IsLocalhost` 仅依据 `r.RemoteAddr` 判定，不检查任何代理头（代码中无 `X-Forwarded-For` 处理）。引入 AI 令牌后，剩余风险如下：
 
 - **FRP 隧道**：frpc 以 TCP 代理方式从 `127.0.0.1` 回拨主端口（`internal/frp`，`tcpCfg.LocalIP = "127.0.0.1"`），故经 FRP 进入的请求在服务端看来**仍是回环**。但请求不携带 AI 令牌，签名校验失败，因此被拒。FRP 的 `Token` 只认证 frpc↔frps 的注册关系，与终端访客身份无关。**残余风险**：若令牌经日志、AI 回显或 agent 落盘泄露，攻击者可在 30 分钟 TTL 内经 FRP 复用该令牌——因为地址判据无法区分 frpc。FRP 默认关闭（`frp.enabled: false`），仅在用户主动部署 frps 并启用时受影响
 - **SSH 隧道**：经 `ssh -L` 转发到 ClawBench 自身 API 的流量在服务端看来同样是回环，但不携带 AI 令牌，故不再自动放行。浏览器需先通过隧道登录取得会话 Cookie，之后请求照常携带该 Cookie 通行。SSH 自身的登录密码与 Web 会话 Cookie 是两套凭证，前者不构成后者的替代
-- **同机其他用户**：令牌经提示词以 header 明文传递给 AI 子进程，会出现在其命令行与日志中。同机其他系统用户若能读取该子进程的进程信息，可在 TTL 内复用。`cookie-token` 的 0600 保护**不适用于** header 方案。若需收紧，应改用 `curl -K` 配置文件或独立监听器
+- **同机其他用户**：令牌经提示词以 header 明文传递给 AI 子进程，会出现在其命令行中。同机其他系统用户若能读取该子进程的进程信息，可在 TTL 内复用。`cookie-token` 的 0600 保护**不适用于** header 方案。若需收紧，应改用 `curl -K` 配置文件或独立监听器
+  - 服务端日志已做脱敏：`internal/ai` 在记录 prompt 与 args 前调用 `model.RedactAIToken`，因为 Pi/DeepSeek/Copilot 把 prompt 作为命令行参数、codex 更是全量记录 prompt。注意 `cli_backend` 的 200 字符截断**不足以**保护——实测 token 位于第 178~193 字符，落在截断窗口内
 - **同机同用户的其他进程**：应用层无法区分。这类进程本就能读数据库与 `cookie-token`，需 OS 级隔离（专用 UID / namespace），超出当前范围
 
 进一步收紧的方向：(1) 让 AI 走独立回环监听器并在监听器级标记来源可信，主监听器永不接受 AI 令牌——这样「仅本机」由构造保证而非由地址推断；(2) 或改用 unix socket + 0600，可同时消除「同机其他用户」一条。

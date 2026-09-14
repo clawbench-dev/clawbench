@@ -2859,6 +2859,64 @@ describe('FileManagerContent — create file/folder', () => {
 
     expect(mockToastShow).toHaveBeenCalled()
   })
+
+  // The results layer renders search hits, not the directory listing, so the
+  // new entry can never appear in it. Collapsing the query first is what makes
+  // the post-create select + scroll actually land on a rendered row.
+  it('doNewFile clears an active search before creating', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+    searchState.query = 'main'
+    searchState.results = [{ name: 'main.ts', path: 'main.ts', type: 'file', matchedIndices: [] }]
+
+    const wrapper = mountContent({
+      currentDir: 'docs',
+      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
+    })
+    expect(wrapper.vm.searchActive).toBe(true)
+
+    await wrapper.vm.doNewFile()
+    await nextTick()
+
+    expect(mockSearchReset).toHaveBeenCalled()
+    expect(wrapper.vm.searchActive).toBe(false)
+    // The selection is re-applied after the reset, so the created row stays
+    // selected (exitSearch() blanks selectedPath as part of collapsing).
+    expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
+  })
+
+  it('doNewFolder clears an active search before creating', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+    searchState.query = 'main'
+    searchState.results = [{ name: 'main.ts', path: 'main.ts', type: 'file', matchedIndices: [] }]
+
+    const wrapper = mountContent({
+      currentDir: 'docs',
+      entries: [...sampleEntries, { name: 'newfile.txt', type: 'dir', modified: '2025-01-01T00:00:00Z', size: 0 }],
+    })
+    await wrapper.vm.doNewFolder()
+    await nextTick()
+
+    expect(mockSearchReset).toHaveBeenCalled()
+    expect(wrapper.vm.searchActive).toBe(false)
+    expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
+  })
+
+  it('doNewFile keeps the entry selected when no search was active', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+    searchState.query = ''
+
+    const wrapper = mountContent({
+      currentDir: 'docs',
+      entries: [...sampleEntries, { name: 'newfile.txt', type: 'file', modified: '2025-01-01T00:00:00Z', size: 0 }],
+    })
+    await wrapper.vm.doNewFile()
+    await nextTick()
+
+    expect(wrapper.vm._getSelectedPath()).toBe('docs/newfile.txt')
+  })
 })
 
 // ── Context menu file/dir actions ──
@@ -3633,6 +3691,76 @@ describe('FileManagerContent — internal move helpers', () => {
     window.dispatchEvent(new CustomEvent('highlight-file-item', { detail: { path: 'readme.md' } }))
     await nextTick()
     expect(wrapper.vm._getSelectedPath()).toBe('readme.md')
+  })
+
+  // A slow /api/dir can outlast a fixed attempt count. While the listing we are
+  // waiting for has not arrived the retry must keep waiting, otherwise the entry
+  // ends up selected but scrolled off-screen once the row finally renders.
+  //
+  // The listing's identity is the signal: the store assigns a fresh entries
+  // array per load, so an unchanged reference means /api/dir is still pending.
+  // (dirLoading is suppressed on the silent post-create refresh, and
+  // isRefreshing clears before loadFiles resolves — neither can be used.)
+  it('keeps retrying past the fixed grace window while the listing has not arrived', async () => {
+    const initialEntries = [...sampleEntries]
+    const wrapper = mountContent({ entries: initialEntries, dirLoading: false })
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    vi.useFakeTimers()
+    try {
+      // 'late.ts' is not in the listing yet, so the first attempt finds no row.
+      wrapper.vm.scrollToEntryAndSelect('late.ts')
+
+      // Wait beyond the grace window (2s). With a fixed budget the retry loop
+      // has already given up here; while the listing is pending it must not.
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(scrollSpy).not.toHaveBeenCalled()
+
+      // The slow listing finally resolves (fresh array) and the row renders. The
+      // retry still in flight must pick it up without a new call.
+      await wrapper.setProps({
+        entries: [...sampleEntries, { name: 'late.ts', type: 'file', modified: '2025-01-03T00:00:00Z', size: 10 }],
+      })
+      await vi.advanceTimersByTimeAsync(150)
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
+      expect(scrollSpy.mock.instances).toContain(wrapper.find('.file-item[data-path="late.ts"]').element)
+    } finally {
+      vi.useRealTimers()
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('stops retrying once the listing arrived without the target', async () => {
+    const wrapper = mountContent({ dirLoading: false })
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    vi.useFakeTimers()
+    try {
+      // 'ghost.ts' is not in the current listing and no new listing is coming,
+      // so the retry must give up instead of spinning forever.
+      wrapper.vm.scrollToEntryAndSelect('ghost.ts')
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(scrollSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('scrolls immediately when the entry is already rendered', async () => {
+    const wrapper = mountContent()
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      wrapper.vm.scrollToEntryAndSelect('test.ts')
+      expect(scrollSpy).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' })
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
   })
 })
 

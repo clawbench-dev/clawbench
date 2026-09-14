@@ -93,7 +93,7 @@
             class="forge-header-btn"
             :loading="items.loading.value"
             :title="t('nav.refresh')"
-            @click="refresh"
+            @click="onRefreshClick"
           />
         </div>
 
@@ -147,7 +147,7 @@
               <div class="forge-error-title">{{ pipelineErrorTitle(pipelines.error.value.code) }}</div>
               <div class="forge-error-body">{{ pipelines.error.value.message }}</div>
             </div>
-            <button class="fbtn" @click="refresh">{{ t('forge.retry') }}</button>
+            <button class="fbtn" @click="onRefreshClick">{{ t('forge.retry') }}</button>
           </div>
 
           <div v-else-if="pipelines.loading.value" class="forge-loading">
@@ -235,7 +235,7 @@
             <div class="forge-error-title">{{ errorTitle(items.error.value.code) }}</div>
             <div class="forge-error-body">{{ items.error.value.message }}</div>
           </div>
-          <button class="fbtn" @click="refresh">{{ t('forge.retry') }}</button>
+          <button class="fbtn" @click="onRefreshClick">{{ t('forge.retry') }}</button>
         </div>
 
         <div v-else-if="items.loading.value" class="forge-loading">
@@ -419,11 +419,29 @@ function setActiveTab(key: ForgeTabKey) {
   }
 }
 
-async function refresh() {
-  await items.loadBinding()
+/**
+ * Refresh the binding and the active tab's list.
+ *
+ * `force` bypasses the shared binding cache. Post-write callers (bind/unbind)
+ * must pass it: the server state is known to have changed, and a cached value
+ * would show the repository the user just switched away from.
+ */
+async function refresh(force = false) {
+  await items.loadBinding(force)
   if (!items.isBound.value) return
+  // Only the visible tab has data worth reloading; the other loads on switch.
   if (activeTab.value === 'pipeline') await pipelines.load()
   else await items.load()
+}
+
+/**
+ * Click handler for the refresh affordances.
+ *
+ * Exists so a DOM click cannot pass its MouseEvent into `refresh(force)` — a
+ * truthy event would bypass the binding cache on every click.
+ */
+function onRefreshClick() {
+  void refresh()
 }
 
 onMounted(refresh)
@@ -537,7 +555,7 @@ async function unbindRepo() {
     appLog.w(TAG, 'unbind failed', err)
   }
   closeDetail()
-  await refresh()
+  await refresh(true)
 }
 
 async function bindFromRemote(r: ForgeRemote) {
@@ -555,7 +573,8 @@ async function submitBinding(input: { url?: string; platform?: string; host?: st
     await setForgeBinding(input)
     bindDialogOpen.value = false
     manualUrl.value = ''
-    await refresh()
+    // The binding just changed server-side, so bypass the cache.
+    await refresh(true)
   } catch (err) {
     if (err instanceof ForgeApiError) {
       bindError.value = err.code === 'UnsafeHost' ? t('forge.bind.unsafeHost') : err.message

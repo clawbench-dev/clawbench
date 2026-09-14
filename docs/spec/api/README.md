@@ -13,7 +13,7 @@
 
 ## 约定
 
-- **鉴权**：除显式标注 `security: []` 的端点外，所有 `/api/` 路由都需会话 Cookie（`clawbench_session`）。免鉴权端点的原因写在各 operation 的 `description` 里（如 `/api/ssh/info` 供 Android 原生发现端口、`/api/client-log` 供原生上报日志）。
+- **鉴权**：除显式标注 `security: []` 的端点外，所有 `/api/` 路由都需会话 Cookie（`clawbench_session`）或本机 AI 的短时 `aiToken`。免鉴权端点的原因写在各 operation 的 `description` 里（如 `/api/ssh/info` 供 Android 原生发现端口、`/api/health` 供原生在登录前做身份探测）。
 - **错误体**：统一为 `components/schemas/ErrorResponse`（`error` / `code` / `msgKey` / `detail`），`msgKey` 供前端本地化。
 - **项目范围**：通过 `clawbench_project` Cookie 或 `project_path` 查询参数传递。
 

@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,31 +29,48 @@ const (
 // aiTokenSeparator splits the encoded expiry from the encoded signature.
 const aiTokenSeparator = "."
 
+// aiTokenKey signs AI tokens. It is generated fresh per process and never
+// persisted.
+//
+// Why ephemeral: a token only has to survive from prompt injection until the AI
+// issues its first curl — seconds, within one process lifetime. A restart kills
+// the AI subprocess that holds the old prompt anyway, so the only consequence
+// is that a stale token stops verifying; the injected instructions already tell
+// the AI to report 401 and ask the user to re-run the command. Nothing needs to
+// be read back at startup, so there is no persistence and no rotation path.
+//
+// Why not CookieToken: that value is the session cookie the server hands to
+// browsers and is written to {DataDir}/cookie-token (whose comment even calls
+// it "not secret"). Sharing it as the signing key would mean any cookie leak is
+// also the ability to mint AI tokens. A per-process random key has no
+// persisted copy at all, so its blast radius is one process lifetime.
+var aiTokenKey = GenerateRandomToken(32)
+
 // SignAIToken returns a token valid until now+AITokenTTL.
 //
 // The token is stateless: it carries its own expiry and an HMAC over it, so
-// verification needs no server-side map and no cleanup goroutine. The signing
-// key is CookieToken, which means rotating the cookie token (as the password
-// change handler does) invalidates every in-flight AI token at once.
-//
-// Returns "" when no signing key is configured. A caller must never accept a
-// token it could not have produced.
+// verification needs no server-side map and no cleanup goroutine.
 func SignAIToken(now time.Time) string {
-	if CookieToken == "" {
+	if aiTokenKey == "" {
 		return ""
 	}
 	exp := now.Add(AITokenTTL).Unix()
-	return encodeAIToken(exp, CookieToken)
+	return encodeAIToken(exp, aiTokenKey)
 }
 
 // VerifyAIToken reports whether token is well-formed, correctly signed, and
-// not yet expired at now.
+// within its validity window at now.
 //
-// Every failure mode returns false: empty or unconfigured signing key, malformed
-// structure, bad base64, signature mismatch, and expiry. Signature comparison is
-// constant-time so a caller cannot learn a valid signature byte by byte.
+// Every failure mode returns false: empty token, malformed structure, bad
+// base64, signature mismatch, expiry, and an expiry implausibly far in the
+// future. Signature comparison is constant-time so a caller cannot learn a
+// valid signature byte by byte.
 func VerifyAIToken(token string, now time.Time) bool {
-	if token == "" || CookieToken == "" {
+	// aiTokenKey is always populated by GenerateRandomToken, so the empty-key
+	// branch is unreachable today. It is kept as fail-closed defense: without
+	// it, an empty key would sign and verify consistently, silently turning
+	// "no key configured" into "every token accepted".
+	if token == "" || aiTokenKey == "" {
 		return false
 	}
 	expPart, sigPart, ok := strings.Cut(token, aiTokenSeparator)
@@ -71,7 +89,14 @@ func VerifyAIToken(token string, now time.Time) bool {
 	if now.Unix() >= exp {
 		return false
 	}
-	want := aiTokenSignature(exp, CookieToken)
+	// Upper bound as well as lower. The TTL is a property of SignAIToken, so
+	// without this check a holder of the signing key could mint a token valid
+	// for years and the "30 minute" limit would be decorative. Clamping here
+	// means even a leaked key yields at most one TTL of access.
+	if exp > now.Add(AITokenTTL).Unix() {
+		return false
+	}
+	want := aiTokenSignature(exp, aiTokenKey)
 	got, err := base64.RawURLEncoding.DecodeString(sigPart)
 	if err != nil {
 		return false
@@ -84,6 +109,24 @@ func encodeAIToken(exp int64, key string) string {
 	expPart := base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(exp, 10)))
 	sigPart := base64.RawURLEncoding.EncodeToString(aiTokenSignature(exp, key))
 	return expPart + aiTokenSeparator + sigPart
+}
+
+// aiTokenHeaderPattern matches an injected "X-ClawBench-AI-Token: <value>"
+// occurrence so the value can be redacted without the caller knowing it.
+var aiTokenHeaderPattern = regexp.MustCompile(regexp.QuoteMeta(AITokenHeader) + `:\s*\S+`)
+
+// RedactAIToken removes any AI token from a string destined for a log.
+//
+// The token is injected into the AI's prompt as
+// "X-ClawBench-AI-Token: <value>", and some backends pass the prompt as a
+// command-line argument. Those arguments are logged (internal/ai), so the raw
+// token would otherwise land in {LogDir}/logs/ in plaintext — readable by
+// anyone who can read the data dir, and valid from loopback for a TTL.
+//
+// Redaction keys off the header name rather than a caller-supplied value, so a
+// new log site cannot leak the token by forgetting to pass it in.
+func RedactAIToken(s string) string {
+	return aiTokenHeaderPattern.ReplaceAllString(s, AITokenHeader+": [redacted]")
 }
 
 // aiTokenSignature returns the raw HMAC over the expiry. The expiry is the only

@@ -128,6 +128,13 @@ const i18n = createI18n({
           renderedView: 'Rendered preview',
           sourceView: 'Source code',
         },
+        dirPreview: {
+          loading: 'Loading…',
+          empty: 'This directory is empty',
+          loadFailed: 'Failed to load directory',
+          close: 'Close preview',
+          count: '{n} items',
+        },
         header: {
           lineNumbers: 'Line Numbers',
         },
@@ -168,6 +175,15 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const errorMessage = ref<string | null>(null)
   const isLargeFile = ref(false)
   const windowTruncated = ref(false)
+  // Directory targets: the card lists the directory instead of slicing code.
+  const isDirTarget = ref(false)
+  const dirEntries = ref<any[]>([])
+  const dirLoading = ref(false)
+  const dirError = ref(false)
+  const dirLoadedPath = ref('')
+  const dirEntryVisible = (entry: { name: string }) => !entry.name.startsWith('.')
+  const openDirChild = vi.fn()
+  const openDirFile = vi.fn()
   const contextExpansion = ref(0)
   const placement = ref<any>({
     viewportX: 100,
@@ -220,6 +236,14 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     errorMessage,
     isLargeFile,
     windowTruncated,
+    isDirTarget,
+    dirEntries,
+    dirLoading,
+    dirError,
+    dirLoadedPath,
+    dirEntryVisible,
+    openDirChild,
+    openDirFile,
     contextExpansion,
     placement,
     renderMode,
@@ -397,6 +421,123 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     expect(document.body.textContent).toContain('oversized line')
+  })
+
+  it('lists a directory target instead of slicing code', () => {
+    const openDirChild = vi.fn()
+    const openDirFile = vi.fn()
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+      ]),
+      openDirChild,
+      openDirFile,
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The directory listing replaces the code slice.
+    const items = document.querySelectorAll('.dir-preview-item')
+    expect(items.length).toBe(2)
+    // No code-slice body, and no text-viewer tools for a directory.
+    expect(document.querySelector('.code-preview-lines')).toBeNull()
+    // The card supplies its own title + meta rows, so the embedded body must
+    // drop its own toolbar — otherwise three bars stack up.
+    expect(document.querySelector('.dir-preview-body .dir-preview-meta')).toBeNull()
+
+    // Clicking a child directory hands off to the file manager.
+    ;(items[1] as HTMLElement).click()
+    expect(openDirChild).toHaveBeenCalledWith('nested')
+
+    // Clicking a child file opens it in the full-screen viewer.
+    ;(items[0] as HTMLElement).click()
+    expect(openDirFile).toHaveBeenCalledWith('a.ts')
+  })
+
+  it('hides the "open file" action for a directory target', () => {
+    // A directory has no file to open in the viewer, and the reveal button
+    // already opens the directory itself — the two would be redundant, and
+    // "Full file" would be mislabeled.
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.querySelector('button[title="Open file"]')).toBeNull()
+    // "Open Directory" (reveal) stays available.
+    expect(document.querySelector('button[title="Open Directory"]')).not.toBeNull()
+  })
+
+  it('shows the entry count in the meta row for a directory target', () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: 'nested', type: 'dir' },
+        { name: 'deep', type: 'dir' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // Line count / size would be meaningless here.
+    expect(document.body.textContent).toContain('3 items')
+  })
+
+  it('counts only visible entries so the number matches the rendered grid', () => {
+    // The mock's dirEntryVisible hides dotfiles. The count must apply the same
+    // filter the grid does, or the meta row reports entries the user cannot see
+    // (and disagrees with the docked pane, which counts the filtered list).
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([
+        { name: 'a.ts', type: 'file' },
+        { name: '.hidden', type: 'file' },
+        { name: '.env', type: 'file' },
+      ]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.body.textContent).toContain('1 items')
+    expect(document.body.textContent).not.toContain('3 items')
+    // And the grid really does render just the one.
+    expect(document.querySelectorAll('.dir-preview-item').length).toBe(1)
+  })
+
+  it('does not open a dead search bar over a directory listing (Ctrl+F)', async () => {
+    const preview = createMockPreviewController({
+      isDirTarget: ref(true),
+      target: ref<any>({ filePath: 'src/components', isDir: true }),
+      dirEntries: ref([{ name: 'a.ts', type: 'file' }]),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    // The search button is hidden for a directory; the window-level Ctrl+F
+    // shortcut must not bypass that and open an unsearchable bar.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true }))
+    await nextTick()
+
+    expect(document.querySelector('.code-preview-search-input')).toBeNull()
   })
 
   it('renders binary file error with open full file button', () => {
@@ -2544,5 +2685,47 @@ describe('code-link-preview.css — docked row metrics are platform-independent'
     }
     // And the compact class itself must be gone from the stylesheet entirely.
     expect(code).not.toContain('.is-compact')
+  })
+})
+
+describe('code-link-preview.css — compact floating header', () => {
+  // The floating card's title row was 37px because of 24px buttons plus 6px
+  // paddings (the text is only ~16px). These assertions pin the three
+  // declarations that hold it at 27px; measured in headless Chrome against the
+  // real stylesheet, all of short / long / very-long paths render 27px.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  const decls = (selector: string): string => {
+    const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')
+    const m = code.match(re)
+    expect(m, `${selector} rule must exist`).not.toBeNull()
+    return m![1]
+  }
+
+  it('slims the header paddings and its own buttons', () => {
+    expect(decls('.code-preview-header')).toMatch(/padding:\s*var\(--space-1\)/)
+    // Scoped to the header — the meta row keeps its 24px controls.
+    const btn = decls('.code-preview-header .code-preview-btn')
+    expect(btn).toMatch(/height:\s*22px/)
+    expect(btn).toMatch(/min-width:\s*22px/)
+  })
+
+  it('keeps the path on one line so a long path cannot re-inflate the row', () => {
+    const path = decls('.code-preview-title-path')
+    expect(path).toMatch(/flex-wrap:\s*nowrap/)
+    // A max-height would be redundant and would hide the wrap regression.
+    expect(path).not.toMatch(/max-height/)
+  })
+
+  it('clamps the file name to one line', () => {
+    // A 2-line clamp measured 34.7px for a very long name, undoing the
+    // compaction. Ellipsis + nowrap keeps the row at 27px.
+    const name = decls('.code-preview-filename')
+    expect(name).toMatch(/white-space:\s*nowrap/)
+    expect(name).toMatch(/text-overflow:\s*ellipsis/)
+    expect(name).not.toMatch(/-webkit-line-clamp/)
   })
 })

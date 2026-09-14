@@ -478,6 +478,69 @@ describe('useTerminalViewport', () => {
     vi.useRealTimers()
   })
 
+  it('refits on a container resize that leaves the keyboard height unchanged', () => {
+    // Regression: dragging the pane divider changes only the container width,
+    // so keyboardHeight stays 0. The keyboard-height gate in updateViewport()
+    // must not swallow this — otherwise xterm keeps stale cols, no onResize
+    // fires and the PTY keeps wrapping at the old width.
+    vi.useFakeTimers()
+    const originalRO = globalThis.ResizeObserver
+    const mockRO = class {
+      static cb: ResizeObserverCallback | null = null
+      constructor(cb: ResizeObserverCallback) { mockRO.cb = cb }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver = mockRO as unknown as typeof ResizeObserver
+
+    const mockTerminal = createMockTerminal()
+    const terminal = ref(mockTerminal)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // Fixed viewport metrics: the keyboard never opens during this test.
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 800,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    // First call always fits (prevShared === undefined).
+    vi.advanceTimersByTime(100)
+    expect(mockTerminal.fitAddon.fit).toHaveBeenCalledTimes(1)
+
+    // Divider drag → container ResizeObserver fires. Keyboard height is still 0
+    // before and after, so only the ResizeObserver path can trigger the refit.
+    const keyboardBefore = viewport.keyboardHeight.value
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    expect(viewport.keyboardHeight.value).toBe(keyboardBefore)
+    vi.advanceTimersByTime(100)
+    expect(mockTerminal.fitAddon.fit).toHaveBeenCalledTimes(2)
+
+    // The drag emits a burst of callbacks — the debounce must coalesce them.
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    mockRO.cb?.([], mockRO as unknown as ResizeObserver)
+    vi.advanceTimersByTime(100)
+    expect(mockTerminal.fitAddon.fit).toHaveBeenCalledTimes(3)
+
+    viewport.stopWatching()
+    globalThis.ResizeObserver = originalRO
+    vi.useRealTimers()
+  })
+
   it('cancels pending fit debounce on stopWatching', () => {
     vi.useFakeTimers()
     const mockTerminal = createMockTerminal()

@@ -516,7 +516,10 @@ func TestProcessClawbenchCommand_TokenSignedPerInjection(t *testing.T) {
 
 // With no configured cookie token there is nothing to sign with; the template
 // must not advertise an empty credential as if it were usable.
-func TestProcessClawbenchCommand_NoCookieTokenInjectsEmpty(t *testing.T) {
+// The token is signed with a per-process key, not CookieToken, so it must be
+// injected even when no password/cookie token is configured. (Previously the
+// template rendered an empty credential in that case.)
+func TestProcessClawbenchCommand_InjectsTokenWithoutCookieToken(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 	model.SessionToken = ""
@@ -525,7 +528,8 @@ func TestProcessClawbenchCommand_NoCookieTokenInjectsEmpty(t *testing.T) {
 	result, err := processClawbenchCommand("/cb-task daily", "/project", "sess-1")
 	require.NoError(t, err)
 
-	assert.Contains(t, result, model.AITokenHeader+": \"")
+	token := injectedAIToken(t, result)
+	assert.NotEmpty(t, token, "a token must be injected regardless of cookie-token state")
 }
 
 // itoa avoids pulling strconv into the test's import list for one call.

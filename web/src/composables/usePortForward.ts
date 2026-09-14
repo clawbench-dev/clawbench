@@ -296,10 +296,16 @@ export function usePortForward() {
     }
   }
 
-  /** Fetch SSH tunnel connection info from server */
+  /**
+   * Fetch SSH tunnel connection info from server.
+   *
+   * Uses the authenticated endpoint: the public `/api/ssh/info` now returns only
+   * {enabled, port} for the Android pre-login port probe. The web UI needs the
+   * command, fingerprint and connection stats, so it must use the full one.
+   */
   async function loadSSHInfo() {
     try {
-      const data = await apiGet<SSHInfo>('/api/ssh/info')
+      const data = await apiGet<SSHInfo>('/api/ssh/info/full')
       sshInfo.value = data
     } catch {
       sshInfo.value = null

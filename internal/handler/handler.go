@@ -290,6 +290,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 
 	registerPublic("/", ServeIndex)
 	registerPublic("/login", ServeLogin)
+	// Health probe — intentionally public. Android calls it before the WebView
+	// loads, for two things it cannot do later: confirming the target really is
+	// a ClawBench server (the "app" field), and reading "version" to drive the
+	// blocking version-mismatch dialog. Neither can wait for login, since login
+	// itself requires the WebView. It exposes only {app, version}, and the
+	// version is already inferable from the publicly downloadable APK.
 	registerPublic("/api/health", ServeHealth)
 	registerPublic("/api/me", ServeAuthCheck)
 	register("/api/system/resources", ServeSystemResources)
@@ -410,14 +416,17 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/session-search", ServeRAGSessionSearch)
 	register("/api/rag/session-first-message", ServeRAGSessionFirstMessage)
 
-	// Client log collection — intentionally unauthenticated:
-	// Android AppLog sends logs via native HttpURLConnection (no WebView cookies).
-	// JS frontend sends logs via fetch (no auth required for debug logs).
-	// This endpoint only accepts log entries (write-only, no read); the data is
-	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
+	// Client log collection — auth-protected.
+	// This is an append-only write primitive into a file on the server, so an
+	// unauthenticated caller could forge log lines or rotate the log file to
+	// destroy the previous generation. Both clients have a session by the time
+	// they upload: the JS relay is gated on the "Debug Log Capture" setting and
+	// only armed from the authenticated app (web/src/utils/appLog.ts), and
+	// Android's AppLog.startCapture is invoked from the WebView bridge after
+	// login, with the WebView cookie jar available in the same process.
 	// Android native and JS frontend both land in the unified
 	// {LogDir}/logs/client.log ([js]/[android] markers).
-	registerPublic("/api/client-log", ServeClientLog)
+	register("/api/client-log", ServeClientLog)
 
 	// Android APK download — intentionally unauthenticated:
 	// APK is a public resource; users need to download it before they can even log in.
@@ -437,14 +446,19 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
 	register("/api/openapi-proxy", proxy.ServeCORSProxy)
 
-	// SSH tunnel info — intentionally unauthenticated:
-	// 1. Android BackgroundService.fetchSSHPort() calls this from native Java
-	//    (no WebView cookies available) to discover the SSH port before connecting.
-	// 2. Without this, fetchSSHPort gets 401, falls back to httpPort+1 (wrong port),
-	//    and SSH tunnel silently fails with no error reported to the user.
-	// 3. This endpoint only exposes: SSH port number, username ("clawbench"),
-	//    host key fingerprint, and connection stats — no secrets or credentials.
+	// SSH tunnel info — split by audience, mirroring the frp pair below.
+	// 1. Android BackgroundService.fetchSSHPort() calls the public one from
+	//    native Java (no WebView cookies available) to discover the SSH port
+	//    before connecting. Without it, fetchSSHPort gets 401, falls back to
+	//    httpPort+1 (wrong port), and the tunnel silently fails.
+	//    It therefore exposes ONLY {enabled, port}.
+	// 2. The full payload (host, username, host key fingerprint, the generated
+	//    `ssh -L` command, connection stats) is consumed exclusively by the
+	//    authenticated web UI, so it lives behind auth. The command enumerates
+	//    every forwarded port and its internal target host — that is a map of
+	//    the operator's internal network.
 	registerPublic("/api/ssh/info", ServeSSHInfo)
+	register("/api/ssh/info/full", ServeSSHInfoFull)
 
 	// FRP tunnel status
 	register("/api/frp/info", ServeFRPInfo)           // Full status, requires auth (exposes public IP)

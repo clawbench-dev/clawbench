@@ -155,4 +155,19 @@ describe('DirPreviewBody', () => {
     const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
     expect(wrapper.find('.dir-preview-grid').exists()).toBe(true)
   })
+
+  it('omits its own toolbar when the host already provides one (chromeless)', () => {
+    // The floating preview card renders a title row AND a meta row; without
+    // this the pane would stack a third bar (measured 31px of wasted height).
+    const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }], chromeless: true })
+    expect(wrapper.find('.dir-preview-meta').exists()).toBe(false)
+    // The listing itself is untouched.
+    expect(wrapper.find('.dir-preview-grid').exists()).toBe(true)
+    expect(wrapper.findAll('.dir-preview-item')).toHaveLength(1)
+  })
+
+  it('keeps its toolbar by default (the docked pane relies on it)', () => {
+    const wrapper = mountBody({ entries: [{ name: 'a.ts', type: 'file' }] })
+    expect(wrapper.find('.dir-preview-meta').exists()).toBe(true)
+  })
 })

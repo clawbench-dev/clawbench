@@ -3,21 +3,19 @@ import {
     fetchForgeItems,
     fetchForgeItem,
     fetchForgeComments,
-    fetchForgeBinding,
     fetchForgePipelines,
     fetchForgePipeline,
     markForgeRead,
     type ForgeItem,
     type ForgeComment,
-    type ForgeBinding,
     type ForgePipelineRun,
     type ForgePipelineJob,
     type ForgePipelineStatus,
     ForgeApiError,
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
-import { setForgeBindingState } from '@/composables/useForgeBinding'
-import { useForgeUnread } from '@/composables/useForgeUnread'
+import { setForgeBindingState, useForgeBinding } from '@/composables/useForgeBinding'
+import { useForgeUnread } from '@/composables/useForgeUnread' 
 
 const TAG = 'UseForge'
 
@@ -49,8 +47,6 @@ export type ForgeFilter = 'all' | 'assigned' | 'created' | 'review'
  */
 export function useForgeItems(getProjectPath: () => string) {
     const items = ref<ForgeItem[]>([])
-    const binding = ref<ForgeBinding | null>(null)
-    const suggested = ref<Record<string, string> | null>(null)
     const loading = ref(false)
     const loadingMore = ref(false)
     const error = ref<{ message: string; code: string } | null>(null)
@@ -65,22 +61,24 @@ export function useForgeItems(getProjectPath: () => string) {
     let requestSeq = 0
     let abort: AbortController | null = null
 
+    // The binding is a module-level singleton shared with the dock icon and the
+    // task views. Reading it directly (rather than mirroring it into a local
+    // ref) means the panel can never show a repository another consumer has
+    // already refreshed away.
+    const forge = useForgeBinding()
+    const binding = forge.binding
+
     const isBound = computed(() => binding.value !== null)
     const isEmpty = computed(() => !loading.value && !error.value && isBound.value && items.value.length === 0)
 
-    /** Load the binding (and a suggested binding when unbound). */
-    async function loadBinding() {
-        try {
-            const res = await fetchForgeBinding()
-            binding.value = res.binding
-            suggested.value = res.suggested ?? null
-        } catch (err) {
-            appLog.w(TAG, 'loadBinding failed', err)
-            binding.value = null
-        }
-        // Keep the shared binding in sync so the dock icon follows the platform
-        // (the dock lives in App.vue, outside this composable's scope).
-        setForgeBindingState(binding.value)
+    /**
+     * Load the binding through the shared store.
+     *
+     * Pass `force` after a write (bind/unbind): the server state is known to
+     * have changed, so the cached value would be stale.
+     */
+    async function loadBinding(force = false) {
+        await forge.refresh(force)
     }
 
     /** Reload the list from page 1, honouring the current filters. */
@@ -109,7 +107,15 @@ export function useForgeItems(getProjectPath: () => string) {
             })
             if (seq !== requestSeq) return
             items.value = res.items
-            binding.value = res.binding
+            // The list response carries the binding it was served for, so this
+            // is a free confirmation — route it through the shared setter so
+            // the resolved flag and cache timestamp stay consistent.
+            //
+            // Safety note: this runs only for the newest request (seq guard
+            // above), and a bind/unbind triggers refresh(true) + load(), which
+            // bumps requestSeq. So a list response that started before a manual
+            // bind cannot land here afterwards and overwrite it.
+            setForgeBindingState(res.binding)
             hasMore.value = res.hasMore
             nextPage.value = res.nextPage
         } catch (err) {
@@ -170,14 +176,6 @@ export function useForgeItems(getProjectPath: () => string) {
         void load()
     }
 
-    function reset() {
-        items.value = []
-        binding.value = null
-        error.value = null
-        hasMore.value = false
-        nextPage.value = 1
-    }
-
     /**
      * Mark one item read (what opening a row does).
      *
@@ -212,10 +210,10 @@ export function useForgeItems(getProjectPath: () => string) {
     }
 
     return {
-        items, binding, suggested, loading, loadingMore, error,
+        items, binding, loading, loadingMore, error,
         type, state, mineFilter, query,
         hasMore, nextPage, isBound, isEmpty,
-        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery, reset,
+        loadBinding, load, loadMore, setType, setState, setMineFilter, setQuery,
         markItemRead, markAllRead,
     }
 }

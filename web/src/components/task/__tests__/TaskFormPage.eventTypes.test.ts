@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import TaskFormPage from '../TaskFormPage.vue'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // The real composable returns `form` as a ref. The template auto-unwraps it
 // (`form.triggerMode`) while the script reads `form.value.agentId`, so the mock
@@ -41,7 +42,7 @@ const i18n = createI18n({
   locale: 'en',
   messages: {
     en: {
-      common: { cancel: 'Cancel', save: 'Save' },
+      common: { cancel: 'Cancel', save: 'Save', loading: 'Loading…' },
       task: {
         form: {
           name: 'Name', prompt: 'Prompt', agent: 'Agent', triggerMode: 'Trigger',
@@ -196,6 +197,9 @@ describe('TaskFormPage watched repository', () => {
   beforeEach(() => {
     formRef.value.eventTypes = ''
     mockFetchForgeBinding.mockReset()
+    // The binding singleton (and its TTL cache) survives between tests; reset it
+    // so each case performs its own lookup, as a real project switch would.
+    resetForgeBindingState()
   })
 
   it('shows the project-bound repository as read-only text, with no selector', async () => {
@@ -224,5 +228,28 @@ describe('TaskFormPage watched repository', () => {
     expect(wrapper.find('.form-warning').text()).toContain('never fire')
     const save = wrapper.find('button.primary-btn, button[type=submit]')
     if (save.exists()) expect(save.attributes('disabled')).toBeUndefined()
+  })
+
+  // Regression: the repository row read `boundRepoLabel || unbound` with the
+  // label starting at '', so an in-flight lookup rendered the "no repository
+  // bound — this task will never fire" warning. Users saw a red warning for a
+  // project that was in fact bound, for as long as the request took.
+  it('does not warn while the binding lookup is still in flight', async () => {
+    let release: (v: unknown) => void = () => {}
+    mockFetchForgeBinding.mockReturnValue(new Promise(resolve => { release = resolve }))
+
+    const wrapper = mountForm()
+    await wrapper.vm.$nextTick()
+
+    // The lookup has not answered yet: no unbound claim, no warning.
+    expect(wrapper.find('.form-warning').exists()).toBe(false)
+    expect(wrapper.find('.event-repo-readonly').text()).not.toContain('No repository bound')
+
+    // Once it answers "bound", the real repository appears and still no warning.
+    release({ binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' } })
+    await vi.waitFor(() => {
+      expect(wrapper.find('.event-repo-readonly').text()).toContain('acme/widgets')
+    })
+    expect(wrapper.find('.form-warning').exists()).toBe(false)
   })
 })

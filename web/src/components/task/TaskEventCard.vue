@@ -76,11 +76,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, Braces, Zap } from 'lucide-vue-next'
 import { eventChips, eventKindLabel, type EventChip } from '@/utils/forgeEventLabels'
-import { fetchForgeBinding } from '@/utils/forgeApi'
+import { useForgeBinding } from '@/composables/useForgeBinding'
 import { formatDateTimeWithYear } from '@/utils/format'
 
 const { t } = useI18n()
@@ -119,18 +119,17 @@ const groupedChips = computed(() => {
 // Every event task watches its project's bound repository, so the binding is
 // resolved for display. An unbound project shows the "no repository" label —
 // the task can never fire, which the form warns about at creation time.
-const boundRepoLabel = ref('')
-onMounted(async () => {
-    try {
-        const res = await fetchForgeBinding()
-        const b = res?.binding
-        if (b) boundRepoLabel.value = `${b.owner}/${b.repo}`
-    } catch {
-        // Best-effort: fall back to the generic label below.
-    }
-})
+//
+// The shared store coalesces this with the other consumers, and `resolved`
+// separates "not fetched yet" from "confirmed unbound": without it the card
+// flashes a false "no repository bound" while the lookup is in flight.
+const { slug: boundRepoLabel, resolved: bindingResolved, refresh: refreshBinding } = useForgeBinding()
+onMounted(() => { void refreshBinding() })
 
-const repoLabel = computed(() => boundRepoLabel.value || t('task.form.eventRepoUnbound'))
+const repoLabel = computed(() => {
+    if (boundRepoLabel.value) return boundRepoLabel.value
+    return bindingResolved.value ? t('task.form.eventRepoUnbound') : t('common.loading')
+})
 
 // ── Event context preview ──
 // Mirrors the backend's EventPromptTemplate ordering, but substitutes sample

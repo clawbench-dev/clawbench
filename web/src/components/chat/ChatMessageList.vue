@@ -1545,20 +1545,13 @@ defineExpose({
   border-radius: 50%;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  opacity: var(--opacity-muted);
-  transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base), opacity var(--duration-base);
+  opacity: 1;
+  transition: background var(--duration-base), color var(--duration-base), transform var(--duration-base), border-color var(--duration-base);
   -webkit-tap-highlight-color: transparent;
 }
 
 .scroll-fab-round:focus-visible {
-  opacity: 1;
   background: var(--bg-tertiary);
-}
-@media (hover: hover) {
-  .scroll-fab-round:hover {
-    opacity: 1;
-    background: var(--bg-tertiary);
-  }
 }
 
 .scroll-fab-round:not(:disabled):active {

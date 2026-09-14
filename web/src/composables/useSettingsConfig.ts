@@ -411,7 +411,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.system_prompt_interval': 10,
   'chat.recommend_enabled': false,
   'chat.recommend_context_messages': 3,
-  'session.max_count': 10,
+  'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
   'recent_projects.max_count': 10,
