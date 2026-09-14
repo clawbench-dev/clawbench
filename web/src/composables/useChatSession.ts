@@ -10,7 +10,7 @@ const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
@@ -206,6 +206,21 @@ export function useChatSession(options: UseChatSessionOptions) {
     currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
     currentBackend.value = (sessionData.backend as string) || ''
     currentAgentId.value = (sessionData.agentId as string) || ''
+    // ACP model list — must run BEFORE syncModelFromData below, which resolves
+    // the display name from agent.models: an ACP-only modelId would otherwise
+    // render as its raw id instead of its name.
+    //
+    // A brand-new session never talks to ACP, so this is the only way its model
+    // list can include ACP-only models (e.g. "Auto"): the backend resolves them
+    // from the agent-level capability registry and returns them here. Without
+    // this, the list depended on unrelated frontend cache timing and the
+    // ACP-only entries appeared only intermittently.
+    // updateACPModelList merges onto the CLI baseline, so passing only the ACP
+    // half is correct (see its docstring).
+    const modelListState = sessionData.modelListState as { models?: Array<{ id: string; name: string }>; currentModelId?: string } | undefined
+    if (modelListState?.models && modelListState.models.length > 0) {
+      updateACPModelList(currentAgentId.value, modelListState.models, modelListState.currentModelId)
+    }
     syncModelFromData(currentAgentId.value, sessionData.modelId as string)
     syncThinkingEffortFromData((sessionData.thinkingEffortState as Record<string, unknown>)?.currentId as string || '')
     syncModeFromData(

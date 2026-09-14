@@ -9,12 +9,108 @@ import (
 	"os"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// --- AIChat: ACP modelListState for a brand-new session ---
+//
+// Contract the frontend relies on to render ACP-only models (e.g. "Auto") on a
+// session that has never talked to ACP: GET /api/ai/chat resolves the model list
+// from the agent-level capability registry when the session has no live pool
+// connection yet. A new session is inserted with an empty transport (not 'cli'),
+// so the ACP branch must run. If this regresses, the model list silently falls
+// back to CLI-only entries and the ACP models disappear from the picker.
+func TestAIChat_NewSession_ReturnsACPModelListStateFromRegistry(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "acp-model-list-agent"
+	agent := &model.Agent{
+		ID:         agentID,
+		Name:       "ACP Model List Agent",
+		Backend:    "acp-model-list",
+		Transport:  "acp-stdio",
+		AcpCommand: "acp-model-list --acp",
+		Models:     []model.AgentModel{{ID: "cli-only", Name: "CLI Only", Default: true}},
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModels(agentID, []model.AgentModel{
+		{ID: "auto", Name: "Auto"},
+		{ID: "deepseek-v4-flash", Name: "Deepseek v4 Flash"},
+	})
+
+	// Brand-new session: transport is left empty, matching createSession.
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "New", agentID, "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	mls, ok := resp["modelListState"].(map[string]any)
+	require.True(t, ok, "new session response must carry modelListState so the frontend can show ACP-only models")
+
+	rawModels, ok := mls["models"].([]any)
+	require.True(t, ok, "modelListState.models must be present")
+	ids := make([]string, 0, len(rawModels))
+	for _, m := range rawModels {
+		entry, ok := m.(map[string]any)
+		require.True(t, ok)
+		ids = append(ids, entry["id"].(string))
+	}
+	assert.Contains(t, ids, "auto")
+	assert.Contains(t, ids, "deepseek-v4-flash")
+}
+
+// A CLI session must NOT be served ACP models — the ACP branch is gated on
+// transport != "cli". This is the negative half of the contract above.
+func TestAIChat_CLISession_OmitsACPModelListState(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	const agentID = "acp-model-list-cli-agent"
+	agent := &model.Agent{
+		ID:         agentID,
+		Name:       "CLI Session Agent",
+		Backend:    "acp-model-list-cli",
+		Transport:  "acp-stdio",
+		AcpCommand: "acp-model-list-cli --acp",
+		Models:     []model.AgentModel{{ID: "cli-only", Name: "CLI Only", Default: true}},
+	}
+	model.Agents[agentID] = agent
+	model.AgentList = append(model.AgentList, agent)
+
+	ai.GetAgentCapabilityRegistry().UpdateModels(agentID, []model.AgentModel{
+		{ID: "auto", Name: "Auto"},
+	})
+
+	sessionID, err := service.CreateSession(env.ProjectDir, agent.Backend, "CLI", agentID, "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.UpdateSessionTransport(sessionID, "cli"))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp["modelListState"], "CLI sessions must not receive ACP model state")
+}
 
 // --- ServeToolCallDetail ---
 

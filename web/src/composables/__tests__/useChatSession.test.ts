@@ -92,6 +92,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     syncModelFromAgent: vi.fn().mockReturnValue({ modelId: '', modelName: '' }),
     getAgentModel: vi.fn().mockReturnValue(undefined),
     agentHeaderTitle: vi.fn().mockReturnValue('🤖 Test'),
+    // ACP model list merge — the subject of the new-session model-list fix.
+    updateACPModelList: vi.fn(),
   }
   const mockUtilsFns = {
     buildMessageSnapshot: vi.fn().mockReturnValue(''),
@@ -126,6 +128,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.syncModelFromAgent.mockReset().mockReturnValue({ modelId: '', modelName: '' })
     mockAgentFns.getAgentModel.mockReset().mockReturnValue(undefined)
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
+    mockAgentFns.updateACPModelList.mockReset()
     mockUtilsFns.buildMessageSnapshot.mockReset().mockReturnValue('')
     mockUtilsFns.parseMessages.mockReset().mockReturnValue([])
     mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
@@ -343,10 +346,12 @@ vi.mock('@/composables/useAgents', () => ({
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
     supportsACP: vi.fn().mockReturnValue(false),
+    updateACPModelList: mockAgentFns.updateACPModelList,
   }),
   restoreOriginalModels: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
   getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
+  updateACPModelList: mockAgentFns.updateACPModelList,
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -3502,6 +3507,250 @@ describe('createSession', () => {
     await session.createSession('agent2')
 
     expect(mockIdentity.autoApprove).toBe(false)
+  })
+
+  // ── ACP model list on session switch / creation ──
+  // Regression: a brand-new session never talks to ACP, so the only way its
+  // model list can include ACP-only models (e.g. "Auto", "Deepseek v4 Flash")
+  // is by consuming the `modelListState` the backend already returns from
+  // GET /api/ai/chat (it reads the agent-level capability registry). Before
+  // the fix that field was ignored, so the ACP-only entries appeared or
+  // disappeared depending on unrelated frontend cache timing.
+  it('merges the ACP modelListState from the chat response into the agent model list', async () => {
+    const acpModels = [
+      { id: 'auto', name: 'Auto' },
+      { id: 'deepseek-v4-flash', name: 'Deepseek v4 Flash' },
+    ]
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          sessionId: 'new-acp-1',
+          title: 'New Session',
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          sessionCount: 5,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'new-acp-1',
+          sessionTitle: 'New Session',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: 'auto',
+          transport: 'acp-stdio',
+          // Backend already knows the ACP models from a prior handshake.
+          modelListState: { currentModelId: 'auto', models: acpModels },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 5 }),
+      })
+
+    const options = {
+      currentSessionId: ref('old-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.createSession('agent2')
+
+    expect(mockAgentFns.updateACPModelList).toHaveBeenCalledWith(
+      'agent2',
+      acpModels,
+      'auto',
+    )
+  })
+
+  it('does not merge when the chat response carries no ACP modelListState', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ok: true,
+          sessionId: 'new-acp-2',
+          title: 'New Session',
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          sessionCount: 5,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'new-acp-2',
+          sessionTitle: 'New Session',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: '',
+          transport: 'cli',
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 5 }),
+      })
+
+    const options = {
+      currentSessionId: ref('old-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.createSession('agent2')
+
+    expect(mockAgentFns.updateACPModelList).not.toHaveBeenCalled()
+  })
+
+  // Regression: switching to an existing session takes the same
+  // syncSessionState path but does NOT go through createSession, so it must be
+  // covered separately — the original bug also affected this path (switchSession
+  // restores the CLI baseline first, wiping any ACP-only entries).
+  it('merges the ACP modelListState when switching to an existing session', async () => {
+    const acpModels = [
+      { id: 'auto', name: 'Auto' },
+      { id: 'deepseek-v4-flash', name: 'Deepseek v4 Flash' },
+    ]
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'existing-acp-1',
+          sessionTitle: 'Existing',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: 'deepseek-v4-flash',
+          transport: 'acp-stdio',
+          modelListState: { currentModelId: 'deepseek-v4-flash', models: acpModels },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.switchSession('existing-acp-1')
+
+    expect(mockAgentFns.updateACPModelList).toHaveBeenCalledWith(
+      'agent2',
+      acpModels,
+      'deepseek-v4-flash',
+    )
+  })
+
+  // Ordering guard: syncModelFromData resolves the display name from
+  // agent.models, so the ACP merge must happen first. Otherwise selecting an
+  // ACP-only model would show its raw id instead of its human-readable name.
+  it('resolves an ACP-only model name after merging the ACP model list', async () => {
+    const acpModels = [{ id: 'auto', name: 'Auto' }]
+    mockAgentFns.getAgentModel.mockImplementation((_agentId: string, modelId: string) =>
+      acpModels.find(m => m.id === modelId),
+    )
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'existing-acp-2',
+          sessionTitle: 'Existing',
+          messages: [],
+          total: 0,
+          backend: 'codebuddy',
+          agentId: 'agent2',
+          modelId: 'auto',
+          transport: 'acp-stdio',
+          modelListState: { currentModelId: 'auto', models: acpModels },
+          running: false,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
+      })
+
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading: ref(false),
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+    await session.switchSession('existing-acp-2')
+
+    // The merge must be observed before getAgentModel is consulted for the name.
+    const mergeOrder = mockAgentFns.updateACPModelList.mock.invocationCallOrder[0]
+    const lookupOrder = mockAgentFns.getAgentModel.mock.invocationCallOrder[0]
+    expect(mergeOrder).toBeLessThan(lookupOrder)
+    expect(mockIdentity.currentModelName).toBe('Auto')
   })
 
   it('API returns !ok: shows error toast', async () => {
