@@ -103,7 +103,8 @@ sequenceDiagram
 - **会话标题派生**：导入的 ACP 会话标题从 CLI transcript 派生，优先取后端持久化的自定义标题（用户改名或自动主题名），其次取首条人类提问（剥离机器生成前缀）。系统始终扫描完整 transcript 一次性提取两个候选，不设文件大小上限，并按 `(sessionID, modTime)` 缓存重复读取——确保导入会话的标题与外部会话列表一致，不会因大文件回退到中间消息作为标题
 - **会话标题锁定（title_renamed）**：`chat_sessions.title_renamed` 标记"标题已被有意选定"，自动命名（用首条用户消息覆盖）遇到该标记即跳过。凡是标题有意义的创建路径都锁定——用户手动改名、创建/导入时显式指定标题、任务（`⏰ <任务名>`）、续接、分叉、ACP 导入（标题源自 transcript）。避免"用户发消息前改的名字被首条消息冲掉"或"任务标题被任务 prompt 覆盖"；手动改名会 trim 空白，防止纯空格锁死自动命名
 - **会话分叉**：用户可以从历史用户消息创建独立会话，复制该消息之前的上下文并保留原会话。支持 `beforeMessageId` 参数指定分叉点（包括从 assistant 消息处分叉，标题取前一条 user 消息内容）。分叉时可选 Agent（`agentId` 参数），选择不同 Agent 后新会话使用该 Agent 的后端和配置，模型清空让前端回退到全局偏好。分叉标题由源会话标题 + emoji 前缀派生，长对话中的替代方案探索不会污染现有分支，详细流程见[会话导航与分叉](../features/session-navigation.md)
-- **会话完成自动标记已读**：当前会话执行结束（completed/cancelled）时前端自动调用 `POST /api/ai/chat/read` 清空未读，`UpdateLastRead` 锚定最新已完结 assistant 消息的 `created_at` 避免秒精度竞态——用户正在查看的会话结束后不应残留未读徽标；后台完成的会话则保留未读，供悬浮窗/Live Updates 展示"有内容待看"
+- **会话完成自动标记已读**：当前会话执行结束（completed/cancelled）时前端自动调用 `POST /api/ai/chat/read` 清空未读，`UpdateLastRead` 锚定最新已完结 assistant 消息的 `created_at` 避免秒精度竞态——用户正在查看的会话结束后不应残留未读徽标；后台完成的会话则保留未读，供悬浮窗/Live Updates 展示"有内容待看"。**注意这只覆盖聊天会话**——任务执行与 forge 条目各自有独立的逐条已读模型（见[任务](../features/scheduled-tasks.md)与 [Forge 集成](../features/forge-integration.md)），不共用这条水位线
+- **会话标签**：会话可挂任意多个标签（按项目隔离定义），通过 PATCH `/api/ai/session/update` 的 `tags` 字段全量替换；会话列表支持按标签服务端筛选。详见[会话标签](../features/session-tags.md)
 
 ### 设计要点
 

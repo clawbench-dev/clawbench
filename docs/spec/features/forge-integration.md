@@ -40,6 +40,24 @@ flowchart TD
     G --> I[任务 sink：匹配事件任务]
 ```
 
+### CI 完成事件：独立轮询通道
+
+```mermaid
+flowchart TD
+    A[ForgePoller 快速 tick] --> B{有任务订阅 pipeline_done?}
+    B -->|否| Z[跳过，不消耗配额]
+    B -->|是| C[IncludePipelines 拉取运行列表]
+    C --> D{终态?}
+    D -->|运行中| Z2[不记录、不派发]
+    D -->|success/failure| E[按 run_id 插入去重表]
+    E --> F{首次见到该 run?}
+    F -->|否| Z3[已处理，丢弃]
+    F -->|是| G[按 run_id debounce 30s]
+    G --> H[派发 pipeline_done 事件]
+```
+
+CI 事件是**仓库级**的（一次 run 由 push / tag / 定时触发，不挂在任何 issue/PR 上），因此订阅键是裸键 `pipeline_done` 而非 `pr.pipeline_done`。轮询只在确有任务订阅时才发起，避免无人使用时白耗 API 配额。
+
 ### 事件触发任务
 
 ```mermaid
@@ -63,18 +81,20 @@ sequenceDiagram
 
 - **仓库绑定**：项目与 forge 仓库一一绑定，绑定关系随项目走。优先从本地 git remote 自动解析（官方 host 自动绑定，自建实例需确认），也支持手动填 URL。绑定是事件任务的作用域来源——事件任务不单独配置仓库，而是跟随所属项目绑定的仓库
 - **Issue / PR 浏览**：独立 Dock tab「议题与合并请求」（英文 `Issues & PRs`），类型 chip（Issues / PRs）+ 状态 chip（Open 默认 / Closed / All）+「跟我相关」chip（全部 / 分配给我 / 我提的 / 待我 review，身份从 token 自动获取）。列表按更新时间倒序、滚动分页、服务端搜索；详情原地替换列表并带面包屑返回，展示正文 + 评论/时间线（不含 diff），复用共享 Markdown 渲染管线
-- **未读与通知**：tab 带未读徽标。设置里六类事件开关（新开 / 关闭 / 合并 / 重开 / 评论 / CI 完成，默认全开）。未读计数**与通知开关解耦**——它表示"列表里有新变化"，即使某类事件通知被关闭，未读仍计数（否则全关时徽标死掉而 AI 任务照跑，用户零信号）
-- **事件触发 AI 任务**：任务表单可选「触发方式：定时 / 事件」。选事件后展开事件类型多选（`issue.opened`、`pr.merged` 等按 kind 分域，merged 仅 PR），prompt 区上方出现**只读事件上下文块**（按事件类型条件渲染适用变量，不适用整行省略），与用户输入拼接为最终 prompt。事件到达即执行，产出会话 + 执行记录，四通道通知，执行记录带来源链接可深链回原始 issue/PR
+- **未读与通知**：tab 带未读徽标，**按条目而非事件计数**——同一 issue 连来三条评论只算一条未读，用户要的是"哪些东西有动静"而不是"发生了几件事"。未读按 `item_key`（`issue/<n>` / `pr/<n>` / `pipeline/run:<id>`）去重统计，标记已读只写现有行的 `read_at`，因此该条目之后再有活动会自然重新变未读。设置里六类事件开关（新开 / 关闭 / 合并 / 重开 / 评论 / CI 完成，默认全开）。未读计数**与通知开关解耦**——即使某类事件通知被关闭，未读仍计数（否则全关时徽标死掉而 AI 任务照跑，用户零信号）。列表行带行级未读标记，可单条标记已读，也可一键「全部标为已读」
+- **事件触发 AI 任务**：任务表单可选「触发方式：定时 / 事件」。选事件后展开事件类型多选（`issue.opened`、`pr.merged`、`pipeline_done` 等按 kind 分域，merged 仅 PR），prompt 区上方出现**只读事件上下文块**（按事件类型条件渲染适用变量，不适用整行省略），与用户输入拼接为最终 prompt。事件到达即执行，产出会话 + 执行记录，四通道通知，执行记录带来源链接可深链回原始 issue/PR
+- **CI 完成事件（`pipeline_done`）**：仓库的流水线运行结束时触发任务——CI 失败自动让 AI 去看日志、CI 成功自动总结变更。只有 success / failure 两个终态派发事件（cancelled / skipped 不打扰），同一 run 只派发一次（按 `run_id` 去重），且首次同步只建基线不补发历史。流水线标题取"每次运行"的标题（GitHub 用 `display_title`，即 commit message / 手动输入的 run 名），而非 workflow 名——否则列表里十条运行全叫 "CI"，用户无法区分
 - **引用到对话**：详情页 header 的引用按钮（消息图标）把 issue/PR 变成聊天内容——复用全站共享的引用输入框，issue/PR 地址作为 **URL 附件**（chip 文案 `owner/repo#123`）进入输入框，用户可再划取文本补充，最终消息为 URL 附件 + 选中文本 fence + 用户输入。当前项目无活跃会话则新建并切到聊天 tab。详情正文也支持双击复制 + 划取引用（与 Markdown 预览同一链路）
 - **凭据按 host 隔离（R4）**：token 存储键为 `(platform, host)`，不再是单一全局 token。自建 GitLab 实例各自独立凭据，一个 host 被控不影响其他 host。`GET /api/config` 不回传密钥明文，改为回传 host 存在性标记（write-only 语义，与密码字段一致）；`config.yaml` 权限为 `0600`。自建实例支持「跳过 TLS 校验」开关（默认关，用于自签名证书）
-- **事件任务护栏**：全局 kill-switch「暂停所有事件触发」；识别 AI 自身账号产生的写操作事件并**抑制**（防递归）；per-repo 同类型事件 debounce 合并；事件队列（任务忙时入队退避重试而非丢弃）；`pipeline_done` 为保留但不再提供的类型（当前无派发路径）
+- **事件任务护栏**：全局 kill-switch「暂停所有事件触发」；识别 AI 自身账号产生的写操作事件并**抑制**（防递归）；per-repo 同类型事件 debounce 合并；事件队列（任务忙时入队退避重试而非丢弃）
 
 ### 设计要点
 
 - **Provider 抽象隔离平台差异**：`internal/forge/` 定义统一的 `Provider` 接口与模型（`Item`/`Comment`/`Change`），GitHub 走 `google/go-github`，GitLab 用自建轻量 REST v4 client——刻意避开官方 SDK 的重依赖树（protovalidate/protobuf/cel-go/graphql-go/keyring）。平台差异（GitHub 只有 `owner/repo` 两段、GitLab 允许多级 group；GitLab `merged`/`locked` 归一为 closed；GitHub issues 端点混入 PR 需剔除）在 adapter 内消化，上层只见统一模型
 - **变化靠本地快照 diff，而非平台事件 API**：GitHub `issues?since` 只表明"变了"而不表明"变成了什么事件"，GitLab events API 粒度只到天。因此以水位线增量拉取 + `forge_items` 快照对比推导事件，把"发生了什么"的判断权握在自己手里。水位线**必须整批（所有页）拉完才推进**，边界用严格 `>` 加 1s 重叠窗口，并对事件做 `dedupe_key` 去重——不依赖时间戳唯一性
 - **未读与通知解耦**：两者共用同一事件源但独立于开关。通知是"提醒你"，未读是"有变化"——把两者绑在一起会让关闭某类通知连带让徽标失去意义，而 AI 任务仍在后台触发，用户彻底失去信号
-- **防递归靠身份识别而非提示词**：`CLAWBENCH_SCHEDULED=1` 只能阻止 AI 通过 `/cb-task` 再建任务，挡不住 AI 用 `gh`/`glab` 写回 forge 再触发自己。因此触发器解析凭据对应的账号登录名（缓存 10 分钟），抑制 acting actor 等于该账号的事件——比对 item 作者会漏掉"AI 评论别人的 issue"
+- **防递归靠身份识别而非提示词**：`CLAWBENCH_SCHEDULED=1` 只能阻止 AI 通过 `/cb-task` 再建任务，挡不住 AI 用 `gh`/`glab` 写回 forge 再触发自己。因此触发器解析凭据对应的账号登录名（缓存 10 分钟），抑制 acting actor 等于该账号的事件——比对 item 作者会漏掉"AI 评论别人的 issue"。**流水线事件刻意豁免**：CI 结束不是"用户做的动作"，而是几分钟前某次运行（可能是别人、可能是定时或 push 触发）的结果；抑制"自己"的流水线恰好会砍掉最有价值的场景——AI 推了修复、CI 失败、而负责修复的任务永远不跑。actor 仍随事件下发，任务 prompt 通过 `ACTOR_IS_SELF` 变量自行判断
+- **CI 事件用 per-run 去重表而非水位线**：首次见到时仍在运行的 run 不记录，所以"后来完成的更早 run"会被标量水位线永久跳过（run 101 先完成会把水位线推过 100，100 完成时已在水位线之下而静默丢失）。改为每个 run 一行（`PRIMARY KEY (platform,host,owner,repo,run_id)`），天然免疫乱序完成与分页；新鲜度判定直接用 `INSERT ... ON CONFLICT DO NOTHING` 的 `RowsAffected`，避免"先查后写"的窗口
 - **事件不丢优先于事件及时**：运行中再来事件若沿用"直接丢弃"会丢数据。改为持久化事件队列 + 退避重试（任务忙时 10s 退避、最多 30 次），配 per-repo debounce 合并突发——宁可延迟，不可静默丢失
 - **绑定是事件作用域的唯一来源**：事件任务不单独配置仓库，其项目绑定的仓库即作用域。这消除了"任务配的仓库"与"项目绑的仓库"两份状态不一致的可能；轮询单元是 repo（`host + owner/repo`）而非绑定行，同一 repo 被两个项目绑定只轮询一次
 
@@ -94,6 +114,10 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 
 `FileEntry` 增加 `kind`（`file` / `url`）与 `url` 字段。URL entry 在后端**跳过本地路径校验**（不 `os.Stat`、不落 `Files`），但校验 URL 安全性（仅 http/https + host，拒绝 `javascript:`/`data:`——该值会被持久化并重新渲染为 `href`）。前端按 `url` 去重、走独立发送通道、以链接样式渲染 chip。
 
+### CI 运行的去重与新鲜度
+
+`RecordPipelineRun` 是"这个 run 处理过吗"的唯一判据，返回值直接决定是否派发。基线行与已派发行在语义上完全相同（都是"这个 run 不该再触发"），因此不设 `dispatched` 列——任何读者看到该行即可认为已处理。首次同步（表为空）只记录不派发，避免接入瞬间把历史运行全部补发成任务。
+
 ## 数据模型
 
 | 表 | 用途 |
@@ -101,9 +125,11 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 | `project_forges` | 项目 → 仓库绑定（`project_path` 归一化，`source` = auto/manual，含 opt-out 标记） |
 | `forge_items` | 每个 issue/PR 的本地快照（状态、merged 标记、评论双键、`comments_baselined` 区分"零评论"与"从未拉取"） |
 | `forge_sync_state` | per-repo 水位线（`updated_at`）与同步状态 |
-| `forge_events` | 派生事件（`dedupe_key` 唯一、`read_at` 未读标记、repo 索引） |
+| `forge_events` | 派生事件（`dedupe_key` 唯一、`item_key` 供未读按条目去重、`read_at` 已读标记、repo 索引） |
+| `forge_pipeline_runs` | 每个已处理 CI run 一行（`PRIMARY KEY (platform,host,owner,repo,run_id)`），去重与基线共用 |
 | `scheduled_tasks` | 增 `trigger_mode`（`cron`/`event`）与 `event_types`（逗号分隔订阅） |
-| `task_executions` | 增 `event_url` / `event_summary` 供执行记录溯源 |
+| `task_executions` | 增 `event_url` / `event_summary` 供执行记录溯源，`read_at` 逐条已读 |
+| `session_tags` / `session_tag_links` | 会话标签定义（`UNIQUE(name, project_path)`）与会话↔标签关联 |
 
 ## API 端点
 
@@ -111,18 +137,19 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 
 - `POST/DELETE /api/forge/credentials` — 按 host 设置/清除 token（write-only）
 - `POST /api/forge/verify-token` — 校验 token 是否可访问指定 host
-- `GET /api/forge/items` — 列表（类型/状态/搜索/分页/跟我相关）
+- `GET /api/forge/items` — 列表（类型/状态/搜索/分页/跟我相关），行带 `unread` 标记
 - `GET /api/forge/item` — 单条详情
 - `GET /api/forge/comments` — 评论分页（旧→新）
+- `GET /api/forge/pipelines` — CI 运行列表（状态筛选/分页）
+- `GET /api/forge/pipeline` — 单次 CI 运行详情
 - `GET/POST/DELETE /api/forge/binding` — 读取（官方 host remote 自动绑定）/ 设置 / 清除绑定
 - `GET /api/forge/remotes` — 列出本地 git remote 解析出的 forge 仓库
 - `POST /api/forge/test` — 验证已绑定仓库可达
-- `GET /api/forge/unread` — 未读事件数
-- `POST /api/forge/read` — 标记全部已读（进 tab 时调用）
+- `GET /api/forge/unread` — 未读**条目**数（项目作用域，未绑定返回 0）
+- `POST /api/forge/read` — 标记已读；带 `itemKey` 标记单条，不带则整仓库已读
 
 ## 已接受的限制
 
 - **不做 webhook**：当前仅靠轮询感知变化，延迟为轮询间隔量级。webhook 接收（低延迟加速层）已有设计方案（`docs/plans/2026-09-12-forge-webhook.md`）但**尚未实施**
 - **只读 API 表面**：ClawBench 不代劳远端写操作（不评论、不 review、不改状态），写操作由事件任务里的 AI 借助外部工具完成
-- **`pipeline_done` 保留未启用**：CI 完成事件当前无派发路径，订阅键保留以免已存任务在编辑时被拒，但表单不再提供
-- **轮询配额上限**：单实例可轮询的 repo 数受平台限额约束（GitHub 约 38 个），无自适应降频配置
+- **轮询配额上限**：单实例可轮询的 repo 数受平台限额约束（GitHub 约 38 个），无自适应降频配置。CI 轮询额外占配额，因此只在确有任务订阅 `pipeline_done` 时才发起

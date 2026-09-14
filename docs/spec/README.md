@@ -1,6 +1,6 @@
 # ClawBench 系统设计规格
 
-ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工作台，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、任务系统（含 GitHub/GitLab 事件触发）、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
+ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工作台，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、任务系统（含 GitHub/GitLab 事件触发）、会话标签、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
 
 ## 模块地图
 
@@ -11,7 +11,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → SessionExecutor → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、交互式提问卡（`<ask-question>` → AskUserQuestion 工具调用，单选可取消）、/cb-* 内置命令注入、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文仅截断工具输出、thinking 惰性加载、子智能体内容分组（按 `_meta` 父工具调用 id 折叠进父 Agent 卡片）、工具调用耗时、会话重置（卡死会话一键重启进程保留上下文）、消息回溯 Rewind（原址截断会话历史并重启 AI 会话）、完成弹窗（后台完成时 Android 通知风格卡片，可追问/标记已读/跳转，详见[完成通知弹窗](features/completion-popup.md)）、未读自动清除、错误码透传与展示、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复、DB 持久化消息队列（drain loop 原子出队 + 出队熔断）、ACP `_meta` Token/成本明细（最新完整快照合并，供[用量统计](features/usage-stats.md)聚合）展示 |
 | [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、ZCode ACP 桥接（zcode-acp-server）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复、ACP `_meta` 扩展元信息解析（per-agent 归一化 → chat_metadata）、子智能体父工具调用归属（`_meta` parentToolCallId / parentToolUseId → ParentToolCallID） |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件 |
-| [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话、分叉（含 beforeMessageId、可选 Agent）、会话标题派生（transcript 双候选提取）、设置即时持久化、过期归档自动清理、Codex 项目级历史会话发现（磁盘扫描 + ACP 合并）、优雅退出（WaitStreamsDrained + GracefulStopAll 等待流落库再回收进程） |
+| [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话（标题时间戳前缀 + 锁定）、分叉（含 beforeMessageId、可选 Agent）、会话标题派生（transcript 双候选提取）、设置即时持久化、会话标签、过期归档自动清理、Codex 项目级历史会话发现（磁盘扫描 + ACP 合并）、优雅退出（WaitStreamsDrained + GracefulStopAll 等待流落库再回收进程） |
 | [摘要管线](core/summarization.md) | 双管线（TTS vs 阅读摘要）、summarizeMessage 统一调度、SummaryCards 结构化卡片、摘要视图 warning/error 横幅通道、多 pass 压缩、Block 提取算法、降级链（AI 失败使用结论文本）、热重载、推荐回复（stable/rolling 分离 + prompt caching） |
 
 ### features/ — 功能特性
@@ -19,17 +19,18 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | 模块 | 说明 |
 |------|------|
 | [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；14 个后端规格 |
-| [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入，见 [Forge 集成](features/forge-integration.md)） |
-| [Forge 集成](features/forge-integration.md) | GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、后台轮询感知变化（水位线 + 快照 diff）、未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与 SSRF 防护 |
+| [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，执行级逐条已读（不再切 tab 自动清零）；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入，见 [Forge 集成](features/forge-integration.md)） |
+| [Forge 集成](features/forge-integration.md) | GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、后台轮询感知变化（水位线 + 快照 diff）、CI 完成事件（per-run 去重表 + 按 run 去重 debounce）、按条目未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与 SSRF 防护 |
+| [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_path)`）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签）、哈希配色、PATCH 全量替换语义 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
 | [语音输入](features/stt.md) | 双模式语音识别（流式 WS + 非流式 POST）、vLLM Whisper 引擎、增量识别 + 最终全量、安全上下文检测、快捷键触发 |
 | [推荐回复](features/chat-recommendation.md) | AI 回复完成后自动生成下一步建议、stable/rolling 分离支持 prompt caching、快捷指令感知、离线恢复、会话隔离 |
 | [Web 终端](features/terminal.md) | PTY 多标签会话（独立进程组防 /dev/tty 阻塞）、三模式手势系统（浏览/手势/选择）、拖拽选择+浮动复制栏、虚拟修饰键、键位/符号配置、终端主题切换、终端输入抽屉、终端帮助抽屉、TUI 应用支持 |
 | [Git 管理](features/git-management.md) | 历史浏览、文件 Diff 抽屉（prev/next 顺序导航）、Worktree 隔离、分支/标签 CRUD、内联操作按钮、代码量统计（存量 cloc 快照 + 增量 git stats 时间窗，双子页） |
-| [文件管理](features/file-management.md) | 目录浏览（browse）+ 文件查看（view）独立 Tab、CodeMirror 代码编辑（浏览/编辑双模式）、VS Code 风格 sticky scroll、Markdown 标题锚定滚动同步、Markdown HTML 导出（共享渲染管线重建自包含单文件）、代码链接预览（点击验证过的代码文件路径/path:line 链接弹出代码切片浮层卡片，详见文件管理规格）、文件分享链接（capability token 公开只读）、Excalidraw 画布编辑（iframe 内嵌独立构建 + 保存写回原文件）、内联音频/视频播放器、二进制文件处理（64KB/512KB 截断 + forceText）、目录导航栈、双候选路径解析、文件刷新与差异高亮（useFileRefresh 统一三种触发 + Markdown 块级差异 + 代码行级差异 + 两阶段闪烁）、刷新跳过加载遮罩、编辑、上传（含文件夹上传/目录树下载/粘贴上传）、目录跳转、拖放移动、面包屑拖拽到聊天、排序、网格视图、键盘快捷键、代码符号提取、归档打包 |
+| [文件管理](features/file-management.md) | 目录浏览（browse）+ 文件查看（view）独立 Tab、停靠预览窗格（工具栏开关 → 列表下方可拖拽高度的预览区，目录列出内容、文件复用代码切片/媒体渲染）、预览按行窗口取数（`lineStart`/`lineEnd` + `totalLines`，大文件不整体传输）、CodeMirror 代码编辑（浏览/编辑双模式）、VS Code 风格 sticky scroll、Markdown 标题锚定滚动同步、Markdown HTML 导出（共享渲染管线重建自包含单文件）、代码链接预览（点击验证过的代码文件路径/path:line 链接弹出代码切片浮层卡片，详见文件管理规格）、文件分享链接（capability token 公开只读）、Excalidraw 画布编辑（iframe 内嵌独立构建 + 保存写回原文件）、内联音频/视频播放器、二进制文件处理（64KB/512KB 截断 + forceText）、目录导航栈、双候选路径解析、文件刷新与差异高亮（useFileRefresh 统一三种触发 + Markdown 块级差异 + 代码行级差异 + 两阶段闪烁）、刷新跳过加载遮罩、编辑、上传（含文件夹上传/目录树下载/粘贴上传）、目录跳转、拖放移动、面包屑拖拽到聊天、排序、网格视图、键盘快捷键、代码符号提取、归档打包 |
 | [文件发现](features/file-discovery.md) | 搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
 | [附件与系统分享](features/attachments-and-share.md) | 多文件附件（含行范围）、上传历史（支持删除）、Share In（支持删除）、文件夹上传（保持目录结构）、目录树下载（File System Access API）、粘贴上传、面包屑拖拽附件、缩略图与项目隔离 |
-| [会话导航与分叉](features/session-navigation.md) | 用户消息索引（含搜索框即时过滤 + 命中高亮）、跨分页定位、Ctrl+Up/Down 跳转消息、从指定消息创建对话分支（含 beforeMessageId、可选 Agent） |
+| [会话导航与分叉](features/session-navigation.md) | 用户消息索引（含搜索框即时过滤 + 命中高亮）、跨分页定位、Ctrl+Up/Down 跳转消息、从指定消息创建对话分支（含 beforeMessageId、可选 Agent）、分叉上下文字符预算压缩（L0 工具输入结构裁剪 + L1 尾部窗口） |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块（含 chunk_overlap 配置）、向量化（可独立开关）、SQLite vec0 向量索引、混合检索（含 search_mode 配置）、三级索引重建（向量重建 + 全量重建 + 独立 FTS 重建）、可配置批次大小（`rag.batch_size`）、索引磁盘占用展示、会话聚合搜索、消息聚类分析、索引进度跟踪 |
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
@@ -59,7 +60,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（143 路径 / 181 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
+| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（147 路径 / 186 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
 
 ### client/ — 客户端
 
