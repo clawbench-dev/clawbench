@@ -285,6 +285,17 @@ public class AppLog {
         try {
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
+
+            // /api/client-log is auth-protected: it is an append-only write into
+            // a file on the server, so it cannot be left open to anonymous
+            // callers. Capture only starts after login (the WebView bridge arms
+            // it), and the cookie jar lives in this same process, so a session
+            // cookie is available here.
+            String cookie = extractSessionCookie(readWebViewCookies(serverBaseUrl));
+            if (cookie != null) {
+                conn.setRequestProperty("Cookie", cookie);
+            }
+
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
             conn.setDoOutput(true);
@@ -310,6 +321,44 @@ public class AppLog {
         } finally {
             conn.disconnect();
         }
+    }
+
+    /**
+     * Read the raw cookie string for a URL from the WebView cookie jar.
+     * Returns null when unavailable (e.g. no WebView yet, or not logged in).
+     */
+    static String readWebViewCookies(String url) {
+        try {
+            return android.webkit.CookieManager.getInstance().getCookie(url);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Pick the ClawBench session cookie out of a raw Cookie header value.
+     *
+     * The server scopes the cookie name by port: "clawbench_session" on the
+     * default port, "cb<port>_clawbench_session" otherwise. Matching only the
+     * bare name would silently send nothing on a custom port, and the relay
+     * would 401.
+     *
+     * Package-private and static so it can be unit tested without a WebView.
+     */
+    static String extractSessionCookie(String cookies) {
+        if (cookies == null) return null;
+        for (String cookie : cookies.split(";")) {
+            String trimmed = cookie.trim();
+            int eqIdx = trimmed.indexOf('=');
+            if (eqIdx > 0) {
+                String name = trimmed.substring(0, eqIdx);
+                if (name.equals("clawbench_session")
+                        || (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                    return trimmed;
+                }
+            }
+        }
+        return null;
     }
 
     // --- Data class ---

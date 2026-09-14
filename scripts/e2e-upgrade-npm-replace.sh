@@ -83,13 +83,13 @@ DATA="$ROOT/data"
 HOME_DIR="$ROOT/home"
 mkdir -p "$BIN_DIR" "$DATA" "$HOME_DIR" "$ROOT/registry"
 
-echo "[1/7] building binaries (old=$OLD_VER new=$NEW_VER)"
+echo "[1/8] building binaries (old=$OLD_VER new=$NEW_VER)"
 go build -ldflags "-X clawbench/internal/version.Version=$OLD_VER" -o "$BIN_DIR/clawbench" ./cmd/server
 go build -ldflags "-X clawbench/internal/version.Version=$NEW_VER" -o "$ROOT/registry/clawbench-new" ./cmd/server
 "$BIN_DIR/clawbench" --version | grep -q "$OLD_VER" && check "old binary reports $OLD_VER" 0 || check "old binary reports $OLD_VER" 1
 
 # ------------------------------------------------------- mock registry
-echo "[2/7] starting mock npm registry on :$REG_PORT"
+echo "[2/8] starting mock npm registry on :$REG_PORT"
 # Build the release tarball (package/bin/clawbench) up front: packing the ~90MB
 # binary takes seconds, and the registry must be serving before the service
 # queries it.
@@ -162,7 +162,7 @@ check "mock registry serves metadata" "$REG_OK"
 [ "$REG_OK" -ne 0 ] && { echo "registry failed to start"; exit 1; }
 
 # ------------------------------------------------------------ start svc
-echo "[3/7] starting service from npm-style package layout"
+echo "[3/8] starting service from npm-style package layout"
 # NPM_CONFIG_REGISTRY points the upgrade check at the mock registry. The
 # default base is tried first, but it is unreachable inside the network
 # namespace, so the mock becomes the effective source.
@@ -181,7 +181,7 @@ echo "      recorded self-path: $(cat "$DATA/self-path" 2>/dev/null || echo '(mi
 [ -f "$DATA/self-path" ] && check "startup recorded self-path" 0 || check "startup recorded self-path" 1
 
 # --------------------------------------------- simulate npm replacement
-echo "[4/7] simulating npm replace: retire old package dir, install new, delete retired"
+echo "[4/8] simulating npm replace: retire old package dir, install new, delete retired"
 RETIRE="$ROOT/.clawbench-dS2lu9p5"
 mv "$PKG" "$RETIRE"                                  # (1) retire (rename)
 mkdir -p "$BIN_DIR"                                  # (2) install new
@@ -197,9 +197,29 @@ esac
 [ ! -e "${EXE_LINK% (deleted)}" ] && check "old executable path no longer exists" 0 || check "old executable path no longer exists" 1
 kill -0 "$SVC_PID" 2>/dev/null && check "service still alive after replacement" 0 || check "service still alive after replacement" 1
 
+# ------------------------------------------------------- authenticate
+# The upgrade endpoints are auth-protected. The service generated its own
+# password on first start (no config file is written), so log in with it to get
+# a session cookie. A loopback address alone no longer bypasses auth.
+echo "[5/8] authenticating via /login"
+AUTO_PW="$(cat "$DATA/auto-password" 2>/dev/null || true)"
+if [ -z "$AUTO_PW" ]; then
+  echo "ERROR: could not read $DATA/auto-password" >&2
+  exit 1
+fi
+COOKIE_JAR="$ROOT/cookies.txt"
+rm -f "$COOKIE_JAR"
+curl -s --max-time 10 -X POST "http://127.0.0.1:$PORT/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"password\":\"$AUTO_PW\"}" \
+  -c "$COOKIE_JAR" -o /dev/null || true
+# On a non-default port the cookie is port-scoped (e.g. cb20987_clawbench_session),
+# so match the suffix rather than the bare name.
+grep -q "clawbench_session" "$COOKIE_JAR" 2>/dev/null && check "obtained session cookie" 0 || check "obtained session cookie" 1
+
 # ------------------------------------------------------- trigger upgrade
-echo "[5/7] requesting upgrade via API (what the UI calls)"
-curl -s --max-time 10 -X POST "http://127.0.0.1:$PORT/api/upgrade/start" > "$ROOT/start.json" || true
+echo "[6/8] requesting upgrade via API (what the UI calls)"
+curl -s --max-time 10 -X POST -b "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/upgrade/start" > "$ROOT/start.json" || true
 head -c 200 "$ROOT/start.json" 2>/dev/null; echo
 
 # Poll status until terminal. The service may restart mid-poll (that is the
@@ -208,7 +228,7 @@ head -c 200 "$ROOT/start.json" 2>/dev/null; echo
 STATUS=""
 PHASE=""
 for i in $(seq 1 60); do
-  STATUS="$(curl -s --max-time 5 "http://127.0.0.1:$PORT/api/upgrade/status" 2>/dev/null || true)"
+  STATUS="$(curl -s --max-time 5 -b "$COOKIE_JAR" "http://127.0.0.1:$PORT/api/upgrade/status" 2>/dev/null || true)"
   PHASE="$(printf '%s' "$STATUS" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("phase",""))' 2>/dev/null || echo '')"
   case "$PHASE" in
     completed|restarting|failed) break ;;
@@ -218,7 +238,7 @@ done
 echo "      final status: ${STATUS:-<no response>}"
 
 # ------------------------------------------------------------- assert
-echo "[6/7] asserting outcome"
+echo "[7/8] asserting outcome"
 ERR="$(printf '%s' "$STATUS" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("error",""))' 2>/dev/null || echo '')"
 CODE="$(printf '%s' "$STATUS" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("error_code",""))' 2>/dev/null || echo '')"
 
@@ -237,7 +257,7 @@ else
 fi
 
 # --------------------------------------------------------------- restart
-echo "[7/7] verifying restart brings the service back"
+echo "[8/8] verifying restart brings the service back"
 # The short-circuit calls the restart function; on this unsupervised deploy it
 # spawns a sentinel that re-execs the recorded path. Give it time to come back.
 sleep 8

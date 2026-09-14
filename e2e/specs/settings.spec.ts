@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures'
 import { SettingsPage } from '../pages/settings.page'
 import { ChatPage } from '../pages/chat.page'
-import { getServerURL } from '../helpers/server'
+import { apiFetch } from '../helpers/auth'
 
 test.describe('Password Change Dialog', () => {
   let settings: SettingsPage
@@ -13,17 +13,16 @@ test.describe('Password Change Dialog', () => {
    * Reset the server password to the known E2E_PASSWORD before each test.
    * This ensures test isolation — if a previous test (or a crashed run)
    * left the password in a different state, we reset it.
-   * Uses Node.js fetch (localhost bypasses auth).
+   * Uses Node.js fetch with an explicit session cookie (Node carries no browser cookies).
    */
   test.beforeEach(async ({ page }) => {
     settings = new SettingsPage(page)
     const chat = new ChatPage(page)
 
     // Ensure password is in the expected state before each test
-    const baseURL = getServerURL()
     for (const current of [NEW_PASSWORD, E2E_PASSWORD]) {
       try {
-        const resp = await fetch(`${baseURL}/api/config/password`, {
+        const resp = await apiFetch('/api/config/password', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ current_password: current, new_password: E2E_PASSWORD }),
@@ -73,10 +72,10 @@ test.describe('Password Change Dialog', () => {
     await expect(settings.passwordDialog).not.toBeVisible({ timeout: 10000 })
 
     // Restore the original password so subsequent tests/specs work
-    // Use server-side fetch (localhost bypasses auth + avoids rate limiting from browser)
-    const baseURL = getServerURL()
+    // Use server-side fetch (avoids rate limiting from browser); the session
+    // cookie is attached by apiFetch.
     try {
-      await fetch(`${baseURL}/api/config/password`, {
+      await apiFetch('/api/config/password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

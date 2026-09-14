@@ -18,6 +18,18 @@ import (
 // an inline [source] marker so entries can be distinguished when reading.
 var clientLogMu sync.Mutex
 
+// Per-field caps. Every one of these fields is attacker-controlled, and a log
+// line is only useful if its shape is predictable — an unbounded field both
+// lets a client forge structure and lets a single request exhaust the file cap.
+const (
+	clientLogMaxMsgLen   = 4096
+	clientLogMaxTagLen   = 128
+	clientLogMaxLevelLen = 8
+	// clientLogMaxBodyBytes bounds one request's total contribution to the file,
+	// independent of entry count, so 200 entries cannot each carry 4 KiB.
+	clientLogMaxBodyBytes = 256 << 10 // 256 KiB
+)
+
 // ClientLogEntry represents a single log entry from a client (Android app or JS frontend).
 type ClientLogEntry struct {
 	Level  string `json:"level"` // D, I, W, E
@@ -45,10 +57,59 @@ func effectiveSource(s string) string {
 	return s
 }
 
+// sanitizeLogField makes an attacker-controlled value safe to embed in one
+// log line.
+//
+// Escaping only Msg is not enough: every field is placed into the line, so a
+// line break in ANY of them splits the record and lets a caller forge
+// additional entries (e.g. Tag = "x\n<timestamp> [js] I/Real: ..."). All fields
+// are escaped for that reason.
+//
+// Escaping is used rather than stripping so the log still shows that the input
+// contained a line break — this is a debug log, and silently losing the
+// structure would hide the very thing an operator is looking for.
+func sanitizeLogField(s string, maxLen int) string {
+	// Escape the byte that terminates a record, plus CR (which some readers
+	// treat as a line end) and NUL (which makes tools read the file as binary).
+	s = strings.NewReplacer(
+		"\n", "\\n",
+		"\r", "\\r",
+		"\x00", "\\0",
+	).Replace(s)
+	if len(s) > maxLen {
+		// Truncate on a rune boundary so the file stays valid UTF-8.
+		s = strings.ToValidUTF8(s[:maxLen], "")
+		s += "…[truncated]"
+	}
+	return s
+}
+
+// clientLogEntryLine renders one entry as a single log line. Caller must have
+// sanitized the fields (see sanitizeLogField).
+func clientLogEntryLine(e ClientLogEntry) string {
+	return fmt.Sprintf(
+		"%s [%s] %s/%s: %s\n",
+		time.UnixMilli(e.Ts).Format("2006-01-02T15:04:05.000"),
+		effectiveSource(e.Source),
+		e.Level,
+		e.Tag,
+		e.Msg,
+	)
+}
+
 // ServeClientLog handles POST /api/client-log. It receives batched log entries
 // from clients and appends them to a single unified log file
 // ({LogDir}/logs/client.log); each line carries an inline [js] / [android]
 // marker for its origin.
+//
+// No rate limit, deliberately. Disk usage is already bounded by the per-request
+// byte cap plus the 50 MiB file cap with rotation, and the endpoint is
+// auth-protected, so a limiter would not change either bound — it would only
+// throttle churn. Every other authenticated endpoint is unlimited, and a 429
+// here is silently dropped by both clients (appLog.ts discards without retry),
+// so a limiter would trade a real risk of losing logs for no security gain.
+// Adding one would need to be a global write-throttling middleware, not a
+// special case for this endpoint.
 func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -70,21 +131,21 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		req.Entries = req.Entries[:200]
 	}
 
-	// Format entries (one line per entry; escape newlines in messages).
-	// Unified file — each line carries the effective source as [js]/[android].
+	// Format entries. EVERY field is attacker-controlled, so all of them are
+	// sanitized — escaping only Msg would leave Tag/Level/Source free to forge
+	// whole lines. The total is also bounded so one request cannot dominate the
+	// file regardless of how the entries are distributed.
 	lines := make([]byte, 0, len(req.Entries)*128)
 	for _, e := range req.Entries {
-		t := time.UnixMilli(e.Ts)
-		msg := strings.ReplaceAll(e.Msg, "\n", "\\n")
-		src := effectiveSource(e.Source)
-		line := fmt.Sprintf(
-			"%s [%s] %s/%s: %s\n",
-			t.Format("2006-01-02T15:04:05.000"),
-			src,
-			e.Level,
-			e.Tag,
-			msg,
-		)
+		e.Msg = sanitizeLogField(e.Msg, clientLogMaxMsgLen)
+		e.Tag = sanitizeLogField(e.Tag, clientLogMaxTagLen)
+		e.Level = sanitizeLogField(e.Level, clientLogMaxLevelLen)
+		e.Source = sanitizeLogField(e.Source, clientLogMaxLevelLen)
+
+		line := clientLogEntryLine(e)
+		if len(lines)+len(line) > clientLogMaxBodyBytes {
+			break
+		}
 		lines = append(lines, line...)
 	}
 

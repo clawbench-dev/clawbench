@@ -202,8 +202,8 @@ func applyHotReloadWarnings() []string {
 
 // configResponse is the config returned to clients via GET /api/config.
 // Secret fields (API keys, tokens) are returned in full — the API is
-// protected by auth middleware (password + localhost bypass). Frontend
-// renders secrets using <input type="password"> for secure display.
+// protected by auth middleware (password, or a short-lived AI token from
+// localhost). Frontend renders secrets using <input type="password">.
 type configResponse struct {
 	Version        string               `json:"version"`
 	HasPassword    bool                 `json:"has_password"` // true when a password is configured

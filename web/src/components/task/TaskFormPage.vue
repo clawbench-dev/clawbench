@@ -83,14 +83,16 @@
                so the user can confirm what it will watch. -->
           <div class="form-group">
             <label class="form-label">{{ t('task.form.eventRepo') }}</label>
-            <div class="event-repo-readonly" :class="{ unbound: !boundRepoLabel }">
+            <div class="event-repo-readonly" :class="{ unbound: bindingResolved && !boundRepoLabel }">
               <GitBranch :size="14" />
-              <span>{{ boundRepoLabel || t('task.form.eventRepoUnbound') }}</span>
+              <span>{{ repoValueLabel }}</span>
             </div>
             <div v-if="boundRepoLabel" class="form-hint">{{ t('task.form.eventRepoHint') }}</div>
             <!-- Unbound is a soft warning, not a validation error: the task can
-                 still be saved, but it can never fire. -->
-            <div v-else class="form-warning">
+                 still be saved, but it can never fire. Suppressed while the
+                 lookup is pending — showing it then would accuse the user of a
+                 problem that may not exist. -->
+            <div v-else-if="!bindingPending" class="form-warning">
               <AlertTriangle :size="13" />
               <span>{{ t('task.form.eventRepoUnboundWarn') }}</span>
             </div>
@@ -256,7 +258,7 @@ import MenuSelect from '@/components/common/MenuSelect.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useTaskForm } from '@/composables/useTaskForm.ts'
-import { fetchForgeBinding } from '@/utils/forgeApi'
+import { useForgeBinding } from '@/composables/useForgeBinding'
 import { FORGE_EVENT_TRANSITIONS, expandStoredEventTypes, offeredEventValues, eventKindLabel, eventTransitionLabel } from '@/utils/forgeEventLabels'
 import { humanizeCron } from '@/utils/format.ts'
 import '@/assets/modal-footer-btn.css'
@@ -338,18 +340,21 @@ const selectedEventTypes = computed({
 })
 
 // The watched repository is the project's binding, so there is nothing to
-// choose — the form only displays it. An empty label means the project has no
-// binding, which is what drives the warning below.
-const boundRepoLabel = ref('')
+// choose — the form only displays it. The shared store coalesces this with the
+// other consumers (dock icon, list, event card).
+const { slug: boundRepoLabel, resolved: bindingResolved, refresh: refreshBinding } = useForgeBinding()
+
+// A pending lookup must not be presented as "unbound": the warning below says
+// the task can never fire, which is a claim we cannot make until the server
+// has answered. Only a *resolved* empty binding is genuinely unbound.
+const bindingPending = computed(() => !bindingResolved.value)
+const repoValueLabel = computed(() => {
+  if (boundRepoLabel.value) return boundRepoLabel.value
+  return bindingResolved.value ? t('task.form.eventRepoUnbound') : t('common.loading')
+})
 
 async function loadBoundRepo() {
-  try {
-    const res = await fetchForgeBinding()
-    const b = res.binding
-    boundRepoLabel.value = b ? `${b.owner}/${b.repo}` : ''
-  } catch {
-    boundRepoLabel.value = ''
-  }
+  await refreshBinding()
 }
 
 // The read-only context block mirrors the backend's EventPromptTemplate: only

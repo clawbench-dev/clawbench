@@ -17,10 +17,12 @@ import { appLog } from '@/utils/appLog'
 import { apiGet } from '@/utils/api'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { parseLineRanges } from '@/utils/lineRanges'
+import { joinPath } from '@/utils/path'
 import { getFileType } from '@/utils/fileType'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import type { DirPreviewEntry } from '@/composables/useDirPreview'
 import {
   sliceCodeForPreview,
   computeRenderWindow,
@@ -48,6 +50,11 @@ export interface PreviewTarget {
   /** Full multi-range target (canonical "90-91,309,938-943"), when annotated. */
   lineRanges?: string
   anchorEl?: HTMLElement
+  /**
+   * The verified annotation is a directory, not a file. Directories have no
+   * content to fetch, so the card renders a listing instead of a code slice.
+   */
+  isDir?: boolean
 }
 
 /** Whether the preview target is a Markdown file (by extension). */
@@ -131,6 +138,81 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const filePath = target.value?.filePath || ''
     return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
   })
+
+  // ── Directory targets ───────────────────────────────────────────────────
+  // A directory annotation has no file content, so the card lists the
+  // directory instead of slicing code. This mirrors the file manager's docked
+  // pane (useDirPreview + DirPreviewBody) so both surfaces show the same
+  // control; the listing is fetched from the same /api/dir endpoint.
+  const isDirTarget = computed(() => target.value?.isDir === true)
+  const dirEntries = ref<DirPreviewEntry[]>([])
+  const dirLoading = ref(false)
+  const dirError = ref(false)
+  /** Directory the current listing belongs to (guards out-of-order responses). */
+  const dirLoadedPath = ref('')
+  let dirSeq = 0
+
+  const loadDir = async (path: string) => {
+    const mySeq = ++dirSeq
+    dirLoading.value = true
+    dirError.value = false
+    try {
+      const url = `/api/dir?path=${encodeURIComponent(path)}`
+      const data = await apiGet<{ items: DirPreviewEntry[] }>(url, { timeoutMs: 10_000 })
+      if (mySeq !== dirSeq) return
+      dirEntries.value = data.items || []
+      dirLoadedPath.value = path
+    } catch (err) {
+      if (mySeq !== dirSeq) return
+      appLog.w('CodeLinkPreview', 'Failed to list directory for preview', { path, error: err })
+      dirEntries.value = []
+      dirError.value = true
+      dirLoadedPath.value = path
+    } finally {
+      if (mySeq === dirSeq) dirLoading.value = false
+    }
+  }
+
+  /** Hidden entries are filtered at render time so the toolbar toggle applies
+   *  without a refetch — same rule as useDirPreview. */
+  const dirEntryVisible = (entry: DirPreviewEntry): boolean =>
+    localConfig.showHidden === true || !entry.name.startsWith('.')
+
+  /** Fetch the target's directory listing. Called by showPreview and refresh. */
+  const fetchDirPreview = (dirPath: string) => {
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    void loadDir(dirPath)
+  }
+
+  /**
+   * The card listed a directory and the user picked a child directory: hand off
+   * to the file manager, exactly as the docked pane does (its listing becomes
+   * the main list, so keeping the card open would just duplicate it).
+   *
+   * With no `name` this opens the listed directory itself — what the card's
+   * "open directory" button does, as opposed to revealing its parent.
+   */
+  const openDirChild = (name?: string) => {
+    const parent = target.value?.filePath || ''
+    const full = name ? joinPath(parent, name) : parent
+    if (!full) return
+    close()
+    window.dispatchEvent(new CustomEvent('open-directory-from-context', {
+      detail: { path: full, source: options.source },
+    }))
+  }
+
+  /**
+   * The card listed a directory and the user picked a file: open it in the
+   * full-screen viewer, matching the docked pane and a double-click in the list.
+   */
+  const openDirFile = (name: string) => {
+    const parent = target.value?.filePath || ''
+    close()
+    options.onBeforeOpen?.()
+    void openFilePath(joinPath(parent, name), undefined, undefined, options.source)
+  }
 
   // ── Media targets (image / SVG / video / audio / PDF) ────────────────────
   // These are served as raw bytes by /api/local-file/ (correct MIME, no size
@@ -319,6 +401,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       return
     }
 
+    // Directories have no file content either: the card lists them instead. The
+    // listing lives in dirEntries, so nothing to slice here.
+    if (isDirTarget.value) {
+      fileContent.value = null
+      slicedCode.value = null
+      fetchedWindow.value = null
+      fileTotalLines.value = null
+      windowTruncated.value = false
+      fetchDirPreview(newTarget.filePath)
+      status.value = 'ready'
+      return
+    }
+
     // Ask for just the lines this preview can render (plus margin), so a large
     // file is never transferred in full. A widen re-fetch passes the exact
     // window it needs; otherwise the window is planned from the target.
@@ -414,6 +509,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     fetchedWindow.value = null
     fileTotalLines.value = null
     windowTruncated.value = false
+    // Retargeting away from a directory (or onto another one) must not leave the
+    // previous listing on screen while the new one loads.
+    dirSeq += 1
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    dirLoading.value = false
+    dirError.value = false
     mode.value = wasPinned && previewMode !== 'sheet' ? 'pinned' : previewMode
     contextExpansion.value = 0
     extraAboveLines.value = 0
@@ -454,6 +556,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     fetchedWindow.value = null
     fileTotalLines.value = null
     windowTruncated.value = false
+    // Drop the listing and invalidate any in-flight fetch so a stale response
+    // can't repopulate the card after it was closed.
+    dirSeq += 1
+    dirEntries.value = []
+    dirLoadedPath.value = ''
+    dirLoading.value = false
+    dirError.value = false
     errorCode.value = null
     errorMessage.value = null
     isLargeFile.value = false
@@ -498,6 +607,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     // nonce feeds MediaPreviewBody's cache-busting param.
     if (isMediaTarget.value) {
       mediaRefreshNonce.value += 1
+      return
+    }
+    // A directory listing is its own fetch; re-run it rather than re-slicing.
+    if (isDirTarget.value) {
+      fetchDirPreview(target.value.filePath)
       return
     }
     fetchPreview(target.value, true)
@@ -570,12 +684,19 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     const targetEl = el.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]')
     if (!targetEl) return null
 
-    // Check verification status: must be file, not dir or unverified
+    // Only verified paths qualify: "file" previews its content, "dir" previews
+    // its listing. Unverified paths (no data-path-type yet) return null and fall
+    // through to the container's original handler.
     const pathType = targetEl.getAttribute('data-path-type')
-    if (pathType !== 'file') return null
+    if (pathType !== 'file' && pathType !== 'dir') return null
 
     const filePath = targetEl.getAttribute('data-file-path')
     if (!filePath) return null
+
+    // Line annotations are meaningless for a directory; ignore any suffix.
+    if (pathType === 'dir') {
+      return { filePath, isDir: true, anchorEl: targetEl }
+    }
 
     const startAttr = targetEl.getAttribute('data-line-start')
     const endAttr = targetEl.getAttribute('data-line-end')
@@ -712,6 +833,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     isAudioTarget,
     isPdfTarget,
     isMediaTarget,
+    // Directory targets (the card lists the directory instead of slicing code).
+    isDirTarget,
+    dirEntries,
+    dirLoading,
+    dirError,
+    dirLoadedPath,
+    dirEntryVisible,
+    openDirChild,
+    openDirFile,
     mediaRefreshNonce,
     showPreview,
     close,
@@ -752,16 +882,17 @@ export interface CodeLinkPreviewController {
 }
 
 /**
- * Shared interceptor for clicks on verified file-path annotations
- * (`.chat-file-path[data-file-path]` with `data-path-type="file"`).
+ * Shared interceptor for clicks on verified path annotations
+ * (`.chat-file-path[data-file-path]` with `data-path-type` of `file` or `dir`).
  *
  * The composable binds a capture-phase click listener once its container ref is
  * mounted; until that binding is in place this helper is the fallback used by
  * container-level click handlers (chat / markdown preview / task views), so
- * every surface shares one decision instead of four copies.
+ * every surface shares one decision instead of five copies.
  *
- * Only verified *file* paths are intercepted — directories and not-yet-verified
- * paths return false and fall through to the container's original handlers.
+ * Both verified types are intercepted: a file previews its content, a directory
+ * previews its listing. Only unverified paths (no `data-path-type` yet) return
+ * false and fall through to the container's original handlers.
  * Returns true when the event was handled by the preview (open it).
  */
 export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLinkPreviewController): boolean {
@@ -771,15 +902,16 @@ export function handleVerifiedFilePathClick(event: MouseEvent, preview: CodeLink
   const target = event.target as HTMLElement | null
   const linkOrBtn = target?.closest<HTMLElement>('.chat-file-path[data-file-path], .chat-file-open-btn[data-file-path]') ?? null
   const pathEl = target?.closest<HTMLElement>('.chat-file-path[data-file-path]') ?? null
-  const isVerifiedFile = linkOrBtn?.getAttribute('data-path-type') === 'file'
+  const pathType = linkOrBtn?.getAttribute('data-path-type')
+  const isVerifiedPath = pathType === 'file' || pathType === 'dir'
   // Desktop: modifier-click on either the path text or the open button pins the
   // preview; plain click on the path text opens a transient preview.
-  if (isVerifiedFile && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
+  if (isVerifiedPath && ((isModifier && linkOrBtn) || (!isTouch && pathEl))) {
     preview.handleClick(event)
     return true
   }
   // Touch: tapping the path text opens the bottom-sheet preview.
-  if (isVerifiedFile && isTouch && pathEl) {
+  if (isVerifiedPath && isTouch && pathEl) {
     preview.handleClick(event)
     return true
   }

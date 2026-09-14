@@ -34,18 +34,35 @@ body.code-preview-dragging * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) var(--space-5);
+  /* Compact title row. Measured against the real stylesheet, this row used to be
+     37px and the height came from the 24px buttons plus 6px paddings — the text
+     is only ~16px. So the buttons and paddings are the lever, not the font.
+     With 22px buttons and 2px paddings the row is a deterministic 27px: the
+     floating card's chrome drops from 68px (37 + 31) to 58px, which is what
+     "the header is too thick" was about. The meta row below is deliberately
+     untouched. Keep the path on ONE line (see .code-preview-title-path) or a
+     long path wraps to two lines and the row grows back past 27px. */
+  padding: var(--space-1) var(--space-4);
   background: var(--bg-primary, #ffffff);
   border-bottom: 1px solid var(--border-color, #ebebeb);
   cursor: grab;
   user-select: none;
   touch-action: none;
   flex-shrink: 0;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .code-preview-header:active {
   cursor: grabbing;
+}
+
+/* Header controls (pin / close) are 22px rather than the shared 24px so they fit
+   the compact row. Scoped to the header: the meta row's tool strip keeps 24px,
+   and the docked pane keeps its own 28px touch target. */
+.code-preview-header .code-preview-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
 }
 
 .code-preview-header-actions {
@@ -70,13 +87,15 @@ body.code-preview-dragging * {
 
 .code-preview-title-path {
   display: flex;
-  flex-wrap: wrap;
+  /* One line only. A wrapping path would push the compact header back to two
+     lines (~38px), so the dir ellipsises and the file name is kept whole by
+     .code-preview-title-file's flex-shrink: 0. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-1) var(--space-2);
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   line-height: 1.35;
-  max-height: 38px;
   overflow: hidden;
   flex: 1;
   min-width: 0;
@@ -479,11 +498,15 @@ body.code-preview-dragging * {
 .code-preview-filename {
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary, #202124);
-  word-break: break-all;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  /* Single line with an ellipsis, so the compact header row stays 27px even for
+     a very long file name. It used to wrap to 2 lines, which measured 34.7px and
+     undid the compaction. The full path is still reachable via the title's
+     tooltip, so nothing is lost. Only the floating header renders this class
+     (the docked pane uses .code-preview-compact-name, the sheet uses
+     .code-preview-sheet-title). */
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.35;
   min-width: 0;
 }

@@ -33,9 +33,46 @@ func GetSSHServer() *ssh.Server {
 	return s
 }
 
-// ServeSSHInfo returns SSH connection info for tunnel setup.
+// ServeSSHInfo returns the minimal SSH info an unauthenticated client needs to
+// discover the tunnel port.
 // GET /api/ssh/info
+//
+// Deliberately public, mirroring the /api/frp/status split: Android's
+// BackgroundService.fetchSSHPort() calls this from native Java with no cookie
+// to learn the port before it can connect. It only reports whether SSH is on
+// and which port to dial.
+//
+// Everything else — the host key fingerprint, the username, the generated
+// `ssh -L` command, and connection stats — is NOT here. The command in
+// particular enumerates every forwarded local port and its internal target
+// host, which is a map of the operator's internal network and has no business
+// being served to anonymous callers. Those fields moved to the authenticated
+// ServeSSHInfoFull.
 func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	sshRef := GetSSHServer()
+	if sshRef == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"port":    0,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": true,
+		"port":    sshRef.Port(),
+	})
+}
+
+// ServeSSHInfoFull returns the complete SSH tunnel setup payload for the
+// authenticated web UI (ProxyPanelContent shows the command and fingerprint;
+// usePortForward polls connection stats).
+// GET /api/ssh/info/full
+func ServeSSHInfoFull(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}

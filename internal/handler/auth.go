@@ -116,18 +116,33 @@ func (l *loginLimiter) cleanupLoop() {
 	}
 }
 
+// clientIP returns the request's source IP without its port, for per-IP rate
+// limiting. Falls back to the raw RemoteAddr when it has no port (which is what
+// httptest requests and some proxies produce).
+func clientIP(r *http.Request) string {
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || ip == "" {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
 // --- Auth handlers ---
 
 // ServeAuthCheck returns 200 if the session cookie is valid, 401 otherwise.
-// Localhost requests are always considered authenticated (same as middleware.Auth).
+//
+// The AI-token bypass mirrors middleware.Auth exactly, and MUST keep doing so:
+// this route is registered public (it does not run the Auth middleware) and the
+// SPA calls it to decide whether to show the login screen. If the two disagreed,
+// a caller could be told it is authenticated while every other API returns 401.
 func ServeAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if model.SessionToken == "" && model.CookieToken == "" {
 		// No password set, always authenticated
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	// Localhost bypass
-	if middleware.ShouldBypassAuth(r) {
+	// Local AI subprocess holding a short-lived signed token
+	if middleware.IsAITokenRequest(r) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -161,10 +176,7 @@ func ServeLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if remoteIP == "" {
-			remoteIP = r.RemoteAddr
-		}
+		remoteIP := clientIP(r)
 
 		// Rate limiting check (ISS-003c)
 		limiter := getLoginLimiter()

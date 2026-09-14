@@ -1,25 +1,63 @@
-import { ref } from 'vue'
-import { fetchForgeBinding } from '@/utils/forgeApi'
+import { ref, computed } from 'vue'
+import { fetchForgeBinding, type ForgeBinding } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'UseForgeBinding'
+
+// How long a resolved binding stays fresh. The binding is a project property
+// that changes only when the user rebinds or unbinds, so a short window is
+// enough to collapse the burst of fetches that a single navigation produces
+// (App mount + task list + task form + event card + forge panel all resolve it).
+const BINDING_TTL_MS = 5_000
 
 // Module-level singleton: the bound platform decides the dock icon, and the
 // dock is rendered by App.vue while the binding is loaded by the forge panel.
 // A shared ref keeps both in sync without prop drilling.
 //
-// `platform` is the raw forge platform ("github" | "gitlab"), or '' when
-// nothing is bound (or no project is selected).
-const platform = ref('')
-const host = ref('')
+// `binding` is the raw ForgeBinding, or null when nothing is bound (or no
+// project is selected). `resolved` distinguishes "not fetched yet" from
+// "fetched and confirmed unbound" — without it every consumer would render the
+// "no repository bound" warning during the initial load, which is wrong.
+const binding = ref<ForgeBinding | null>(null)
+const resolved = ref(false)
+const loading = ref(false)
+
+// In-flight dedup: concurrent callers share one request instead of each
+// issuing its own. Without this, opening the task list fires 3-5 identical
+// GETs that queue behind each other on the server's 2-connection read pool.
+let inflight: Promise<ForgeBinding | null> | null = null
+let fetchedAt = 0
+
+// Monotonic guard: a stale response (project switched mid-flight) must not
+// overwrite the newer project's binding.
+let requestSeq = 0
+
+const platform = computed(() => binding.value?.platform ?? '')
+const host = computed(() => binding.value?.host ?? '')
+
+/** The canonical "owner/repo" label, or '' when unbound. */
+const slug = computed(() => {
+    const b = binding.value
+    return b ? `${b.owner}/${b.repo}` : ''
+})
 
 /**
  * setForgeBindingState updates the shared binding from a caller that already
- * holds a binding object (the forge panel), avoiding a duplicate fetch.
+ * holds a binding object (the forge panel), avoiding a duplicate fetch. It
+ * marks the value resolved, since the caller has just read it from the server.
  */
-export function setForgeBindingState(binding: { platform?: string; host?: string } | null) {
-    platform.value = binding?.platform ?? ''
-    host.value = binding?.host ?? ''
+export function setForgeBindingState(next: { platform?: string; host?: string; owner?: string; repo?: string } | null) {
+    binding.value = next
+        ? {
+            platform: next.platform ?? '',
+            host: next.host ?? '',
+            owner: next.owner ?? '',
+            repo: next.repo ?? '',
+            slug: next.owner && next.repo ? `${next.owner}/${next.repo}` : '',
+        }
+        : null
+    resolved.value = true
+    fetchedAt = Date.now()
 }
 
 /**
@@ -34,28 +72,85 @@ export function forgeDockIconKind(currentPlatform: string): 'github' | 'gitlab' 
 }
 
 /**
- * useForgeBinding exposes which forge the current project is bound to.
+ * useForgeBinding exposes which forge the current project is bound to, and is
+ * the single source of truth for every consumer that needs it.
  *
- * The dock icon uses this to show the GitHub logo for github.com and the
+ * The dock icon uses `platform` to show the GitHub logo for github.com and the
  * GitLab logo otherwise, so the tab reflects the actual integration rather
- * than implying GitHub for every user.
+ * than implying GitHub for every user. Task views use `slug`/`resolved` to
+ * label the watched repository without flashing a false "unbound" state.
  */
 export function useForgeBinding() {
-    async function refresh() {
-        try {
-            const res = await fetchForgeBinding()
-            setForgeBindingState(res?.binding ?? null)
-        } catch (err) {
-            // A failed lookup must not leave a stale platform driving the icon.
-            appLog.w(TAG, 'refresh failed', err)
-            clear()
+    /**
+     * Load the binding, coalescing concurrent callers onto one request.
+     *
+     * @param force bypass the TTL cache AND supersede any in-flight lookup.
+     *              Use after a write (bind/unbind): an in-flight request was
+     *              started before the write, so its answer is stale by
+     *              definition and must not be adopted.
+     */
+    async function refresh(force = false): Promise<ForgeBinding | null> {
+        if (!force && resolved.value && Date.now() - fetchedAt < BINDING_TTL_MS) {
+            return binding.value
         }
+        // Only a cache-bypassing call may preempt an in-flight lookup; everyone
+        // else rides along on it.
+        if (!force && inflight) return inflight
+
+        // Bumping the sequence makes any older in-flight response discard its
+        // result instead of overwriting this one.
+        const seq = ++requestSeq
+        loading.value = true
+        const request = (async () => {
+            try {
+                const res = await fetchForgeBinding()
+                if (seq !== requestSeq) return binding.value
+                binding.value = res?.binding ?? null
+                resolved.value = true
+                fetchedAt = Date.now()
+                return binding.value
+            } catch (err) {
+                // A failed lookup must not leave a stale binding driving the
+                // icon or the repository label. Mark resolved so consumers stop
+                // showing a loading state, but leave the value empty.
+                appLog.w(TAG, 'refresh failed', err)
+                if (seq === requestSeq) {
+                    binding.value = null
+                    resolved.value = true
+                    fetchedAt = Date.now()
+                }
+                return binding.value
+            } finally {
+                if (seq === requestSeq) {
+                    loading.value = false
+                    inflight = null
+                }
+            }
+        })()
+        inflight = request
+        return request
     }
 
     function clear() {
-        platform.value = ''
-        host.value = ''
+        binding.value = null
+        resolved.value = false
+        fetchedAt = 0
+        inflight = null
+        requestSeq++
     }
 
-    return { platform, host, refresh, clear }
+    return { binding, platform, host, slug, resolved, loading, refresh, clear }
+}
+
+/**
+ * resetForgeBindingState drops the cached binding. Called on project switch:
+ * the binding belongs to the previous project and must not be shown for the
+ * new one while its own lookup is in flight.
+ */
+export function resetForgeBindingState() {
+    binding.value = null
+    resolved.value = false
+    fetchedAt = 0
+    inflight = null
+    requestSeq++
 }

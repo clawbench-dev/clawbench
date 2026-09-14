@@ -20,7 +20,6 @@ dingtalk:
 frp:
     token: abc***xyz
 host: ""
-localhost_auth_exempt: false
 log_level: ""
 log_max_days: 0
 password: ""

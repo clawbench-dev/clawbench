@@ -13,7 +13,7 @@ const platformSupported = ref<boolean | null>(null)
  * actual server runtime: `/api/terminal/status` returns `enabled: false`
  * when the terminal manager is nil (e.g. config says true but server hasn't
  * restarted yet). Mirrors the SSH pattern where `sshInfo.enabled` comes from
- * the live `/api/ssh/info` endpoint.
+ * the live `/api/ssh/info/full` endpoint.
  *
  * `platformSupported` indicates whether the OS supports PTY (false on Windows
  * where creack/pty lacks ConPTY). The frontend uses this to show a dedicated
