@@ -266,13 +266,13 @@ describe('activePane focus tracking', () => {
 
 describe('wideDockTabOrder', () => {
   it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
-    const all = wideDockTabOrder(['tasks', 'terminal', 'proxy', 'stats', 'settings'])
-    expect(all).toEqual(['browse', 'view', 'history', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
+    const all = wideDockTabOrder(['forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
+    expect(all).toEqual(['browse', 'view', 'history', 'forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
     expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
   })
 
   it('preserves secondary-tab order after filtering (terminal/proxy disabled)', () => {
-    expect(wideDockTabOrder(['tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'tasks', 'settings'])
+    expect(wideDockTabOrder(['forge', 'tasks', 'settings'])).toEqual(['browse', 'view', 'history', 'forge', 'tasks', 'settings'])
     expect(wideDockTabOrder([])).toEqual(['browse', 'view', 'history'])
   })
 
@@ -282,6 +282,48 @@ describe('wideDockTabOrder', () => {
     // The whole visible dock never depends on measured space — regression guard
     // for the old height-measured overflow that collapsed tabs into a popup.
     expect(order).toHaveLength(WIDE_SCREEN_PRIMARY_TABS.length + 2)
+  })
+})
+
+describe('wide dock tab reachability (regression)', () => {
+  // A tab rendered in the wide dock but missing from WIDE_SCREEN_DOCK_TABS is a
+  // dead button: switchLeftTab() returns early, so clicking it does nothing at
+  // all (no state change, no error). That was the forge tab bug — it is
+  // rendered by the wide dock (App.vue renders overflowTabs, which starts with
+  // 'forge') but was never added to the whitelist.
+  const SECONDARY_TABS = ['forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings']
+
+  it('every tab the wide dock renders can actually be switched to', () => {
+    const rendered = wideDockTabOrder(SECONDARY_TABS)
+    // Direct whitelist coverage: the dock renders exactly these tabs, so the
+    // switch whitelist must contain every one of them.
+    expect(rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab))).toEqual([])
+
+    for (const tab of rendered) {
+      resetWideScreenState()
+      // Start from a tab that is guaranteed different from the target, so the
+      // switch below is a real transition rather than the same-tab early return.
+      switchLeftTab(tab === 'browse' ? 'settings' : 'browse')
+      const setActiveTab = vi.fn()
+      registerWideScreenCallbacks({ setActiveTab })
+      switchLeftTab(tab)
+      const { leftTab } = useWideScreenLayout()
+      expect(leftTab.value, `dock tab "${tab}" is rendered but not switchable`).toBe(tab)
+      expect(setActiveTab, `dock tab "${tab}" did not sync activeTab`).toHaveBeenCalledWith(tab)
+    }
+  })
+
+  it('forge is switchable and persists across a re-init', () => {
+    expect(WIDE_SCREEN_DOCK_TABS).toContain('forge')
+    switchLeftTab('forge')
+    expect(localStorage.getItem(WIDE_SCREEN_LEFT_TAB_KEY)).toBe('forge')
+    _resetForTest()
+    const { leftTab } = useWideScreenLayout()
+    expect(leftTab.value).toBe('forge')
+  })
+
+  it('resolveLeftTabOnEnter accepts forge as the current narrow-mode tab', () => {
+    expect(resolveLeftTabOnEnter('forge', 'browse')).toBe('forge')
   })
 })
 
