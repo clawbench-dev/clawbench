@@ -1,6 +1,9 @@
 <template>
   <ModalDialog :open="open" :title="t('sessionTags.title')" :z-index="2600" @close="close">
     <div class="session-tags-dialog">
+      <!-- Failures must be visible: a silent catch leaves the user staring at an
+           unchanged dialog with no way to tell a failed save from a no-op. -->
+      <div v-if="errorMsg" class="st-error">{{ errorMsg }}</div>
       <!-- Existing candidates: global tags + this project's tags -->
       <div class="st-section-label">{{ t('sessionTags.existingLabel') }}</div>
       <div v-if="loading" class="st-empty">{{ t('common.loading') }}</div>
@@ -96,6 +99,7 @@ const candidates = ref([])      // selectable registry entries
 const selected = ref([])        // names currently attached to the session
 const loading = ref(false)
 const saving = ref(false)
+const errorMsg = ref('')
 const newTagName = ref('')
 const newTagScope = ref('project')
 
@@ -174,6 +178,7 @@ async function requestDelete(tag) {
     { confirmText: t('common.delete'), cancelText: t('common.cancel') }
   )
   if (!confirmed) return
+  errorMsg.value = ''
   try {
     const query = `name=${encodeURIComponent(tag.name)}&scope=${encodeURIComponent(tag.scope || 'project')}`
     await apiDelete(`/api/ai/session/tags?${query}`)
@@ -183,12 +188,14 @@ async function requestDelete(tag) {
     store.state.sessionListVersion++
   } catch (err) {
     appLog.e('SessionTagDialog', 'Failed to delete tag:', err)
+    errorMsg.value = t('sessionTags.deleteFailed')
   }
 }
 
 async function load() {
   if (!props.sessionId) return
   loading.value = true
+  errorMsg.value = ''
   try {
     const res = await apiGet(`/api/ai/session/tags`)
     candidates.value = res?.tags || []
@@ -198,6 +205,10 @@ async function load() {
   } catch (err) {
     appLog.e('SessionTagDialog', 'Failed to load tags:', err)
     candidates.value = []
+    // Without this the dialog renders "no tags yet" while the session's real
+    // tags are still selected but invisible — the user would think the session
+    // has no tags at all.
+    errorMsg.value = t('sessionTags.loadFailed')
   } finally {
     loading.value = false
   }
@@ -206,6 +217,7 @@ async function load() {
 async function save() {
   if (!props.sessionId) return
   saving.value = true
+  errorMsg.value = ''
   try {
     // A name typed into the input but not yet committed with the 创建 button
     // must not be silently dropped: the user filled the field and pressed
@@ -225,6 +237,9 @@ async function save() {
     emit('close')
   } catch (err) {
     appLog.e('SessionTagDialog', 'Failed to save tags:', err)
+    // Keep the dialog open with the user's edits intact so a retry is possible;
+    // the error row is what tells them the first attempt did not stick.
+    errorMsg.value = t('sessionTags.saveFailed')
   } finally {
     saving.value = false
   }
@@ -271,6 +286,16 @@ watch(() => props.open, (open) => {
   font-size: var(--font-size-sm);
   color: var(--text-muted);
   padding: var(--space-3) 0;
+}
+
+/* Same visual language as the other dialogs' error rows
+   (e.g. .copy-agent-dialog__error). */
+.st-error {
+  font-size: var(--font-size-md);
+  color: #e74c3c;
+  padding: var(--space-4) var(--space-6);
+  background: rgba(231, 76, 60, 0.1);
+  border-radius: var(--radius-sm);
 }
 
 .st-candidate-list {

@@ -554,4 +554,84 @@ describe('SessionTagDialog', () => {
       tags: [{ name: 'brandnew', scope: 'project' }],
     })
   })
+
+  // Every catch here used to only appLog.e, so a failed save left the dialog
+  // open and unchanged with no explanation — indistinguishable from the click
+  // doing nothing. The row is what makes the failure visible and retryable.
+  describe('failures are visible to the user', () => {
+    it('shows an error row when tags fail to load', async () => {
+      mockGet.mockRejectedValue(new Error('offline'))
+      const wrapper = await mountDialog()
+      await flushPromises()
+
+      expect(wrapper.find('.st-error').exists()).toBe(true)
+      expect(wrapper.find('.st-error').text()).toBe('sessionTags.loadFailed')
+    })
+
+    it('shows an error row when saving fails, and keeps the dialog open', async () => {
+      mockGet.mockResolvedValue({ tags: [] })
+      mockPatch.mockRejectedValue(new Error('boom'))
+      const wrapper = await mountDialog()
+      await flushPromises()
+
+      await wrapper.find('.st-input').setValue('urgent')
+      await wrapper.find('.fbtn-primary').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.st-error').text()).toBe('sessionTags.saveFailed')
+      // Still open, edits intact, so the user can retry.
+      expect(wrapper.find('.modal-stub').exists()).toBe(true)
+      expect(wrapper.emitted('close')).toBeUndefined()
+      expect(wrapper.vm.saving).toBe(false)
+    })
+
+    it('clears the error row and closes once a retry succeeds', async () => {
+      mockGet.mockResolvedValue({ tags: [] })
+      const wrapper = await mountDialog()
+      await flushPromises()
+
+      mockPatch.mockRejectedValueOnce(new Error('boom'))
+      await wrapper.find('.st-input').setValue('urgent')
+      await wrapper.find('.fbtn-primary').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.st-error').exists()).toBe(true)
+
+      mockPatch.mockResolvedValue({})
+      await wrapper.find('.fbtn-primary').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.st-error').exists()).toBe(false)
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+
+    it('shows an error row when deleting an existing tag fails', async () => {
+      mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 2 }] })
+      mockDelete.mockRejectedValue(new Error('boom'))
+      mockDialogHolder.confirm = vi.fn().mockResolvedValue(true)
+      const wrapper = await mountDialog({ initialTags: ['bug'] })
+      await flushPromises()
+
+      await wrapper.find('.st-delete-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.st-error').text()).toBe('sessionTags.deleteFailed')
+      // The row stays: the definition was not actually removed.
+      expect(wrapper.findAll('.st-candidate').length).toBe(1)
+    })
+
+    it('does not leave a stale error row after a later success', async () => {
+      mockGet.mockRejectedValueOnce(new Error('offline'))
+      const wrapper = await mountDialog()
+      await flushPromises()
+      expect(wrapper.find('.st-error').exists()).toBe(true)
+
+      // Reopening reloads; the previous failure must not linger.
+      await wrapper.setProps({ open: false })
+      mockGet.mockResolvedValue({ tags: [{ name: 'bug', scope: 'project', count: 1 }] })
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+
+      expect(wrapper.find('.st-error').exists()).toBe(false)
+    })
+  })
 })

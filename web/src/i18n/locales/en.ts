@@ -932,6 +932,9 @@ export default {
     deleteTag: 'Delete tag',
     deleteConfirm: 'Delete tag "{name}"? It will be removed from all sessions.',
     filterLabel: 'Filter sessions by tag',
+    loadFailed: "Couldn't load tags. The list below may be incomplete.",
+    saveFailed: "Couldn't save tags. Your changes are still here — try again.",
+    deleteFailed: "Couldn't delete the tag. Please try again.",
   },
   sessionSearch: {
     title: 'Session Search',

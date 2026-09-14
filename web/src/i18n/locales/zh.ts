@@ -932,6 +932,9 @@ export default {
     deleteTag: '删除标签',
     deleteConfirm: '删除标签"{name}"？该标签将从所有会话中移除。',
     filterLabel: '按标签筛选会话',
+    loadFailed: '标签加载失败，下方列表可能不完整。',
+    saveFailed: '标签保存失败，你的修改还在，可重试。',
+    deleteFailed: '标签删除失败，请重试。',
   },
   sessionSearch: {
     title: '会话搜索',
