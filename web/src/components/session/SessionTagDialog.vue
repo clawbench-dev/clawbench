@@ -285,6 +285,11 @@ watch(() => props.open, (open) => {
 
 .st-checkbox {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  /* Without an explicit size the UA default (13px) sits noticeably smaller
+     than the 16px used by other checkboxes in the app. */
+  accent-color: var(--accent-color, #0066cc);
   cursor: pointer;
 }
 
@@ -322,13 +327,49 @@ watch(() => props.open, (open) => {
   gap: var(--space-2);
 }
 
+/* Native controls carry no styling of their own here: the global reset zeroes
+   padding/margin on every element (web/css/base.css), so an input left with
+   only layout rules renders as bare text with no border or hit area. Every
+   control below therefore declares its own surface, matching the convention
+   used by other form dialogs (e.g. .form-input, .port-add-input). */
 .st-input {
   flex: 1;
   min-width: 0;
+  height: 32px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-family: inherit;
+}
+
+.st-input:focus {
+  outline: none;
+  border-color: var(--accent-color, #0066cc);
+}
+
+.st-input::placeholder {
+  color: var(--text-muted);
 }
 
 .st-scope-select {
   flex-shrink: 0;
+  height: 32px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.st-scope-select:focus {
+  outline: none;
+  border-color: var(--accent-color, #0066cc);
 }
 
 .st-add-btn {
@@ -336,11 +377,26 @@ watch(() => props.open, (open) => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-6);
+  /* Explicit border: this is a <button>, and without one the UA paints its own
+     chrome, which reads as an unstyled element next to the input/select. */
+  border: 1px solid var(--accent-color, #0066cc);
+  border-radius: var(--radius-sm);
+  background: var(--accent-color, #0066cc);
+  color: #fff;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
+  transition: opacity var(--duration-base) ease;
+}
+
+.st-add-btn:hover:not(:disabled) {
+  opacity: 0.88;
 }
 
 .st-add-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 

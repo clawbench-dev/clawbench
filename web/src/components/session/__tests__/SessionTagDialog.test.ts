@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 
 const { mockStore, mockDialogHolder, mockGet, mockDelete, mockPatch } = vi.hoisted(() => ({
@@ -326,5 +328,46 @@ describe('SessionTagDialog', () => {
     await flushPromises()
     expect(wrapper.vm.candidates).toEqual([])
     expect(wrapper.vm.loading).toBe(false)
+  })
+  // The global reset zeroes padding/margin on every element (web/css/base.css),
+  // so a control that declares only layout (flex/min-width) renders as bare UA
+  // chrome — no border, no background, no hit area. That is exactly how this
+  // dialog shipped once: the input read as plain text and the create button as
+  // a text link, while the chips above (which do declare a surface) looked
+  // right. jsdom does not cascade CSS, so assert on the declared source rules.
+  describe('form controls declare their own surface', () => {
+    const src = readFileSync(resolve(process.cwd(), 'src/components/session/SessionTagDialog.vue'), 'utf8')
+    const ruleFor = (selector: string) => {
+      // Match ".selector { ... }" and take the declaration block.
+      const m = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(src)
+      return m ? m[1] : ''
+    }
+
+    it.each([
+      ['.st-input', 'the text field'],
+      ['.st-scope-select', 'the scope dropdown'],
+    ])('%s (%s) declares border, background and padding', (selector) => {
+      const rule = ruleFor(selector)
+      expect(rule, `${selector} rule must exist`).not.toBe('')
+      expect(rule).toMatch(/border:/)
+      expect(rule).toMatch(/background:/)
+      expect(rule).toMatch(/padding:/)
+    })
+
+    it('.st-add-btn declares a button surface, not just layout', () => {
+      const rule = ruleFor('.st-add-btn')
+      expect(rule).not.toBe('')
+      // A <button> with no border declaration keeps the UA border, which reads
+      // as an unstyled element next to the bordered input.
+      expect(rule).toMatch(/border:/)
+      expect(rule).toMatch(/background:/)
+      expect(rule).toMatch(/padding:/)
+    })
+
+    it('.st-checkbox declares an explicit size', () => {
+      const rule = ruleFor('.st-checkbox')
+      expect(rule).toMatch(/width:/)
+      expect(rule).toMatch(/height:/)
+    })
   })
 })
