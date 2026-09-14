@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TaskEventCard from '../TaskEventCard.vue'
+import { resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // ── Mocks ──
 vi.mock('vue-i18n', () => ({
@@ -60,6 +61,9 @@ function mountCard(overrides: Record<string, unknown> = {}) {
 describe('TaskEventCard manual-run explanation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // The binding singleton (and its TTL cache) survives between tests; reset it
+    // so each case performs its own lookup, as a real project switch would.
+    resetForgeBindingState()
     mockFetchBinding.mockResolvedValue({ binding: null })
   })
 
@@ -75,5 +79,52 @@ describe('TaskEventCard manual-run explanation', () => {
     const wrapper = mountCard({ status: 'paused' })
     expect(wrapper.find('.event-paused-note').exists()).toBe(true)
     expect(wrapper.text()).toContain('task.overview.eventNoManualRun')
+  })
+})
+
+// The card resolves the project's bound repository for the "watched repository"
+// row. It must show the real binding, and must not claim the project is unbound
+// before the lookup has answered.
+describe('TaskEventCard watched repository', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetForgeBindingState()
+  })
+
+  it('shows the project-bound repository', async () => {
+    mockFetchBinding.mockResolvedValue({
+      binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' },
+    })
+    const wrapper = mountCard()
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('acme/widgets')
+    })
+  })
+
+  it('shows the unbound label when the project has no binding', async () => {
+    mockFetchBinding.mockResolvedValue({ binding: null })
+    const wrapper = mountCard()
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('task.form.eventRepoUnbound')
+    })
+  })
+
+  // Regression: the row read `boundRepoLabel || t('eventRepoUnbound')`, and the
+  // label started at '', so an in-flight lookup claimed the project was unbound.
+  it('does not claim the project is unbound while the lookup is in flight', async () => {
+    let release: (v: unknown) => void = () => {}
+    mockFetchBinding.mockReturnValue(new Promise(resolve => { release = resolve }))
+
+    const wrapper = mountCard()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('task.form.eventRepoUnbound')
+    expect(wrapper.text()).toContain('common.loading')
+
+    release({ binding: { platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' } })
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('acme/widgets')
+    })
+    expect(wrapper.text()).not.toContain('task.form.eventRepoUnbound')
   })
 })

@@ -54,6 +54,14 @@ export const ERR_SELF_PATH_UNRESOLVED = 'self_path_unresolved'
  */
 export const ERR_RESTART_FAILED = 'restart_failed'
 
+/**
+ * Failure id emitted when the release cannot be fully verified but the request
+ * did not carry a confirmation matching the registry's current warning. Usually
+ * the metadata changed between the check and the start, so re-running the check
+ * and confirming again is the way forward.
+ */
+export const ERR_UNVERIFIED_NOT_CONFIRMED = 'unverified_not_confirmed'
+
 const SKIP_KEY = 'clawbench-upgrade-skip'
 
 // Module-level singleton state (shared across all component instances)
@@ -282,10 +290,22 @@ export function useUpgrade() {
    * on the registry metadata, so the decision can be made up front rather than
    * mid-download. A cancelled confirmation starts nothing.
    *
+   * The warning the user accepted is sent back with the request. The service
+   * compares it against what the registry reports and refuses a mismatch, so an
+   * unverified install cannot proceed without a decision that matches the
+   * metadata actually being installed.
+   *
    * A tarball that fails its integrity hash is a separate matter handled by the
    * backend, which refuses to install it outright.
    */
   async function startUpgrade(): Promise<void> {
+    // Re-check before every attempt, not just the first. After a failure the
+    // dialog stays open on the failure screen; without this, a retry would
+    // reuse whatever warning the previous attempt happened to leave behind —
+    // possibly none, from the reset broadcast at the start of that attempt.
+    // Re-checking means the user is always asked about the metadata in play.
+    await checkUpgrade()
+
     if (!(await confirmUnverifiedUpgrade())) return
 
     showProgressDialog.value = true
@@ -297,7 +317,9 @@ export function useUpgrade() {
     state.error = ''
     state.error_code = ''
     try {
-      await apiPost('/api/upgrade/start', {})
+      await apiPost('/api/upgrade/start', {
+        verification_warning: verificationWarning.value,
+      })
     } catch (e) {
       appLog.e(TAG, 'Start failed', e)
     }

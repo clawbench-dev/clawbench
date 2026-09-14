@@ -45,6 +45,16 @@ public class AppLogSessionCookieTest {
     }
 
     @Test
+    public void rejectsPortScopedNameWithoutDigits() {
+        // The port-scoped form is cb<digits>_clawbench_session. A name with no
+        // digits is not one the server ever emits, and any same-origin script
+        // could set it — so it must not be picked up as the session cookie.
+        assertNull(AppLog.extractSessionCookie("cb_clawbench_session=abc"));
+        assertNull(AppLog.extractSessionCookie("cbx_clawbench_session=abc"));
+        assertNull(AppLog.extractSessionCookie("cb-20000_clawbench_session=abc"));
+    }
+
+    @Test
     public void doesNotMatchSimilarNames() {
         // A prefix/suffix near-miss must not be mistaken for the session cookie.
         assertNull(AppLog.extractSessionCookie("clawbench_session_extra=abc"));

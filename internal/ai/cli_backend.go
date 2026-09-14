@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // streamWaitDelay bounds how long the process's exec-managed pipes (stderr)
@@ -74,6 +76,19 @@ func truncatePrompt(req ChatRequest) string {
 		return p[:maxPromptLog] + "..."
 	}
 	return p
+}
+
+// redactArgs strips any injected AI token from command-line arguments before
+// they are logged. Some backends pass the prompt as an argument, so the token
+// (injected into that prompt) would otherwise be written to the server log in
+// plaintext. The token is also logged for the full args list rather than just
+// the prompt, which is why truncating the prompt is not sufficient.
+func redactArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = model.RedactAIToken(a)
+	}
+	return out
 }
 
 // Name returns the backend identifier (implements AIBackend).
@@ -151,9 +166,11 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		slog.String("backend", b.BackendName),
 		slog.String("work_dir", req.WorkDir),
 		slog.String("session_id", req.SessionID),
-		slog.String("prompt", truncatePrompt(req)),
+		slog.String("prompt", model.RedactAIToken(truncatePrompt(req))),
 		slog.Bool("has_fork_context", req.ForkContext != ""),
-		slog.Any("args", args),
+		// args is logged in full and, for backends that pass the prompt as an
+		// argument (pi, deepseek, copilot), contains the injected AI token.
+		slog.Any("args", redactArgs(args)),
 	)
 
 	// Create a manual stdout pipe so we own the read end. Unlike StdoutPipe,

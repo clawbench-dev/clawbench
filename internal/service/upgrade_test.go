@@ -447,13 +447,31 @@ func TestResolveExpectedDigest_NeitherField_WarnsAndProceeds(t *testing.T) {
 
 // The unverified digest must pass verification unconditionally — there is
 // nothing to compare against, and the warning already covered the gap.
-func TestExpectedDigest_UnverifiedAlwaysPasses(t *testing.T) {
-	digest, _, err := resolveExpectedDigest("", "")
+// An unverified digest passes any bytes, while a verified one rejects the same
+// bytes. Asserting only the first half would be tautological — the point is the
+// contrast, which is what makes the flag load-bearing.
+func TestExpectedDigest_UnverifiedPassesWhereVerifiedWouldFail(t *testing.T) {
+	unverified, _, err := resolveExpectedDigest("", "")
 	require.NoError(t, err)
+	require.True(t, unverified.unverified)
 
-	hasher := digest.newHasher()
-	_, _ = hasher.Write([]byte("arbitrary bytes"))
-	assert.NoError(t, digest.verify(hasher), "an unverified digest has nothing to check")
+	// A digest with a real hash, for the same content the hasher will see.
+	sum := sha512.Sum512([]byte("arbitrary bytes"))
+	verified, _, err := resolveExpectedDigest("sha512-"+base64.StdEncoding.EncodeToString(sum[:]), "")
+	require.NoError(t, err)
+	require.False(t, verified.unverified)
+
+	arbitrary := []byte("arbitrary bytes")
+
+	uh := unverified.newHasher()
+	_, _ = uh.Write(arbitrary)
+	assert.NoError(t, unverified.verify(uh), "an unverified digest has nothing to compare")
+
+	// The verified digest must disagree with a *different* payload, proving the
+	// two branches really do differ.
+	vh := verified.newHasher()
+	_, _ = vh.Write([]byte("different bytes"))
+	require.Error(t, verified.verify(vh), "a verified digest must reject the wrong content")
 }
 
 func TestResolveExpectedDigest_WhitespaceOnly_WarnsAndProceeds(t *testing.T) {
@@ -1400,45 +1418,43 @@ func TestExpectedDigest_VerifyRealSHA512(t *testing.T) {
 	assert.NoError(t, digest.verify(hasher))
 }
 
-// --- downloadAndExtract refuses a tarball it cannot verify ---
+// --- unverified installs require a matching acknowledgment ---
 
-// The regression test for the fail-open bug: a registry response with neither
-// dist.integrity nor dist.shasum must abort the whole upgrade before anything
-// is downloaded. Previously the empty integrity string caused verification to
-// be skipped and the binary was installed unverified.
-// A registry that supplies no hash no longer blocks the upgrade: it proceeds
-// unverified and records a warning. The download is still attempted, which is
-// the behavior change this test pins down.
-func TestPerformUpgrade_NoUsableHashProceedsWithWarning(t *testing.T) {
+// unverifiedMirrorHarness stands up the "plain proxy" scenario: the default
+// registry is unreachable, and the user's mirror advertises an upgrade while
+// supplying no hash at all (so the release cannot be verified). It reports how
+// many times the tarball was fetched, which is the signal for whether the
+// upgrade proceeded past the acknowledgment gate.
+type unverifiedMirrorHarness struct {
+	tarballHits int32
+	warning     string
+}
+
+func newUnverifiedMirrorHarness(t *testing.T) *unverifiedMirrorHarness {
+	t.Helper()
+	h := &unverifiedMirrorHarness{}
+
 	dir := withTempDataDir(t)
-
-	// A real file stands in for the on-disk binary, and a version behind the
-	// target defeats the short-circuit so the download path is reached.
 	live := filepath.Join(dir, "bin", "clawbench")
 	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
 	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
 	require.NoError(t, WriteSelfPath(live))
 
+	// A version behind the target defeats the short-circuit, so the download
+	// path is reached.
 	origVer := selfBinaryVersion
 	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
 	t.Cleanup(func() { selfBinaryVersion = origVer })
 
-	// The default registry is unreachable, so the user's mirror supplies the
-	// metadata.
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(failServer.Close)
 
-	// The mirror advertises an upgrade but supplies no hash at all, and serves
-	// a real tarball so the download can complete.
-	binContent := []byte("#!/bin/sh\necho clawbench")
-	tarball, _ := buildTarball(t, binContent)
-
-	var tarballHits int32
+	tarball, _ := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
 	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, ".tgz") {
-			atomic.AddInt32(&tarballHits, 1)
+			atomic.AddInt32(&h.tarballHits, 1)
 			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
 			_, _ = w.Write(tarball)
 			return
@@ -1460,7 +1476,7 @@ func TestPerformUpgrade_NoUsableHashProceedsWithWarning(t *testing.T) {
 	t.Cleanup(func() { upgradeHTTPClient = origClient })
 
 	origChina := platform.ChinaMirrorChecked.Load()
-	platform.ChinaMirrorChecked.Store(2) // non-China → default base first
+	platform.ChinaMirrorChecked.Store(2) // non-China -> default base first
 	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
 
 	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
@@ -1475,19 +1491,133 @@ func TestPerformUpgrade_NoUsableHashProceedsWithWarning(t *testing.T) {
 	ResetUpgradeState()
 	t.Cleanup(ResetUpgradeState)
 
-	performUpgrade(context.Background())
+	// Discover the warning the registry produces, which is what a client that
+	// showed it to the user would echo back.
+	probe, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	require.NotEmpty(t, probe.VerificationWarning, "precondition: the mirror supplies no hash")
+	h.warning = probe.VerificationWarning
+
+	return h
+}
+
+// With the user's acknowledgment, the unverified install proceeds and the
+// warning is surfaced.
+func TestPerformUpgrade_UnverifiedWithAcknowledgmentProceeds(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), h.warning)
 
 	s := GetUpgradeState()
 	assert.Contains(t, s.VerificationWarning, "no integrity hash",
 		"the unverified install must be reported to the user")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&tarballHits),
-		"the download must proceed when no hash is available")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&h.tarballHits),
+		"the download must proceed when the warning was acknowledged")
 
 	// The upgrade may still fail later (the fake binary cannot be exec'd), but
-	// it must not fail for lack of verification. Asserting on the reason rather
-	// than the phase keeps this test about the policy change.
-	assert.NotContains(t, s.Error, "unverified",
-		"the upgrade must no longer be refused for a missing hash")
+	// it must not fail for lack of verification.
+	assert.NotContains(t, s.Error, "unverified")
+}
+
+// Without an acknowledgment the upgrade must be refused before any download.
+// This is what makes the confirmation a control rather than a UI convention:
+// POST /api/upgrade/start cannot install an unverified release on its own.
+func TestPerformUpgrade_UnverifiedWithoutAcknowledgmentRefused(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), "")
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&h.tarballHits),
+		"nothing may be downloaded without an acknowledgment")
+}
+
+// An acknowledgment that does not match the current metadata is refused: the
+// user consented to a different risk description than the one now on offer, so
+// the decision does not carry over.
+func TestPerformUpgrade_StaleAcknowledgmentRefused(t *testing.T) {
+	h := newUnverifiedMirrorHarness(t)
+
+	performUpgrade(context.Background(), "some other warning the user saw earlier")
+
+	s := GetUpgradeState()
+	assert.Equal(t, UpgradePhaseFailed, s.Phase)
+	assert.Equal(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&h.tarballHits))
+}
+
+// A fully verified release needs no acknowledgment, so an empty one is correct
+// rather than suspicious. Guarding the inverse direction: the gate must not
+// demand a confirmation that the client could never have obtained.
+func TestPerformUpgrade_VerifiedReleaseNeedsNoAcknowledgment(t *testing.T) {
+	dir := withTempDataDir(t)
+	live := filepath.Join(dir, "bin", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
+	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
+	require.NoError(t, WriteSelfPath(live))
+
+	origVer := selfBinaryVersion
+	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
+	t.Cleanup(func() { selfBinaryVersion = origVer })
+
+	// A mirror that serves a hash AND a valid npm signature, so the release is
+	// fully verified and produces no warning at all. Both are required: a
+	// missing signature is itself a warning.
+	keys := newTestSigningKeys(t)
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	tarball, integrity := buildTarball(t, []byte("#!/bin/sh\necho clawbench"))
+	mirrorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, ".tgz") {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+			_, _ = w.Write(tarball)
+			return
+		}
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://mirror.example.com/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = integrity
+		resp.Dist.Signatures = []npmSignature{keys.sign(t, pkg, "99.0.0", integrity)}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mirrorServer.Close)
+
+	origClient := upgradeHTTPClient
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		mirrorBase: mirrorServer.URL,
+		keysJSON:   keys.keysJSON(t),
+	}}
+	t.Cleanup(func() { upgradeHTTPClient = origClient })
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	platform.ChinaMirrorChecked.Store(2)
+	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
+
+	origEnv := os.Getenv("NPM_CONFIG_REGISTRY")
+	os.Setenv("NPM_CONFIG_REGISTRY", mirrorServer.URL)
+	t.Cleanup(func() { os.Setenv("NPM_CONFIG_REGISTRY", origEnv) })
+
+	origRestart := upgradeRestartFunc
+	upgradeRestartFunc = func() error { return nil }
+	t.Cleanup(func() { upgradeRestartFunc = origRestart })
+
+	ResetUpgradeState()
+	t.Cleanup(ResetUpgradeState)
+
+	// Confirm the precondition: this release produces no warning at all.
+	probe, err := fetchUpgradeInfo()
+	require.NoError(t, err)
+	require.Empty(t, probe.VerificationWarning, "precondition: the release verifies")
+
+	performUpgrade(context.Background(), "")
+
+	s := GetUpgradeState()
+	assert.NotEqual(t, UpgradeErrUnverifiedNotConfirmed, s.ErrorCode,
+		"a verified release must not be refused for a missing acknowledgment")
 }
 
 // downloadAndExtract verifies whenever the digest carries a hash. An unverified
@@ -1518,6 +1648,67 @@ func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
+}
+
+// An unverified digest must not be reported as a successful verification. The
+// regression this guards: verify() returns nil for an unverified digest, so a
+// shared code path would log "integrity verified" alongside a hardcoded
+// algorithm that was never applied.
+func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho hi")
+	tarball, _ := buildTarball(t, binContent)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+	require.True(t, digest.unverified, "precondition: no hash means unverified")
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, digest, destPath),
+		"an unverified install must still complete")
+
+	got, readErr := os.ReadFile(destPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, binContent, got)
+}
+
+// A decompression bomb must not be able to fill the disk. The archive here is
+// tiny on the wire and enormous once expanded, which is exactly the shape a
+// hostile mirror would serve when no hash constrains it.
+func TestDownloadAndExtract_RejectsOversizedBinary(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	huge := bytes.Repeat([]byte("A"), maxBinarySize+1024)
+	tarball, _ := buildTarball(t, huge)
+	require.Less(t, len(tarball), 10<<20, "precondition: the archive itself is small")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err = downloadAndExtract(context.Background(), ts.URL, digest, destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "an oversized binary must be cleaned up")
 }
 
 // The digest is checked against the bytes actually served, so a tarball that is
@@ -1833,7 +2024,7 @@ func TestPerformUpgrade_UnreachableRegistry(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		performUpgrade(context.Background())
+		performUpgrade(context.Background(), "")
 	}()
 
 	select {
@@ -2019,7 +2210,7 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		performUpgrade(context.Background())
+		performUpgrade(context.Background(), "")
 	}()
 	select {
 	case <-done:

@@ -1639,6 +1639,67 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
+  it('batches >100 paths into separate requests', async () => {
+    // The endpoint rejects >100 paths with 400 TooManyPaths, and the error body
+    // has no `results` field. Sending them all at once therefore made
+    // Object.entries(undefined) throw, which the catch block treated as a
+    // network failure and cached every path as 'none' — permanently stripping
+    // annotations from real files. Chunk the request instead.
+    const mockFetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { paths: string[] }
+      const results: Record<string, string> = {}
+      for (const p of body.paths) results[p] = 'file'
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ results }) })
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const paths = Array.from({ length: 250 }, (_, i) => `src/f${i}.go`)
+    const container = document.createElement('div')
+    container.innerHTML = paths
+      .map(p => `<span class="chat-file-path" data-file-path="${p}">${p}</span>`)
+      .join('')
+
+    await verifyFilePaths(paths, container)
+
+    // Three requests of at most 100, and every path verified as a real file.
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    for (const call of mockFetch.mock.calls) {
+      const body = JSON.parse(String((call[1] as RequestInit).body)) as { paths: string[] }
+      expect(body.paths.length).toBeLessThanOrEqual(100)
+    }
+    for (const p of paths) {
+      const el = container.querySelector(`[data-file-path="${p}"]`)
+      expect(el, `${p} must keep its annotation`).not.toBeNull()
+      expect(el!.getAttribute('data-path-type')).toBe('file')
+    }
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps annotations when the batch request fails with a non-OK status', async () => {
+    // A 4xx/5xx body carries no `results`. Treating that as "path does not
+    // exist" would strip annotations from files that are perfectly real, so an
+    // unusable response must leave the annotation alone (still clickable is
+    // better than silently destroyed).
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ error: 'TooManyPaths', code: 400 }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+
+    await verifyFilePaths(['src/real.go'], container)
+
+    const el = container.querySelector('.chat-file-path')
+    expect(el).not.toBeNull()
+    expect(el!.getAttribute('data-file-path')).toBe('src/real.go')
+
+    vi.unstubAllGlobals()
+  })
+
   it('removes annotation for project-external directory', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,

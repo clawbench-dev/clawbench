@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"clawbench/internal/model"
 )
@@ -65,23 +66,47 @@ func effectiveSource(s string) string {
 // additional entries (e.g. Tag = "x\n<timestamp> [js] I/Real: ..."). All fields
 // are escaped for that reason.
 //
+// Nor is escaping only "\n"/"\r" enough. Readers disagree about what ends a
+// line, and several of those characters survive a newline-only blacklist:
+// Python's str.splitlines() also breaks on VT, FF, FS/GS/RS and NEL, and JS
+// treats U+2028/U+2029 as line terminators in its grammar. So this escapes
+// every control character (unicode.IsControl covers C0, DEL and C1 — including
+// NEL) plus the two Unicode line separators that are not classified as
+// controls. Anything printable passes through untouched.
+//
 // Escaping is used rather than stripping so the log still shows that the input
-// contained a line break — this is a debug log, and silently losing the
+// contained something odd — this is a debug log, and silently losing the
 // structure would hide the very thing an operator is looking for.
 func sanitizeLogField(s string, maxLen int) string {
-	// Escape the byte that terminates a record, plus CR (which some readers
-	// treat as a line end) and NUL (which makes tools read the file as binary).
-	s = strings.NewReplacer(
-		"\n", "\\n",
-		"\r", "\\r",
-		"\x00", "\\0",
-	).Replace(s)
-	if len(s) > maxLen {
-		// Truncate on a rune boundary so the file stays valid UTF-8.
-		s = strings.ToValidUTF8(s[:maxLen], "")
-		s += "…[truncated]"
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == 0:
+			b.WriteString(`\0`)
+		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029':
+			// Any other control char (VT, FF, FS/GS/RS, NEL, DEL, …) or a
+			// Unicode line separator. Render as an escape so it stays visible
+			// but cannot act as a record break.
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
 	}
-	return s
+
+	out := b.String()
+	if len(out) > maxLen {
+		// Truncate on a rune boundary so the file stays valid UTF-8.
+		out = strings.ToValidUTF8(out[:maxLen], "")
+		out += "…[truncated]"
+	}
+	return out
 }
 
 // clientLogEntryLine renders one entry as a single log line. Caller must have
@@ -116,6 +141,19 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound the body BEFORE decoding. The byte cap further down applies to
+	// rendered lines, which is too late: json.Decode builds the whole
+	// []ClientLogEntry first, so without this a single request could make the
+	// server allocate hundreds of MiB (200 entries × arbitrarily large Msg).
+	//
+	// The 2× headroom over clientLogMaxBodyBytes is deliberate: the two caps
+	// measure different things (raw JSON vs. rendered lines) and escaping can
+	// expand the body. A consequence is that a 200-entry batch of maximum-size
+	// messages (~830 KiB) is rejected here rather than truncated by the append
+	// cap — which is fine, and still leaves the append cap binding for any
+	// batch that fits in the body limit.
+	r.Body = http.MaxBytesReader(w, r.Body, clientLogMaxBodyBytes*2)
+
 	var req clientLogRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -136,6 +174,7 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	// whole lines. The total is also bounded so one request cannot dominate the
 	// file regardless of how the entries are distributed.
 	lines := make([]byte, 0, len(req.Entries)*128)
+	written := 0
 	for _, e := range req.Entries {
 		e.Msg = sanitizeLogField(e.Msg, clientLogMaxMsgLen)
 		e.Tag = sanitizeLogField(e.Tag, clientLogMaxTagLen)
@@ -147,6 +186,7 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		lines = append(lines, line...)
+		written++
 	}
 
 	clientLogMu.Lock()
@@ -158,7 +198,10 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"written": len(req.Entries)})
+	// Report what was actually appended, not what was received: a batch can be
+	// cut short by the body cap, and a count that disagrees with the file makes
+	// this diagnostic endpoint untrustworthy.
+	writeJSON(w, http.StatusOK, map[string]any{"written": written})
 }
 
 // clientLogMaxBytes is the client-log file cap. When an append would push the

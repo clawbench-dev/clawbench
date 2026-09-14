@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"clawbench/internal/model"
 )
 
 // CodexStreamMessage represents a single JSON line from `codex exec --json`
@@ -485,9 +487,11 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 		slog.String("backend", "codex"),
 		slog.String("work_dir", req.WorkDir),
 		slog.String("session_id", req.SessionID),
-		slog.String("prompt", req.Prompt),
+		// Logged in full (unlike cli_backend, which truncates), so the injected
+		// AI token must be redacted explicitly.
+		slog.String("prompt", model.RedactAIToken(req.Prompt)),
 		slog.Bool("resume", req.Resume),
-		slog.Any("args", fullArgs),
+		slog.Any("args", redactArgs(fullArgs)),
 	)
 
 	// ISS-050: only create stdoutPipe for non-resume mode.

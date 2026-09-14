@@ -274,6 +274,16 @@ describe('useUpgrade', () => {
   // ── startUpgrade ──
 
   describe('startUpgrade', () => {
+    // startUpgrade re-checks first; a verified release is the plain path.
+    beforeEach(() => {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        verification_warning: '',
+      })
+    })
+
     it('shows progress dialog and calls API', async () => {
       mockApiPost.mockResolvedValue({})
 
@@ -281,7 +291,7 @@ describe('useUpgrade', () => {
       await upgrade.startUpgrade()
 
       expect(upgrade.showProgressDialog.value).toBe(true)
-      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', {})
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', { verification_warning: '' })
     })
 
     it('still shows progress dialog even when API fails', async () => {
@@ -323,44 +333,59 @@ describe('useUpgrade', () => {
   // decision happens up front.
 
   describe('unverified upgrade confirmation', () => {
+    // startUpgrade re-checks before every attempt, so the warning always comes
+    // from the server response rather than from local state.
+    const WARNING = 'The registry did not sign this release.'
+    function mockCheckWithWarning(warning: string) {
+      mockApiGet.mockResolvedValue({
+        current_version: 'v1.0.0',
+        latest_version: 'v1.1.0',
+        has_upgrade: true,
+        verification_warning: warning,
+      })
+    }
+
     it('does not prompt when the release was fully verified', async () => {
+      mockCheckWithWarning('')
       mockApiPost.mockResolvedValue({})
 
       const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
       expect(mockDialogConfirm).not.toHaveBeenCalled()
-      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', {})
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', { verification_warning: '' })
     })
 
     it('prompts with the warning text when verification was incomplete', async () => {
-      const upgrade = useUpgrade()
-      upgrade.verificationWarning.value = 'The registry did not sign this release.'
+      mockCheckWithWarning(WARNING)
       mockApiPost.mockResolvedValue({})
 
+      const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
       expect(mockDialogConfirm).toHaveBeenCalledTimes(1)
-      expect(mockDialogConfirm.mock.calls[0][0]).toBe('The registry did not sign this release.')
+      expect(mockDialogConfirm.mock.calls[0][0]).toBe(WARNING)
     })
 
-    it('proceeds with the upgrade when the user accepts', async () => {
-      const upgrade = useUpgrade()
-      upgrade.verificationWarning.value = 'unverified'
+    it('sends the accepted warning back with the request', async () => {
+      // The service compares this against the registry, so it must be the exact
+      // text the user saw.
+      mockCheckWithWarning(WARNING)
       mockDialogConfirm.mockResolvedValue(true)
       mockApiPost.mockResolvedValue({})
 
+      const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
-      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', {})
+      expect(mockApiPost).toHaveBeenCalledWith('/api/upgrade/start', { verification_warning: WARNING })
       expect(upgrade.showProgressDialog.value).toBe(true)
     })
 
     it('starts nothing when the user cancels', async () => {
-      const upgrade = useUpgrade()
-      upgrade.verificationWarning.value = 'unverified'
+      mockCheckWithWarning(WARNING)
       mockDialogConfirm.mockResolvedValue(false)
 
+      const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
       expect(mockApiPost).not.toHaveBeenCalled()
@@ -370,21 +395,47 @@ describe('useUpgrade', () => {
     it('does not clear the previous failure when the user cancels', async () => {
       // Cancelling means no attempt happened, so the last real failure must
       // remain visible rather than being wiped by a no-op.
-      const upgrade = useUpgrade()
-      upgrade.verificationWarning.value = 'unverified'
-      upgrade.state.error = 'previous failure'
+      mockCheckWithWarning(WARNING)
       mockDialogConfirm.mockResolvedValue(false)
 
+      const upgrade = useUpgrade()
+      upgrade.state.error = 'previous failure'
       await upgrade.startUpgrade()
 
       expect(upgrade.state.error).toBe('previous failure')
     })
 
-    it('treats a whitespace-only warning as verified', async () => {
+    it('re-checks before a retry so a stale warning is never reused', async () => {
+      // After a failure the dialog stays open on the failure screen. The retry
+      // must ask about the metadata currently on offer, not whatever the
+      // previous attempt left behind.
+      mockCheckWithWarning(WARNING)
+      mockDialogConfirm.mockResolvedValue(false)
+
       const upgrade = useUpgrade()
-      upgrade.verificationWarning.value = '   '
+      await upgrade.startUpgrade()
+
+      expect(mockApiGet).toHaveBeenCalledWith('/api/upgrade/check')
+    })
+
+    it('asks about the newly reported warning when it changed since the last attempt', async () => {
+      // The server's answer changes between attempts; the user must be asked
+      // about the new one.
+      mockCheckWithWarning('a different problem')
       mockApiPost.mockResolvedValue({})
 
+      const upgrade = useUpgrade()
+      upgrade.verificationWarning.value = 'a stale warning from before'
+      await upgrade.startUpgrade()
+
+      expect(mockDialogConfirm.mock.calls[0][0]).toBe('a different problem')
+    })
+
+    it('treats a whitespace-only warning as verified', async () => {
+      mockCheckWithWarning('   ')
+      mockApiPost.mockResolvedValue({})
+
+      const upgrade = useUpgrade()
       await upgrade.startUpgrade()
 
       expect(mockDialogConfirm).not.toHaveBeenCalled()

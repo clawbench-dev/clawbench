@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { loadBrowseDir, loadOpenFile, clearStaleOpenFile } from '@/stores/app.ts'
 import { store } from '@/stores/app.ts'
-import { apiGet } from '@/utils/api'
+import { apiGet, apiPost } from '@/utils/api'
+import { useForgeBinding, setForgeBindingState, resetForgeBindingState } from '@/composables/useForgeBinding'
 
 // Mock API to prevent real network calls
 vi.mock('@/utils/api', () => ({
@@ -571,5 +572,40 @@ describe('navigateToDir and navigateToParentDir', () => {
     store.state.currentDir = ''
     const ok = await store.navigateToParentDir()
     expect(ok).toBe(false)
+  })
+})
+
+// The forge binding is a module-level singleton keyed by project. It must be
+// dropped whenever the project changes, or task views keep labelling the new
+// project with the previous project's repository.
+describe('setProject resets the cached forge binding', () => {
+  beforeEach(() => {
+    resetForgeBindingState()
+  })
+
+  it('clears a previously resolved binding', async () => {
+    setForgeBindingState({ platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets' })
+    const { slug, resolved } = useForgeBinding()
+    expect(slug.value).toBe('acme/widgets')
+    expect(resolved.value).toBe(true)
+
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: 'ok', path: '/proj/b' } as never)
+    await store.setProject('/proj/b')
+
+    // The old project's repository must not survive into the new project.
+    expect(slug.value).toBe('')
+    expect(resolved.value).toBe(false)
+  })
+
+  // Worktree jumps (task exec detail, chat messages, git panel) call
+  // setProject() directly instead of going through App.vue's hotSwitchProject.
+  // Hooking the reset into setProject is what covers those paths.
+  it('covers project switches that bypass the App-level handler', async () => {
+    setForgeBindingState({ platform: 'github', host: 'github.com', owner: 'old', repo: 'repo' })
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: 'ok', path: '/worktrees/wt' } as never)
+
+    await store.setProject('/worktrees/wt')
+
+    expect(useForgeBinding().slug.value).toBe('')
   })
 })

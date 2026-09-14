@@ -88,6 +88,14 @@ const (
 	// a restart happens. Reported instead of leaving the phase at "restarting"
 	// forever, which would show an endless spinner with no way forward.
 	UpgradeErrRestartFailed = "restart_failed"
+
+	// UpgradeErrUnverifiedNotConfirmed means the registry metadata says this
+	// release cannot be fully verified, but the request did not carry the
+	// acknowledgment the user would have given for exactly that warning. Either
+	// the caller skipped the confirmation step, or the metadata changed between
+	// the check and the start. The upgrade is refused so an unverified install
+	// cannot happen without a decision; the client should re-check and re-ask.
+	UpgradeErrUnverifiedNotConfirmed = "unverified_not_confirmed"
 )
 
 // SetUpgradeError sets phase to failed with an error message.
