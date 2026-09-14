@@ -575,7 +575,7 @@ import {
 } from './composables/useWideScreenLayout'
 // Single source of truth for dock tabs (render list, switch whitelist, icons,
 // titles). See the module doc for why this exists.
-import { DOCK_TABS } from './composables/dockTabs'
+import { secondaryDockTabs } from './composables/dockTabs'
 import { dockTabWithIcon } from './composables/dockTabMeta'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
@@ -600,7 +600,7 @@ const projectKey = ref('initial')
 const switchingProject = ref(false)
 const navigationByProject = new Map()
 
-async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId?: string; executionId?: string } | null) {
+async function hotSwitchProject(newProjectPath: string, pendingSessionId?: string | null, pendingTaskNav?: { taskId: string; executionId?: string } | null) {
   const previousProjectPath = store.state.projectRoot
   if (previousProjectPath) {
     navigationByProject.set(previousProjectPath, navigation.snapshot())
@@ -857,9 +857,21 @@ function switchTab(tab: string, force = false) {
   overflowMenuOpen.value = false
 }
 
+/**
+ * Payload of the `clawbench-open-session` / `clawbench-open-task` window events.
+ *
+ * Two dispatchers emit these: the Android native shell (MainActivity, from a
+ * notification tap — see its handleNotificationIntent / pendingNavigation
+ * re-dispatch) and CompletionPopover.vue. Both send `sessionId`/`taskId` as
+ * strings (Android reads them via getStringExtra; the popover's
+ * CompletionItem types taskId as string).
+ */
+interface OpenSessionDetail { sessionId?: string; projectPath?: string }
+interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+
 /** Handle clawbench-open-session event from Android push notification tap */
 function handleOpenSession(e: Event) {
-  const detail = (e as CustomEvent).detail
+  const detail = (e as CustomEvent<OpenSessionDetail>).detail
   if (!detail?.sessionId) {
     appLog.w(TAG, 'clawbench-open-session: no sessionId in detail, ignoring')
     return
@@ -882,7 +894,7 @@ function handleOpenSession(e: Event) {
 
 /** Handle clawbench-open-task event from Android push notification tap (task execution) */
 function handleOpenTask(e: Event) {
-  const detail = (e as CustomEvent).detail
+  const detail = (e as CustomEvent<OpenTaskDetail>).detail
   if (!detail?.taskId) {
     appLog.w(TAG, 'clawbench-open-task: no taskId in detail, ignoring')
     return
@@ -1823,12 +1835,15 @@ async function handleFileHistoryForward() {
 
 
 
-function onTaskCardClick(taskId: string) {
+// Task cards carry a numeric task id: ContentBlocks emits summaryTaskIDs
+// (taskIDs?: number[]) and blockTasks[].taskId, both numbers end-to-end from
+// the backend's TaskIDs []int64. No coercion needed.
+function onTaskCardClick(taskId: number) {
     // Task cards appear inside chat messages (scheduled-task-card), so this is
     // a chat→tasks jump. Record the chat origin so Back returns the user
     // straight to the conversation.
     beginExternalJump('chat', surfaceLabel('chat'), { tab: 'chat' })
-    navigateToTaskSettings(Number(taskId))
+    navigateToTaskSettings(taskId)
     switchTab('tasks')
 }
 
@@ -1884,13 +1899,14 @@ const overflowBtnRef = ref<HTMLElement | null>(null)
 // Secondary (non-primary) dock tabs, in registry order, minus the ones the
 // current runtime has disabled. The render list, the switch whitelist and the
 // icon/title lookups all derive from DOCK_TABS — see composables/dockTabs.ts.
-const overflowTabs = computed(() => {
-  return DOCK_TABS
-    .filter((t) => !t.primary)
-    .filter((t) => !(t.id === 'terminal' && isTerminalDisabled.value))
-    .filter((t) => !(t.id === 'proxy' && isSSHDisabled.value))
-    .map((t) => t.id)
-})
+// The filtering itself lives in secondaryDockTabs() so a test can assert the
+// render list stays a subset of the switch whitelist.
+const overflowTabs = computed(() =>
+  secondaryDockTabs({
+    terminalDisabled: isTerminalDisabled.value,
+    sshDisabled: isSSHDisabled.value,
+  }),
+)
 
 // Responsive dock overflow — ResizeObserver drives inline promotion
 const dockRef = ref<HTMLElement | null>(null)
@@ -2736,7 +2752,11 @@ function handleCtrlF(e: KeyboardEvent) {
     const tag = target?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA') return
     if (target?.isContentEditable) return
-    if (target?.closest('.terminal-panel')) return
+    // Optional call, not just optional chain: a keydown dispatched on
+    // `document` has an EventTarget (not an Element) as its target, and
+    // EventTarget has no `closest`. Same guard as the sibling copies in
+    // ChatMessageList/ChatPanelContent.
+    if (target?.closest?.('.terminal-panel')) return
     // Skip when modal dialog or project dialog is open
     if (_dlg.state.value.visible || projectDialogOpen.value) return
 

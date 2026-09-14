@@ -94,3 +94,25 @@ export const DOCK_TAB_BY_ID: ReadonlyMap<DockTabId, DockTabDescriptor> = new Map
 export function isDockTabId(tab: string): tab is DockTabId {
   return DOCK_TAB_BY_ID.has(tab as DockTabId)
 }
+
+/**
+ * The secondary (non-primary) dock tabs that should be rendered, in registry
+ * order, with the runtime-gated ones filtered out.
+ *
+ * This is the *render* list the narrow dock's overflow area and the wide-screen
+ * dock's tail both use. It lives here (not inline in App.vue) so a test can
+ * assert it is a subset of the switch whitelist: the original forge bug was
+ * precisely the render list diverging from what `switchLeftTab` accepts, and an
+ * inline computed in a .vue file is not reachable from a unit test.
+ *
+ * `terminal`/`proxy` are hidden when their feature is unavailable at runtime
+ * (terminal: the PTY manager is not up yet or the platform cannot run it; proxy:
+ * SSH is config-disabled). Both are still declared in DOCK_TABS — this function
+ * is where the runtime gate is applied.
+ */
+export function secondaryDockTabs(opts: { terminalDisabled?: boolean; sshDisabled?: boolean } = {}): DockTabId[] {
+  return DOCK_TABS.filter((t) => !t.primary)
+    .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))
+    .filter((t) => !(t.id === 'proxy' && opts.sshDisabled))
+    .map((t) => t.id)
+}
