@@ -483,7 +483,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 			return
 		}
-		service.SignalDrain(sessionID)
+		// No explicit wake is needed: the failed TrySetSessionRunning above already
+		// marked the live runner as having pending work, which is what it checks
+		// before deciding to exit.
 
 		// Emit user_message to other session subscribers for cross-device sync.
 		// SenderClientID allows the sending device to skip its own echo. MessageID
@@ -531,12 +533,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID, "msgId": msgID})
 
-	// Create context and cancel AFTER TrySetSessionRunning succeeded, but BEFORE
-	// starting the goroutine. Registering the cancel function here (not inside the
-	// goroutine) prevents a race where CancelSession finds no cancel func but
-	// activeSessions is true, which would leave the session permanently stuck.
-	ctx, cancel := context.WithCancel(context.Background())
-	service.RegisterSessionCancel(sessionID, cancel)
+	// The runner created by TrySetSessionRunning already owns the execution
+	// context, and it is the one CancelSession will cancel. Reuse it instead of
+	// minting a second context: two contexts would mean the session's "running"
+	// state and its cancellability referred to different things.
+	ctx := service.SessionRunContext(sessionID)
+	if ctx == nil {
+		// The runner vanished between the claim and here (a cancel landed in the
+		// gap). Nothing to execute — the user's message stays queued for the
+		// queue reaper to recover if they still want it answered.
+		slog.Warn("ai goroutine skipped: session runner disappeared after claim",
+			slog.String("session", sessionID))
+		return
+	}
 
 	slog.Info("about to start ai goroutine", slog.String("project", projectPath))
 
@@ -549,9 +558,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					slog.Any("panic", r),
 					slog.String("stack", string(debug.Stack())),
 				)
-				service.SetSessionRunning(sessionID, false, true) // skipEvent: error event already emitted below
-				service.UnregisterSessionCancel(sessionID)
-				cancel()
+				// Retire the runner and cancel its context in one step, so the
+				// session cannot be left running with nothing to cancel it.
+				service.FinishSessionRun(sessionID)
 				// Emit error event to WS clients
 				ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 				// Push cancelled notification — panic is a terminal state
@@ -563,9 +572,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		slog.Info("ai goroutine started", slog.String("project", projectPath))
-		defer service.SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
-		defer cancel()
-		defer service.UnregisterSessionCancel(sessionID)
+		// Single cleanup: removes the runner and cancels its context. Replaces the
+		// previous three separate defers (clear flag / cancel / unregister) whose
+		// execution order was load-bearing and left a window where the session was
+		// still "running" with no cancel func registered.
+		defer service.FinishSessionRun(sessionID)
 		// Mark session as not-running BEFORE sending terminal WS event.
 		// Without this, a race exists: the "done" event reaches the client,
 		// which calls loadHistory(), but the deferred SetSessionRunning(false)

@@ -1229,8 +1229,8 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "panic-sess-1"
-	_, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel(sessionID, cancel)
+	_, created := SubmitSessionRun(sessionID)
+	require.True(t, created)
 
 	cfg := LaunchConfig{
 		SessionID:   sessionID,
@@ -1244,7 +1244,7 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer func() { close(done) }()
-		defer handleSessionPanic(cfg, sessionID, cancel)
+		defer handleSessionPanic(cfg, sessionID)
 		panic("test panic")
 	}()
 	// Wait for the goroutine to complete - handleSessionPanic should recover

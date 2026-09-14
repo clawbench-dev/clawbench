@@ -911,10 +911,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Execute AI backend (no timeout - let AI run indefinitely)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Register the cancel func BEFORE starting the turn so CancelAllRunning and
-	// a user cancel can actually reach this execution. Historically the
-	// scheduler never registered one, so any cancel of a scheduled session fell
-	// through to CancelSession's "running but no cancel func" force-clear branch.
+	// Adopt this execution into the session registry so a user cancel actually
+	// reaches it. SetSessionRunning(true) above registered a placeholder for the
+	// idle sweep; without this the registry would hold a context nobody watches
+	// and CancelSession would cancel the wrong thing. This is also what makes
+	// scheduled sessions cancellable at all — previously their cancel func lived
+	// only in the scheduler's own map, so a user cancel could not reach it.
+	RegisterExternalExecution(sessionID, ctx, cancel)
+
 	running := &RunningExecution{
 		ID:          sessionID,
 		TaskID:      task.ID,

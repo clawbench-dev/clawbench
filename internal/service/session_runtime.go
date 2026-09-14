@@ -23,15 +23,14 @@ import (
 	"clawbench/internal/ws"
 )
 
-// Active session tracking - keyed by sessionID
+// Active session tracking lives in session_runner.go's registry: one entry per
+// running session, holding both the running state and the cancel func so the two
+// can never disagree. See that file for why the containers were merged.
+//
+// sessionCancelReasons stays separate: it records WHY a turn ended and is read
+// by the executor (a different subsystem) after the runner is gone, so it cannot
+// live on the runner without threading it across that boundary.
 var (
-	activeSessions = make(map[string]bool)
-	activeMu       sync.Mutex
-)
-
-// Session cancel functions for aborting AI responses
-var (
-	sessionCancels       sync.Map // map[string]context.CancelFunc
 	sessionCancelReasons sync.Map // map[string]string — "user", "disconnect"
 	// terminalPushDone tracks whether a terminal push notification has already been
 	// claimed for a session. Guarded via LoadOrStore so only one of the done/cancel
@@ -331,35 +330,46 @@ func collapseToSingleLine(s string) string {
 }
 
 // IsSessionRunning checks if a session is currently running.
+//
+// "Running" is derived from the runner registry, so a true result guarantees a
+// live cancel func exists for the session. That invariant is what lets
+// CancelSession work without a force-clear fallback.
 func IsSessionRunning(sessionID string) bool {
-	activeMu.Lock()
-	defer activeMu.Unlock()
-	return activeSessions[sessionID]
+	return isRunnerRegistered(sessionID)
 }
 
 // GetRunningSessionIDs returns all currently running session IDs in a single call.
 // This avoids N separate mutex acquisitions when checking running state for multiple sessions.
 func GetRunningSessionIDs() []string {
-	activeMu.Lock()
-	defer activeMu.Unlock()
-	ids := make([]string, 0, len(activeSessions))
-	for id := range activeSessions {
-		ids = append(ids, id)
-	}
-	return ids
+	return runningRunnerIDs()
 }
 
 // SetSessionRunning sets the running state for a session.
 // If skipEvent is true, the session_update event is suppressed (used by CancelSession
 // which emits its own "cancelled" event and should not also emit "completed").
+//
+// running=true registers a runner for a session whose execution the caller owns
+// (the scheduler). running=false retires the runner and cancels its context.
 func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
-	activeMu.Lock()
 	if running {
-		activeSessions[sessionID] = true
+		// Register a placeholder runner so IsSessionRunning reports true and the
+		// ACP idle sweep leaves the connection alone. The scheduler's own
+		// execution is adopted separately (RegisterExternalExecution) so that a
+		// cancel can reach it.
+		registryMu.Lock()
+		if _, ok := registry[sessionID]; !ok {
+			c, cancel := context.WithCancel(context.Background())
+			registry[sessionID] = &sessionRunner{sessionID: sessionID, ctx: c, cancel: cancel}
+		}
+		registryMu.Unlock()
 	} else {
-		delete(activeSessions, sessionID)
+		// Remove the entry WITHOUT cancelling: this call means "the session is no
+		// longer running", not "stop it". Callers reach here from abort branches
+		// that still have work to do (emitting terminal events, updating task
+		// rows), so cancelling their context would cut that work off. The
+		// execution goroutine cancels its own context via FinishSessionRun.
+		removeRunner(sessionID)
 	}
-	activeMu.Unlock()
 
 	// Note: orphan finalization is NOT triggered here automatically.
 	// It must be called explicitly from paths where FinalizeStreamingMessage
@@ -467,19 +477,16 @@ func FinalizeOrphanedMessages(sessionID string, cancelReason string) {
 	finalizeOrphanedStreamingMessages(sessionID, cancelReason)
 }
 
-// TrySetSessionRunning atomically checks and sets running state.
-// Returns true if session was successfully marked as running (was not running before).
-// Returns false if session was already running.
+// TrySetSessionRunning claims a session for execution.
+// Returns true if the caller created the runner (the session was idle) and must
+// therefore start the execution goroutine. Returns false if a runner already
+// exists — it has been woken, and its own loop will pick the work up.
 // Emits a "running" session_update event on success.
 func TrySetSessionRunning(sessionID string) bool {
-	activeMu.Lock()
-
-	if activeSessions[sessionID] {
-		activeMu.Unlock()
+	_, created := submitRunner(sessionID)
+	if !created {
 		return false
 	}
-	activeSessions[sessionID] = true
-	activeMu.Unlock()
 
 	// Reset the terminal-push guard so a new run of the same session can push again.
 	terminalPushDone.Delete(sessionID)
@@ -490,31 +497,41 @@ func TrySetSessionRunning(sessionID string) bool {
 	return true
 }
 
-// RegisterSessionCancel stores the cancel function for a session
-func RegisterSessionCancel(sessionID string, cancel context.CancelFunc) {
-	sessionCancels.Store(sessionID, cancel)
-}
-
-// UnregisterSessionCancel removes the cancel function for a session
-func UnregisterSessionCancel(sessionID string) {
-	sessionCancels.Delete(sessionID)
-}
-
-// sessionTurnCancels holds the cancel func for the CURRENT turn of a session,
-// as opposed to sessionCancels which stops the whole execution goroutine.
+// RegisterSessionCancel makes a caller-owned execution cancellable by recording
+// its cancel func on the session's registry entry.
 //
-// The drain loop runs many turns on one goroutine, all sharing a single
-// long-lived context. That is correct for "stop everything" (user cancel,
-// shutdown) but useless for "stop just this turn" — cancelling the shared
-// context would abort every subsequent queued turn too. The interrupt action
-// ("interrupt and send") needs exactly the narrower scope, so each turn
-// registers its own derived context here for the duration of that turn.
-var sessionTurnCancels sync.Map // map[string]*sessionTurn
+// This is the low-level primitive used by callers that create their own context
+// (the interactive handler and the scheduler's execution goroutine). It only
+// ever installs a real cancel func, so it cannot create the old "running with
+// nothing to cancel" state.
+func RegisterSessionCancel(sessionID string, cancel context.CancelFunc) {
+	registryMu.Lock()
+	if r, ok := registry[sessionID]; ok {
+		r.cancel = cancel
+	} else {
+		// No runner yet: register one so running and cancellable stay in step.
+		// The context is unknown here, so derive one tied to the cancel func —
+		// callers that need the context itself use SubmitSessionRun.
+		registry[sessionID] = &sessionRunner{sessionID: sessionID, cancel: cancel}
+	}
+	registryMu.Unlock()
+}
 
-// sessionTurn is one running turn's registration. The id makes the entry
-// addressable: an interrupt must prove it is stopping the SAME turn the caller
-// observed, or it could kill a turn that started in between (see
+// UnregisterSessionCancel clears a session's registry entry without cancelling
+// it. Used by paths that are already winding the execution down and only need to
+// stop advertising the session as running.
+func UnregisterSessionCancel(sessionID string) {
+	removeRunner(sessionID)
+}
+
+// sessionTurn is one running turn's registration. The id makes it addressable:
+// an interrupt must prove it is stopping the SAME turn the caller observed, or
+// it could kill a turn that started in between (see
 // InterruptSessionTurnIfCurrent).
+//
+// The registration lives on the session's runner entry (sessionRunner.turn)
+// rather than in its own map, so "which turn is running" and "is this session
+// running" cannot disagree.
 type sessionTurn struct {
 	id     uint64
 	cancel context.CancelFunc
@@ -528,29 +545,37 @@ var turnSeq atomic.Uint64
 // at a time).
 func RegisterSessionTurnCancel(sessionID string, cancel context.CancelFunc) uint64 {
 	id := turnSeq.Add(1)
-	sessionTurnCancels.Store(sessionID, &sessionTurn{id: id, cancel: cancel})
+	registryMu.Lock()
+	if r, ok := registry[sessionID]; ok {
+		r.turn = &sessionTurn{id: id, cancel: cancel}
+	} else {
+		registry[sessionID] = &sessionRunner{sessionID: sessionID, turn: &sessionTurn{id: id, cancel: cancel}}
+	}
+	registryMu.Unlock()
 	return id
 }
 
 // UnregisterSessionTurnCancel clears the current turn's cancel func. Called
 // when the turn ends, so a later interrupt cannot cancel a finished turn.
 func UnregisterSessionTurnCancel(sessionID string) {
-	sessionTurnCancels.Delete(sessionID)
+	registryMu.Lock()
+	if r, ok := registry[sessionID]; ok {
+		r.turn = nil
+	}
+	registryMu.Unlock()
 }
 
 // CurrentTurnID returns the id of the turn running right now, if any. Callers
 // pair it with InterruptSessionTurnIfCurrent so their interrupt only lands on
 // the turn they actually inspected.
 func CurrentTurnID(sessionID string) (uint64, bool) {
-	v, ok := sessionTurnCancels.Load(sessionID)
-	if !ok {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	r, ok := registry[sessionID]
+	if !ok || r.turn == nil {
 		return 0, false
 	}
-	t, ok := v.(*sessionTurn)
-	if !ok {
-		return 0, false
-	}
-	return t.id, true
+	return r.turn.id, true
 }
 
 // InterruptSessionTurnIfCurrent stops the turn identified by expectedTurnID,
@@ -574,19 +599,17 @@ func CurrentTurnID(sessionID string) (uint64, bool) {
 // expectedTurnID (already finished and replaced) — the caller then reports that
 // nothing was interrupted.
 func InterruptSessionTurnIfCurrent(sessionID string, expectedTurnID uint64) bool {
-	v, ok := sessionTurnCancels.Load(sessionID)
-	if !ok {
+	// Read-and-clear the turn under the registry lock: only the caller that
+	// removes it wins, so two concurrent interrupts cannot both report success.
+	registryMu.Lock()
+	r, ok := registry[sessionID]
+	if !ok || r.turn == nil || r.turn.id != expectedTurnID {
+		registryMu.Unlock()
 		return false
 	}
-	t, ok := v.(*sessionTurn)
-	if !ok || t.id != expectedTurnID {
-		return false
-	}
-	// Atomic compare-and-delete: only the caller that removes the entry wins, so
-	// two concurrent interrupts cannot both report success.
-	if !sessionTurnCancels.CompareAndDelete(sessionID, t) {
-		return false
-	}
+	t := r.turn
+	r.turn = nil
+	registryMu.Unlock()
 
 	// Do NOT overwrite a reason that is already recorded for this turn.
 	//
@@ -621,30 +644,21 @@ func InterruptSessionTurnIfCurrent(sessionID string, expectedTurnID uint64) bool
 // unblocks CLI-backend streams whose process is still alive — unlike ACP
 // prompts there is no per-connection promptCancel to invoke.
 //
-// Entries are removed after cancelling (mirroring CancelSession's
-// LoadAndDelete) so no stale cancel func outlives the shutdown.
+// Entries are removed after cancelling so no stale runner outlives the shutdown.
+//
+// The reason is recorded BEFORE cancelling (never while holding registryMu):
+// each executor's buildResult reads GetAndClearCancelReason and persists the
+// interrupted message with a restart warning block, which is what produces the
+// frontend's "服务重启，AI 响应中断" banner.
 func CancelAllSessions() {
-	sessionCancels.Range(func(key, value any) bool {
-		cancel, ok := value.(context.CancelFunc)
-		if !ok {
-			sessionCancels.Delete(key)
-			return true
+	for _, r := range allRunners() {
+		sessionCancelReasons.Store(r.sessionID, cancelReasonRestart)
+		if r.cancel != nil {
+			r.cancel()
 		}
-		// Record the restart reason BEFORE cancelling so each executor's
-		// buildResult (interactive mode reads GetAndClearCancelReason) persists
-		// the interrupted message with a restart warning block — otherwise the
-		// graceful-shutdown Finalize would only mark it cancelled:true and the
-		// frontend's "服务重启，AI 响应中断" banner would never appear.
-		if sid, ok := key.(string); ok {
-			sessionCancelReasons.Store(sid, cancelReasonRestart)
-		}
-		cancel()
-		sessionCancels.Delete(key)
-		if sid, ok := key.(string); ok {
-			slog.Debug("shutdown: cancelled session", slog.String("session_id", sid))
-		}
-		return true
-	})
+		removeRunner(r.sessionID)
+		slog.Debug("shutdown: cancelled session", slog.String("session_id", r.sessionID))
+	}
 }
 
 // SetCancelReason records the cancellation reason for a session without cancelling it.
@@ -689,21 +703,20 @@ func GetCancelReason(sessionID string) string {
 // CancelSession cancels an ongoing AI stream for a session.
 // Returns true if session was found and cancelled, or if session is already not running (idempotent).
 func CancelSession(sessionID string) bool {
-	// Load and delete the cancel function
-	val, ok := sessionCancels.LoadAndDelete(sessionID)
+	// Take the runner out of the registry atomically. Removing it is what marks
+	// the session as not running, and the entry always carries a cancel func, so
+	// the old "running but nothing to cancel" branch is no longer reachable.
+	runner, ok := takeRunner(sessionID)
 	if !ok {
-		// If session is not in running state, consider it already cancelled (idempotent)
-		if !IsSessionRunning(sessionID) {
-			return true
-		}
-		// Session is marked as running but has no cancel function — this is a stuck state.
-		// Can happen if the goroutine hasn't registered its cancel yet (race window),
-		// or if the cancel was already consumed by a previous cancel call.
-		// Force-clear the running state to unstick the session.
-		slog.Warn("CancelSession: session running but no cancel func, force-clearing",
+		// Not running — already cancelled (idempotent).
+		return true
+	}
+	cancel := runner.cancel
+	if cancel == nil {
+		// A registry entry without a cancel func should be impossible; if it
+		// somehow happens, clear it rather than leave a session stuck running.
+		slog.Warn("CancelSession: runner had no cancel func, cleared",
 			slog.String("session_id", sessionID))
-		// The goroutine is dead, so its RunDrainLoop cancel branch will never
-		// emit queue_cancel. Collect + clear + emit here instead.
 		queueIDs, _ := GetQueuedQueueIDs(sessionID)
 		_ = ClearQueuedMessages(sessionID)
 		if len(queueIDs) > 0 {
@@ -715,14 +728,8 @@ func CancelSession(sessionID string) bool {
 				},
 			})
 		}
-		SetSessionRunning(sessionID, false, true)
-		// Stuck session: nothing will finalize its streaming messages.
 		FinalizeOrphanedMessages(sessionID, "user")
 		return true
-	}
-	cancel, ok := val.(context.CancelFunc)
-	if !ok {
-		return false
 	}
 
 	// Cancel the Go context first so the agent process starts shutting down,
@@ -752,8 +759,9 @@ func CancelSession(sessionID string) bool {
 	wonPush := markTerminalPushDone(sessionID)
 	emitSessionEvent(sessionID, "cancelled", false, wonPush, wonPush)
 
-	// Mark session as not running (skip completed event — we already sent "cancelled")
-	SetSessionRunning(sessionID, false, true)
+	// The runner was already removed by takeRunner above, which is what marks
+	// the session not-running. No separate SetSessionRunning call is needed (and
+	// calling it would cancel the context a second time).
 
 	return true
 }
@@ -762,7 +770,7 @@ func CancelSession(sessionID string) bool {
 // Used when the WS client has disconnected and we want to stop the AI goroutine
 // to prevent zombie processes.
 func ForceCancelSession(sessionID string) {
-	val, ok := sessionCancels.LoadAndDelete(sessionID)
+	runner, ok := takeRunner(sessionID)
 	if !ok {
 		return
 	}
@@ -771,13 +779,13 @@ func ForceCancelSession(sessionID string) {
 		slog.Warn("forceCancel: failed to clear queued messages",
 			slog.String("session", sessionID), slog.String("error", err.Error()))
 	}
-	if cancel, ok := val.(context.CancelFunc); ok {
-		cancel()
+	if runner.cancel != nil {
+		runner.cancel()
 	}
-	// ISS-120: Clear activeSessions to prevent zombie entries that block new messages.
-	// Skip the "completed" event (true) — ForceCancelSession is for disconnected clients
-	// that won't see it anyway, and we don't want to emit a stale event on reconnection.
-	SetSessionRunning(sessionID, false, true)
+	// ISS-120: the registry entry is gone, so the session is no longer running
+	// and cannot block new messages. Skip the "completed" event — this path is
+	// for disconnected clients that won't see it anyway, and a stale event would
+	// confuse them on reconnection.
 
 	// ForceCancel: the AI goroutine may still be running and may or may not
 	// complete FinalizeStreamingMessage. Launch orphan cleanup with a delay

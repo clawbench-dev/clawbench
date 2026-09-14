@@ -12,6 +12,7 @@ import (
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupDrainTest() {
@@ -383,29 +384,44 @@ func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *te
 	assert.Equal(t, 0, GetQueuedCount(sessionID))
 }
 
-// TestWaitForEnqueue_SignaledBySignalDrain verifies a queued message signal
-// wakes WaitForEnqueue immediately (design plan: SignalDrain → WaitForEnqueue
-// returns true).
-func TestWaitForEnqueue_SignaledBySignalDrain(t *testing.T) {
-	sessionID := "drain-wait-signal"
-	started := make(chan struct{})
-	done := make(chan bool)
-	go func() {
-		close(started)
-		done <- WaitForEnqueue(sessionID, 500*time.Millisecond)
-	}()
-	<-started
-	SignalDrain(sessionID)
-	assert.True(t, <-done, "WaitForEnqueue must return true when signaled")
+// TestRetireRunner_KeepsGoingWhenWorkArrived verifies the exit decision cannot
+// strand a message. A send that lands after the loop last checked the queue must
+// keep the runner alive: retiring would leave that message with no consumer,
+// which is the "no answer until I cancel and re-send" bug this replaced the
+// SignalDrain/WaitForEnqueue dance to prevent.
+func TestRetireRunner_KeepsGoingWhenWorkArrived(t *testing.T) {
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	sessionID := "drain-retire-race"
+	_, created := SubmitSessionRun(sessionID)
+	require.True(t, created)
+
+	// A concurrent send arrives: it sees the runner and marks it as having work.
+	_, createdAgain := SubmitSessionRun(sessionID)
+	require.False(t, createdAgain, "the second submit must reuse the runner")
+
+	// The runner must NOT retire — the work has to be picked up.
+	assert.False(t, retireRunner(sessionID), "runner must keep going when work arrived")
+	assert.True(t, IsSessionRunning(sessionID), "session must still be running")
+
+	// Once the work is drained, the next retire succeeds.
+	assert.True(t, retireRunner(sessionID), "runner may exit when nothing is pending")
+	assert.False(t, IsSessionRunning(sessionID))
 }
 
-// TestWaitForEnqueue_Timeout verifies WaitForEnqueue returns false when no
-// signal arrives within the timeout.
-func TestWaitForEnqueue_Timeout(t *testing.T) {
-	sessionID := "drain-wait-timeout"
-	start := time.Now()
-	assert.False(t, WaitForEnqueue(sessionID, 50*time.Millisecond))
-	assert.GreaterOrEqual(t, time.Since(start), 40*time.Millisecond)
+// TestRetireRunner_ExitsWhenIdle verifies the plain exit path: no late work
+// means the runner retires and the session stops being reported as running.
+func TestRetireRunner_ExitsWhenIdle(t *testing.T) {
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	sessionID := "drain-retire-idle"
+	_, created := SubmitSessionRun(sessionID)
+	require.True(t, created)
+
+	assert.True(t, retireRunner(sessionID))
+	assert.False(t, IsSessionRunning(sessionID))
 }
 
 // TestCancelQueuedMessage_DeletesRow verifies that canceling a queued message

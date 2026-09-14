@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -201,15 +200,22 @@ type LaunchConfig struct {
 // The caller must have already persisted the user message and called TrySetSessionRunning.
 func LaunchSessionExecution(cfg LaunchConfig) {
 	sessionID := cfg.SessionID
-	ctx, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel(sessionID, cancel)
+	// Reuse the context the runner created when it claimed the session, so
+	// "running" and "cancellable" refer to the same execution. The caller has
+	// just won TrySetSessionRunning, so the runner is present; if it vanished in
+	// the meantime (a cancel landed) there is nothing to execute.
+	ctx := runnerContext(sessionID)
+	if ctx == nil {
+		slog.Warn("launch: session runner gone before execution started",
+			slog.String("session", sessionID))
+		return
+	}
 
 	go func() {
-		defer handleSessionPanic(cfg, sessionID, cancel)
+		defer handleSessionPanic(cfg, sessionID)
 
-		defer SetSessionRunning(sessionID, false, true) // skipEvent: markDoneAndSendFinal already emitted the terminal event
-		defer cancel()
-		defer UnregisterSessionCancel(sessionID)
+		// Single cleanup: removes the runner and cancels its context.
+		defer FinishSessionRun(sessionID)
 		defer handleACPCleanup(sessionID, cfg.AgentID)
 
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -276,20 +282,15 @@ type EnqueueStartConfig struct {
 
 // EnqueueAndMaybeStart is the unified enqueue entry point (POST /api/ai/queue).
 // It persists the message to chat_history (queued=1), then:
-//   - if the session is NOT running, starts an AI execution goroutine that
-//     drains the queue (returns started=true);
-//   - if the session IS running, signals the existing drain loop (returns
-//     started=false).
+//   - if the session is idle, claims it and starts an execution goroutine that
+//     runs the message and then drains the rest of the queue (started=true);
+//   - if the session is already running, marks its runner as having pending work
+//     and returns (started=false) — that runner's loop will dequeue it.
 //
-// B2 self-healing: a race exists where the drain loop has just decided to exit
-// (WaitForEnqueue timed out) while the session is still marked running. The
-// delayed recheck goroutine below watches this window: 100ms later, if the
-// session is no longer running, it takes over and starts the execution itself
-// so the queued message is never silently lost.
-// EnqueueAndMaybeStart persists the message and starts/notifies execution.
-//
-// If the session is already running and the backend can inject into the running
-// turn, the message is delivered there instead of being queued (injected=true).
+// A message can no longer be stranded between those two outcomes: a runner only
+// exits after re-checking for late work under the same lock this function uses
+// to submit (see retireRunner). That atomic check replaced the previous
+// "signal + 100ms delayed re-check" workaround.
 //
 // It returns started=true when a new execution goroutine was launched (the
 // session was idle), plus the persisted DB message id (msgID, >0) so callers
@@ -329,6 +330,10 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 		return false, false, 0, err
 	}
 
+	// Claim the session. created=true means we must start the execution; false
+	// means a live runner exists and has been woken to pick this message up.
+	// Either way the message cannot be stranded: a runner that is about to exit
+	// re-checks for late work under the same lock (see retireRunner).
 	if TrySetSessionRunning(cfg.SessionID) {
 		// Session was idle — the message we just queued is the FIRST one and must
 		// NOT be consumed twice. executeStreamRunShared runs cfg.Message directly,
@@ -339,8 +344,8 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 		// into the queue between our insert and the TrySetSessionRunning claim,
 		// and that earlier row belongs to the drain loop, not to this execution.
 		consumeQueuedMessageByID(cfg.SessionID, msgID)
-		// Start execution now; the drain loop inside will consume the REST of
-		// the queue (any messages beyond the first).
+		// Start execution now; the loop inside will consume the REST of the
+		// queue (any messages beyond the first).
 		LaunchSessionExecution(LaunchConfig{
 			SessionID:   cfg.SessionID,
 			ProjectPath: cfg.ProjectPath,
@@ -352,32 +357,9 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, injected bool, 
 		return true, false, msgID, nil
 	}
 
-	// Session is running — the drain loop will pick the message up. Signal it.
-	SignalDrain(cfg.SessionID)
-
-	// B2 self-heal: delayed recheck for the drain-loop exit race.
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		// Defensive: if the DB has been torn down (test cleanup), do nothing.
-		if !DBReady() {
-			return
-		}
-		// If the session is no longer running, the drain loop exited without
-		// consuming our message — take over and start execution ourselves.
-		if !IsSessionRunning(cfg.SessionID) {
-			if TrySetSessionRunning(cfg.SessionID) {
-				consumeQueuedMessageByID(cfg.SessionID, msgID)
-				LaunchSessionExecution(LaunchConfig{
-					SessionID:   cfg.SessionID,
-					ProjectPath: cfg.ProjectPath,
-					BackendName: cfg.BackendName,
-					AgentID:     cfg.AgentID,
-					Message:     cfg.Message,
-					QueueID:     cfg.QueueID,
-				})
-			}
-		}
-	}()
+	// A runner already exists and has been woken; its loop will dequeue this
+	// message. No signal or delayed re-check is needed — the wake flag set by
+	// TrySetSessionRunning is what the runner consults before exiting.
 	return false, false, msgID, nil
 }
 
@@ -408,7 +390,7 @@ func consumeQueuedMessageByID(sessionID string, msgID int64) {
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.
-func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.CancelFunc) {
+func handleSessionPanic(cfg LaunchConfig, sessionID string) {
 	if r := recover(); r != nil {
 		slog.Error(
 			"session goroutine panicked",
@@ -416,9 +398,9 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.Cance
 			slog.Any("panic", r),
 			slog.String("stack", string(debug.Stack())),
 		)
-		SetSessionRunning(sessionID, false, true)
-		UnregisterSessionCancel(sessionID)
-		cancel()
+		// Retire the runner and cancel its context together, so the session is
+		// not left running with nothing to cancel it.
+		FinishSessionRun(sessionID)
 		emitDrainEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 		// Push cancelled notification — panic is a terminal state
 		EmitSessionPushNotification(sessionID, statusCancelled)

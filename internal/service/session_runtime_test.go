@@ -34,12 +34,11 @@ func TestRegisterSessionCancel(t *testing.T) {
 
 	RegisterSessionCancel("session-cancel-1", cancel)
 
-	// Cancel should be stored; loading and calling it should cancel the context
-	val, ok := sessionCancels.Load("session-cancel-1")
-	assert.True(t, ok)
-	loadedCancel, ok := val.(context.CancelFunc)
-	assert.True(t, ok)
-	assert.NotNil(t, loadedCancel)
+	// The cancel func must be reachable through the registry, which is also what
+	// makes the session report as running — the two facts are one entry now.
+	r, ok := takeRunner("session-cancel-1")
+	assert.True(t, ok, "the session must be registered")
+	assert.NotNil(t, r.cancel)
 }
 
 func TestUnregisterSessionCancel(t *testing.T) {
@@ -52,8 +51,7 @@ func TestUnregisterSessionCancel(t *testing.T) {
 	RegisterSessionCancel("session-cancel-2", cancel)
 	UnregisterSessionCancel("session-cancel-2")
 
-	_, ok := sessionCancels.Load("session-cancel-2")
-	assert.False(t, ok)
+	assert.False(t, IsSessionRunning("session-cancel-2"))
 }
 
 func TestUnregisterSessionCancel_Idempotent(t *testing.T) {
@@ -193,9 +191,8 @@ func TestCancelSession_WithCancelFunc(t *testing.T) {
 	reason := GetAndClearCancelReason("session-cancel-3")
 	assert.Equal(t, "user", reason)
 
-	// Cancel func should be removed
-	_, ok := sessionCancels.Load("session-cancel-3")
-	assert.False(t, ok)
+	// The runner must be gone, so the session is no longer running.
+	assert.False(t, IsSessionRunning("session-cancel-3"))
 }
 
 func TestCancelSession_NotRunning_NoCancelFunc(t *testing.T) {
@@ -243,16 +240,19 @@ func TestCancelAllSessions_Empty(t *testing.T) {
 	assert.NotPanics(t, CancelAllSessions)
 }
 
-func TestCancelAllSessions_BadValue(t *testing.T) {
+// TestCancelAllSessions_EntryWithoutCancelFunc verifies shutdown survives a
+// runner that has no cancel func (defensive: the registry should always carry
+// one, but a nil must not panic the shutdown path).
+func TestCancelAllSessions_EntryWithoutCancelFunc(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	// A non-CancelFunc value must be evicted, not panic.
-	sessionCancels.Store("session-bad", "not-a-cancel-func")
+	registryMu.Lock()
+	registry["session-bad"] = &sessionRunner{sessionID: "session-bad"}
+	registryMu.Unlock()
 
 	assert.NotPanics(t, CancelAllSessions)
-	_, ok := sessionCancels.Load("session-bad")
-	assert.False(t, ok, "non-CancelFunc entry must be removed")
+	assert.False(t, IsSessionRunning("session-bad"), "the entry must be removed")
 }
 
 func TestCancelAllSessions_SetsRestartReason(t *testing.T) {
@@ -274,7 +274,16 @@ func TestCancelAllSessions_SetsRestartReason(t *testing.T) {
 	assert.Equal(t, cancelReasonRestart, GetCancelReason("session-all-r2"))
 }
 
-func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
+// TestCancelSession_CancelsContextAndLeavesQueueToTheRun verifies the cancel
+// contract after the state machine was unified.
+//
+// Cancelling no longer clears the queue itself: the session's own turn loop
+// observes the cancellation and clears it while emitting queue_cancel (see
+// drainHandleTerminal). Doing it in both places would drop the queue_cancel
+// event that removes the frontend's pending bubbles. What CancelSession must
+// guarantee is that the execution context is actually cancelled and the session
+// stops reporting as running.
+func TestCancelSession_CancelsContextAndLeavesQueueToTheRun(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -287,19 +296,22 @@ func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
 		db.Close()
 	}()
 
-	sessionID := "session-stuck-queue"
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Stuck')", sessionID)
+	sessionID := "session-cancel-queue"
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Cancel')", sessionID)
 	require.NoError(t, err)
 
-	SetSessionRunning(sessionID, true)
-	// Enqueue a message to verify it gets cleared on force-cancel
+	ctx, created := SubmitSessionRun(sessionID)
+	require.True(t, created)
+	// Enqueue a message; it belongs to the (cancelled) run, which is what
+	// clears it, so it must still be present right after the cancel.
 	_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "hello", nil, "q-1", "")
 
 	result := CancelSession(sessionID)
 	assert.True(t, result)
+	assert.Error(t, ctx.Err(), "the execution context must be cancelled")
 	assert.False(t, IsSessionRunning(sessionID))
-	// Queue should be cleared
-	assert.Equal(t, 0, GetQueuedCount(sessionID))
+	assert.Equal(t, 1, GetQueuedCount(sessionID),
+		"the turn loop owns queue clearing so it can emit queue_cancel")
 }
 
 func TestCancelSession_StuckThenNewMessage(t *testing.T) {
@@ -365,9 +377,8 @@ func TestForceCancelSession(t *testing.T) {
 	reason := GetAndClearCancelReason("session-force")
 	assert.Equal(t, "disconnect", reason)
 
-	// Cancel func should be removed
-	_, ok := sessionCancels.Load("session-force")
-	assert.False(t, ok)
+	// The runner must be gone, so the session is no longer running.
+	assert.False(t, IsSessionRunning("session-force"))
 }
 
 func TestForceCancelSession_NotFound(t *testing.T) {
@@ -489,11 +500,13 @@ func TestSetSessionRunning_FalseRemovesKey(t *testing.T) {
 
 // --- Helpers ---
 
+// cleanupCancels clears the runner registry. Kept under its historical name so
+// the many existing tests that call it keep working; the storage it clears is
+// now the unified registry (see session_runner.go).
 func cleanupCancels() {
-	sessionCancels.Range(func(key, _ interface{}) bool {
-		sessionCancels.Delete(key)
-		return true
-	})
+	registryMu.Lock()
+	registry = make(map[string]*sessionRunner)
+	registryMu.Unlock()
 }
 
 func cleanupCancelReasons() {
@@ -503,10 +516,13 @@ func cleanupCancelReasons() {
 	})
 }
 
+// cleanupActiveSessions clears the runner registry. Running state and cancel
+// funcs now share one container, so this is the same clear as cleanupCancels;
+// both names are kept because existing tests call each for its own intent.
 func cleanupActiveSessions() {
-	activeMu.Lock()
-	defer activeMu.Unlock()
-	activeSessions = make(map[string]bool)
+	registryMu.Lock()
+	registry = make(map[string]*sessionRunner)
+	registryMu.Unlock()
 }
 
 func cleanupAllSessionState() {
@@ -1159,18 +1175,43 @@ func TestEmitSessionEventWSOnly_BroadcastNoPush(t *testing.T) {
 	assert.Equal(t, "session-ws-only-1", data.SessionID)
 }
 
-// --- CancelSession with bad cancel type ---
+// --- CancelSession defensive paths ---
 
-func TestCancelSession_BadCancelType(t *testing.T) {
+// TestCancelSession_NotRunningIsIdempotent verifies cancelling an idle session
+// reports success without side effects.
+func TestCancelSession_NotRunningIsIdempotent(t *testing.T) {
 	cleanupAllSessionState()
 	defer cleanupAllSessionState()
 
-	// Store a non-CancelFunc value
-	sessionCancels.Store("session-bad-cancel", "not-a-cancel-func")
-	SetSessionRunning("session-bad-cancel", true)
+	assert.True(t, CancelSession("session-never-started"))
+}
+
+// TestCancelSession_RunnerWithoutCancelFuncIsCleared verifies the defensive
+// branch: a registry entry with no cancel func (which the unified registry
+// should make impossible) is cleared rather than left stuck running.
+func TestCancelSession_RunnerWithoutCancelFuncIsCleared(t *testing.T) {
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	// The defensive branch touches the queue, so it needs a DB.
+	db, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(drainTestSchema)
+	require.NoError(t, err)
+	cleanup := SetDBForTest(db, db)
+	defer func() {
+		cleanup()
+		_ = db.Close()
+	}()
+
+	registryMu.Lock()
+	registry["session-bad-cancel"] = &sessionRunner{sessionID: "session-bad-cancel"}
+	registryMu.Unlock()
 
 	result := CancelSession("session-bad-cancel")
-	assert.False(t, result, "should return false when cancel func has wrong type")
+	assert.True(t, result, "the stuck entry must be cleared")
+	assert.False(t, IsSessionRunning("session-bad-cancel"))
 }
 
 // --- SetSessionRunning with skipEvent ---
