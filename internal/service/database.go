@@ -623,8 +623,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
-	// Forge sync state: snapshot rows, watermark, and derived events.
-	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL} {
+	// Forge sync state: snapshot rows, watermark, derived events, and the CI
+	// run ledger.
+	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL, ForgePipelineRunsDDL} {
 		if _, err := WriteExec(ddl); err != nil {
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}
@@ -645,6 +646,49 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			if _, err := WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
 				return fmt.Errorf("failed to backfill forge_items.comments_baselined: %w", err)
 			}
+		}
+	}
+	// forge_events.item_key: identifies the item an event is about, so the unread
+	// badge can count distinct ITEMS rather than raw events (and so a row can be
+	// marked read on its own). It cannot be derived from (item_type, number)
+	// because pipeline events carry Number 0 for every run.
+	//
+	// The backfill reconstructs the key from the columns that are already there.
+	// A pipeline row's run id only exists inside its dedupe_key ("...|run:<id>"),
+	// so it is parsed out; if that parse fails the row is marked read rather than
+	// given a junk key, since a wrong key would create a phantom unread item that
+	// the user could never clear by opening anything.
+	{
+		var exists int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_events') WHERE name='item_key'").Scan(&exists)
+		if exists == 0 {
+			if _, err := WriteExec("ALTER TABLE forge_events ADD COLUMN item_key TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add forge_events.item_key column: %w", err)
+			}
+			if _, err := WriteExec(
+				"UPDATE forge_events SET item_key = item_type || '/' || number WHERE item_type != 'pipeline'",
+			); err != nil {
+				return fmt.Errorf("failed to backfill forge_events.item_key: %w", err)
+			}
+			if _, err := WriteExec(
+				`UPDATE forge_events SET item_key = 'pipeline/run:' || substr(dedupe_key, instr(dedupe_key, 'run:') + 4)
+				 WHERE item_type = 'pipeline' AND instr(dedupe_key, 'run:') > 0`,
+			); err != nil {
+				return fmt.Errorf("failed to backfill forge_events.item_key (pipeline): %w", err)
+			}
+			// Rows whose key could not be reconstructed are retired instead of
+			// left with an empty key (they would be invisible to the badge but
+			// permanently unread).
+			if _, err := WriteExec(
+				"UPDATE forge_events SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE item_key = ''",
+			); err != nil {
+				return fmt.Errorf("failed to retire keyless forge_events rows: %w", err)
+			}
+		}
+		// The index is created AFTER the column exists (on a fresh database the
+		// column is already in the CREATE TABLE, so this is a no-op there).
+		if _, err := WriteExec(ForgeEventItemIndexDDL); err != nil {
+			return fmt.Errorf("failed to create forge_events item index: %w", err)
 		}
 	}
 
@@ -678,6 +722,56 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if hasReadAt == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
+		}
+	}
+
+	// Unread became per-execution: scheduled_tasks.last_read_at is no longer
+	// consulted, so a task's watermark can no longer suppress anything.
+	//
+	// That REMOVES a suppression, which would otherwise inflate the badge on
+	// upgrade: executions that finished before the user last opened the task and
+	// were never individually opened were counted read only by virtue of the
+	// watermark. Without this backfill a long-lived task would suddenly report
+	// every run it ever made as unread.
+	//
+	// So the exact set that the watermark was suppressing is marked read once,
+	// and then the watermark is cleared. Clearing it is what makes the step
+	// one-time: a second boot finds nothing to migrate (and would otherwise be
+	// harmless, since read_at is already set).
+	//
+	// Only executions strictly at or before the watermark are touched; anything
+	// after it was already unread and must stay that way.
+	//
+	// Guarded on the column existing: `last_read_at` is declared in the
+	// scheduled_tasks CREATE TABLE, so a database old enough to predate it has
+	// no watermark to migrate at all (CREATE TABLE IF NOT EXISTS leaves such a
+	// table untouched).
+	var hasTaskLastRead int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='last_read_at'").Scan(&hasTaskLastRead)
+	if hasTaskLastRead > 0 {
+		var pending int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM task_executions e
+			 JOIN scheduled_tasks s ON s.id = e.task_id
+			 WHERE e.read_at IS NULL AND e.status != 'running' AND s.last_read_at IS NOT NULL`,
+		).Scan(&pending); err != nil {
+			return fmt.Errorf("failed to count executions pending the unread migration: %w", err)
+		}
+		if pending > 0 {
+			if _, err := WriteExec(
+				`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
+				 WHERE read_at IS NULL AND status != 'running'
+				   AND task_id IN (SELECT id FROM scheduled_tasks WHERE last_read_at IS NOT NULL)
+				   AND created_at <= (SELECT last_read_at FROM scheduled_tasks WHERE id = task_id)`,
+			); err != nil {
+				return fmt.Errorf("failed to backfill per-execution read state: %w", err)
+			}
+			if _, err := WriteExec(
+				"UPDATE scheduled_tasks SET last_read_at = NULL WHERE last_read_at IS NOT NULL",
+			); err != nil {
+				return fmt.Errorf("failed to clear the retired last_read_at watermark: %w", err)
+			}
+			slog.Info("migrated task unread state to per-execution", slog.Int("executions", pending))
 		}
 	}
 

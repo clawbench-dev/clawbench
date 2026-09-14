@@ -43,8 +43,9 @@ func TestRenderEventContext_PipelineEvent(t *testing.T) {
 	ec := EventContext{
 		EventType:      string(forge.EventPipeline),
 		Repo:           "acme/widgets",
-		ItemNumber:     7,
-		ItemType:       "pr",
+		ItemType:       string(forge.ItemTypePipeline),
+		ItemNumber:     0,
+		Title:          "CI",
 		PipelineStatus: "success",
 		PipelineURL:    "https://ci.example/run/7",
 	}
@@ -59,6 +60,71 @@ func TestRenderEventContext_PipelineEvent(t *testing.T) {
 	// No comment on this event, so the comment line must be absent.
 	if strings.Contains(out, "评论内容") {
 		t.Fatalf("pipeline event must not render comment line, got:\n%s", out)
+	}
+	// A run has no item, so the item line must be absent rather than rendering
+	// the nonsensical "pipeline #0".
+	if strings.Contains(out, "条目") {
+		t.Fatalf("pipeline event must not render an item line, got:\n%s", out)
+	}
+	if strings.Contains(out, "#0") {
+		t.Fatalf("pipeline event must not render a zero item number, got:\n%s", out)
+	}
+}
+
+// TestRenderEventContext_PipelineActorIsSelf guards the prompt's only means of
+// telling whether it triggered itself: the code deliberately does not suppress
+// self-triggered pipelines, so the flag must reach the prompt.
+func TestRenderEventContext_PipelineActorIsSelf(t *testing.T) {
+	base := EventContext{
+		EventType: string(forge.EventPipeline),
+		Repo:      "acme/widgets",
+		ItemType:  string(forge.ItemTypePipeline),
+	}
+
+	self := base
+	self.ActorIsSelf = true
+	out := RenderEventContext(self)
+	if !strings.Contains(out, "是否自身触发：是") {
+		t.Fatalf("self-triggered pipeline must be labeled, got:\n%s", out)
+	}
+
+	other := base
+	other.ActorIsSelf = false
+	out = RenderEventContext(other)
+	if !strings.Contains(out, "是否自身触发：否") {
+		t.Fatalf("external pipeline must be labeled, got:\n%s", out)
+	}
+
+	// The flag is pipeline-scoped: an issue/PR event decides this in code, so
+	// the variable must not appear for it.
+	issueEC := EventContext{
+		EventType: string(forge.EventOpened), Repo: "a/b",
+		ItemType: "issue", ItemNumber: 1,
+	}
+	if strings.Contains(RenderEventContext(issueEC), "是否自身触发") {
+		t.Fatalf("issue event must not render the pipeline self flag, got:\n%s", RenderEventContext(issueEC))
+	}
+}
+
+// TestEventPromptTemplate_PipelineHidesItemVariable: a pipeline-only
+// subscription can never receive an item, so promising {{ITEM_TYPE}} would
+// mislead the user writing the prompt.
+func TestEventPromptTemplate_PipelineHidesItemVariable(t *testing.T) {
+	out := EventPromptTemplate([]string{string(forge.EventPipeline)})
+	if strings.Contains(out, "ITEM_TYPE") {
+		t.Fatalf("pipeline-only subscription must not advertise an item variable, got:\n%s", out)
+	}
+	if !strings.Contains(out, "{{PIPELINE_STATUS}}") {
+		t.Fatalf("pipeline vars missing, got:\n%s", out)
+	}
+	if !strings.Contains(out, "{{ACTOR_IS_SELF}}") {
+		t.Fatalf("the self-authorship variable must be offered, got:\n%s", out)
+	}
+
+	// A mixed subscription still involves items, so the variable stays.
+	mixed := EventPromptTemplate([]string{string(forge.EventPipeline), "pr.opened"})
+	if !strings.Contains(mixed, "ITEM_TYPE") {
+		t.Fatalf("a mixed subscription must keep the item variable, got:\n%s", mixed)
 	}
 }
 

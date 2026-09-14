@@ -18,6 +18,8 @@ const (
 	jsonHost           = "host"
 	jsonNoForgeBinding = "NoForgeBinding"
 	jsonCode           = "code"
+	// jsonCount is the response key for a numeric total (the unread count).
+	jsonCount = "count"
 )
 
 // forgeItemView is the frontend-facing shape of an issue or PR. It flattens the
@@ -42,6 +44,10 @@ type forgeItemView struct {
 	CreatedAt    string   `json:"createdAt"`
 	UpdatedAt    string   `json:"updatedAt"`
 	Slug         string   `json:"slug"`
+	// Unread is true when this item has forge activity the user has not seen.
+	// It is filled from the same rows the dock badge counts, so the badge and
+	// the per-row dot cannot disagree.
+	Unread bool `json:"unread,omitempty"`
 }
 
 func toForgeItemView(pf *service.ProjectForge, item forge.Item) forgeItemView {
@@ -132,9 +138,19 @@ func ServeForgeItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tag each row with its unread state. One query for the whole page, and no
+	// extra provider call — the list and the dock badge read the same rows.
+	unreadKeys, err := service.UnreadForgeItemKeys(pf.RepoKey())
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
 	items := make([]forgeItemView, 0, len(res.Items))
 	for _, it := range res.Items {
-		items = append(items, toForgeItemView(pf, it))
+		view := toForgeItemView(pf, it)
+		view.Unread = unreadKeys[forge.ItemKeyForNumber(it.Type, it.Number)]
+		items = append(items, view)
 	}
 
 	// Optional "mine" filter, applied server-side using the token's identity.
@@ -617,34 +633,85 @@ func suggestForgeBinding(projectPath string) map[string]any {
 	}
 }
 
-// ServeForgeUnread returns the unread forge-event count. The count is
-// independent of the notification toggles: it tracks "are there new changes",
-// so turning every notification off does not silently kill the badge.
+// ServeForgeUnread returns the number of unread ITEMS for the project's bound
+// repository. The count is independent of the notification toggles: it tracks
+// "are there new changes", so turning every notification off does not silently
+// kill the badge.
+//
+// It is project-scoped because the panel it points at is one project's
+// repository; a global count would be a number the user cannot act on.
 //
 //	GET /api/forge/unread
 func ServeForgeUnread(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
-	n, err := service.CountUnreadForgeEvents()
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	// An unbound project has nothing to be unread about. This is a normal state,
+	// not an error: the panel shows its "bind a repository" prompt.
+	pf, err := service.GetProjectForge(projectPath)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": n})
+	if pf == nil {
+		writeJSON(w, http.StatusOK, map[string]any{jsonCount: 0})
+		return
+	}
+	n, err := service.CountUnreadForgeEvents(pf.RepoKey())
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{jsonCount: n})
 }
 
-// ServeForgeMarkRead clears the unread count (called when the user opens the
-// Issues & PRs tab).
+// ServeForgeMarkRead marks unread forge activity as read.
+//
+// With no body (or an empty itemKey) it marks the whole repository, which is the
+// "mark all read" action. With `{"itemKey":"issue/42"}` it marks just that item,
+// which is what opening a row does.
 //
 //	POST /api/forge/read
 func ServeForgeMarkRead(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	if err := service.MarkForgeEventsRead(); err != nil {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	pf, err := service.GetProjectForge(projectPath)
+	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"count": 0})
+	if pf == nil {
+		writeJSON(w, http.StatusOK, map[string]any{jsonCount: 0})
+		return
+	}
+
+	// The body is optional: an absent or empty body means "all".
+	var req struct {
+		ItemKey string `json:"itemKey"`
+	}
+	if err = decodeOptionalJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: err.Error()})
+		return
+	}
+	if err = service.MarkForgeEventsRead(pf.RepoKey(), req.ItemKey); err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	// Report the remaining count so the client can settle its badge without a
+	// second round trip.
+	n, err := service.CountUnreadForgeEvents(pf.RepoKey())
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{jsonCount: n})
 }

@@ -50,6 +50,15 @@ type ProjectForge struct {
 // Slug returns the canonical owner/repo identifier.
 func (p ProjectForge) Slug() string { return p.Owner + "/" + p.Repo }
 
+// RepoKey returns the binding's repository identity.
+//
+// Read state is stored per REPOSITORY, not per project: one upstream item is one
+// item, even when two projects happen to be bound to the same repo. Keeping the
+// conversion here means every caller derives the key the same way.
+func (p ProjectForge) RepoKey() ForgeRepoKey {
+	return ForgeRepoKey{Platform: p.Platform, Host: p.Host, Owner: p.Owner, Repo: p.Repo}
+}
+
 // NormalizeProjectPath canonicalizes a project path so the same project always
 // maps to one binding row. It resolves symlinks when possible, cleans the path,
 // and strips a trailing separator. On any error it falls back to the cleaned

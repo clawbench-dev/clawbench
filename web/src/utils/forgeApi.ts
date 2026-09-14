@@ -38,6 +38,8 @@ export interface ForgeItem {
     createdAt: string
     updatedAt: string
     slug: string
+    /** True when this item has activity the user has not seen. */
+    unread?: boolean
 }
 
 export interface ForgeComment {
@@ -46,6 +48,64 @@ export interface ForgeComment {
     body: string
     createdAt: string
     updatedAt: string
+}
+
+/** Normalized CI run status, shared by both platforms. */
+export type ForgePipelineStatus = 'success' | 'failure' | 'running' | 'cancelled' | 'skipped' | 'unknown'
+
+export interface ForgePipelineRun {
+    platform: string
+    host: string
+    owner: string
+    repo: string
+    /** Platform run id (GitHub run id / GitLab pipeline id). */
+    id: number
+    /** Workflow name; falls back to the ref on older GitLab instances. */
+    name: string
+    /** Human-facing run counter (GitHub run_number / GitLab iid). */
+    number: number
+    status: ForgePipelineStatus
+    ref: string
+    sha: string
+    /** What triggered the run, in the platform's own vocabulary. */
+    event: string
+    actor: string
+    url: string
+    createdAt: string
+    updatedAt: string
+    /** Absent when the platform does not report it (GitHub's list endpoint). */
+    durationSeconds?: number
+    slug: string
+    /** True when this run has activity the user has not seen. */
+    unread?: boolean
+}
+
+export interface ForgePipelineJob {
+    id: number
+    name: string
+    /** GitLab only; GitHub has no stage concept. */
+    stage?: string
+    status: ForgePipelineStatus
+    /** GitLab only. */
+    failureReason?: string
+    runner?: string
+    url: string
+    durationSeconds?: number
+    startedAt?: string
+    completedAt?: string
+}
+
+export interface ForgePipelineListResult {
+    pipelines: ForgePipelineRun[]
+    hasMore: boolean
+    nextPage: number
+    binding: ForgeBinding
+}
+
+export interface ForgePipelineDetailResult {
+    pipeline: ForgePipelineRun
+    jobs: ForgePipelineJob[]
+    binding: ForgeBinding
 }
 
 export interface ForgeItemListResult {
@@ -179,6 +239,30 @@ export function fetchForgeBinding(signal?: AbortSignal): Promise<{ binding: Forg
     return forgeFetch('/api/forge/binding', { signal })
 }
 
+/**
+ * List CI runs for the bound repository.
+ *
+ * `status` filters server-side; omit it for every status. The forge API is
+ * read-only, so there is no corresponding write call (no re-run, no cancel).
+ */
+export function fetchForgePipelines(params: {
+    status?: ForgePipelineStatus
+    page?: number
+    perPage?: number
+    signal?: AbortSignal
+} = {}): Promise<ForgePipelineListResult> {
+    const q = new URLSearchParams()
+    if (params.status) q.set('status', params.status)
+    q.set('page', String(params.page ?? 1))
+    q.set('perPage', String(params.perPage ?? 30))
+    return forgeFetch<ForgePipelineListResult>(`/api/forge/pipelines?${q.toString()}`, { signal: params.signal })
+}
+
+/** Fetch one run and its jobs. Jobs are best-effort and may come back empty. */
+export function fetchForgePipeline(id: number, signal?: AbortSignal): Promise<ForgePipelineDetailResult> {
+    return forgeFetch(`/api/forge/pipeline?id=${id}`, { signal })
+}
+
 export function setForgeBinding(input: { url?: string; platform?: string; host?: string; owner?: string; repo?: string }): Promise<{ binding: ForgeBinding }> {
     return forgeFetch('/api/forge/binding', { method: 'POST', body: input })
 }
@@ -228,6 +312,16 @@ export function fetchForgeUnread(signal?: AbortSignal): Promise<{ count: number 
     return forgeFetch('/api/forge/unread', { signal })
 }
 
-export function markForgeRead(): Promise<{ count: number }> {
-    return forgeFetch('/api/forge/read', { method: 'POST' })
+/**
+ * Mark forge activity read.
+ *
+ * With no itemKey the whole bound repository is marked read (the "mark all
+ * read" action). With an itemKey only that item is marked, which is what
+ * opening a row does.
+ */
+export function markForgeRead(itemKey?: string): Promise<{ count: number }> {
+    return forgeFetch('/api/forge/read', {
+        method: 'POST',
+        body: itemKey ? { itemKey } : {},
+    })
 }

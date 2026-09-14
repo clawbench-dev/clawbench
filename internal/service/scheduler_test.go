@@ -1965,3 +1965,76 @@ func TestScheduledTask_EventTypeList(t *testing.T) {
 	assert.Equal(t, []string{"closed", "merged"}, task.EventTypeList())
 	assert.Nil(t, (&model.ScheduledTask{}).EventTypeList())
 }
+
+// ── Per-execution unread model ──
+
+// TestMarkTaskExecutionsRead_PerExecution: "mark all read" must write read_at on
+// each execution, not move a task-level watermark. A watermark could not express
+// "this one read, that one not".
+func TestMarkTaskExecutionsRead_PerExecution(t *testing.T) {
+	_, cleanup := setupScheduler(t)
+	defer cleanup()
+
+	now := time.Now()
+	res, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+	)
+	assert.NoError(t, err)
+	taskID, _ := res.LastInsertId()
+
+	// One finished, one still running.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'completed', ?)",
+		taskID, "sess-1", now,
+	)
+	assert.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'running', ?)",
+		taskID, "sess-2", now,
+	)
+	assert.NoError(t, err)
+
+	assert.NoError(t, service.MarkTaskExecutionsRead(taskID))
+
+	var finishedRead, runningRead int
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM task_executions WHERE status='completed' AND read_at IS NOT NULL").Scan(&finishedRead))
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM task_executions WHERE status='running' AND read_at IS NOT NULL").Scan(&runningRead))
+
+	assert.Equal(t, 1, finishedRead, "the finished execution must be marked read")
+	assert.Equal(t, 0, runningRead, "a running execution must not be marked read — its outcome is unknown")
+}
+
+// TestUnread_IgnoresLastReadAtWatermark is the regression for the model change:
+// a task-level watermark used to suppress unread for executions older than it,
+// which silently swallowed runs the user had never opened.
+func TestUnread_IgnoresLastReadAtWatermark(t *testing.T) {
+	_, cleanup := setupScheduler(t)
+	defer cleanup()
+
+	now := time.Now()
+	older := now.Add(-time.Hour)
+	res, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
+		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now, now,
+	)
+	assert.NoError(t, err)
+	taskID, _ := res.LastInsertId()
+
+	// An execution that finished BEFORE the watermark and was never opened.
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, read_at, created_at) VALUES (?, ?, 'auto', 'completed', NULL, ?)",
+		taskID, "sess-old", older,
+	)
+	assert.NoError(t, err)
+
+	// Under the old watermark rule this counted as read. It must now be unread:
+	// the user was never shown it.
+	tasks, err := service.GetTasks("/proj")
+	assert.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, 1, tasks[0].UnreadCount,
+		"an unopened execution older than the watermark is still unread")
+}

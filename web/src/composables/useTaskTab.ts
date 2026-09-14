@@ -212,26 +212,6 @@ async function markAllTasksRead() {
     }
 }
 
-/** Mark a single task as read — clears unread badge for that task only */
-async function markTaskRead(taskId: number) {
-    const task = store.state.tasks.find(t => (t as unknown as TaskItem).id === taskId)
-    if (!task || (task as unknown as TaskItem).unreadCount <= 0) return
-    try {
-        const resp = await fetch(`/api/tasks/${taskId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'read' }),
-        })
-        if (!resp.ok) return
-        // Optimistically clear unread count for this task
-        ;(task as Record<string, unknown>).unreadCount = 0
-        // Re-derive taskUnreadCount from remaining unread tasks
-        store.state.taskUnreadCount = store.state.tasks.reduce((sum, t) => sum + ((t as unknown as TaskItem).unreadCount || 0), 0)
-    } catch {
-        // Silently ignore — next poll will correct
-    }
-}
-
 // --- WS event handler ---
 
 // Called from WS task_update event
@@ -253,8 +233,10 @@ export function useTaskTab() {
         currentView.value = 'settings'
         execDetailOpen.value = false
         formViewOpen.value = false
-        // Clear unread badge for this task — user is viewing its details (incl. history)
-        markTaskRead(taskId)
+        // Opening a task deliberately does NOT clear its unread history. Unread
+        // is per execution: opening one run marks that run read. Clearing the
+        // whole task here is what made the badge number impossible to act on —
+        // it vanished before the user could find which run it referred to.
     }
 
     function goBack() {
@@ -355,6 +337,5 @@ export function useTaskTab() {
         // Data methods
         loadTasks,
         markAllTasksRead,
-        markTaskRead,
     }
 }

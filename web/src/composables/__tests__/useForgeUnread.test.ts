@@ -120,3 +120,41 @@ describe('useForgeUnread', () => {
     expect(forgeUnreadCount.value).toBe(2)
   })
 })
+
+describe('useForgeUnread markRead (mark all in the bound repository)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useForgeUnread().forgeUnreadCount.value = 0
+  })
+
+  it('marks read with no itemKey, which the server treats as "all"', async () => {
+    mockMarkRead.mockResolvedValue({ count: 0 })
+    const { forgeUnreadCount, markRead } = useForgeUnread()
+    forgeUnreadCount.value = 4
+
+    await markRead()
+
+    // No argument: the whole repository, not one item.
+    expect(mockMarkRead).toHaveBeenCalledWith()
+    expect(forgeUnreadCount.value).toBe(0)
+  })
+
+  it('settles on the server-reported remainder rather than assuming zero', async () => {
+    // Activity can arrive while the request is in flight; the response is the
+    // authoritative remainder, so the badge must use it.
+    mockMarkRead.mockResolvedValue({ count: 2 })
+    const { forgeUnreadCount, markRead } = useForgeUnread()
+    forgeUnreadCount.value = 4
+
+    await markRead()
+
+    expect(forgeUnreadCount.value).toBe(2)
+  })
+
+  it('does nothing when there is nothing unread', async () => {
+    const { forgeUnreadCount, markRead } = useForgeUnread()
+    forgeUnreadCount.value = 0
+    await markRead()
+    expect(mockMarkRead).not.toHaveBeenCalled()
+  })
+})

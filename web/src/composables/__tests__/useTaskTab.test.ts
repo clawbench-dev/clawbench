@@ -923,19 +923,22 @@ describe('useTaskTab', () => {
       expect(formViewOpen.value).toBe(false)
     })
 
-    it('navigateToTaskSettings calls markTaskRead (history is merged into settings)', async () => {
+    it('navigateToTaskSettings does NOT clear the task unread history', async () => {
+      // Unread is per execution: opening a task must not wipe its history, or
+      // the badge number would vanish before the user could find which run it
+      // referred to. Opening one run is what marks that run read.
       const { navigateToTaskSettings, currentView, selectedTaskId } = useTaskTab()
       store.state.tasks = [{ id: 1, unreadCount: 2, name: 'Task 1' }]
+      mockFetch.mockClear()
       mockFetch.mockResolvedValue({ ok: true })
 
       navigateToTaskSettings(1)
       expect(currentView.value).toBe('settings')
       expect(selectedTaskId.value).toBe(1)
 
-      // markTaskRead should be called (unread badge cleared when viewing task details)
-      await vi.waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
-      })
+      // Give any fire-and-forget call a chance to land before asserting absence.
+      await new Promise(r => setTimeout(r, 0))
+      expect(mockFetch).not.toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
     })
 
     it('goBack navigates from settings to list', () => {
@@ -1168,58 +1171,4 @@ describe('useTaskTab', () => {
 
   // ── markTaskRead ──
 
-  describe('markTaskRead', () => {
-    it('marks a single task as read', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [
-        { id: 1, unreadCount: 2 },
-        { id: 2, unreadCount: 3 },
-      ]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(1)
-
-      expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
-      expect(store.state.tasks[0].unreadCount).toBe(0)
-      expect(store.state.taskUnreadCount).toBe(3)
-    })
-
-    it('skips when task has no unreadCount', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 0 }]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(1)
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('skips when task is not found', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockResolvedValue({ ok: true })
-
-      await markTaskRead(999)
-      expect(mockFetch).not.toHaveBeenCalled()
-    })
-
-    it('does not update local state when API returns not ok', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockResolvedValue({ ok: false, status: 500 })
-
-      await markTaskRead(1)
-
-      expect(store.state.tasks[0].unreadCount).toBe(2)
-    })
-
-    it('silently ignores fetch error', async () => {
-      const { markTaskRead } = useTaskTab()
-      store.state.tasks = [{ id: 1, unreadCount: 2 }]
-      mockFetch.mockRejectedValue(new Error('Network error'))
-
-      await markTaskRead(1)
-      // Should not throw, unreadCount stays unchanged
-      expect(store.state.tasks[0].unreadCount).toBe(2)
-    })
-  })
 })
