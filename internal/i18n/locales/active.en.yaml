@@ -46,6 +46,7 @@ FileNotFoundShort: File not found
 BrokenSymlink: "Broken symlink: target not found ({{.Target}})"
 DirectoryNotFound: Directory not found
 InvalidFilePath: Invalid file path
+InvalidLineRange: Invalid line range
 InvalidURLAttachment: URL attachments must be an http(s) address
 FileTooLargeOrInvalid: File too large or invalid form
 NoFileProvided: No file provided

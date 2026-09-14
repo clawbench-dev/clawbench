@@ -1716,7 +1716,13 @@ paths:
     get:
       tags: [Files]
       summary: 读取文件内容
-      description: 返回文本/结构化内容；二进制与不支持类型有专门处理。`{path}` 为项目相对路径。
+      description: |
+        返回文本/结构化内容；二进制与不支持类型有专门处理。`{path}` 为项目相对路径。
+
+        可选行窗口（快速预览窗格使用）：传 `lineStart`/`lineEnd` 时只返回该区间
+        （1-based，闭区间）的行，并附带文件总行数 `totalLines`，避免大文件整体传输。
+        行窗口只对文本文件生效；`forceText` / 二进制嗅探路径会忽略窗口并返回完整
+        净化内容。窗口最多 `maxWindowLines` 行。
       operationId: fileGet
       parameters:
         - $ref: "#/components/parameters/FilePath"
@@ -1730,9 +1736,67 @@ paths:
           description: 置 1 时强制按文本返回。
           schema:
             type: string
+        - name: lineStart
+          in: query
+          description: 行窗口起始行（1-based，含）。设置后仅返回该区间内容；单独使用时窗口即为该行。
+          schema:
+            type: integer
+            minimum: 1
+        - name: lineEnd
+          in: query
+          description: 行窗口结束行（1-based，含），须 >= lineStart。必须与 lineStart 同时提供，省略时窗口为单行 lineStart。
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
-          description: 文件内容
+          description: |
+            文件内容。带行窗口时额外返回 `totalLines`（文件总行数）、
+            `windowStart`/`windowEnd`（本次返回内容覆盖的行区间，`windowEnd < windowStart`
+            表示未取到任何行，如起始行超出文件末尾）、`windowTruncated`（是否因窗口上限被截断）。
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
+                  name:
+                    type: string
+                  path:
+                    type: string
+                  supported:
+                    type: boolean
+                  isBinary:
+                    type: boolean
+                  truncated:
+                    type: boolean
+                  size:
+                    type: integer
+                  subtype:
+                    type: string
+                  specJson:
+                    type: string
+                  linkTarget:
+                    type: string
+                  isSymlink:
+                    type: boolean
+                  totalLines:
+                    type: integer
+                    description: 文件总行数（仅行窗口响应）。
+                  windowStart:
+                    type: integer
+                    description: 返回内容起始行（1-based，含）。
+                  windowEnd:
+                    type: integer
+                    description: |
+                      返回内容结束行（1-based，含）。小于 windowStart 表示未取到任何行
+                      （如起始行超出文件末尾）。该字段始终返回，便于区分「空窗口」与「无窗口元数据」。
+                  windowTruncated:
+                    type: boolean
+                    description: 是否因窗口字节上限被截断（如存在超长行）。
+        "400":
+          $ref: "#/components/responses/Error"
         "403":
           $ref: "#/components/responses/Error"
         "404":
