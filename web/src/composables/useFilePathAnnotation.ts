@@ -639,22 +639,51 @@ function cacheSet(key: string, value: PathType): void {
 let pendingPaths: string[] = []
 let batchInFlight: Promise<void> | null = null
 
+/**
+ * Max paths per batch-exists request. `ServeFileBatchExists` rejects more than
+ * this with 400 TooManyPaths, so requests are chunked to stay under it.
+ */
+const MAX_BATCH_PATHS = 100
+
+/**
+ * POST one chunk of paths and return the per-path types.
+ *
+ * Returns null when the response is unusable — a non-OK status (e.g. 400
+ * TooManyPaths, or a 5xx) or a body without `results`. Callers must NOT treat
+ * that as "these paths do not exist": the server never answered the question,
+ * and caching 'none' would strip annotations from perfectly real files.
+ */
+async function fetchPathTypes(paths: string[]): Promise<Record<string, string> | null> {
+    const resp = await fetch('/api/file/batch-exists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths }),
+    })
+    if (!resp.ok) return null
+    const data = await resp.json() as { results?: Record<string, string> }
+    return data.results ?? null
+}
+
 async function drainBatch(): Promise<void> {
     const paths = [...new Set(pendingPaths)]
     pendingPaths = []
 
     try {
-        const resp = await fetch('/api/file/batch-exists', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths }),
-        })
-        const data = await resp.json() as { results: Record<string, string> }
-        for (const [path, type] of Object.entries(data.results)) {
-            if (type === 'file' || type === 'dir') {
-                cacheSet(path, type)
-            } else {
-                cacheSet(path, 'none')
+        for (let i = 0; i < paths.length; i += MAX_BATCH_PATHS) {
+            const chunk = paths.slice(i, i + MAX_BATCH_PATHS)
+            const results = await fetchPathTypes(chunk)
+            if (!results) {
+                // The server answered but told us nothing usable. Leave the
+                // remaining paths uncached rather than marking them missing, so
+                // the annotation survives and a later pass can retry.
+                return
+            }
+            for (const [path, type] of Object.entries(results)) {
+                if (type === 'file' || type === 'dir') {
+                    cacheSet(path, type)
+                } else {
+                    cacheSet(path, 'none')
+                }
             }
         }
     } catch {
