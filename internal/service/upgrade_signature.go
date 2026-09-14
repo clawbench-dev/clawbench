@@ -73,13 +73,18 @@ func isOfficialRegistry(base string) bool {
 // identity and integrity hash, and returns a human-readable warning describing
 // why verification could not be completed.
 //
-// It never fails the upgrade. Signature verification is defense in depth: when
-// it cannot be completed the download still has its integrity hash checked
-// against the registry metadata, which is the same protection the upgrade had
-// before signatures were added. Refusing to upgrade instead would strand users
-// whose network cannot reach npmjs, or whose mirror repackages tarballs, for no
-// gain — a mirror that wants to evade this check can simply omit the signature
-// field. The warning is what keeps the downgrade visible rather than silent.
+// It never fails the upgrade. This makes the signature an advisory check, not a
+// gate, and the consequence should be stated plainly: a registry that omits the
+// signature field entirely is indistinguishable here from one that has none to
+// offer, so a mirror determined to serve modified content can do so by simply
+// not signing. What the check still catches is tampering with a response that
+// does carry a signature (for example a proxy that passes npm's signatures
+// through), and a stale signature that a naive mirror failed to strip.
+//
+// The warning is what keeps the downgrade visible: the caller surfaces it and
+// the user decides whether to proceed. Refusing outright would strand users
+// whose network cannot reach npmjs, or whose mirror legitimately repackages
+// tarballs.
 //
 // An empty return means the signature was verified. The one check that does
 // still abort an upgrade lives in downloadAndExtract: a tarball whose bytes do
@@ -94,7 +99,7 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 			slog.Warn("upgrade: signatures present but dist.integrity missing",
 				"registry", registryBase, "package", pkg, "version", version)
 			return fmt.Sprintf("The registry %s supplied a signature but no integrity hash, so the "+
-				"release could not be authenticated. The download will still be checked for corruption.", registryBase)
+				"release could not be authenticated.", registryBase)
 		}
 		if isOfficialRegistry(registryBase) {
 			slog.Warn("upgrade: official registry returned neither signature nor integrity",
@@ -115,16 +120,16 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 				"every published version, so this is unexpected — the release could not be authenticated.",
 				registryBase)
 		}
-		return fmt.Sprintf("The registry %s did not sign this release, so the download could only be "+
-			"checked against its integrity hash.", registryBase)
+		return fmt.Sprintf("The registry %s did not sign this release, so it could not be "+
+			"authenticated against npm's signing keys.", registryBase)
 	}
 
 	keys, err := fetchNpmSigningKeys(ctx)
 	if err != nil {
-		slog.Warn("upgrade: cannot reach npm signing keys — falling back to integrity check only",
+		slog.Warn("upgrade: cannot reach npm signing keys — signature not verified",
 			"error", err, "package", pkg, "version", version)
 		return fmt.Sprintf("The release signature could not be verified because npm's signing keys were "+
-			"unreachable (%v). The download was checked against its integrity hash only.", err)
+			"unreachable (%v), so the release could not be authenticated.", err)
 	}
 
 	payload := fmt.Sprintf("%s@%s:%s", pkg, version, integrity)
@@ -148,9 +153,10 @@ func verifyRegistrySignature(ctx context.Context, pkg, version, integrity string
 
 	slog.Warn("upgrade: registry signature verification failed",
 		"registry", registryBase, "package", pkg, "version", version, "error", lastErr)
-	return fmt.Sprintf("The release signature from %s did not verify (%v). This can happen when a mirror "+
-		"repackages the tarball, which changes its integrity hash and invalidates the original signature. "+
-		"The download was checked against its integrity hash only.", registryBase, lastErr)
+	return fmt.Sprintf("The release signature from %s did not verify (%v), so the release could not be "+
+		"authenticated. A mirror that repackages the tarball changes its integrity hash and thereby "+
+		"invalidates the original signature, but a tampered or substituted release produces the same "+
+		"result — the two cannot be told apart from here.", registryBase, lastErr)
 }
 
 // findSigningKey returns the key matching keyid.

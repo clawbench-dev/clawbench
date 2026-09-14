@@ -39,7 +39,7 @@ const i18n = createI18n({
         dockerHintBody: '就地升级仍然可用，但用未更新的镜像重建容器会回退到旧版本。',
         dockerHintRestart: '容器必须使用 --restart always 或 --restart unless-stopped，否则就地升级后服务不会自动恢复。请勿使用 --restart on-failure：服务以退出码 0 结束，该策略不会触发重启。',
         verificationWarningTitle: '本次升级未能完全验证',
-        verificationWarningHint: '下载内容仍会做完整性校验，但无法证明该软件包确实来自发布者。',
+        verificationWarningHint: '上面的内容说明了哪些校验无法完成。',
       },
     },
   },

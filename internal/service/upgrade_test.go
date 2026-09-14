@@ -447,13 +447,31 @@ func TestResolveExpectedDigest_NeitherField_WarnsAndProceeds(t *testing.T) {
 
 // The unverified digest must pass verification unconditionally — there is
 // nothing to compare against, and the warning already covered the gap.
-func TestExpectedDigest_UnverifiedAlwaysPasses(t *testing.T) {
-	digest, _, err := resolveExpectedDigest("", "")
+// An unverified digest passes any bytes, while a verified one rejects the same
+// bytes. Asserting only the first half would be tautological — the point is the
+// contrast, which is what makes the flag load-bearing.
+func TestExpectedDigest_UnverifiedPassesWhereVerifiedWouldFail(t *testing.T) {
+	unverified, _, err := resolveExpectedDigest("", "")
 	require.NoError(t, err)
+	require.True(t, unverified.unverified)
 
-	hasher := digest.newHasher()
-	_, _ = hasher.Write([]byte("arbitrary bytes"))
-	assert.NoError(t, digest.verify(hasher), "an unverified digest has nothing to check")
+	// A digest with a real hash, for the same content the hasher will see.
+	sum := sha512.Sum512([]byte("arbitrary bytes"))
+	verified, _, err := resolveExpectedDigest("sha512-"+base64.StdEncoding.EncodeToString(sum[:]), "")
+	require.NoError(t, err)
+	require.False(t, verified.unverified)
+
+	arbitrary := []byte("arbitrary bytes")
+
+	uh := unverified.newHasher()
+	_, _ = uh.Write(arbitrary)
+	assert.NoError(t, unverified.verify(uh), "an unverified digest has nothing to compare")
+
+	// The verified digest must disagree with a *different* payload, proving the
+	// two branches really do differ.
+	vh := verified.newHasher()
+	_, _ = vh.Write([]byte("different bytes"))
+	require.Error(t, verified.verify(vh), "a verified digest must reject the wrong content")
 }
 
 func TestResolveExpectedDigest_WhitespaceOnly_WarnsAndProceeds(t *testing.T) {
@@ -1518,6 +1536,67 @@ func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 
 	_, statErr := os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
+}
+
+// An unverified digest must not be reported as a successful verification. The
+// regression this guards: verify() returns nil for an unverified digest, so a
+// shared code path would log "integrity verified" alongside a hardcoded
+// algorithm that was never applied.
+func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho hi")
+	tarball, _ := buildTarball(t, binContent)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+	require.True(t, digest.unverified, "precondition: no hash means unverified")
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, digest, destPath),
+		"an unverified install must still complete")
+
+	got, readErr := os.ReadFile(destPath)
+	require.NoError(t, readErr)
+	assert.Equal(t, binContent, got)
+}
+
+// A decompression bomb must not be able to fill the disk. The archive here is
+// tiny on the wire and enormous once expanded, which is exactly the shape a
+// hostile mirror would serve when no hash constrains it.
+func TestDownloadAndExtract_RejectsOversizedBinary(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	huge := bytes.Repeat([]byte("A"), maxBinarySize+1024)
+	tarball, _ := buildTarball(t, huge)
+	require.Less(t, len(tarball), 10<<20, "precondition: the archive itself is small")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	digest, _, err := resolveExpectedDigest("", "")
+	require.NoError(t, err)
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err = downloadAndExtract(context.Background(), ts.URL, digest, destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "limit")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "an oversized binary must be cleaned up")
 }
 
 // The digest is checked against the bytes actually served, so a tarball that is

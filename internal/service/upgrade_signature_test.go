@@ -273,7 +273,9 @@ func TestVerifyRegistrySignature_KeysEndpointUnreachableWarns(t *testing.T) {
 	warning := verifyRegistrySignature(context.Background(), "pkg", "1.2.3", "sha512-abc",
 		[]npmSignature{sig}, npmjsRegistryBase)
 	assert.Contains(t, warning, "could not be verified")
-	assert.Contains(t, warning, "integrity hash only")
+	// The wording must state the consequence (unauthenticated) rather than
+	// promising an integrity check that may not happen.
+	assert.Contains(t, warning, "could not be authenticated")
 }
 
 func TestVerifyRegistrySignature_EmptyKeyListWarns(t *testing.T) {
@@ -505,4 +507,75 @@ func TestFetchUpgradeInfo_VerifiedReleaseHasNoWarning(t *testing.T) {
 	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
 	require.NoError(t, err)
 	assert.Empty(t, info.VerificationWarning)
+}
+
+// The warning must cover a missing hash, not just signature problems.
+//
+// This is the regression that mattered: the client asks the user to confirm
+// before starting, and it learns what to ask from this endpoint. If a missing
+// hash were only discovered during the download, the install would proceed with
+// no confirmation at all — silently, for exactly the mirror configuration most
+// likely to omit the field.
+func TestFetchUpgradeInfo_MissingHashIsReportedBeforeDownload(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	// A plain proxy: no signature, no integrity, no shasum.
+	const mirror = "https://nexus.corp/repository/npm-proxy"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = mirror + "/x/-/x-99.0.0.tgz"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{
+		mirrorBase: ts.URL,
+		keysStatus: http.StatusNotFound,
+	}}
+
+	info, err := fetchUpgradeInfoFromBase(mirror, pkg, "0.1.0")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, info.VerificationWarning,
+		"a missing hash must be visible to /check, or the confirmation gate cannot fire")
+	assert.Contains(t, info.VerificationWarning, "no integrity hash")
+	assert.Empty(t, info.Integrity)
+	assert.Empty(t, info.Shasum)
+}
+
+// Both reasons can apply at once; the user should see both rather than whichever
+// was computed last.
+func TestFetchUpgradeInfo_ReportsBothReasons(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+
+	// An official registry that returns neither a signature nor a hash trips
+	// both checks.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = npmjsRegistryBase + "/x/-/x-99.0.0.tgz"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+
+	info, err := fetchUpgradeInfoFromBase(npmjsRegistryBase, pkg, "0.1.0")
+	require.NoError(t, err)
+
+	// Both reasons appear: the signature check's complaint and the digest
+	// resolution's.
+	assert.Contains(t, info.VerificationWarning, "neither a signature nor an integrity hash")
+	assert.Contains(t, info.VerificationWarning, "no integrity hash for this release")
 }

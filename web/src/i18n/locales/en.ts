@@ -2638,7 +2638,7 @@ export default {
     dockerHintBody: 'The in-place upgrade still works, but rebuilding the container from the unchanged image will revert it. Prefer updating the image instead:',
     dockerHintRestart: 'The container must use --restart always or --restart unless-stopped, otherwise the service will not come back after an in-place upgrade. Do not use --restart on-failure: the server exits with code 0, so it would never restart.',
     verificationWarningTitle: 'This upgrade could not be fully verified',
-    verificationWarningHint: 'The text above explains which checks could not be completed. For an internal mirror, proxy, or a registry that omits hashes this is usually normal; on the official registry it is worth a closer look. You will be asked to confirm once more before the upgrade starts.',
+    verificationWarningHint: 'The text above explains which checks could not be completed. An internal mirror or proxy may simply not provide signatures or hashes, which is normal — but a tampered response looks the same, and the two cannot be told apart here. You will be asked to confirm once more before the upgrade starts.',
     verificationConfirmTitle: 'This upgrade could not be fully verified',
     verificationConfirmProceed: 'Upgrade anyway',
     verificationConfirmCancel: 'Cancel',
