@@ -339,9 +339,14 @@ public class AppLog {
      * Pick the ClawBench session cookie out of a raw Cookie header value.
      *
      * The server scopes the cookie name by port: "clawbench_session" on the
-     * default port, "cb<port>_clawbench_session" otherwise. Matching only the
-     * bare name would silently send nothing on a custom port, and the relay
-     * would 401.
+     * default port, "cb<port>_clawbench_session" otherwise (see
+     * model.ScopedCookieName). Matching only the bare name would silently send
+     * nothing on a custom port, and the relay would 401.
+     *
+     * The port-scoped form requires digits, so "cb_anything_clawbench_session"
+     * — which any same-origin script could set — is not mistaken for a session
+     * cookie. The value still has to be a valid token, so this is about not
+     * sending the wrong credential, not about trust.
      *
      * Package-private and static so it can be unit tested without a WebView.
      */
@@ -352,13 +357,29 @@ public class AppLog {
             int eqIdx = trimmed.indexOf('=');
             if (eqIdx > 0) {
                 String name = trimmed.substring(0, eqIdx);
-                if (name.equals("clawbench_session")
-                        || (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                if (name.equals("clawbench_session") || isPortScopedSessionCookie(name)) {
                     return trimmed;
                 }
             }
         }
         return null;
+    }
+
+    /**
+     * True for "cb<digits>_clawbench_session". Requires at least one digit so a
+     * name like "cbx_clawbench_session" is rejected.
+     */
+    private static boolean isPortScopedSessionCookie(String name) {
+        final String prefix = "cb";
+        final String suffix = "_clawbench_session";
+        if (!name.startsWith(prefix) || !name.endsWith(suffix)) return false;
+        int digitsStart = prefix.length();
+        int digitsEnd = name.length() - suffix.length();
+        if (digitsEnd <= digitsStart) return false;
+        for (int i = digitsStart; i < digitsEnd; i++) {
+            if (!Character.isDigit(name.charAt(i))) return false;
+        }
+        return true;
     }
 
     // --- Data class ---

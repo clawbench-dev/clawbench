@@ -174,6 +174,7 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	// whole lines. The total is also bounded so one request cannot dominate the
 	// file regardless of how the entries are distributed.
 	lines := make([]byte, 0, len(req.Entries)*128)
+	written := 0
 	for _, e := range req.Entries {
 		e.Msg = sanitizeLogField(e.Msg, clientLogMaxMsgLen)
 		e.Tag = sanitizeLogField(e.Tag, clientLogMaxTagLen)
@@ -185,6 +186,7 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		lines = append(lines, line...)
+		written++
 	}
 
 	clientLogMu.Lock()
@@ -196,7 +198,10 @@ func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"written": len(req.Entries)})
+	// Report what was actually appended, not what was received: a batch can be
+	// cut short by the body cap, and a count that disagrees with the file makes
+	// this diagnostic endpoint untrustworthy.
+	writeJSON(w, http.StatusOK, map[string]any{"written": written})
 }
 
 // clientLogMaxBytes is the client-log file cap. When an append would push the

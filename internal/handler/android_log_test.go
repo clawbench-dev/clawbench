@@ -329,3 +329,35 @@ func TestServeClientLog_AcceptsBodyUnderLimit(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.NotEmpty(t, readClientLog(t, logDir))
 }
+
+// `written` must report what was actually appended. A batch cut short by the
+// body cap used to still report the received count, which made the one
+// diagnostic number on this endpoint lie.
+func TestServeClientLog_WrittenReflectsActualAppend(t *testing.T) {
+	logDir := setupClientLogTest(t)
+
+	// Sized to pass the body limit but exceed the append cap, so the loop
+	// breaks partway.
+	perEntry := clientLogMaxBodyBytes*2/200 - 64
+	entries := make([]ClientLogEntry, 0, 200)
+	for range 200 {
+		entries = append(entries, ClientLogEntry{
+			Level: "I", Tag: "T", Msg: strings.Repeat("x", perEntry), Ts: 1700000000000,
+		})
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{"entries": entries})
+	w := callHandler(ServeClientLog, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Written int `json:"written"`
+	}
+	decodeRespJSON(t, w.Body, &resp)
+
+	actual := strings.Count(readClientLog(t, logDir), "\n")
+	assert.Equal(t, actual, resp.Written,
+		"written must match the number of lines actually appended")
+	assert.Less(t, resp.Written, 200,
+		"the append cap should have cut this batch short")
+}
