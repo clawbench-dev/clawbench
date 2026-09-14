@@ -988,7 +988,7 @@ export default {
     resume: '启用',
     run: '执行',
     delete: '删除',
-    clearUnread: '清除未读',
+    clearUnread: '全部标为已读',
     actionFailed: '操作失败',
     actionFailedDetail: '操作失败: {error}',
     overview: {
