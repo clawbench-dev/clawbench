@@ -51,7 +51,9 @@ describe('registerSessionActions', () => {
     const { switchSession, createSession, archiveSession, sendMessage, openChatPanel } = useSessionIdentity()
 
     await switchSession('s1')
-    expect(mockSwitch).toHaveBeenCalledWith('s1')
+    // switchSession always forwards the optional projectPath, so the callback
+    // receives an explicit `undefined` as its second argument.
+    expect(mockSwitch).toHaveBeenCalledWith('s1', undefined)
 
     await createSession('agent-1')
     expect(mockCreate).toHaveBeenCalledWith('agent-1')
@@ -92,7 +94,7 @@ describe('registerSessionActions', () => {
 
     const { switchSession } = useSessionIdentity()
     await switchSession('session-123')
-    expect(secondSwitch).toHaveBeenCalledWith('session-123')
+    expect(secondSwitch).toHaveBeenCalledWith('session-123', undefined)
     expect(firstSwitch).not.toHaveBeenCalled()
   })
 })
@@ -112,7 +114,7 @@ describe('action delegation', () => {
 
     const { switchSession } = useSessionIdentity()
     await switchSession('session-123')
-    expect(mockSwitch).toHaveBeenCalledWith('session-123')
+    expect(mockSwitch).toHaveBeenCalledWith('session-123', undefined)
   })
 
   it('does nothing when switchSession has no callback', async () => {

@@ -13,12 +13,15 @@
           <div class="dlg-msg">{{ dlg.state.value.message }}</div>
           <textarea
             v-if="dlg.state.value.type === 'prompt'"
+            :key="inputEpoch"
             ref="inputRef"
             v-model="inputVal"
             class="dlg-input dlg-textarea"
             :placeholder="dlg.state.value.placeholder"
             rows="3"
             @keydown.enter.prevent="handleConfirm"
+            @beforeinput="onBeforeInput"
+            @input="onInput"
           ></textarea>
           <div class="dlg-actions">
             <button
@@ -50,6 +53,8 @@ import { useI18n } from 'vue-i18n'
 import { Info, MessageSquareText } from 'lucide-vue-next'
 import { useDialog } from '@/composables/useDialog'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { isAndroidUA } from '@/composables/usePlatformDetect'
+import { isSelectAllDeleteSignature, shouldRebuildInputOnSelectAllDelete } from '@/utils/dialogInputRecovery'
 
 const { t } = useI18n()
 const dlg = useDialog()
@@ -59,8 +64,65 @@ const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
 let unregisterBack: (() => void) | null = null
 
+// Changing this key tears down and recreates the <textarea>, which gives the
+// WebView a brand-new InputConnection. See onBeforeInput for why that is needed.
+const inputEpoch = ref(0)
+
+// Set when a beforeinput carried the Android select-all-delete signature; read
+// by the input handler that follows, so the edit is never cancelled.
+let pendingSelectAllDeleteRebuild = false
+
+/**
+ * Android WebView: deleting the whole selection (which `select()` below creates)
+ * makes the IME emit an empty insert, after which its InputConnection stops
+ * delivering keystrokes entirely — the field stays empty however much the user
+ * types. Reproduced on device.
+ *
+ * Collapsing the caret and blur+focus were both tried and both failed on
+ * device: they operate on the same element, which reuses the dead connection.
+ * Rebuilding the element is the only approach left that gives a fresh one.
+ *
+ * Detection happens here but the rebuild is deferred to the input handler:
+ * touching the selection inside beforeinput would cancel the pending delete.
+ * Android-only — desktop never produces this signature, and its behaviour must
+ * stay untouched.
+ */
+function onBeforeInput(e: InputEvent): void {
+  // Each beforeinput opens a fresh detection window, so a signature whose input
+  // event never arrives cannot leak into a later keystroke.
+  pendingSelectAllDeleteRebuild = false
+
+  const el = inputRef.value
+  if (!el) return
+  const selLen = (el.selectionEnd ?? 0) - (el.selectionStart ?? 0)
+  const signature = isSelectAllDeleteSignature(e, selLen)
+  if (!shouldRebuildInputOnSelectAllDelete(isAndroidUA, signature)) return
+
+  pendingSelectAllDeleteRebuild = true
+}
+
+function onInput(): void {
+  if (!pendingSelectAllDeleteRebuild) return
+  pendingSelectAllDeleteRebuild = false
+
+  // Bump the key: Vue replaces the element, so the WebView builds a fresh
+  // InputConnection. Focus is lost with the old node, so restore it once the
+  // new one is mounted and put the caret at the end.
+  inputEpoch.value++
+  void nextTick(() => {
+    const ta = inputRef.value
+    if (!ta) return
+    ta.focus()
+    const end = ta.value.length
+    ta.setSelectionRange(end, end)
+  })
+}
+
 watch(() => dlg.state.value.visible, async (v) => {
   if (!v) {
+    // Drop any detection that never got its matching input event, so a stale
+    // flag cannot make the next dialog's first keystroke rebuild the element.
+    pendingSelectAllDeleteRebuild = false
     if (unregisterBack) { unregisterBack(); unregisterBack = null }
     return
   }
