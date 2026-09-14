@@ -69,6 +69,11 @@ type Change struct {
 	// PipelineStatus / PipelineURL describe a finished CI run (pipeline_done).
 	PipelineStatus string
 	PipelineURL    string
+	// PipelineRunID is the platform's run identity for a pipeline event. It is
+	// the revision discriminator in DedupeKey: without it two successful runs on
+	// the same repository would collide on "state:success" and the second would
+	// be dropped as a duplicate.
+	PipelineRunID int64
 }
 
 // DeriveChanges compares a stored snapshot with the freshly fetched item state
@@ -176,6 +181,12 @@ func DedupeKey(repo Remote, itemType ItemType, number int, ev Change) string {
 	switch ev.Type {
 	case EventCommented:
 		revision = fmt.Sprintf("comment:%d", ev.CommentID)
+	case EventPipeline:
+		// A CI event has no item number and its NewState is only success or
+		// failure, so a state-based revision would make every successful run on
+		// a repository collide with the previous one. The run id is the only
+		// value that distinguishes two runs.
+		revision = fmt.Sprintf("run:%d", ev.PipelineRunID)
 	default:
 		revision = fmt.Sprintf("state:%s", ev.NewState)
 	}

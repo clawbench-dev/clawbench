@@ -103,8 +103,13 @@ func FormatForgeEventMessage(event ForgeEvent, item forge.Item) (title, body str
 	// (the previous English "issue"/"PR/MR" read as a mixed-language sentence).
 	// 合并请求 covers both a GitHub pull request and a GitLab merge request.
 	kind := "议题"
-	if event.ItemType == string(forge.ItemTypeChangeRequest) {
+	switch event.ItemType {
+	case string(forge.ItemTypeChangeRequest):
 		kind = "合并请求"
+	case string(forge.ItemTypePipeline):
+		// A pipeline belongs to the repository, not to an item. Rendering it as
+		// an issue/PR would produce "合并请求 #0", which is meaningless.
+		kind = "仓库流水线"
 	}
 	verb := map[string]string{
 		string(forge.EventOpened):    "新开",
@@ -118,9 +123,18 @@ func FormatForgeEventMessage(event ForgeEvent, item forge.Item) (title, body str
 		verb = event.EventType
 	}
 
-	title = fmt.Sprintf("%s %s #%d %s", event.Owner+"/"+event.Repo, kind, event.Number, verb)
-	body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: #%d %s\n\n**事件**: %s",
-		title, event.Owner, event.Repo, kind, event.Number, item.Title, verb)
+	// A pipeline has no item number, so its heading omits the "#0" that would
+	// otherwise be rendered.
+	if event.ItemType == string(forge.ItemTypePipeline) {
+		title = fmt.Sprintf("%s %s %s", event.Owner+"/"+event.Repo, kind, verb)
+		body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: %s\n\n**事件**: %s",
+			title, event.Owner, event.Repo, kind, item.Title, verb)
+	} else {
+		title = fmt.Sprintf("%s %s #%d %s", event.Owner+"/"+event.Repo, kind, event.Number, verb)
+		body = fmt.Sprintf("### %s\n\n**仓库**: %s/%s\n\n**%s**: #%d %s\n\n**事件**: %s",
+			title, event.Owner, event.Repo, kind, event.Number, item.Title, verb)
+	}
+
 	if item.Author.Login != "" {
 		body += fmt.Sprintf("\n\n**作者**: %s", item.Author.Login)
 	}

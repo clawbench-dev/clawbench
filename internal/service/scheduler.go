@@ -561,20 +561,29 @@ var forgeEventTransitions = map[string][]string{
 	forgeEventKindPR:    {"opened", "closed", "merged", "reopened", "commented"},
 }
 
+// forgeRepoTargetedTransitions are events that belong to the REPOSITORY rather
+// than to an issue or PR.
+//
+// A pipeline run is not attached to any item: it is triggered by a push to a
+// branch, a tag, or a schedule, none of which is an issue or a PR. Scoping it
+// under a kind would be a lie — it would render as "PR #0" and imply the run
+// belongs to a change request. These are therefore subscribed with the BARE
+// key (e.g. "pipeline_done") and matched only against the bare key.
+var forgeRepoTargetedTransitions = []string{"pipeline_done"}
+
 // forgeRetiredEventTypes are accepted but no longer offered.
 //
-// Nothing derives these events yet (no code path emits a pipeline change), so
-// subscribing would create a trigger that can never fire. They stay VALID so a
-// task that already stores one is not rejected on its next edit — the editor
-// cannot render a checkbox for them, and rejecting on save would strand the
-// user with a task they cannot fix from the UI.
-var forgeRetiredEventTypes = []string{"pipeline_done"}
+// Empty today: pipeline_done was the last retired type and is now a real,
+// derivable event. The mechanism is kept because a future event type may need
+// to be withdrawn without invalidating tasks that already store it.
+var forgeRetiredEventTypes = []string{}
 
 // forgeEventKey builds the canonical kind-scoped subscription key.
 func forgeEventKey(kind, transition string) string { return kind + "." + transition }
 
 // validForgeEventTypes is the set of event types an event task may subscribe to:
-// every kind-scoped key, plus the bare legacy keys for backward compatibility.
+// every kind-scoped key, the bare legacy keys, and the repository-targeted
+// events.
 var validForgeEventTypes = func() map[string]bool {
 	out := make(map[string]bool)
 	for kind, transitions := range forgeEventTransitions {
@@ -585,6 +594,14 @@ var validForgeEventTypes = func() map[string]bool {
 			out[tr] = true
 		}
 	}
+	for _, tr := range forgeRepoTargetedTransitions {
+		out[tr] = true
+		// "pr.pipeline_done" was accepted while the event was retired, so a task
+		// that stored that spelling must keep validating — the editor offers no
+		// checkbox for it, and rejecting on save would strand the user with a
+		// task they cannot fix from the UI. It is NOT offered.
+		out[forgeEventKey(forgeEventKindPR, tr)] = true
+	}
 	for _, tr := range forgeRetiredEventTypes {
 		out[tr] = true
 		out[forgeEventKey(forgeEventKindPR, tr)] = true
@@ -593,7 +610,7 @@ var validForgeEventTypes = func() map[string]bool {
 }()
 
 // OfferedForgeEventTypesForTest exposes the offered vocabulary so a test can
-// assert that a retired type is no longer presented to users.
+// assert exactly which keys the UI presents.
 func OfferedForgeEventTypesForTest() []string {
 	out := make([]string, 0)
 	for kind, transitions := range forgeEventTransitions {
@@ -601,6 +618,8 @@ func OfferedForgeEventTypesForTest() []string {
 			out = append(out, forgeEventKey(kind, tr))
 		}
 	}
+	// Repository-targeted events are offered in their bare form.
+	out = append(out, forgeRepoTargetedTransitions...)
 	return out
 }
 

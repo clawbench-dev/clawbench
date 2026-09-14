@@ -623,8 +623,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
-	// Forge sync state: snapshot rows, watermark, and derived events.
-	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL} {
+	// Forge sync state: snapshot rows, watermark, derived events, and the CI
+	// run ledger.
+	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL, ForgePipelineRunsDDL} {
 		if _, err := WriteExec(ddl); err != nil {
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}

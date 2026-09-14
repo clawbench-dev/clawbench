@@ -39,9 +39,19 @@
     </div>
 
     <template v-else>
-      <!-- Detail view replaces the list in place (currentView pattern). -->
+      <!-- Detail view replaces the list in place (currentView pattern).
+           A pipeline gets its own component: the issue/PR detail is
+           title + markdown body + comment thread, none of which a CI run has —
+           its shape is metadata + a job table. -->
+      <ForgePipelineDetail
+        v-if="detailOpen && activeTab === 'pipeline'"
+        :run-id="pipelineDetailId"
+        @back="closeDetail"
+        @quote="onPipelineQuote"
+      />
+
       <ForgeDetail
-        v-if="detailOpen"
+        v-else-if="detailOpen"
         :type="items.type.value"
         :number="detailNumber"
         @back="closeDetail"
@@ -90,26 +100,87 @@
 
         <!-- Type switch: page tabs, matching the stats panel tab bar
              (connected rectangular tabs with a bottom accent underline).
-             State/mine below are independent filters, so they stay as chips. -->
+             State/mine below are independent filters, so they stay as chips.
+             Pipelines is a peer tab: CI runs are neither issues nor PRs, and
+             they need their own filters (a run has no open/closed state and no
+             assignee). -->
         <div class="forge-tabs">
           <button
+            v-for="tab in forgeTabs"
+            :key="tab.key"
             class="forge-tab"
-            :class="{ active: items.type.value === 'issue' }"
-            @click="items.setType('issue')"
+            :class="{ active: activeTab === tab.key }"
+            @click="setActiveTab(tab.key)"
           >
-            <CircleQuestionMark :size="13" />
-            <span>{{ t('forge.type.issues') }}</span>
-          </button>
-          <button
-            class="forge-tab"
-            :class="{ active: items.type.value === 'pr' }"
-            @click="items.setType('pr')"
-          >
-            <GitPullRequest :size="13" />
-            <span>{{ t('forge.type.prs') }}</span>
+            <component :is="tab.icon" :size="13" />
+            <span>{{ t(tab.labelKey) }}</span>
           </button>
         </div>
 
+        <!-- Pipelines: a repository-level view with its own filters and list. -->
+        <template v-if="activeTab === 'pipeline'">
+          <div class="forge-toolbar">
+            <div class="forge-chips forge-chips-scroll">
+              <button
+                v-for="f in FORGE_PIPELINE_FILTERS"
+                :key="f"
+                class="forge-chip"
+                :class="{ active: pipelines.filter.value === f }"
+                @click="pipelines.setFilter(f)"
+              >{{ t(`forge.pipeline.filter.${f}`) }}</button>
+            </div>
+          </div>
+
+          <div v-if="pipelines.error.value" class="forge-error-card">
+            <AlertCircle :size="18" class="forge-error-icon" />
+            <div class="forge-error-text">
+              <div class="forge-error-title">{{ pipelineErrorTitle(pipelines.error.value.code) }}</div>
+              <div class="forge-error-body">{{ pipelines.error.value.message }}</div>
+            </div>
+            <button class="fbtn" @click="refresh">{{ t('forge.retry') }}</button>
+          </div>
+
+          <div v-else-if="pipelines.loading.value" class="forge-loading">
+            <LoadingIndicator size="md" :label="t('forge.loading')" />
+          </div>
+
+          <div v-else-if="pipelines.pipelines.value.length === 0" class="forge-state">
+            <div class="forge-empty-card">
+              <Inbox :size="34" :stroke-width="1.5" class="forge-empty-icon" />
+              <div class="forge-empty-title">{{ t('forge.pipeline.emptyList') }}</div>
+            </div>
+          </div>
+
+          <div v-else class="forge-list" @scroll="onPipelineScroll">
+            <div
+              v-for="run in pipelines.pipelines.value"
+              :key="run.id"
+              class="forge-row forge-pipeline-row"
+              @click="openPipelineDetail(run)"
+            >
+              <span class="forge-state-dot" :class="`pipeline-${run.status}`"></span>
+              <div class="forge-row-main">
+                <div class="forge-row-title">
+                  <span class="forge-row-number">#{{ run.number }}</span>
+                  <span class="forge-row-text">{{ run.name }}</span>
+                </div>
+                <div class="forge-row-meta">
+                  <span class="forge-pipeline-ref">{{ run.ref }}</span>
+                  <span v-if="run.sha" class="forge-pipeline-sha">{{ shortSha(run.sha) }}</span>
+                  <span v-if="run.event" class="forge-pipeline-event">{{ run.event }}</span>
+                  <span v-if="run.actor" class="forge-row-author">{{ run.actor }}</span>
+                  <span class="forge-row-time">{{ formatTime(run.updatedAt) }}</span>
+                </div>
+              </div>
+              <ChevronRight :size="16" class="forge-row-chevron" />
+            </div>
+            <div v-if="pipelines.loadingMore.value" class="forge-loading-more">
+              <LoadingIndicator size="sm" />
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
         <div class="forge-toolbar">
           <div class="forge-chips forge-chips-scroll">
             <button
@@ -189,6 +260,7 @@
             <LoadingIndicator size="sm" />
           </div>
         </div>
+        </template>
       </template>
     </template>
 
@@ -249,7 +321,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Github, Inbox, MessageSquare, CircleQuestionMark, GitPullRequest,
+  Github, Inbox, MessageSquare, CircleQuestionMark, GitPullRequest, Activity,
   ChevronRight, ChevronDown, AlertCircle, Unlink,
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -258,9 +330,10 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import ForgeDetail from '@/components/forge/ForgeDetail.vue'
-import { useForgeItems } from '@/composables/useForge'
+import ForgePipelineDetail from '@/components/forge/ForgePipelineDetail.vue'
+import { useForgeItems, useForgePipelines, FORGE_PIPELINE_FILTERS } from '@/composables/useForge'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, ForgeApiError } from '@/utils/forgeApi'
+import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, type ForgeRemote, type ForgePipelineRun, ForgeApiError } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ForgePanel'
@@ -275,6 +348,21 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const items = useForgeItems(() => props.projectPath)
+const pipelines = useForgePipelines(() => props.projectPath)
+
+/**
+ * The three peer tabs of the forge panel. Declared as data rather than three
+ * hand-written buttons so adding a view cannot leave the tab bar and the
+ * rendered branch out of step.
+ */
+const forgeTabs = [
+  { key: 'issue' as const, labelKey: 'forge.type.issues', icon: CircleQuestionMark },
+  { key: 'pr' as const, labelKey: 'forge.type.prs', icon: GitPullRequest },
+  { key: 'pipeline' as const, labelKey: 'forge.type.pipelines', icon: Activity },
+]
+type ForgeTabKey = typeof forgeTabs[number]['key']
+
+const activeTab = ref<ForgeTabKey>('issue')
 
 const stateOptions: Array<'open' | 'closed' | 'all'> = ['open', 'closed', 'all']
 const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'assigned', 'created', 'review']
@@ -282,6 +370,7 @@ const mineOptions: Array<'all' | 'assigned' | 'created' | 'review'> = ['all', 'a
 const searchInput = ref('')
 const detailOpen = ref(false)
 const detailNumber = ref(0)
+const pipelineDetailId = ref(0)
 const bindDialogOpen = ref(false)
 const remotes = ref<ForgeRemote[]>([])
 const manualUrl = ref('')
@@ -289,9 +378,24 @@ const bindError = ref('')
 const repoMenuOpen = ref(false)
 const repoBadgeRef = ref<HTMLElement | null>(null)
 
+/** Switch tabs, loading the target view's data on first use. */
+function setActiveTab(key: ForgeTabKey) {
+  if (activeTab.value === key) return
+  closeDetail()
+  activeTab.value = key
+  if (key === 'pipeline') {
+    void pipelines.load()
+  } else {
+    // The issue/PR list shares one composable; changing the type reloads it.
+    items.setType(key)
+  }
+}
+
 async function refresh() {
   await items.loadBinding()
-  if (items.isBound.value) await items.load()
+  if (!items.isBound.value) return
+  if (activeTab.value === 'pipeline') await pipelines.load()
+  else await items.load()
 }
 
 onMounted(refresh)
@@ -302,9 +406,12 @@ watch(() => props.projectPath, () => {
   void refresh()
 })
 watch(() => props.active, (isActive) => {
-  if (isActive && items.isBound.value && items.items.value.length === 0 && !items.loading.value) {
-    void items.load()
+  if (!isActive || !items.isBound.value) return
+  if (activeTab.value === 'pipeline') {
+    if (pipelines.pipelines.value.length === 0 && !pipelines.loading.value) void pipelines.load()
+    return
   }
+  if (items.items.value.length === 0 && !items.loading.value) void items.load()
 })
 
 function openDetail(it: { type: 'issue' | 'pr'; number: number }) {
@@ -312,9 +419,15 @@ function openDetail(it: { type: 'issue' | 'pr'; number: number }) {
   detailNumber.value = it.number
   detailOpen.value = true
 }
+
+function openPipelineDetail(run: ForgePipelineRun) {
+  pipelineDetailId.value = run.id
+  detailOpen.value = true
+}
 function closeDetail() {
   detailOpen.value = false
   detailNumber.value = 0
+  pipelineDetailId.value = 0
 }
 
 // Register the drill-down back handler so the edge-swipe gesture and the Android
@@ -333,6 +446,28 @@ function onListScroll(e: Event) {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
     void items.loadMore()
   }
+}
+
+function onPipelineScroll(e: Event) {
+  const el = e.target as HTMLElement
+  if (!el) return
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+    void pipelines.loadMore()
+  }
+}
+
+/** First 7 characters of a commit hash, the conventional short form. */
+function shortSha(sha: string): string {
+  return sha.slice(0, 7)
+}
+
+/**
+ * A platform without CI support is not an error to retry — it is a fact about
+ * the platform, so it gets its own wording instead of the generic error title.
+ */
+function pipelineErrorTitle(code: string): string {
+  if (code === 'ForgeNoPipelines') return t('forge.pipeline.noPlatform')
+  return errorTitle(code)
 }
 
 async function openBindDialog() {
@@ -392,6 +527,25 @@ async function submitBinding(input: { url?: string; platform?: string; host?: st
 
 function onQuote(payload: { item: { type: 'issue' | 'pr'; number: number; title: string; url: string; slug: string } }) {
   emit('quote', payload)
+}
+
+/**
+ * Quote a whole CI run into the chat.
+ *
+ * The payload reuses the item quote shape (`url` + a `slug#number` label) so
+ * App.vue's single handler needs no pipeline branch. A run has no PR number, so
+ * the label carries the run counter, which is what the user sees on the row.
+ */
+function onPipelineQuote(run: ForgePipelineRun) {
+  emit('quote', {
+    item: {
+      type: 'pr',
+      number: run.number,
+      title: run.name,
+      url: run.url,
+      slug: run.slug,
+    },
+  })
 }
 
 function errorTitle(code: string): string {
@@ -788,6 +942,24 @@ function formatTime(iso: string): string {
 .forge-state-dot.state-open { background: var(--color-success); }
 .forge-state-dot.state-closed { background: var(--color-red); }
 .forge-state-dot.state-merged { background: var(--color-purple); }
+/* CI run / job status. Distinct from the issue states above: a run's status is
+   an outcome, not a lifecycle state. */
+.forge-state-dot.pipeline-success { background: var(--color-success); }
+.forge-state-dot.pipeline-failure { background: var(--color-red); }
+.forge-state-dot.pipeline-running { background: var(--color-yellow); }
+.forge-state-dot.pipeline-cancelled,
+.forge-state-dot.pipeline-skipped { background: var(--text-secondary, #8b949e); }
+.forge-state-dot.pipeline-unknown { background: var(--border-color, #6e7681); }
+/* Pipeline row metadata: the ref is the most useful field, so it is emphasised
+   over the secondary run details. */
+.forge-pipeline-ref {
+  font-weight: var(--font-weight-medium);
+}
+.forge-pipeline-sha,
+.forge-pipeline-event {
+  font-family: var(--font-mono, monospace);
+  opacity: 0.85;
+}
 .forge-loading-more {
   padding: var(--space-6);
   display: flex;

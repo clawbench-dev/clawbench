@@ -99,7 +99,9 @@ func (p *ForgePoller) run() {
 	// Run once at startup (full pass), then on independent tickers. State
 	// transitions are polled frequently; comment activity is folded into the
 	// slower ticker only, which is what keeps comment traffic off the fast path.
-	p.syncAll(SyncOptions{IncludeComments: true})
+	// CI runs ride the fast ticker: a finished pipeline is the most
+	// time-sensitive signal a task can act on.
+	p.syncAll(SyncOptions{IncludeComments: true, IncludePipelines: true})
 
 	stateTicker := time.NewTicker(p.stateEvery)
 	commentTicker := time.NewTicker(p.commentEvery)
@@ -111,9 +113,9 @@ func (p *ForgePoller) run() {
 		case <-p.stopCh:
 			return
 		case <-stateTicker.C:
-			p.syncAll(SyncOptions{IncludeComments: false})
+			p.syncAll(SyncOptions{IncludeComments: false, IncludePipelines: true})
 		case <-commentTicker.C:
-			p.syncAll(SyncOptions{IncludeComments: true})
+			p.syncAll(SyncOptions{IncludeComments: true, IncludePipelines: true})
 		}
 	}
 }
@@ -129,6 +131,12 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 	if len(repos) == 0 {
 		return
 	}
+
+	// CI polling costs an extra request per repository, so it only runs when an
+	// active event task actually subscribes to a pipeline event. Computed once
+	// per cycle: the answer is repo-independent, and re-reading the task table
+	// per repository would be wasteful.
+	pipelineSubscribed := anyTaskSubscribesPipeline()
 
 	// Deduplicate by repository so two projects bound to one repo fetch once.
 	seen := make(map[string]bool)
@@ -148,7 +156,9 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 				slog.String("host", pf.Host), slog.String("err", err.Error()))
 			continue
 		}
-		err := p.syncer.SyncRepoWithOptions(ctx, pf, opts)
+		repoOpts := opts
+		repoOpts.IncludePipelines = opts.IncludePipelines && pipelineSubscribed
+		err := p.syncer.SyncRepoWithOptions(ctx, pf, repoOpts)
 		p.limiter.Release()
 		cancel()
 
@@ -173,6 +183,34 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 	}
 }
 
+// AnyTaskSubscribesPipelineForTest exposes the CI-polling gate so a test can
+// assert it without driving a whole poll cycle.
+func AnyTaskSubscribesPipelineForTest() bool { return anyTaskSubscribesPipeline() }
+
+// anyTaskSubscribesPipeline reports whether any active event task subscribes to
+// a pipeline event. When none does, CI polling is skipped entirely so the quota
+// is not spent on runs nobody is listening for.
+//
+// A failure to enumerate tasks returns false: skipping a poll is recoverable,
+// whereas polling everything on every cycle is not.
+func anyTaskSubscribesPipeline() bool {
+	tasks, err := GetTasks("")
+	if err != nil {
+		slog.Warn("forge poller: list tasks failed", slog.String("err", err.Error()))
+		return false
+	}
+	for i := range tasks {
+		task := &tasks[i]
+		if !task.IsEventTriggered() || task.Status != SessionArchiveFilterActive {
+			continue
+		}
+		if eventTypeSubscribed(task, forge.ItemTypePipeline, forge.EventPipeline) {
+			return true
+		}
+	}
+	return false
+}
+
 // forgeSnapshotRetention is how long a snapshot row may go unseen before it is
 // pruned. It must comfortably exceed the slowest poll interval so a repo that
 // is briefly unreachable is not mistaken for one whose items were deleted.
@@ -193,12 +231,25 @@ func (p *ForgePoller) pruneRepo(pf ProjectForge, key string) {
 		slog.Info("forge poller: pruned stale snapshots",
 			slog.String("repo", key), slog.Int64("removed", removed))
 	}
+
+	// The CI run ledger needs the same treatment: nothing else deletes from it,
+	// so without this it would grow for the lifetime of the install.
+	pipelineRemoved, err := PruneForgePipelineRuns(repoKey, cutoff)
+	if err != nil {
+		slog.Warn("forge poller: prune pipeline runs failed",
+			slog.String("repo", key), slog.String("err", err.Error()))
+		return
+	}
+	if pipelineRemoved > 0 {
+		slog.Info("forge poller: pruned stale pipeline runs",
+			slog.String("repo", key), slog.Int64("removed", pipelineRemoved))
+	}
 }
 
 // SyncNow runs one full cycle immediately (used by tests and the manual refresh
 // path). It does not affect the ticker schedule.
 func (p *ForgePoller) SyncNow() {
-	p.syncAll(SyncOptions{IncludeComments: true})
+	p.syncAll(SyncOptions{IncludeComments: true, IncludePipelines: true})
 }
 
 // globalForgePoller is the running instance, protected by mu.

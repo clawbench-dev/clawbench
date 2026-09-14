@@ -47,7 +47,7 @@ const i18n = createI18n({
           name: 'Name', prompt: 'Prompt', agent: 'Agent', triggerMode: 'Trigger',
           triggerCron: 'Schedule', triggerEvent: 'Event',
           eventTypes: 'Events to watch', eventTypesRequired: 'pick one',
-          eventKindIssue: 'Issues', eventKindPr: 'Pull requests',
+          eventKindIssue: 'Issues', eventKindPr: 'Pull requests', eventKindRepo: 'Repository pipelines',
           eventOpened: 'Opened', eventClosed: 'Closed', eventMerged: 'Merged',
           eventReopened: 'Reopened', eventCommented: 'Commented', eventPipeline: 'Pipeline finished',
           eventRepo: 'Repo', eventRepoHint: 'Watched repo',
@@ -56,6 +56,7 @@ const i18n = createI18n({
           eventContextHeader: 'Context', varEventType: 'event', varRepo: 'repo',
           varItem: 'item', varTitle: 'title', varUrl: 'url', varAuthor: 'author',
           varState: 'state', varCommentBody: 'comment', varPipelineStatus: 'ps', varPipelineUrl: 'pu',
+          varActorIsSelf: 'self',
           repeatMode: 'Repeat', presets: {},
         },
       },
@@ -77,12 +78,12 @@ describe('TaskFormPage event type grouping', () => {
     mockFetchForgeBinding.mockResolvedValue({ binding: null })
   })
 
-  it('groups events under Issues and Pull requests', () => {
+  it('groups events under Issues, Pull requests and Repository pipelines', () => {
     const wrapper = mountForm()
     const groups = wrapper.findAll('.event-type-group')
-    expect(groups.length, 'two kind groups').toBe(2)
+    expect(groups.length, 'two kind groups plus the repository-level group').toBe(3)
     const labels = wrapper.findAll('.event-type-group-label').map(g => g.text())
-    expect(labels).toEqual(['Issues', 'Pull requests'])
+    expect(labels).toEqual(['Issues', 'Pull requests', 'Repository pipelines'])
   })
 
   it('emits kind-scoped keys so issue and PR events are independent', () => {
@@ -105,14 +106,28 @@ describe('TaskFormPage event type grouping', () => {
     expect(values).not.toContain('issue.merged')
   })
 
-  it('does not offer pipeline_done, which nothing can trigger yet', () => {
-    // No code path derives a pipeline event, so offering it would create a
-    // subscription that can never fire.
+  it('offers pipeline_done as a bare repository-level key', () => {
+    // A pipeline is triggered by a push, a tag or a schedule — none of which is
+    // an issue or a PR — so it is offered in its own group under the BARE key,
+    // which is also how the backend matches it.
     const wrapper = mountForm()
     const values = wrapper.findAll('.event-type-group input[type=checkbox]')
       .map(i => (i.element as HTMLInputElement).value)
+    expect(values).toContain('pipeline_done')
+    // The kind-scoped spellings must NOT be offered: an issue has no CI, and a
+    // PR-scoped pipeline would imply a run belongs to a change request.
     expect(values).not.toContain('pr.pipeline_done')
     expect(values).not.toContain('issue.pipeline_done')
+    expect(values).not.toContain('pipeline.pipeline_done')
+  })
+
+  it('renders the repository pipeline group last', () => {
+    const wrapper = mountForm()
+    const groups = wrapper.findAll('.event-type-group')
+    const repoGroup = groups[groups.length - 1]
+    expect(repoGroup.find('.event-type-group-label').text()).toBe('Repository pipelines')
+    const values = repoGroup.findAll('input[type=checkbox]').map(i => (i.element as HTMLInputElement).value)
+    expect(values).toEqual(['pipeline_done'])
   })
 
   it('gives Issues fewer options than Pull requests', () => {

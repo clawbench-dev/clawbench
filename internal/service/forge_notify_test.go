@@ -199,3 +199,27 @@ func TestFormatForgeEventMessage_UnknownEventTypeFallsBack(t *testing.T) {
 	title, _ := service.FormatForgeEventMessage(event, item)
 	assert.Contains(t, title, "weird", "an unrecognized event type must still render, not panic or blank out")
 }
+
+// TestFormatForgeEventMessage_PipelineOmitsItemNumber: a CI run belongs to the
+// repository, not to an item, so the message must not claim "合并请求 #0".
+func TestFormatForgeEventMessage_PipelineOmitsItemNumber(t *testing.T) {
+	event := service.ForgeEvent{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+		ItemType: string(forge.ItemTypePipeline), Number: 0, EventType: "pipeline_done",
+	}
+	item := forge.Item{
+		Type: forge.ItemTypePipeline, Number: 0, Title: "CI",
+		URL: "https://github.com/acme/widgets/actions/runs/42",
+	}
+
+	title, body := service.FormatForgeEventMessage(event, item)
+
+	assert.Contains(t, title, "仓库流水线")
+	assert.Contains(t, title, "流水线完成")
+	assert.NotContains(t, title, "#0", "a pipeline has no item number to show")
+	assert.NotContains(t, title, "合并请求")
+	assert.NotContains(t, body, "#0")
+	assert.Contains(t, body, "仓库流水线")
+	assert.Contains(t, body, "CI", "the workflow name is the run's title")
+	assert.Contains(t, body, "https://github.com/acme/widgets/actions/runs/42")
+}

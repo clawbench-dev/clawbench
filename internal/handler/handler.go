@@ -325,6 +325,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/forge/items", ServeForgeItems)
 	register("/api/forge/item", ServeForgeItem)
 	register("/api/forge/comments", ServeForgeComments)
+	register("/api/forge/pipelines", ServeForgePipelines)
+	register("/api/forge/pipeline", ServeForgePipeline)
 	register("/api/forge/binding", ServeForgeBinding)
 	register("/api/forge/remotes", ServeForgeRemotes)
 	register("/api/forge/test", ServeForgeTest)

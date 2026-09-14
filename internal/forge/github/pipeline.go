@@ -1,0 +1,169 @@
+// Pipeline (GitHub Actions) support for the forge provider.
+//
+// This lives in its own file because pipelines are an OPTIONAL capability: the
+// Provider interface does not require them, callers type-assert
+// forge.PipelineLister, and a platform without CI simply does not implement it.
+package github
+
+import (
+	"context"
+	"time"
+
+	gogithub "github.com/google/go-github/v85/github"
+
+	"clawbench/internal/forge"
+)
+
+// ListPipelineRuns returns workflow runs for this repository, newest first.
+//
+// GitHub has no server-side "updated after" filter on this endpoint, so `since`
+// is applied locally. The caller pages until HasMore is false.
+func (p *Provider) ListPipelineRuns(ctx context.Context, since time.Time, page, perPage int) (forge.PipelineRunPage, error) {
+	runs, resp, err := p.client.Actions.ListRepositoryWorkflowRuns(ctx, p.owner, p.repo, &gogithub.ListWorkflowRunsOptions{
+		ListOptions: gogithub.ListOptions{
+			Page:    pageOrDefault(page),
+			PerPage: perPageOrDefault(perPage),
+		},
+	})
+	if err != nil {
+		return forge.PipelineRunPage{}, wrapErr(err)
+	}
+
+	out := make([]forge.PipelineRun, 0, len(runs.WorkflowRuns))
+	for _, r := range runs.WorkflowRuns {
+		run := convertWorkflowRun(r)
+		// Apply the lower bound locally. The endpoint returns runs ordered by
+		// creation descending, so once a run is older than `since` every
+		// remaining one is too and paging can stop — but the caller owns that
+		// decision, so this only filters.
+		if !since.IsZero() && run.UpdatedAt.Before(since) {
+			continue
+		}
+		out = append(out, run)
+	}
+
+	return forge.PipelineRunPage{
+		Runs:     out,
+		HasMore:  resp != nil && resp.NextPage > 0,
+		NextPage: nextPageOf(resp),
+	}, nil
+}
+
+// ListPipelineJobs returns the jobs of one workflow run.
+//
+// GitHub has no pipeline "stage" concept, so Stage is left empty; the job name
+// and conclusion are what the UI shows.
+func (p *Provider) ListPipelineJobs(ctx context.Context, runID int64) ([]forge.PipelineJob, error) {
+	jobs, _, err := p.client.Actions.ListWorkflowJobs(ctx, p.owner, p.repo, runID, &gogithub.ListWorkflowJobsOptions{
+		ListOptions: gogithub.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return nil, wrapErr(err)
+	}
+
+	out := make([]forge.PipelineJob, 0, len(jobs.Jobs))
+	for _, j := range jobs.Jobs {
+		out = append(out, forge.PipelineJob{
+			ID:          j.GetID(),
+			Name:        j.GetName(),
+			Status:      jobStatus(j),
+			Runner:      j.GetRunnerName(),
+			URL:         j.GetHTMLURL(),
+			StartedAt:   j.GetStartedAt().Time,
+			CompletedAt: j.GetCompletedAt().Time,
+			Duration:    jobDuration(j),
+		})
+	}
+	return out, nil
+}
+
+// convertWorkflowRun normalizes one GitHub run.
+//
+// GitHub splits the outcome in two: `status` says where the run is
+// (queued/in_progress/completed) and `conclusion` says how it ended. A run that
+// has not completed has an empty conclusion, which must NOT be read as success.
+func convertWorkflowRun(r *gogithub.WorkflowRun) forge.PipelineRun {
+	status := forge.PipelineRunning
+	if r.GetStatus() == "completed" {
+		status = forge.NormalizeConclusion(r.GetConclusion())
+	}
+
+	return forge.PipelineRun{
+		ID:        r.GetID(),
+		Name:      runName(r),
+		Number:    r.GetRunNumber(),
+		Status:    status,
+		Ref:       r.GetHeadBranch(),
+		SHA:       r.GetHeadSHA(),
+		Event:     r.GetEvent(),
+		Actor:     actorLogin(r),
+		URL:       r.GetHTMLURL(),
+		CreatedAt: r.GetCreatedAt().Time,
+		UpdatedAt: r.GetUpdatedAt().Time,
+		Duration:  runDuration(r),
+	}
+}
+
+// runName prefers the workflow name, falling back to the display title (which
+// GitHub always populates) so a run never renders nameless.
+func runName(r *gogithub.WorkflowRun) string {
+	if n := r.GetName(); n != "" {
+		return n
+	}
+	return r.GetDisplayTitle()
+}
+
+// actorLogin returns the user who triggered the run. TriggeringActor is the
+// more precise field (it distinguishes a re-run by someone else from the
+// original actor), but it is newer, so Actor is the fallback.
+func actorLogin(r *gogithub.WorkflowRun) string {
+	if u := r.GetTriggeringActor(); u != nil && u.GetLogin() != "" {
+		return u.GetLogin()
+	}
+	if u := r.GetActor(); u != nil {
+		return u.GetLogin()
+	}
+	return ""
+}
+
+// runDuration derives the runtime from the run's start and last-update
+// timestamps. GitHub's list endpoint does not return a duration, so a negative
+// or missing span yields zero ("unknown") rather than a nonsense value.
+func runDuration(r *gogithub.WorkflowRun) time.Duration {
+	start := r.GetRunStartedAt().Time
+	if start.IsZero() {
+		start = r.GetCreatedAt().Time
+	}
+	end := r.GetUpdatedAt().Time
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return 0
+	}
+	return end.Sub(start)
+}
+
+// jobStatus normalizes a job's outcome. Jobs carry the same status/conclusion
+// split as runs.
+func jobStatus(j *gogithub.WorkflowJob) forge.PipelineStatus {
+	if j.GetStatus() == "completed" {
+		return forge.NormalizeConclusion(j.GetConclusion())
+	}
+	return forge.NormalizeConclusion(j.GetStatus())
+}
+
+// jobDuration derives a job's runtime from its own timestamps.
+func jobDuration(j *gogithub.WorkflowJob) time.Duration {
+	start := j.GetStartedAt().Time
+	end := j.GetCompletedAt().Time
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return 0
+	}
+	return end.Sub(start)
+}
+
+// nextPageOf extracts the next page number, or 0 when there is none.
+func nextPageOf(resp *gogithub.Response) int {
+	if resp == nil {
+		return 0
+	}
+	return resp.NextPage
+}

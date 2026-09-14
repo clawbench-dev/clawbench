@@ -54,6 +54,10 @@ func NewForgeSyncer(factory ForgeProviderFactory, sink ForgeChangeSink) *ForgeSy
 type SyncOptions struct {
 	// IncludeComments fetches per-item comment activity (the expensive part).
 	IncludeComments bool
+	// IncludePipelines fetches CI run state. It is off by default because it
+	// costs an extra API call per repository, and the poller only turns it on
+	// when some active event task actually subscribes to a pipeline event.
+	IncludePipelines bool
 }
 
 // SyncRepo runs one incremental sync for a repository binding.
@@ -102,17 +106,139 @@ func (s *ForgeSyncer) SyncRepoWithOptions(ctx context.Context, pf ProjectForge, 
 		return err
 	}
 
-	if err := s.advanceWatermark(repoKey, watermark, maxUpdated, firstSync); err != nil {
+	// Advance the item watermark before touching CI: the two are independent
+	// (CI has its own per-run ledger), so a pipeline failure must not roll back
+	// the item watermark and vice versa.
+	//
+	// Note the assignment (not `:=`): the outer `err` is reused below for the
+	// pipeline pass, so shadowing it here would hide that pass's error.
+	err = s.advanceWatermark(repoKey, watermark, maxUpdated, firstSync)
+	if err != nil {
 		return err
+	}
+
+	// CI runs are fetched after the items and independently of the watermark.
+	// A platform without CI support simply does not implement PipelineLister.
+	pipelinesSeen := 0
+	if opts.IncludePipelines {
+		pipelinesSeen, err = s.syncPipelines(ctx, provider, repoKey, repoRef, remote, since, firstSync)
+		if err != nil {
+			return err
+		}
 	}
 
 	slog.Debug(
 		"forge sync complete",
 		slog.String("repo", repoRef.Key()),
 		slog.Int("items", itemsSeen),
+		slog.Int("pipelines", pipelinesSeen),
 		slog.Bool("first_sync", firstSync),
 	)
 	return nil
+}
+
+// syncPipelines fetches CI runs, records terminal ones, and dispatches the
+// genuinely new ones.
+//
+// Two rules make this correct:
+//
+//   - Non-terminal runs are NOT recorded. If they were, the run would look
+//     already-handled and its eventual completion would be lost forever.
+//   - On a repository's first sync, terminal runs are recorded but NOT
+//     dispatched. Otherwise a fresh install would fire the task once for every
+//     run in the repository's history.
+func (s *ForgeSyncer) syncPipelines(
+	ctx context.Context,
+	provider forge.Provider,
+	repoKey ForgeRepoKey,
+	repoRef ForgeRepoRef,
+	remote forge.Remote,
+	since time.Time,
+	firstSync bool,
+) (int, error) {
+	lister, ok := provider.(forge.PipelineLister)
+	if !ok {
+		// The platform has no CI surface. This is not an error: it is the
+		// expected shape for any provider that only implements Provider.
+		return 0, nil
+	}
+
+	page := 1
+	seen := 0
+	for {
+		res, err := lister.ListPipelineRuns(ctx, since, page, 100)
+		if err != nil {
+			return seen, fmt.Errorf("list pipelines page %d: %w", page, err)
+		}
+
+		for i := range res.Runs {
+			run := res.Runs[i]
+			if !forge.PipelineTerminal(run.Status) {
+				// Still going: leave it unrecorded so it can fire on a later
+				// pass once it reaches a terminal state.
+				continue
+			}
+			seen++
+
+			fresh, err := RecordPipelineRun(repoKey, run.ID)
+			if err != nil {
+				return seen, fmt.Errorf("record pipeline run %d: %w", run.ID, err)
+			}
+			if !fresh {
+				continue // already handled on an earlier pass
+			}
+			if firstSync {
+				// Baseline: recorded so it never fires, but deliberately not
+				// dispatched.
+				continue
+			}
+			if !forge.PipelineFiresTask(run.Status) {
+				// Recorded so it is not re-evaluated forever, but cancelled /
+				// skipped / unknown are not worth waking the user for.
+				continue
+			}
+
+			item, change := pipelineEvent(remote, run)
+			if err := s.persistAndDispatch(ctx, repoRef, remote, item, change); err != nil {
+				return seen, err
+			}
+		}
+
+		if !res.HasMore {
+			break
+		}
+		page = res.NextPage
+		if page <= 0 {
+			break
+		}
+	}
+	return seen, nil
+}
+
+// pipelineEvent builds the synthetic item and change for a CI run. A run has no
+// issue/PR identity, so the item carries the run's own description and a
+// synthetic type; every consumer that renders an item must tolerate that.
+func pipelineEvent(remote forge.Remote, run forge.PipelineRun) (forge.Item, forge.Change) {
+	item := forge.Item{
+		Platform:  remote.Platform,
+		Type:      forge.ItemTypePipeline,
+		Number:    0,
+		Title:     run.Name,
+		State:     forge.State(run.Status),
+		Author:    forge.Author{Login: run.Actor},
+		URL:       run.URL,
+		CreatedAt: run.CreatedAt,
+		UpdatedAt: run.UpdatedAt,
+	}
+	change := forge.Change{
+		Type:           forge.EventPipeline,
+		NewState:       string(run.Status),
+		Actor:          run.Actor,
+		PipelineStatus: string(run.Status),
+		PipelineURL:    run.URL,
+		PipelineRunID:  run.ID,
+	}
+	return item, change
 }
 
 // drainAllTypes pages through every item type, processing each item and
@@ -256,28 +382,53 @@ func (s *ForgeSyncer) processItem(
 		return nil
 	}
 	for _, ch := range changes {
-		// Event-level dedupe: the same event is never dispatched twice, even if
-		// the overlap window re-derives it.
-		key := forge.DedupeKey(remote, typ, item.Number, ch)
-		fresh, err := InsertForgeEvent(ForgeEvent{
-			Platform:  repoKey.Platform,
-			Host:      repoKey.Host,
-			Owner:     repoKey.Owner,
-			Repo:      repoKey.Repo,
-			ItemType:  string(typ),
-			Number:    item.Number,
-			EventType: string(ch.Type),
-			DedupeKey: key,
-			Payload:   item.URL,
-		})
-		if err != nil {
-			return fmt.Errorf("persist event: %w", err)
+		if err := s.persistAndDispatch(ctx, repoRef, remote, item, ch); err != nil {
+			return err
 		}
-		if !fresh {
-			continue // already dispatched
-		}
-		s.sink.HandleChange(ctx, repoRef, item, ch)
 	}
+	return nil
+}
+
+// persistAndDispatch is the single persist→dispatch path for derived events,
+// shared by the item poller and the CI poller so notification, unread-count and
+// task-triggering semantics cannot drift between them.
+//
+// An event that already exists is silently not dispatched (event-level dedupe),
+// which is not an error: the caller has nothing to do differently.
+func (s *ForgeSyncer) persistAndDispatch(
+	ctx context.Context,
+	repoRef ForgeRepoRef,
+	remote forge.Remote,
+	item forge.Item,
+	ch forge.Change,
+) error {
+	if s.sink == nil {
+		return nil
+	}
+
+	// Event-level dedupe: the same event is never dispatched twice, even if the
+	// overlap window re-derives it. The key includes the item type, so a
+	// pipeline event (itemType "pipeline", number 0) can never collide with a
+	// real item's event.
+	key := forge.DedupeKey(remote, item.Type, item.Number, ch)
+	fresh, err := InsertForgeEvent(ForgeEvent{
+		Platform:  repoRef.Platform,
+		Host:      repoRef.Host,
+		Owner:     repoRef.Owner,
+		Repo:      repoRef.Repo,
+		ItemType:  string(item.Type),
+		Number:    item.Number,
+		EventType: string(ch.Type),
+		DedupeKey: key,
+		Payload:   item.URL,
+	})
+	if err != nil {
+		return fmt.Errorf("persist event: %w", err)
+	}
+	if !fresh {
+		return nil // already dispatched
+	}
+	s.sink.HandleChange(ctx, repoRef, item, ch)
 	return nil
 }
 

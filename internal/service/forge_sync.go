@@ -247,6 +247,136 @@ CREATE TABLE IF NOT EXISTS forge_sync_state (
 );
 `
 
+// ForgePipelineRunsDDL creates the per-run ledger for CI events.
+//
+// One row per (repo, run id), meaning "this run has been handled and must never
+// be dispatched". It serves two purposes at once:
+//
+//   - baseline: on a repository's first sync, already-finished runs are
+//     recorded WITHOUT dispatching, so a fresh install does not fire a task for
+//     every historical run;
+//   - dedupe: a run recorded once is never dispatched again.
+//
+// There is deliberately no "dispatched" column: a baseline row and a dispatched
+// row are the same thing to every reader — a run that must not fire again — so
+// the flag would always be misleading in one of the two cases.
+//
+// A single scalar "last seen run id" watermark would be WRONG here. A run that
+// is still in progress at first sight is deliberately not recorded, so run 101
+// finishing first would advance the watermark past run 100; when 100 later
+// finishes it would be below the watermark and silently dropped. A row per run
+// id is immune to that, and to out-of-order completion and pagination.
+const ForgePipelineRunsDDL = `
+CREATE TABLE IF NOT EXISTS forge_pipeline_runs (
+	platform TEXT NOT NULL,
+	host     TEXT NOT NULL,
+	owner    TEXT NOT NULL,
+	repo     TEXT NOT NULL,
+	run_id   INTEGER NOT NULL,
+	seen_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (platform, host, owner, repo, run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_forge_pipeline_runs_seen ON forge_pipeline_runs(platform, host, owner, repo, seen_at);
+`
+
+// RecordPipelineRun records that a run has been handled, returning true when
+// this is the first sighting. A false return means the run was already recorded
+// and must not be dispatched again.
+//
+// Freshness is determined by an explicit existence check rather than by
+// RowsAffected: the insert is a no-op on conflict, so an affected-row count
+// would be indistinguishable from a silent conflict.
+func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
+	if db == nil {
+		return false, nil
+	}
+	seen, err := HasPipelineRun(repo, runID)
+	if err != nil {
+		return false, err
+	}
+	if seen {
+		// Re-seeing a run refreshes seen_at so a run still inside the overlap
+		// window is not pruned while it is still current.
+		_, err = WriteExec(
+			`UPDATE forge_pipeline_runs SET seen_at = CURRENT_TIMESTAMP
+			 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
+			repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
+		)
+		return false, err
+	}
+
+	_, err = WriteExec(
+		`INSERT INTO forge_pipeline_runs
+		   (platform, host, owner, repo, run_id, seen_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		 ON CONFLICT(platform, host, owner, repo, run_id) DO NOTHING`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
+	)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// HasPipelineRun reports whether a run has already been recorded.
+func HasPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
+	if dbRead == nil {
+		return false, nil
+	}
+	var n int
+	err := dbRead.QueryRow(
+		`SELECT COUNT(*) FROM forge_pipeline_runs
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
+	).Scan(&n)
+	return n > 0, err
+}
+
+// PruneForgePipelineRuns deletes run rows not seen since the given time,
+// bounding growth. Callers pass the timestamp of the most recent full scan,
+// mirroring PruneForgeItems.
+func PruneForgePipelineRuns(repo ForgeRepoKey, seenBefore time.Time) (int64, error) {
+	if db == nil {
+		return 0, nil
+	}
+	res, err := WriteExec(
+		`DELETE FROM forge_pipeline_runs
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND seen_at < ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, seenBefore.UTC(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// ListForgePipelineRuns returns every recorded run id for a repository, for
+// tests and diagnostics.
+func ListForgePipelineRuns(repo ForgeRepoKey) ([]int64, error) {
+	if dbRead == nil {
+		return nil, nil
+	}
+	rows, err := dbRead.Query(
+		`SELECT run_id FROM forge_pipeline_runs
+		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? ORDER BY run_id`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // ForgeEventDDL creates the derived-event table. Events are persisted so that
 // notification and unread counting survive a restart, and so the same event is
 // never dispatched twice (event-level dedupe).

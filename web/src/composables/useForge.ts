@@ -4,9 +4,14 @@ import {
     fetchForgeItem,
     fetchForgeComments,
     fetchForgeBinding,
+    fetchForgePipelines,
+    fetchForgePipeline,
     type ForgeItem,
     type ForgeComment,
     type ForgeBinding,
+    type ForgePipelineRun,
+    type ForgePipelineJob,
+    type ForgePipelineStatus,
     ForgeApiError,
 } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
@@ -231,4 +236,155 @@ export function useForgeDetail() {
     }
 
     return { item, comments, loading, loadingComments, error, hasMoreComments, open, loadOlderComments, close }
+}
+
+/** Status filters offered on the Pipelines tab, in display order. */
+export const FORGE_PIPELINE_FILTERS = ['failure', 'running', 'all'] as const
+export type ForgePipelineFilter = typeof FORGE_PIPELINE_FILTERS[number]
+
+/**
+ * useForgePipelines lists CI runs for the project's bound repository.
+ *
+ * Mirrors useForgeItems' shape (paging, loading/error state, a seq guard so
+ * only the latest request writes) but is a separate composable because the
+ * filter vocabulary and the row data are entirely different from issues/PRs.
+ *
+ * The default filter is "failure": a busy repository produces far more green
+ * runs than anyone wants to scroll through, and the reason to open this tab is
+ * almost always to find out what broke.
+ */
+export function useForgePipelines(getProjectPath: () => string) {
+    const pipelines = ref<ForgePipelineRun[]>([])
+    const loading = ref(false)
+    const loadingMore = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    const filter = ref<ForgePipelineFilter>('failure')
+    const hasMore = ref(false)
+    const nextPage = ref(1)
+
+    let requestSeq = 0
+    let abort: AbortController | null = null
+
+    /** The `status` query value; "all" means no filter. */
+    function statusParam(): ForgePipelineStatus | undefined {
+        return filter.value === 'all' ? undefined : filter.value
+    }
+
+    async function load() {
+        const project = getProjectPath()
+        if (!project) {
+            pipelines.value = []
+            return
+        }
+        const seq = ++requestSeq
+        abort?.abort()
+        abort = new AbortController()
+
+        loading.value = true
+        error.value = null
+        try {
+            const res = await fetchForgePipelines({
+                status: statusParam(),
+                page: 1,
+                signal: abort.signal,
+            })
+            if (seq !== requestSeq) return
+            pipelines.value = res.pipelines
+            hasMore.value = res.hasMore
+            nextPage.value = res.nextPage
+        } catch (err) {
+            if (seq !== requestSeq) return
+            pipelines.value = []
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            if (seq === requestSeq) loading.value = false
+        }
+    }
+
+    /** Append the next page (infinite scroll). */
+    async function loadMore() {
+        if (!hasMore.value || loadingMore.value || loading.value) return
+        if (!getProjectPath()) return
+        loadingMore.value = true
+        try {
+            const res = await fetchForgePipelines({
+                status: statusParam(),
+                page: nextPage.value,
+            })
+            pipelines.value = [...pipelines.value, ...res.pipelines]
+            hasMore.value = res.hasMore
+            nextPage.value = res.nextPage
+        } catch (err) {
+            appLog.w(TAG, 'loadMore pipelines failed', err)
+        } finally {
+            loadingMore.value = false
+        }
+    }
+
+    function setFilter(f: ForgePipelineFilter) {
+        if (filter.value === f) return
+        filter.value = f
+        void load()
+    }
+
+    function reset() {
+        pipelines.value = []
+        error.value = null
+        hasMore.value = false
+        nextPage.value = 1
+    }
+
+    return {
+        pipelines, loading, loadingMore, error, filter, hasMore, nextPage,
+        load, loadMore, setFilter, reset,
+    }
+}
+
+/**
+ * useForgePipelineDetail loads one run and its jobs.
+ *
+ * Jobs are best-effort server-side, so an empty list is a normal outcome rather
+ * than an error.
+ */
+export function useForgePipelineDetail() {
+    const run = ref<ForgePipelineRun | null>(null)
+    const jobs = ref<ForgePipelineJob[]>([])
+    const loading = ref(false)
+    const error = ref<{ message: string; code: string } | null>(null)
+    let abort: AbortController | null = null
+
+    async function open(id: number) {
+        abort?.abort()
+        abort = new AbortController()
+        loading.value = true
+        error.value = null
+        run.value = null
+        jobs.value = []
+        try {
+            const res = await fetchForgePipeline(id, abort.signal)
+            run.value = res.pipeline
+            jobs.value = res.jobs ?? []
+        } catch (err) {
+            if (err instanceof ForgeApiError) {
+                error.value = { message: err.message, code: err.code }
+            } else {
+                error.value = { message: String(err), code: 'ForgeError' }
+            }
+        } finally {
+            loading.value = false
+        }
+    }
+
+    function close() {
+        abort?.abort()
+        run.value = null
+        jobs.value = []
+        error.value = null
+    }
+
+    return { run, jobs, loading, error, open, close }
 }

@@ -2307,6 +2307,74 @@ paths:
         "200":
           description: 评论列表
 
+  /api/forge/pipelines:
+    get:
+      tags: [Forge]
+      summary: 流水线运行列表
+      operationId: forgePipelines
+      description: |
+        返回项目所绑定仓库的 CI 运行列表（GitHub Actions / GitLab Pipelines），
+        按时间倒序。**只读**：本端点只发 GET，不提供重跑或取消。
+
+        查询参数 `status` 过滤归一化后的状态：`success`、`failure`、`running`、
+        `cancelled`、`skipped`。无法识别的值等同于不过滤（与 `state` 的处理一致）。
+
+        平台不支持 CI 时返回 400 + `code=ForgeNoPipelines`；项目未绑定仓库时返回
+        404 + `code=NoForgeBinding`。
+
+        `durationSeconds` 可能缺失：GitHub 的运行列表不返回耗时，只有详情端点
+        能给出推算值。
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failure, running, cancelled, skipped]
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: 运行列表（`pipelines`、`hasMore`、`nextPage`、`binding`）
+        "400":
+          description: 该平台不提供 CI 能力
+        "404":
+          description: 项目未绑定仓库
+
+  /api/forge/pipeline:
+    get:
+      tags: [Forge]
+      summary: 流水线运行详情（含作业）
+      operationId: forgePipeline
+      description: |
+        返回单次运行的元信息与它的作业列表。`jobs` 是**尽力而为**的：作业列表拉取
+        失败时仍返回 200，此时 `jobs` 为空数组——运行自身的元信息才是主载荷。
+
+        `id` 非法或缺失返回 400 + `code=ForgeInvalidPipelineID`；运行不在可见窗口内
+        返回 404。平台不支持 CI 时返回 400 + `code=ForgeNoPipelines`。
+
+        作业字段的平台差异：`stage` 与 `failureReason` 仅 GitLab 提供（GitHub 无
+        stage 概念），缺失时省略。
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 平台侧的运行 ID（GitHub run id / GitLab pipeline id）
+      responses:
+        "200":
+          description: 运行详情（`pipeline`、`jobs`、`binding`）
+        "400":
+          description: id 非法，或该平台不提供 CI 能力
+        "404":
+          description: 项目未绑定仓库，或运行不存在
+
   /api/forge/binding:
     get:
       tags: [Forge]
@@ -2690,7 +2758,12 @@ paths:
 
         `event_types` 合法取值：`issue.opened`、`issue.closed`、`issue.reopened`、
         `issue.commented`、`pr.opened`、`pr.closed`、`pr.merged`、`pr.reopened`、
-        `pr.commented`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+        `pr.commented`、`pipeline_done`。历史拼写（不带 `issue.`/`pr.` 前缀）仍被接受。
+
+        `pipeline_done` 是**仓库级**事件（CI 运行完成），不属于议题或合并请求，
+        因此用**裸键**订阅；`pr.pipeline_done` 仍被接受（历史拼写，避免既有任务
+        编辑时被拒）但不再作为可选项展示。`issue.pipeline_done` 始终非法。
+        成功与失败都会触发；`cancelled`/`skipped` 不会。
 
         **cron 表达式**按服务器本地时区解释（5 字段，支持 `@daily` 等描述符）。
         没有单独的 cron 校验端点：非法表达式在创建时返回 400，这是唯一的验证方式。
@@ -2704,8 +2777,12 @@ paths:
           （创建时前端会给出警告，但仍允许保存）。
         - 由**凭据账号自身**产生的动作（例如 AI 用该账号创建 PR）不触发事件，
           以防 AI 的写入自我触发形成循环。因此按事件触发时不会被自己创建的内容触发。
+          **`pipeline_done` 是例外**：流水线成败不是用户主动发起的动作，所以即使是
+          自己触发的运行也会触发任务。事件上下文会注入 `是否自身触发`（`是`/`否`），
+          由 prompt 自行决定是否行动。
         - 触发时事件上下文（事件类型、仓库、编号、标题、链接、作者、状态、
-          评论内容等）会**自动前置**到 `prompt` 之前，无需在 prompt 里写占位符。
+          评论内容、流水线状态/链接等）会**自动前置**到 `prompt` 之前，无需在
+          prompt 里写占位符。流水线事件没有编号，因此不注入「条目」一行。
       requestBody:
         required: true
         content:
