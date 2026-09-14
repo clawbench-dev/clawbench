@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -723,108 +722,27 @@ type streamRunResultShared struct {
 // executeStreamRunShared runs one AI backend execution.
 // Uses the correct SessionExecutor API: NewSessionExecutor(ctx, RunConfig) -> RunWithChannel(eventCh) -> Finalize(result, eventCh)
 func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResultShared {
-	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
-	// drain loop's shared context stays alive for the next queued message. The
-	// outer ctx still governs everything (user cancel / shutdown propagate here).
-	turnCtx, turnCancel := context.WithCancel(ctx)
-	RegisterSessionTurnCancel(cfg.SessionID, turnCancel)
-	// Unregister as soon as the turn's outcome has been read (RunWithChannel
-	// returns after buildResult consumed the cancel reason), NOT when this
-	// function exits. Finalize below can take a while (DB writes), and leaving
-	// the turn registered through it would let a late interrupt claim success
-	// and leave its reason behind for the NEXT turn to misread.
-	defer turnCancel()
-
-	sessionTransport := GetSessionTransport(cfg.SessionID)
-
-	backend, err := ai.NewBackendForAgentWithTransport(cfg.BackendName, cfg.AgentID, sessionTransport)
-	if err != nil {
-		slog.Error("failed to create backend", slog.String("backend", cfg.BackendName), slog.String("err", err.Error()))
-		errMsg := fmt.Sprintf("create backend: %v", err)
-		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: blockTypeWarning, contentKeyText: errMsg, contentKeyReason: ai.ReasonBackendExit}}})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
-			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
-		}
-		return streamRunResultShared{err: errMsg}
-	}
-
-	if sessionTransport == transportACPStdio {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = UpdateSessionTransport(cfg.SessionID, "")
-		}
-	}
-
-	// Resolve fileDir to absolute path, matching handler/chat.go logic.
-	// Without this, ACP ResumeSession/NewSession receives cwd="" and fails.
-	fileDir := cfg.ProjectPath
-	if absDir, absErr := filepath.Abs(cfg.ProjectPath); absErr == nil {
-		fileDir = absDir
-	}
-
+	fileDir := resolveFileDir(cfg.ProjectPath)
 	chatReq := BuildChatRequest(cfg.Message, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, false)
 
-	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
-	if err != nil {
-		slog.Error("failed to start stream", slog.String("err", err.Error()))
-		errMsg := fmt.Sprintf("start stream: %v", err)
-		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
-		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: blockTypeWarning, contentKeyText: errMsg, contentKeyReason: ai.ReasonBackendExit}}})
-		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(errContent), nil, false, ""); saveErr != nil {
-			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
-		}
-		return streamRunResultShared{err: errMsg}
-	}
-
-	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	streamingMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(emptyContent), nil, true, "", cfg.QueueID)
-	if err != nil {
-		slog.Error("failed to create streaming message", slog.String("session", cfg.SessionID), slog.String("err", err.Error()))
-	}
-	// Broadcast stream_start so subscribed clients (including ones that opened
-	// the session mid-stream) know the streaming message id and can create a
-	// placeholder if none exists yet. This makes the assistant bubble purely
-	// data-driven: any client, at any time, sees a placeholder whenever the DB
-	// has a streaming=1 row or a stream_start event arrives.
-	ws.EmitToSession(cfg.SessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: cfg.QueueID},
+	// The one AI-turn implementation — shared with the /api/ai/chat handler and
+	// the scheduler so a fix can no longer land in only one copy.
+	res := runTurn(TurnSpec{
+		Ctx:             ctx,
+		Mode:            ModeInteractive,
+		ProjectPath:     cfg.ProjectPath,
+		BackendName:     cfg.BackendName,
+		SessionID:       cfg.SessionID,
+		AgentID:         cfg.AgentID,
+		ChatReq:         chatReq,
+		FileDir:         fileDir,
+		QueueID:         cfg.QueueID,
+		DrainOnFinalize: true,
+		LocalizeError:   serviceLocalizeError,
 	})
-
-	execCfg := RunConfig{
-		Mode:               ModeInteractive,
-		ProjectPath:        cfg.ProjectPath,
-		BackendName:        cfg.BackendName,
-		SessionID:          cfg.SessionID,
-		AgentID:            cfg.AgentID,
-		ChatRequest:        chatReq,
-		StreamingMessageID: streamingMsgID,
-		LocalizeError:      nil,
+	return streamRunResultShared{
+		cancelReason: res.CancelReason,
+		err:          res.Err,
+		empty:        res.Empty,
 	}
-	executor := NewSessionExecutor(turnCtx, execCfg)
-	runResult := executor.RunWithChannel(eventCh)
-	// The turn is over: its cancel reason has been read, so stop advertising it
-	// as interruptible. Anything arriving now belongs to the next turn.
-	UnregisterSessionTurnCancel(cfg.SessionID)
-	runResult = executor.Finalize(runResult, eventCh)
-
-	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: contentKeyMetadata, Meta: runResult.Metadata})
-
-	result := streamRunResultShared{}
-	switch {
-	case runResult.CancelReason == cancelReasonUser:
-		result.cancelReason = runResult.CancelReason
-	case runResult.CancelReason == cancelReasonInterrupt:
-		// "interrupt and send": the drain loop must KEEP the queue and move on
-		// to the next message (see drainHandleTerminal).
-		result.cancelReason = runResult.CancelReason
-	case turnCtx.Err() == context.Canceled:
-		result.cancelReason = "cancel"
-	case turnCtx.Err() == context.DeadlineExceeded:
-		result.err = "AI response timed out (30 min)"
-	case runResult.Empty:
-		result.empty = true
-	}
-
-	return result
 }

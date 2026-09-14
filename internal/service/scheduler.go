@@ -911,21 +911,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Execute AI backend (no timeout - let AI run indefinitely)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	backend, err := ai.NewBackendForAgent(backendName, task.AgentID)
-	if err != nil {
-		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
-		cancel() // Release context resources
-		_ = UpdateExecutionStatus(sessionID, "failed")
-		// No runningExecutions.Delete needed here — the entry hasn't been
-		// stored yet (Store happens after this check, at line ~728).
-		SetSessionRunning(sessionID, false, true)
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
-		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		return
-	}
-
-	// Register running execution only after backend creation succeeds (ISS-128).
-	// This prevents the frontend from seeing a "running" state that immediately fails.
+	// Register the cancel func BEFORE starting the turn so CancelAllRunning and
+	// a user cancel can actually reach this execution. Historically the
+	// scheduler never registered one, so any cancel of a scheduled session fell
+	// through to CancelSession's "running but no cancel func" force-clear branch.
 	running := &RunningExecution{
 		ID:          sessionID,
 		TaskID:      task.ID,
@@ -939,24 +928,47 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		cancel()
 	}()
 
-	// Emit "running" event after backend creation succeeds (ISS-128).
-	emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+	// Run the turn through the shared implementation. The scheduler emits its
+	// own stream_start (its subscribers assert on the exact id), and it handles
+	// the abort/terminal branches below itself because a task failure must also
+	// update the execution row and emit task events — behaviour the interactive
+	// paths do not have.
+	at := runTurnStart(TurnSpec{
+		Ctx:             ctx,
+		Mode:            ModeScheduled,
+		ProjectPath:     projectPath,
+		BackendName:     backendName,
+		SessionID:       sessionID,
+		AgentID:         task.AgentID,
+		ChatReq:         chatReq,
+		FileDir:         projectPath,
+		TaskID:          task.ID,
+		ExecutionID:     executionID,
+		TriggerType:     triggerType,
+		SkipStreamStart: true,
+	})
+	defer at.release()
 
-	eventCh, err := backend.ExecuteStream(ctx, chatReq)
-	if err != nil {
-		slog.Error("failed to execute stream for task", slog.String("err", err.Error()))
+	// Backend creation / stream start failed. ISS-128: no "running" event may be
+	// emitted for a task that fails before it starts, or the frontend shows a
+	// running state that immediately fails. So the failure branch comes first
+	// and emits only "failed".
+	if !at.started() {
+		slog.Error("failed to start task execution", slog.String("err", at.earlyFails.Err))
 		_ = UpdateExecutionStatus(sessionID, "failed")
-		s.runningExecutions.Delete(sessionID)
 		SetSessionRunning(sessionID, false, true)
 		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: "task execution failed"})
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		return
 	}
 
-	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
-	// can update it via FinalizeStreamingMessage, just like interactive sessions).
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, _ := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	// The turn is actually running — only now is a "running" event truthful.
+	emitTaskEvent(fmt.Sprintf("%d", task.ID), "running", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+
+	executor := at.executor
+	eventCh := at.eventCh
+	streamingMsgID := at.msgID
+	runResult := at.runResult
 
 	// Broadcast stream_start (same as interactive paths) so clients that open the
 	// task's session mid-stream can create the streaming placeholder from the
@@ -965,22 +977,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		Type:        "stream_start",
 		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
 	})
-
-	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
-	// conversion, no cancel-reason tracking)
-	executor := NewSessionExecutor(ctx, RunConfig{
-		Mode:               ModeScheduled,
-		ProjectPath:        projectPath,
-		BackendName:        backendName,
-		SessionID:          sessionID,
-		AgentID:            task.AgentID,
-		ChatRequest:        chatReq,
-		TaskID:             task.ID,
-		ExecutionID:        executionID,
-		TriggerType:        triggerType,
-		StreamingMessageID: streamingMsgID,
-	})
-	runResult := executor.RunWithChannel(eventCh)
 
 	// If context was cancelled, mark execution as cancelled and update stats
 	if ctx.Err() == context.Canceled {
@@ -1051,8 +1047,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Finalize: persist blocks to DB, save metadata, drain remaining events
-	runResult = executor.Finalize(runResult, nil)
+	// Finalize: persist blocks to DB, save metadata, drain remaining events.
+	// Shared with the interactive paths so the persisted shape cannot drift.
+	at.runTurnFinalize()
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")

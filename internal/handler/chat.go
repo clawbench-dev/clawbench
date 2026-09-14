@@ -676,133 +676,32 @@ func executeStreamRun(
 	fileDir string,
 	queueID string,
 ) streamRunResult {
-	runStart := time.Now()
-
-	// Per-turn context: lets "interrupt and send" stop just THIS turn while the
-	// drain loop's shared context stays alive for the next queued message. The
-	// outer ctx still governs everything (user cancel / shutdown cancel it, and
-	// that propagates here).
-	turnCtx, turnCancel := context.WithCancel(ctx)
-	service.RegisterSessionTurnCancel(sessionID, turnCancel)
-	// Unregister as soon as the turn's outcome has been read (RunWithChannel
-	// returns after buildResult consumed the cancel reason), NOT when this
-	// function exits. Finalize below can take a while (DB writes), and leaving
-	// the turn registered through it would let a late interrupt claim success
-	// and leave its reason behind for the NEXT turn to misread.
-	defer turnCancel()
-
-	sessionTransport := service.GetSessionTransport(sessionID)
-	slog.Info("acp perf: executeStreamRun.start", "session_id", sessionID, "backend", backendName, "agent_id", agentID, "transport", sessionTransport, "resume", chatReq.Resume)
-
-	backend, err := ai.NewBackendForAgentWithTransport(backendName, agentID, sessionTransport)
-	if err != nil {
-		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
-		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
-		return streamRunResult{err: errMsg}
-	}
-
-	// If session transport was acp-stdio but agent fell back to CLI, clear the
-	// stale transport override so subsequent messages don't keep warning.
-	if sessionTransport == "acp-stdio" {
-		if _, ok := backend.(*ai.ACPBackend); !ok {
-			_ = service.UpdateSessionTransport(sessionID, "")
-		}
-	}
-
-	slog.Info("acp perf: executeStreamRun.ExecuteStream_start", "session_id", sessionID, "transport", sessionTransport, "after_backend_create", time.Since(runStart))
-	eventCh, err := backend.ExecuteStream(turnCtx, chatReq)
-	if err != nil {
-		slog.Error("failed to start stream", slog.String("err", err.Error()))
-		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
-		return streamRunResult{err: errMsg}
-	}
-
-	// Create streaming placeholder message in DB. When this run answers a queued
-	// message, record its queue_id so the frontend can anchor the reply to its
-	// own question (anchorRepliesToQuestions) instead of falling back to raw DB
-	// id order (user2,user3,reply2,reply3).
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "", queueID)
-	if err != nil {
-		slog.Error("failed to create streaming assistant placeholder",
-			slog.String("session", sessionID),
-			slog.String("queueID", queueID),
-			slog.String("err", err.Error()))
-		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		ws.EmitToSession(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
-		return streamRunResult{err: errMsg}
-	}
-	slog.Info("chat: created streaming assistant placeholder",
-		slog.String("session", sessionID),
-		slog.Int64("streamingMsgID", streamingMsgID),
-		slog.String("queueID", queueID))
-
-	// Broadcast stream_start so subscribed clients (including ones that opened
-	// the session mid-stream) know the streaming message id and can create a
-	// placeholder if none exists yet. Mirrors executeStreamRunShared in the
-	// service layer — this is the web POST path's per-prompt insertion point.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: queueID},
-	})
-
-	// Delegate event loop to SessionExecutor
-	cfg := service.RunConfig{
-		Mode:               service.ModeInteractive,
-		ProjectPath:        projectPath,
-		BackendName:        backendName,
-		SessionID:          sessionID,
-		AgentID:            agentID,
-		ChatRequest:        chatReq,
-		FileDir:            fileDir,
-		StreamingMessageID: streamingMsgID,
+	// Delegate the whole turn to the service layer's single implementation,
+	// shared with the queue/push path and the scheduler. runTurn owns the
+	// per-turn context, the turn-cancel registration, backend creation, the
+	// streaming placeholder, stream_start, the event loop and Finalize — so a
+	// fix can no longer land in only one of the copies.
+	res := service.RunTurn(service.TurnSpec{
+		Ctx:             ctx,
+		Mode:            service.ModeInteractive,
+		ProjectPath:     projectPath,
+		BackendName:     backendName,
+		SessionID:       sessionID,
+		AgentID:         agentID,
+		ChatReq:         chatReq,
+		FileDir:         fileDir,
+		QueueID:         queueID,
+		DrainOnFinalize: true,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
 		},
+	})
+
+	return streamRunResult{
+		cancelReason: res.CancelReason,
+		err:          res.Err,
+		empty:        res.Empty,
 	}
-	executor := service.NewSessionExecutor(turnCtx, cfg)
-	runResult := executor.RunWithChannel(eventCh)
-	// The turn is over: its cancel reason has been read, so stop advertising it
-	// as interruptible. Anything arriving now belongs to the next turn.
-	service.UnregisterSessionTurnCancel(sessionID)
-
-	// Finalize: persist to DB, drain channel, save metadata
-	runResult = executor.Finalize(runResult, eventCh)
-
-	// Send updated metadata (with wallMs) to WS clients before the terminal event
-	ws.EmitToSession(sessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
-
-	// Convert RunResult to streamRunResult
-	result := streamRunResult{}
-	switch {
-	case runResult.CancelReason == "user":
-		result.cancelReason = runResult.CancelReason
-	case runResult.CancelReason == "interrupt":
-		// "interrupt and send": the drain loop must KEEP the queue and move on
-		// to the next message. Passing the reason through (instead of folding it
-		// into the generic "cancel" below) is what tells it to do that.
-		result.cancelReason = runResult.CancelReason
-	case turnCtx.Err() == context.Canceled:
-		result.cancelReason = "cancel"
-	case turnCtx.Err() == context.DeadlineExceeded:
-		result.err = "AI response timed out (30 min)"
-	case runResult.Empty:
-		result.empty = true
-	}
-
-	slog.Info(
-		"ai stream run done",
-		slog.String("session", sessionID),
-		slog.Int("blocks", len(runResult.Blocks)),
-		slog.String("cancel_reason", runResult.CancelReason),
-		slog.Int("wall_ms", runResult.WallMs),
-	)
-
-	return result
 }
 
 // buildChatRequest constructs an ai.ChatRequest from the given parameters.
