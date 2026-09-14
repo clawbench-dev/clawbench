@@ -134,17 +134,26 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // toggle (it renders the same line-slice window the code view shows).
   const renderMode = ref<PreviewRenderMode>('source')
 
-  const isMarkdown = computed(() => {
-    const filePath = target.value?.filePath || ''
-    return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
-  })
-
   // ── Directory targets ───────────────────────────────────────────────────
   // A directory annotation has no file content, so the card lists the
   // directory instead of slicing code. This mirrors the file manager's docked
   // pane (useDirPreview + DirPreviewBody) so both surfaces show the same
   // control; the listing is fetched from the same /api/dir endpoint.
+  //
+  // Declared BEFORE the file-type computeds below so they can defer to it.
   const isDirTarget = computed(() => target.value?.isDir === true)
+
+  // `getFileType` is purely extension-based, so a DIRECTORY named `assets.png`
+  // or `docs.md` looks like a media/markdown file. The verified `isDir` flag is
+  // authoritative (it came from the server's stat), so every extension-based
+  // classification defers to it. Without this, such a directory would render a
+  // media body or a bogus markdown toggle instead of its listing.
+  const isMarkdown = computed(() => {
+    if (isDirTarget.value) return false
+    const filePath = target.value?.filePath || ''
+    return filePath ? Boolean(getFileType(filePath).isMarkdown) : false
+  })
+
   const dirEntries = ref<DirPreviewEntry[]>([])
   const dirLoading = ref(false)
   const dirError = ref(false)
@@ -220,6 +229,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   // every raster image as binary. The preview short-circuits the fetch for
   // them and renders a media body straight from the URL.
   const fileType = computed(() => {
+    if (isDirTarget.value) return null
     const filePath = target.value?.filePath || ''
     return filePath ? getFileType(filePath) : null
   })
@@ -241,6 +251,8 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   })
 
   /** Whether the current target is a Markdown file (renderable in the doc view). */
+  // `isMarkdown` and `isMediaTarget` already return false for a directory target
+  // (see their definitions), so this stays a plain alias.
   const canRenderMarkdown = computed(() => isMarkdown.value)
 
   // A Markdown file default-renders unless the annotation pinned a line range
@@ -288,10 +300,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
     const win = fetchedWindow.value
     if (win && win.end < win.start) {
-      // The server captured no lines at all (its byte cap tripped, or the range
-      // starts past EOF). `content` is empty, so slicing it would yield a bogus
-      // blank line — report the empty window instead, and the pane shows the
-      // truncation / out-of-range notice.
+      // The server captured no lines at all: either its byte cap tripped, or the
+      // requested range starts past EOF. `content` is empty, so slicing it would
+      // yield a bogus blank line — report the empty window and let the widen
+      // block below recover it.
+      //
+      // An out-of-range annotation is exactly the case that needs recovering:
+      // computeRenderWindow clamps `reqStart > totalLines` back to the last
+      // lines, so the widen re-fetches a window that really exists and the pane
+      // shows the tail of the file (matching the pre-window behavior). Returning
+      // here instead would leave the pane blank AND un-recoverable, since
+      // expandToTop/expandToBottom are no-ops from an empty slice.
       slicedCode.value = {
         code: '',
         startLine: win.start,
@@ -300,9 +319,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         lineOutOfRange: !windowTruncated.value,
         renderTruncated: false,
       }
-      return
-    }
-    if (win) {
+    } else if (win) {
       slicedCode.value = sliceCodeForPreview(
         fileContent.value.content,
         target.value?.lineStart,
@@ -387,6 +404,25 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       isLargeFile.value = false
     }
 
+    // Directories have no file content: the card lists them instead. The listing
+    // lives in dirEntries, so there is nothing to slice.
+    //
+    // This MUST be checked before isMediaTarget: getFileType() is purely
+    // extension-based, so a DIRECTORY named `assets.png` or `docs.md` looks like
+    // a media/markdown file. The verified `isDir` flag is authoritative — it came
+    // from the server's stat — so it wins over the extension guess. Checking
+    // media first would swallow the directory and never fetch its listing.
+    if (isDirTarget.value) {
+      fileContent.value = null
+      slicedCode.value = null
+      fetchedWindow.value = null
+      fileTotalLines.value = null
+      windowTruncated.value = false
+      fetchDirPreview(newTarget.filePath)
+      status.value = 'ready'
+      return
+    }
+
     // Media files are served as raw bytes by /api/local-file/ and rendered
     // straight from that URL — there is no JSON content to fetch, and /api/file
     // would reject every raster image as binary (10 MiB cap + null-byte sniff).
@@ -397,19 +433,6 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       fetchedWindow.value = null
       fileTotalLines.value = null
       windowTruncated.value = false
-      status.value = 'ready'
-      return
-    }
-
-    // Directories have no file content either: the card lists them instead. The
-    // listing lives in dirEntries, so nothing to slice here.
-    if (isDirTarget.value) {
-      fileContent.value = null
-      slicedCode.value = null
-      fetchedWindow.value = null
-      fileTotalLines.value = null
-      windowTruncated.value = false
-      fetchDirPreview(newTarget.filePath)
       status.value = 'ready'
       return
     }
@@ -602,16 +625,18 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const refresh = () => {
     if (!target.value) return
+    // A directory listing is its own fetch; re-run it rather than re-slicing.
+    // Checked before media for the same reason as fetchPreview: a directory
+    // named `assets.png` must not bump the media nonce instead of re-listing.
+    if (isDirTarget.value) {
+      fetchDirPreview(target.value.filePath)
+      return
+    }
     // Media is not fetched through fetchPreview (no JSON body), so a refresh
     // must instead force the media element to re-request its URL. Bumping this
     // nonce feeds MediaPreviewBody's cache-busting param.
     if (isMediaTarget.value) {
       mediaRefreshNonce.value += 1
-      return
-    }
-    // A directory listing is its own fetch; re-run it rather than re-slicing.
-    if (isDirTarget.value) {
-      fetchDirPreview(target.value.filePath)
       return
     }
     fetchPreview(target.value, true)

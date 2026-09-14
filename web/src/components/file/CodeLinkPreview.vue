@@ -896,6 +896,11 @@ const searchInputRef = ref<HTMLInputElement | null>(null)
 const sheetSearchInputRef = ref<HTMLInputElement | null>(null)
 
 const toggleSearch = () => {
+  // Search only makes sense when a text body is showing. Guarding here (rather
+  // than only at the button) also covers the Ctrl+F shortcut, which is handled
+  // on window and would otherwise open a dead search bar over a directory
+  // listing or a media file — neither has searchable lines.
+  if (!showTextTools.value) return
   isSearchOpen.value = !isSearchOpen.value
   if (isSearchOpen.value) {
     nextTick(() => {
@@ -969,10 +974,13 @@ function formatFileSize(bytes: number): string {
 const contextMeta = computed(() => {
   const filePath = props.preview.target.value?.filePath
   if (!filePath) return ''
-  // A directory has no line count or size; show how many entries it holds,
-  // matching the docked pane's count. `dirEntries` is the unfiltered listing.
+  // A directory has no line count or size; show how many entries it holds.
+  // Count only the VISIBLE entries — the same filter DirPreviewBody renders
+  // with — so the number always matches the grid below it (and the docked
+  // pane, which also counts `shown`).
   if (isDirView.value) {
-    return t('file.dirPreview.count', { n: props.preview.dirEntries.value.length })
+    const shown = props.preview.dirEntries.value.filter(e => props.preview.dirEntryVisible(e))
+    return t('file.dirPreview.count', { n: shown.length })
   }
   const total = props.preview.slicedCode.value?.totalLines
   const size = props.preview.fileContent.value?.size

@@ -668,30 +668,35 @@ async function drainBatch(): Promise<void> {
     const paths = [...new Set(pendingPaths)]
     pendingPaths = []
 
-    try {
-        for (let i = 0; i < paths.length; i += MAX_BATCH_PATHS) {
-            const chunk = paths.slice(i, i + MAX_BATCH_PATHS)
-            const results = await fetchPathTypes(chunk)
-            if (!results) {
-                // The server answered but told us nothing usable. Leave the
-                // remaining paths uncached rather than marking them missing, so
-                // the annotation survives and a later pass can retry.
-                return
-            }
-            for (const [path, type] of Object.entries(results)) {
-                if (type === 'file' || type === 'dir') {
-                    cacheSet(path, type)
-                } else {
-                    cacheSet(path, 'none')
-                }
-            }
+    for (let i = 0; i < paths.length; i += MAX_BATCH_PATHS) {
+        const chunk = paths.slice(i, i + MAX_BATCH_PATHS)
+        let results: Record<string, string> | null
+        try {
+            results = await fetchPathTypes(chunk)
+        } catch {
+            // Network error for THIS chunk. Assume these paths don't exist —
+            // safer than assuming they do, which would leave dead annotations.
+            //
+            // Scoped to `chunk`, never the whole list: earlier chunks may have
+            // already been verified as real files, and cacheSet would overwrite
+            // those with 'none' (a cached 'none' is never re-checked and strips
+            // the annotation outright).
+            for (const p of chunk) cacheSet(p, 'none')
+            return
         }
-    } catch {
-        // On network error, assume paths don't exist.
-        // This is safer than assuming they exist (which leaves broken annotations).
-        // Paths will be re-verified on next render if they re-enter the cache.
-        for (const p of paths) {
-            cacheSet(p, 'none')
+        if (!results) {
+            // The server answered but told us nothing usable (non-OK status, or
+            // no `results` field). Leave this and the remaining chunks uncached
+            // rather than marking them missing, so their annotations survive and
+            // a later pass can retry.
+            return
+        }
+        for (const [path, type] of Object.entries(results)) {
+            if (type === 'file' || type === 'dir') {
+                cacheSet(path, type)
+            } else {
+                cacheSet(path, 'none')
+            }
         }
     }
 }

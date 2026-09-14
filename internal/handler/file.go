@@ -266,14 +266,28 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Line-window requests (quick-preview pane) are only meaningful for real
+	// text files: forceText/binary sanitization rewrites the byte stream, so the
+	// window is ignored there and the full sanitized content is returned.
+	//
+	// Parsed (and rejected) BEFORE the binary early-return below so an invalid
+	// range is a 400 for every file, as the OpenAPI spec promises. Parsing it
+	// after meant a binary file answered 200 isBinary:true for `?lineStart=0`,
+	// which silently contradicts the documented contract.
+	isText := model.IsTextFile(info.Name())
+	forceText := r.URL.Query().Get("forceText") == "1"
+	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
+	if hasWindow && winErr != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
+		return
+	}
+	useWindow := hasWindow && isText
+
 	// For non-text files, check if the content is actually binary (via null-byte
 	// sniffing). If binary, return isBinary=true without the content — the
 	// frontend shows a placeholder with "Open as text" button.
 	// Use ?forceText=1 to override: returns sanitized content (truncated +
 	// non-printable chars replaced) safe for DOM rendering.
-	isText := model.IsTextFile(info.Name())
-	forceText := r.URL.Query().Get("forceText") == "1"
-
 	if !isText && !forceText {
 		isBinary, sniffErr := sniffBinaryContent(absPath)
 		if sniffErr != nil {
@@ -297,15 +311,6 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Line-window requests (quick-preview pane) are only meaningful for real
-	// text files: forceText/binary sanitization rewrites the byte stream, so the
-	// window is ignored there and the full sanitized content is returned.
-	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
-	if hasWindow && winErr != nil {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
-		return
-	}
-	useWindow := hasWindow && isText
 	// Subtype detection (OpenAPI → ReDoc) needs the whole document, and so does
 	// sanitization. Both are skipped on the window path, which only ever serves
 	// the plain-text preview pane.

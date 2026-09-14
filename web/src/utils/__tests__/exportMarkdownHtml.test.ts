@@ -369,6 +369,31 @@ describe('exportMarkdownToHtml', () => {
     expect(result.skippedImages).toBe(1)
   })
 
+  it('chunks more than 50 images instead of failing the whole batch', async () => {
+    // The endpoint rejects >50 paths with 400 TooManyPaths. Un-chunked, that one
+    // 400 made EVERY local image keep its /api/local-file src (broken in the
+    // standalone export). Each chunk must be fetched and applied independently.
+    const calls: string[][] = []
+    mockFetch.mockImplementation((_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { paths: string[] }
+      calls.push(body.paths)
+      const results: Record<string, { mime: string; data: string }> = {}
+      for (const p of body.paths) results[p] = { mime: 'image/png', data: 'x' }
+      return Promise.resolve({ ok: true, json: async () => ({ results }) })
+    })
+
+    const md = Array.from({ length: 120 }, (_, i) => `![p${i}](/api/local-file/img${i}.png)`).join('\n\n')
+    const result = await exportMarkdownToHtml(opts({ content: md }))
+
+    // Three requests of at most 50, and nothing was skipped.
+    expect(calls.length).toBe(3)
+    for (const c of calls) expect(c.length).toBeLessThanOrEqual(50)
+    expect(result.skippedImages).toBe(0)
+    // Every image was actually inlined.
+    expect(result.html).not.toContain('/api/local-file/img0.png')
+    expect(result.html).toContain('data:image/png;base64,x')
+  })
+
   it('counts skipped images when server skips paths', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ results: {} }) })
     const result = await exportMarkdownToHtml(opts({ content: '![p](/api/local-file/missing.png)' }))

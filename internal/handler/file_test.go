@@ -2059,6 +2059,38 @@ func TestGetFileLineWindow(t *testing.T) {
 		}
 	})
 
+	t.Run("InvalidRangeIs400EvenForBinaryFiles", func(t *testing.T) {
+		// The window is ignored for binary content, but an invalid range must
+		// still be rejected: parsing it after the binary early-return made
+		// `?lineStart=0` answer 200 isBinary:true, contradicting the documented
+		// 400 contract. A NUL byte makes the sniffer classify it as binary.
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "blob.bin", "abc\x00def")
+
+		for _, q := range []string{"lineStart=0", "lineStart=10&lineEnd=5", "lineEnd=10"} {
+			t.Run(q, func(t *testing.T) {
+				req := newRequest(t, http.MethodGet, "/api/file/blob.bin?"+q, nil)
+				withProjectCookie(req, env.ProjectDir)
+
+				w := callHandler(GetFile, req)
+				assertStatus(t, w, http.StatusBadRequest)
+				assert.Contains(t, w.Body.String(), "InvalidLineRange")
+			})
+		}
+
+		// And a VALID range on the same binary file keeps its 200 isBinary body.
+		req := newRequest(t, http.MethodGet, "/api/file/blob.bin?lineStart=1&lineEnd=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.True(t, fc.IsBinary)
+	})
+
 	t.Run("NoParamsStillReturnsWholeFile", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
