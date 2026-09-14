@@ -998,6 +998,14 @@ paths:
           in: query
           schema:
             type: integer
+        - name: tag
+          in: query
+          description: |
+            仅返回带有该标签的会话（标签需在本项目可见：全局标签或本项目标签）。
+            在服务端过滤，因此 `hasMore` 反映的是过滤后的集合。
+            大小写不敏感；省略或空值表示不按标签过滤。
+          schema:
+            type: string
       responses:
         "200":
           description: 会话列表
@@ -1089,6 +1097,16 @@ paths:
       summary: 会话标签候选列表
       description: 返回当前项目可选的标签：全部全局标签 + 当前项目自己的标签。同名时全局定义优先。
       operationId: sessionTagsList
+      parameters:
+        - name: inUse
+          in: query
+          description: |
+            传 `1` 时只返回「本项目已有会话在使用」的标签（带使用计数），
+            供会话列表的标签过滤栏使用；省略时返回全部可选候选（含未被使用的
+            全局标签），供标签设置弹窗使用。
+          schema:
+            type: string
+            enum: ["1"]
       responses:
         "200":
           description: 标签候选列表

@@ -1282,12 +1282,21 @@ func GetOverviewSessions() ([]model.ChatSession, error) {
 // created_at-only predicate is used, so older clients keep working unchanged.
 //
 // Returns sessions and hasMore flag.
-func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool) ([]model.ChatSession, bool, error) {
+// GetSessionsPaged returns a keyset-paginated page of active chat sessions for
+// projectPath. tagName, when non-empty, restricts the page to sessions carrying
+// a tag of that name visible in this project (global, or this project's own).
+func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cursorID string, cursorPinned *bool, tagName string) ([]model.ChatSession, bool, error) {
 	// No limit: return all sessions
 	if limit <= 0 {
 		sessions, err := GetSessions(projectPath, backend)
 		if err != nil {
 			return nil, false, err
+		}
+		if tagName != "" {
+			sessions, err = FilterSessionsByTag(sessions, projectPath, tagName)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		return sessions, false, nil
 	}
@@ -1310,6 +1319,19 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
+	}
+	if tagName != "" {
+		// EXISTS rather than a JOIN: a join would multiply rows per tag and
+		// break the LIMIT/keyset arithmetic below. The visibility predicate
+		// mirrors ListSessionTags so a session can only be matched by a
+		// definition it can actually see (global, or its own project's).
+		query += ` AND EXISTS (
+			SELECT 1 FROM session_tag_links l
+			JOIN session_tags t ON t.id = l.tag_id
+			WHERE l.session_id = s.id
+			  AND t.name = ? COLLATE NOCASE
+			  AND (t.scope = 'global' OR t.project_path = ?))`
+		args = append(args, tagName, projectPath)
 	}
 	if cursor != "" && cursorID != "" {
 		if cursorPinned != nil {
@@ -1364,6 +1386,75 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	}
 
 	return sessions, hasMore, nil
+}
+
+// FilterSessionsByTag narrows an in-memory session slice to those carrying a
+// tag of the given name visible in projectPath. Only used by the unpaginated
+// path (limit <= 0); the paged path pushes the same predicate into SQL.
+func FilterSessionsByTag(sessions []model.ChatSession, projectPath, tagName string) ([]model.ChatSession, error) {
+	if len(sessions) == 0 {
+		return sessions, nil
+	}
+	ids := make([]string, 0, len(sessions))
+	for i := range sessions {
+		ids = append(ids, sessions[i].ID)
+	}
+	m, err := GetTagsForSessions(ids)
+	if err != nil {
+		return nil, err
+	}
+	out := sessions[:0:0]
+	for i := range sessions {
+		for _, t := range m[sessions[i].ID] {
+			if strings.EqualFold(t.Name, tagName) && (t.Scope == SessionTagScopeGlobal || t.ProjectPath == projectPath) {
+				out = append(out, sessions[i])
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// ListProjectTagsInUse returns the tags actually carried by at least one active
+// chat session in projectPath, most-used first, then by name.
+//
+// This is what the session-list filter bar shows: unlike ListSessionTags (the
+// dialog's candidate list, which includes every global tag), a tag nobody in
+// this project uses would be a filter that always yields an empty list. The
+// visibility predicate matches ListSessionTags so the same name is not counted
+// under a definition this project cannot see.
+func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
+	rows, err := dbRead.Query(`
+		SELECT t.name, t.scope, t.project_path, COUNT(DISTINCT s.id) AS cnt
+		FROM session_tags t
+		JOIN session_tag_links l ON l.tag_id = t.id
+		JOIN chat_sessions s ON s.id = l.session_id
+		WHERE (t.scope = 'global' OR t.project_path = ?)
+		  AND s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'
+		GROUP BY t.id
+		ORDER BY cnt DESC, t.name COLLATE NOCASE`, projectPath, projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	tags := []SessionTag{}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var t SessionTag
+		if err := rows.Scan(&t.Name, &t.Scope, &t.ProjectPath, &t.Count); err != nil {
+			return nil, err
+		}
+		// A global and a project tag may share a name; the filter bar shows one
+		// chip per name, so keep the first (global wins, matching the list order).
+		key := strings.ToLower(t.Name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		tags = append(tags, t)
+	}
+	return tags, rows.Err()
 }
 
 // UpdateLastRead sets the last_read_at timestamp for a session to now.

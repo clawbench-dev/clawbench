@@ -901,6 +901,7 @@ export default {
     globalHint: 'Global tags are selectable in every project',
     deleteTag: 'Delete tag',
     deleteConfirm: 'Delete tag "{name}"? It will be removed from all sessions.',
+    filterLabel: 'Filter sessions by tag',
   },
   sessionSearch: {
     title: 'Session Search',

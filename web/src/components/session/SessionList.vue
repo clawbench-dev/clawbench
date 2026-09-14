@@ -1,5 +1,17 @@
 <template>
   <div class="session-list">
+    <!-- Tag filter bar. Sits above the scroll area (not inside the pane) so it
+         stays visible while the list scrolls, and is shared by both hosts
+         (pinned sidebar and mobile drawer) since they both render SessionList.
+         Only meaningful on the project pane — the cross pane lists other
+         projects' sessions, which this project's tags do not describe. -->
+    <SessionTagFilterBar
+      v-if="activeTab === 'project'"
+      :tags="filterTags"
+      :active-tag="activeTag"
+      @toggle="toggleTagFilter"
+    />
+
     <!-- ── Project pane: pinned + recent sections, infinite-scrolling ── -->
     <div v-show="activeTab === 'project'" ref="listRef" class="session-list-pane">
       <!-- Only show the full-screen spinner on first load / when the list is empty.
@@ -204,6 +216,7 @@ import { Archive, Pin, PinOff, PencilLine, Tags } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
+import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
@@ -214,7 +227,7 @@ import { useSessionIdentity, reconcileRunningSessions } from '@/composables/useS
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useCrossProjectSessions } from '@/composables/useCrossProjectSessions.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
-import { apiPatch } from '@/utils/api.ts'
+import { apiGet, apiPatch } from '@/utils/api.ts'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { store } from '@/stores/app.ts'
 import { appLog } from '@/utils/appLog'
@@ -239,6 +252,13 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const refreshing = ref(false) // a reload (loadSessions) is in flight
 const hasMore = ref(false)
+// Tag filter. Single-select: '' means no filter. The value is sent to the
+// server (see buildListQuery) rather than applied to the loaded page, so
+// pagination and hasMore stay consistent — client-side filtering would show
+// "no matches" until the user happened to scroll far enough.
+const activeTag = ref('')
+// Tags in use in the current project (with session counts), for the filter bar.
+const filterTags = ref([])
 const listRef = ref(null)
 const sentinelRef = ref(null)
 let observer = null
@@ -337,7 +357,7 @@ async function fetchSessionsUpTo(minCount) {
   let serverHasMore
   let pages = 0
   for (;;) {
-    let url = `/api/ai/sessions?limit=${limit}`
+    let url = `/api/ai/sessions?limit=${limit}${buildTagQuery()}`
     if (cursor) url += buildCursorQuery(cursor)
     const resp = await fetch(url)
     const data = await resp.json()
@@ -374,6 +394,40 @@ function buildCursorQuery(row) {
     + `&cursor_pinned=${row.pinned ? 1 : 0}`
 }
 
+/**
+ * The tag filter must be part of EVERY list request (including each paginated
+ * page), otherwise page 2 would silently fall back to the unfiltered set.
+ */
+function buildTagQuery() {
+  return activeTag.value ? `&tag=${encodeURIComponent(activeTag.value)}` : ''
+}
+
+/**
+ * Load the tags in use in the current project for the filter bar. Tags that no
+ * session here uses are excluded server-side, so every chip yields a result.
+ */
+async function loadFilterTags() {
+  try {
+    const res = await apiGet('/api/ai/session/tags?inUse=1')
+    filterTags.value = res.tags || []
+  } catch (err) {
+    appLog.e('SessionList', 'Failed to load project tags:', err)
+    filterTags.value = []
+  }
+  // If the applied tag no longer exists (deleted, or its last session dropped
+  // it), clear the filter — otherwise the list stays locked to a condition the
+  // user can no longer see or clear from the bar.
+  if (activeTag.value && !filterTags.value.some(tg => tg.name === activeTag.value)) {
+    activeTag.value = ''
+  }
+}
+
+/** Apply/clear the tag filter from a chip click (single-select toggle). */
+function toggleTagFilter(name) {
+  activeTag.value = activeTag.value === name ? '' : name
+  loadSessions()
+}
+
 async function loadMoreSessions() {
   if (loadingMore.value || !hasMore.value || refreshing.value) return
   loadingMore.value = true
@@ -388,7 +442,7 @@ async function loadMoreSessions() {
       return
     }
     // Cursor = the last row's full sort key (pinned, createdAt, id).
-    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}`)
+    const resp = await fetch(`/api/ai/sessions?limit=${pageSize.value}${buildCursorQuery(last)}${buildTagQuery()}`)
     const data = await resp.json()
     const more = data.sessions || []
     if (more.length > 0) sessions.value = [...sessions.value, ...more]
@@ -648,6 +702,10 @@ watch(() => props.activeTab, async (tab) => {
 // project list, not hidden behind the cross tab.
 watch(() => store.state.projectRoot, () => {
   if (props.activeTab !== 'project') emit('update:activeTab', 'project')
+  // Tags are per-project: a filter carried across a project switch would hide
+  // the new project's sessions behind a tag it may not even have.
+  activeTag.value = ''
+  loadFilterTags()
 })
 
 // Bring the active session into view after a cross-project jump. The row may
@@ -678,12 +736,16 @@ function scrollActiveRowIntoView() {
 // subscription below, the drawer/sidebar list stays fresh without manual refresh.
 watch(() => store.state.sessionListVersion, () => {
   reload()
+  // Tag edits and archive/destroy also change which tags are still in use, so
+  // the filter bar's chip set has to be refreshed alongside the list.
+  loadFilterTags()
 })
 
 defineExpose({ loadSessions, addSessionLocally, reload })
 
 onMounted(() => {
   loadSessions()
+  loadFilterTags()
   // Real-time: keep the list in sync with session lifecycle events (running,
   // completed, cancelled, permission, title updates). Debounced so a stream
   // of events (e.g. running→completed) triggers one refresh.

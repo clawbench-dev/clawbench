@@ -498,3 +498,209 @@ func TestHardDeleteSession_RemovesTagLinks(t *testing.T) {
 	// The definition itself must survive (s2 still uses it).
 	require.Len(t, all, 1)
 }
+
+// ── Tag filtering on the session list ──────────────────────────────────────
+
+// TestListProjectTagsInUse_OnlyCountsSessionsInThisProject pins the filter-bar
+// contract: it must offer only tags that a session in THIS project actually
+// carries, so every chip the user can click yields a non-empty list.
+func TestListProjectTagsInUse_OnlyCountsSessionsInThisProject(t *testing.T) {
+	setupDB(t)
+	a1 := helperCreateSession(t, tagProjectA, "codebuddy", "a1")
+	a2 := helperCreateSession(t, tagProjectA, "codebuddy", "a2")
+	b1 := helperCreateSession(t, tagProjectB, "codebuddy", "b1")
+
+	require.NoError(t, service.SetSessionTags(a1, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+	require.NoError(t, service.SetSessionTags(a2, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+	require.NoError(t, service.SetSessionTags(b1, tagProjectB, []service.SessionTagRef{{Name: "onlyB"}}))
+	// A global tag used only in project B must not appear for project A.
+	require.NoError(t, service.SetSessionTags(b1, tagProjectB, []service.SessionTagRef{
+		{Name: "globalB", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	tags, err := service.ListProjectTagsInUse(tagProjectA)
+	require.NoError(t, err)
+	require.Len(t, tags, 1)
+	assert.Equal(t, "bug", tags[0].Name)
+	assert.Equal(t, 2, tags[0].Count)
+}
+
+// TestListProjectTagsInUse_ExcludesArchivedSession pins that the archived
+// predicate is load-bearing: the session keeps its link while archived (which
+// is exactly the state left behind by archiving), so a query missing
+// `archived = 0` would still offer a chip whose filter yields an empty list.
+func TestListProjectTagsInUse_ExcludesArchivedSession(t *testing.T) {
+	setupDB(t)
+	live := helperCreateSession(t, tagProjectA, "codebuddy", "live")
+	archived := helperCreateSession(t, tagProjectA, "codebuddy", "archived")
+
+	require.NoError(t, service.SetSessionTags(live, tagProjectA, []service.SessionTagRef{{Name: "keep"}}))
+	require.NoError(t, service.SetSessionTags(archived, tagProjectA, []service.SessionTagRef{{Name: "gone"}}))
+	require.NoError(t, service.ArchiveSession(tagProjectA, "codebuddy", archived))
+
+	// The link deliberately survives archiving — assert that, so the test keeps
+	// testing the predicate rather than the cleanup.
+	var links int
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM session_tag_links WHERE session_id = ?", archived,
+	).Scan(&links))
+	require.Equal(t, 1, links, "archiving must not unlink; the archived predicate is what excludes it")
+
+	tags, err := service.ListProjectTagsInUse(tagProjectA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"keep"}, namesOf(tags))
+}
+
+// TestListProjectTagsInUse_ExcludesUnlinkedDefinition covers the other way a
+// tag can look configured yet filter to nothing: the definition exists but no
+// session links to it any more.
+func TestListProjectTagsInUse_ExcludesUnlinkedDefinition(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, tagProjectA, "codebuddy", "s")
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "keep"}, {Name: "dropped"}}))
+	// Remove "dropped" from its only session; the definition stays registered.
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "keep"}}))
+
+	// Sanity: the definition is still a dialog candidate...
+	candidates, err := service.ListSessionTags(tagProjectA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dropped", "keep"}, namesOf(candidates))
+
+	// ...but not a filter-bar option.
+	tags, err := service.ListProjectTagsInUse(tagProjectA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"keep"}, namesOf(tags))
+}
+
+// TestGetSessionsPaged_FiltersByTag verifies the SQL predicate: only sessions
+// carrying the tag are returned, and hasMore reflects the FILTERED set (not the
+// unfiltered one) so pagination terminates correctly.
+func TestGetSessionsPaged_FiltersByTag(t *testing.T) {
+	setupDB(t)
+	tagged := make([]string, 0, 3)
+	for range 3 {
+		sid := helperCreateSession(t, tagProjectA, "codebuddy", "t")
+		require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+		tagged = append(tagged, sid)
+	}
+	for range 5 {
+		helperCreateSession(t, tagProjectA, "codebuddy", "u")
+	}
+
+	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "bug")
+	require.NoError(t, err)
+	assert.False(t, hasMore, "hasMore must describe the filtered set")
+	require.Len(t, got, 3)
+	ids := []string{got[0].ID, got[1].ID, got[2].ID}
+	for _, id := range tagged {
+		assert.Contains(t, ids, id)
+	}
+}
+
+// TestGetSessionsPaged_TagFilterPaginatesWithoutDuplicates guards the keyset
+// arithmetic under a filter: a JOIN-based filter would multiply rows and break
+// the "appears exactly once across pages" property.
+func TestGetSessionsPaged_TagFilterPaginatesWithoutDuplicates(t *testing.T) {
+	setupDB(t)
+	for range 5 {
+		sid := helperCreateSession(t, tagProjectA, "codebuddy", "t")
+		require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "bug"}, {Name: "extra"}}))
+	}
+
+	seen := map[string]int{}
+	var cursor, cursorID string
+	var cursorPinned *bool
+	for range 10 {
+		got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 2, cursor, cursorID, cursorPinned, "bug")
+		require.NoError(t, err)
+		for _, s := range got {
+			seen[s.ID]++
+		}
+		if !hasMore || len(got) == 0 {
+			break
+		}
+		last := got[len(got)-1]
+		cursor = last.CreatedAt.Format("2006-01-02 15:04:05")
+		cursorID = last.ID
+		p := last.Pinned
+		cursorPinned = &p
+	}
+	require.Len(t, seen, 5)
+	for id, n := range seen {
+		assert.Equalf(t, 1, n, "session %s must appear exactly once", id)
+	}
+}
+
+// TestGetSessionsPaged_TagFilterMatchesCaseInsensitively mirrors the case
+// folding of tag names: filtering by "BUG" must match a stored "bug".
+func TestGetSessionsPaged_TagFilterMatchesCaseInsensitively(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, tagProjectA, "codebuddy", "t")
+	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+	helperCreateSession(t, tagProjectA, "codebuddy", "u")
+
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "BUG")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, sid, got[0].ID)
+}
+
+// TestGetSessionsPaged_TagFilterRequiresVisibleDefinition pins the visibility
+// predicate in the filter's EXISTS clause.
+//
+// The outer query already restricts rows to this project, so a plain
+// cross-project test cannot reach the predicate — it must be driven by a
+// session in THIS project that is linked to a definition this project cannot
+// see (a project-scoped tag owned by another project). That state is reachable
+// when a session's project changes after tagging, so the filter must not treat
+// such a link as a match. The link is written directly to model that state.
+func TestGetSessionsPaged_TagFilterRequiresVisibleDefinition(t *testing.T) {
+	setupDB(t)
+	mine := helperCreateSession(t, tagProjectA, "codebuddy", "mine")
+	visible := helperCreateSession(t, tagProjectA, "codebuddy", "visible")
+
+	// "visible" is linked to a definition project A can see.
+	require.NoError(t, service.SetSessionTags(visible, tagProjectA, []service.SessionTagRef{{Name: "shared"}}))
+
+	// "mine" is linked to project B's project-scoped "shared" — same name, but
+	// not visible from project A.
+	other := helperCreateSession(t, tagProjectB, "codebuddy", "other")
+	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
+	var foreignTagID int64
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_path = ?",
+		tagProjectB,
+	).Scan(&foreignTagID))
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,
+	)
+	require.NoError(t, err)
+
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	require.NoError(t, err)
+	require.Len(t, got, 1, "only the session linked to a project-A-visible definition matches")
+	assert.Equal(t, visible, got[0].ID)
+}
+
+// TestFilterSessionsByTag_UnpaginatedPath covers the limit<=0 branch, which
+// filters in Go rather than SQL.
+func TestFilterSessionsByTag_UnpaginatedPath(t *testing.T) {
+	setupDB(t)
+	tagged := helperCreateSession(t, tagProjectA, "codebuddy", "tagged")
+	helperCreateSession(t, tagProjectA, "codebuddy", "plain")
+	require.NoError(t, service.SetSessionTags(tagged, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
+
+	all, err := service.GetSessions(tagProjectA, "")
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+
+	got, err := service.FilterSessionsByTag(all, tagProjectA, "bug")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, tagged, got[0].ID)
+
+	// No matches is an empty slice, not an error.
+	none, err := service.FilterSessionsByTag(all, tagProjectA, "nope")
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}

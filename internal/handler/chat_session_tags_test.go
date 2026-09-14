@@ -389,3 +389,117 @@ func TestServeSessionTags_DeleteUsesScope(t *testing.T) {
 	require.Len(t, globalTags, 1)
 	assert.Equal(t, service.SessionTagScopeGlobal, globalTags[0].Scope)
 }
+
+// ── Session-list tag filter (HTTP level) ───────────────────────────────────
+
+// TestServeSessions_TagQueryParamFilters pins that the `tag` query param is
+// actually read and applied, and that hasMore describes the filtered set.
+func TestServeSessions_TagQueryParamFilters(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	tagged, err := service.CreateSession(env.ProjectDir, "claude", "Tagged", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.CreateSession(env.ProjectDir, "claude", "Plain", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(tagged, env.ProjectDir, []service.SessionTagRef{{Name: "bug"}}))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions?limit=10&tag=bug", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var body struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+		HasMore bool `json:"hasMore"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Sessions, 1)
+	assert.Equal(t, tagged, body.Sessions[0].ID)
+	assert.False(t, body.HasMore)
+}
+
+// TestServeSessions_TagQueryParamCaseInsensitive mirrors the name folding.
+func TestServeSessions_TagQueryParamCaseInsensitive(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Tagged", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(sid, env.ProjectDir, []service.SessionTagRef{{Name: "bug"}}))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions?limit=10&tag=BUG", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var body struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Sessions, 1)
+	assert.Equal(t, sid, body.Sessions[0].ID)
+}
+
+// TestServeSessions_NoTagParamReturnsAll is the backward-compatibility guard:
+// omitting the param must not filter anything out.
+func TestServeSessions_NoTagParamReturnsAll(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Tagged", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.CreateSession(env.ProjectDir, "claude", "Plain", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(sid, env.ProjectDir, []service.SessionTagRef{{Name: "bug"}}))
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions?limit=10", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var body struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Len(t, body.Sessions, 2)
+}
+
+// TestServeSessionTags_InUseModeOnlyReturnsUsedTags covers the filter-bar data
+// source: an unused global tag must not be offered (clicking it would show an
+// empty list), while the dialog's default view still lists it.
+func TestServeSessionTags_InUseModeOnlyReturnsUsedTags(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	used, err := service.CreateSession(env.ProjectDir, "claude", "Used", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(used, env.ProjectDir, []service.SessionTagRef{{Name: "inuse"}}))
+
+	// An unused global tag: a dialog candidate, but not a filter option.
+	other, err := service.CreateSession(env.ProjectDir+"-elsewhere", "claude", "Other", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	require.NoError(t, service.SetSessionTags(other, env.ProjectDir+"-elsewhere", []service.SessionTagRef{
+		{Name: "unusedglobal", Scope: service.SessionTagScopeGlobal},
+	}))
+
+	// Dialog view (default): both candidates.
+	allReq := newRequest(t, http.MethodGet, "/api/ai/session/tags", nil)
+	allReq = withProjectCookie(allReq, env.ProjectDir)
+	allW := callHandler(ServeSessionTags, allReq)
+	assertOK(t, allW)
+	assert.ElementsMatch(t, []string{"inuse", "unusedglobal"}, tagNames(decodeTags(t, allW.Body.Bytes())))
+
+	// Filter-bar view: only the one with a session using it here.
+	inUseReq := newRequest(t, http.MethodGet, "/api/ai/session/tags?inUse=1", nil)
+	inUseReq = withProjectCookie(inUseReq, env.ProjectDir)
+	inUseW := callHandler(ServeSessionTags, inUseReq)
+	assertOK(t, inUseW)
+	assert.Equal(t, []string{"inuse"}, tagNames(decodeTags(t, inUseW.Body.Bytes())))
+}

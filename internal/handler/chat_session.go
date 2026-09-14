@@ -102,6 +102,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		cursor := r.URL.Query().Get("cursor")
 		cursorID := r.URL.Query().Get("cursor_id")
+		// Optional tag filter: restricts the page to sessions carrying this tag
+		// (visible in this project). Applied server-side so pagination and
+		// hasMore stay correct — filtering only the loaded page client-side
+		// would show "no matches" until the user scrolled far enough.
+		tagName := strings.TrimSpace(r.URL.Query().Get("tag"))
 		// cursor_pinned completes the keyset: the list is ordered by
 		// (pinned DESC, created_at DESC, id DESC), so paging on created_at alone
 		// re-returns pinned rows on every page. Absent/empty keeps the legacy
@@ -124,10 +129,13 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		var err error
 
 		if limit > 0 {
-			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorPinned)
+			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorPinned, tagName)
 		} else {
 			sessions, err = service.GetSessions(projectPath, "")
 			hasMore = false
+			if err == nil && tagName != "" {
+				sessions, err = service.FilterSessionsByTag(sessions, projectPath, tagName)
+			}
 		}
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load sessions")))
@@ -602,8 +610,9 @@ func attachSessionTags(sessions []model.ChatSession) {
 
 // ServeSessionTags handles GET/DELETE /api/ai/session/tags.
 //
-//	GET    → the tag candidates selectable in the current project
-//	         (global tags + this project's own tags)
+//	GET    → tag candidates for the current project
+//	         (?inUse=1 narrows to tags actually carried by a session here,
+//	          which is what the session-list filter bar shows)
 //	DELETE → delete a tag definition everywhere
 //	         (name + optional scope in the query string)
 func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
@@ -614,7 +623,17 @@ func ServeSessionTags(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		tags, err := service.ListSessionTags(projectPath)
+		// Two distinct views share this endpoint: the dialog needs every
+		// selectable candidate (including unused global tags), while the filter
+		// bar must not offer a tag that would always yield an empty list.
+		inUse := r.URL.Query().Get("inUse") == "1"
+		var tags []service.SessionTag
+		var err error
+		if inUse {
+			tags, err = service.ListProjectTagsInUse(projectPath)
+		} else {
+			tags, err = service.ListSessionTags(projectPath)
+		}
 		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to load session tags")))
 			return

@@ -901,6 +901,7 @@ export default {
     globalHint: '全局标签在所有项目中都可选用',
     deleteTag: '删除标签',
     deleteConfirm: '删除标签"{name}"？该标签将从所有会话中移除。',
+    filterLabel: '按标签筛选会话',
   },
   sessionSearch: {
     title: '会话搜索',
