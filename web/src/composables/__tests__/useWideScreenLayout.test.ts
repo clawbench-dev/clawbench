@@ -21,6 +21,8 @@ import {
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
+import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
 
 beforeEach(() => {
   _resetForTest()
@@ -265,9 +267,12 @@ describe('activePane focus tracking', () => {
 })
 
 describe('wideDockTabOrder', () => {
+  // Secondary tabs = the registry minus the primary head, in registry order.
+  const SECONDARY_TABS = DOCK_TABS.filter((t) => !t.primary).map((t) => t.id)
+
   it('puts the fixed primary tabs first, then the secondary tabs in given order', () => {
-    const all = wideDockTabOrder(['forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
-    expect(all).toEqual(['browse', 'view', 'history', 'forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings'])
+    const all = wideDockTabOrder(SECONDARY_TABS)
+    expect(all).toEqual([...WIDE_SCREEN_PRIMARY_TABS, ...SECONDARY_TABS])
     expect(all).toEqual(WIDE_SCREEN_DOCK_TABS)
   })
 
@@ -285,21 +290,69 @@ describe('wideDockTabOrder', () => {
   })
 })
 
+describe('dock tab registry (single source of truth)', () => {
+  it('derives the switch whitelist from the registry — no second hand-written list', () => {
+    // The whole point of the registry: the whitelist is the registry's ids, so
+    // the two cannot diverge. This is deliberately an identity check on the
+    // exported array: if someone reintroduces a separately maintained list, the
+    // reference stops matching DOCK_TAB_IDS and this fails.
+    expect(WIDE_SCREEN_DOCK_TABS).toBe(DOCK_TAB_IDS)
+    expect(WIDE_SCREEN_DOCK_TABS).toEqual(DOCK_TABS.map((t) => t.id))
+  })
+
+  it('has unique ids and every id is reachable by the type guard', () => {
+    const ids = DOCK_TABS.map((t) => t.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const id of ids) expect(isDockTabId(id)).toBe(true)
+  })
+
+  it('primary tabs are a prefix-ordered subset of the registry', () => {
+    const primary = DOCK_TABS.filter((t) => t.primary).map((t) => t.id)
+    expect(primary).toEqual([...WIDE_SCREEN_PRIMARY_TABS])
+    // Primary tabs must come first in registry order, because the dock renders
+    // WIDE_SCREEN_PRIMARY_TABS before the secondary list.
+    expect(DOCK_TABS.map((t) => t.id).slice(0, primary.length)).toEqual(primary)
+  })
+
+  it('every registry entry carries an i18n title key', () => {
+    for (const tab of DOCK_TABS) {
+      expect(tab.titleKey, `${tab.id} has no titleKey`).toMatch(/^[a-z]+\.[A-Za-z]/)
+    }
+  })
+
+  it('every registry entry has an icon attached in the icon module', () => {
+    // Icons live in dockTabMeta.ts (kept out of dockTabs.ts so that importing
+    // the ids does not pull lucide into composable module graphs). Both halves
+    // must cover exactly the same ids.
+    expect(DOCK_TABS_WITH_ICONS.map((t) => t.id)).toEqual(DOCK_TABS.map((t) => t.id))
+    for (const tab of DOCK_TABS_WITH_ICONS) {
+      expect(tab.icon, `${tab.id} has no icon`).toBeTruthy()
+    }
+  })
+
+  it('rejects unknown ids', () => {
+    expect(isDockTabId('not-a-tab')).toBe(false)
+    expect(isDockTabId('')).toBe(false)
+  })
+})
+
 describe('wide dock tab reachability (regression)', () => {
-  // A tab rendered in the wide dock but missing from WIDE_SCREEN_DOCK_TABS is a
-  // dead button: switchLeftTab() returns early, so clicking it does nothing at
-  // all (no state change, no error). That was the forge tab bug — it is
-  // rendered by the wide dock (App.vue renders overflowTabs, which starts with
-  // 'forge') but was never added to the whitelist.
-  const SECONDARY_TABS = ['forge', 'tasks', 'terminal', 'proxy', 'stats', 'settings']
+  // A tab rendered in the wide dock but not switchable is a dead button:
+  // switchLeftTab() rejects it, so clicking does nothing visible. That was the
+  // forge tab bug — it was rendered by the wide dock (App.vue's overflowTabs,
+  // which starts with 'forge') but missing from the whitelist.
+  //
+  // The render list comes from secondaryDockTabs(), the same function App.vue's
+  // overflowTabs computed calls, so this asserts the real render list rather
+  // than the registry compared against itself.
+  const RENDERED_ALL = wideDockTabOrder(secondaryDockTabs())
 
   it('every tab the wide dock renders can actually be switched to', () => {
-    const rendered = wideDockTabOrder(SECONDARY_TABS)
     // Direct whitelist coverage: the dock renders exactly these tabs, so the
     // switch whitelist must contain every one of them.
-    expect(rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab))).toEqual([])
+    expect(RENDERED_ALL.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab))).toEqual([])
 
-    for (const tab of rendered) {
+    for (const tab of RENDERED_ALL) {
       resetWideScreenState()
       // Start from a tab that is guaranteed different from the target, so the
       // switch below is a real transition rather than the same-tab early return.
@@ -311,6 +364,37 @@ describe('wide dock tab reachability (regression)', () => {
       expect(leftTab.value, `dock tab "${tab}" is rendered but not switchable`).toBe(tab)
       expect(setActiveTab, `dock tab "${tab}" did not sync activeTab`).toHaveBeenCalledWith(tab)
     }
+  })
+
+  it('still holds for every runtime gate combination', () => {
+    // The gates change *which* tabs render; all four combinations must remain
+    // switchable. This is the case the old registry-vs-registry test could not
+    // see, because the gates live outside the registry.
+    for (const terminalDisabled of [false, true]) {
+      for (const sshDisabled of [false, true]) {
+        const rendered = wideDockTabOrder(secondaryDockTabs({ terminalDisabled, sshDisabled }))
+        expect(
+          rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
+          `gate combination terminalDisabled=${terminalDisabled} sshDisabled=${sshDisabled}`,
+        ).toEqual([])
+      }
+    }
+  })
+
+  it('gates hide exactly terminal and proxy, and nothing else', () => {
+    const all = secondaryDockTabs()
+    expect(all).toContain('terminal')
+    expect(all).toContain('proxy')
+    expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true })).toContain('proxy')
+    expect(secondaryDockTabs({ sshDisabled: true })).not.toContain('proxy')
+    expect(secondaryDockTabs({ sshDisabled: true })).toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('proxy')
+    // Order is registry order with the gated ones removed, never reordered.
+    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).toEqual(
+      all.filter((t) => t !== 'terminal' && t !== 'proxy'),
+    )
   })
 
   it('forge is switchable and persists across a re-init', () => {

@@ -672,6 +672,223 @@ describe('useCodeLinkPreview', () => {
     expect(preview.errorCode.value).toBe('not-found')
   })
 
+  it('requests only a line window instead of the whole file', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: 'const a = 1',
+      name: 'big.ts',
+      path: 'big.ts',
+      supported: true,
+      size: 50 * 1024 * 1024,
+      totalLines: 1_000_000,
+      windowStart: 470,
+      windowEnd: 830,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    const url = mockApiGet.mock.calls[0][0] as string
+    expect(url).toContain('lineStart=270')
+    expect(url).toContain('lineEnd=730')
+    // A 50 MB file must not be fetched whole.
+    expect(url).not.toBe('/api/file/big.ts')
+  })
+
+  it('reports total lines from the windowed response, not the window length', async () => {
+    // The server echoes back exactly the requested window (270..730), plus the
+    // file's true length — which the window itself cannot reveal.
+    mockApiGet.mockResolvedValueOnce({
+      content: Array.from({ length: 461 }, (_, i) => `line ${270 + i}`).join('\n'),
+      name: 'big.ts',
+      path: 'big.ts',
+      supported: true,
+      size: 50 * 1024 * 1024,
+      totalLines: 1_000_000,
+      windowStart: 270,
+      windowEnd: 730,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.slicedCode.value?.totalLines).toBe(1_000_000)
+    // Render window is 470..530 in absolute file coordinates.
+    expect(preview.slicedCode.value?.startLine).toBe(470)
+    expect(preview.slicedCode.value?.code.split('\n')[30]).toBe('line 500')
+  })
+
+  it('caches a windowed slice of a large file', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      content: Array.from({ length: 461 }, (_, i) => `line ${270 + i}`).join('\n'),
+      name: 'big.ts',
+      path: 'big.ts',
+      supported: true,
+      size: 50 * 1024 * 1024,
+      totalLines: 1_000_000,
+      windowStart: 270,
+      windowEnd: 730,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+
+    // Re-opening the same target must be served from the LRU, not re-fetched.
+    preview.close()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+    expect(preview.slicedCode.value?.totalLines).toBe(1_000_000)
+  })
+
+  it('widens the window when expansion runs past the fetched slice', async () => {
+    // First response covers the planned 270..730; expanding to the top needs
+    // lines above 270, which triggers exactly one wider re-fetch.
+    mockApiGet
+      .mockResolvedValueOnce({
+        content: Array.from({ length: 461 }, (_, i) => `line ${270 + i}`).join('\n'),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 270,
+        windowEnd: 730,
+      })
+      .mockResolvedValueOnce({
+        content: Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 1,
+        windowEnd: 200,
+      })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(preview.slicedCode.value?.startLine).toBe(470)
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+
+    preview.expandToTop()
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(mockApiGet).toHaveBeenCalledTimes(2)
+    const widenedUrl = mockApiGet.mock.calls[1][0] as string
+    expect(widenedUrl).toContain('lineStart=1')
+    expect(preview.slicedCode.value?.startLine).toBe(1)
+  })
+
+  it('does not flip back to loading while widening the window', async () => {
+    mockApiGet
+      .mockResolvedValueOnce({
+        content: Array.from({ length: 461 }, (_, i) => `line ${270 + i}`).join('\n'),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 270,
+        windowEnd: 730,
+      })
+      .mockResolvedValueOnce({
+        content: Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 1,
+        windowEnd: 200,
+      })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(preview.status.value).toBe('ready')
+
+    // The widen fetch is silent: the existing slice stays on screen (the expand
+    // handler is anchoring scroll around it), so status never returns to loading.
+    preview.expandToTop()
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(preview.status.value).toBe('ready')
+  })
+
+  it('keeps the existing slice when a silent widen fails', async () => {
+    mockApiGet
+      .mockResolvedValueOnce({
+        content: Array.from({ length: 461 }, (_, i) => `line ${270 + i}`).join('\n'),
+        name: 'big.ts',
+        path: 'big.ts',
+        supported: true,
+        size: 50 * 1024 * 1024,
+        totalLines: 1_000_000,
+        windowStart: 270,
+        windowEnd: 730,
+      })
+      .mockRejectedValueOnce({ message: 'network down', status: 500 })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'big.ts', lineStart: 500, lineEnd: 500 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+    expect(preview.status.value).toBe('ready')
+
+    // The background widen fails: the user must keep reading what was already
+    // rendered, not get an error card in place of a good preview. The slice falls
+    // back to the fetched window's top edge, which is still real content.
+    preview.expandToTop()
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(mockApiGet).toHaveBeenCalledTimes(2)
+    expect(preview.status.value).toBe('ready')
+    expect(preview.slicedCode.value?.startLine).toBe(270)
+    expect(preview.slicedCode.value?.code).toContain('line 270')
+  })
+
+  it('surfaces a server-truncated window instead of a blank pane', async () => {
+    // The server hit its byte cap on an oversized line: empty content, but
+    // windowStart=1/windowEnd=0 marks "no lines captured".
+    mockApiGet.mockResolvedValueOnce({
+      content: '',
+      name: 'giant.ts',
+      path: 'giant.ts',
+      supported: true,
+      size: 3 * 1024 * 1024,
+      totalLines: 3,
+      windowStart: 1,
+      windowEnd: 0,
+      windowTruncated: true,
+    })
+
+    const preview = useCodeLinkPreview()
+    preview.showPreview({ filePath: 'giant.ts', lineStart: 1, lineEnd: 3 })
+    await vi.runAllTicks()
+    await Promise.resolve()
+
+    expect(preview.windowTruncated.value).toBe(true)
+    // The empty window is reported, not silently treated as a valid slice.
+    expect(preview.slicedCode.value?.endLine).toBeLessThan(
+      preview.slicedCode.value?.startLine ?? 0
+    )
+    // Widening cannot help — the cap would just trip again.
+    expect(mockApiGet).toHaveBeenCalledTimes(1)
+  })
+
   it('supports context expansion and shrinking', async () => {
     mockApiGet.mockResolvedValueOnce({
       content: Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join('\n'),

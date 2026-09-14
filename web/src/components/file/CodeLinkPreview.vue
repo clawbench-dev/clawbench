@@ -109,6 +109,9 @@
       <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
         {{ t('file.codePreview.truncatedNotice', { n: 200, size: '512KB' }) }}
       </div>
+      <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
+        {{ t('file.codePreview.windowTruncatedNotice') }}
+      </div>
 
       <!-- Mobile In-Preview Search Bar -->
       <div v-if="isSearchOpen" class="code-preview-search-bar">
@@ -583,6 +586,9 @@
         </div>
         <div v-if="preview.slicedCode.value?.renderTruncated" class="code-preview-notice notice-info">
           {{ t('file.codePreview.truncatedNotice', { n: 200, size: '512KB' }) }}
+        </div>
+        <div v-if="preview.windowTruncated.value" class="code-preview-notice notice-warning">
+          {{ t('file.codePreview.windowTruncatedNotice') }}
         </div>
       </div>
 

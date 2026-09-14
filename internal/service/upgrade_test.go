@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash"
@@ -18,6 +20,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -222,7 +226,7 @@ func TestFetchUpgradeInfo_FallsBackToUserMirror(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://mirror.example.com/pkg/-/pkg-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -350,49 +354,180 @@ func writeNpmRc(t *testing.T, content string) {
 	}
 }
 
-// --- verifyIntegrity ---
+// --- resolveExpectedDigest ---
 
-func TestVerifyIntegrity_ValidSHA512(t *testing.T) {
-	data := []byte("hello world")
-	hasher := sha512.New()
-	hasher.Write(data)
-	expectedHash := hasher.Sum(nil)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(expectedHash)
+func TestResolveExpectedDigest_SHA512SRI(t *testing.T) {
+	sum := sha512.Sum512([]byte("hello world"))
+	integrity := "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, integrity)
-	assert.NoError(t, err)
+	digest, err := resolveExpectedDigest(integrity, "")
+	require.NoError(t, err)
+	assert.Equal(t, "sha512", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
 }
 
-func TestVerifyIntegrity_InvalidPrefix_SkipsVerification(t *testing.T) {
-	hasher := sha512.New()
-	hasher.Write([]byte("test"))
+func TestResolveExpectedDigest_SHA1SRI(t *testing.T) {
+	sum := sha1.Sum([]byte("hello world"))
+	integrity := "sha1-" + base64.StdEncoding.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, "sha256-abc123")
-	assert.NoError(t, err) // unsupported algorithm → skip, no error
+	digest, err := resolveExpectedDigest(integrity, "")
+	require.NoError(t, err)
+	assert.Equal(t, "sha1", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
 }
 
-func TestVerifyIntegrity_MalformedBase64(t *testing.T) {
-	hasher := sha512.New()
-	hasher.Write([]byte("test"))
+// npm's own client (pacote) falls back to the legacy hex shasum when
+// dist.integrity is absent, which is legal for older packages and for
+// registries that omit it. ClawBench must do the same rather than install an
+// unverified binary.
+func TestResolveExpectedDigest_FallsBackToShasum(t *testing.T) {
+	sum := sha1.Sum([]byte("legacy package"))
+	shasum := hex.EncodeToString(sum[:])
 
-	err := verifyIntegrity(hasher, "sha512-!!!not-base64!!!")
-	assert.Error(t, err)
+	digest, err := resolveExpectedDigest("", shasum)
+	require.NoError(t, err)
+	assert.Equal(t, "sha1", digest.algorithm)
+	assert.Equal(t, sum[:], digest.hash)
+}
+
+func TestResolveExpectedDigest_IntegrityWinsOverShasum(t *testing.T) {
+	sri := sha512.Sum512([]byte("real"))
+	legacy := sha1.Sum([]byte("real"))
+
+	digest, err := resolveExpectedDigest(
+		"sha512-"+base64.StdEncoding.EncodeToString(sri[:]),
+		hex.EncodeToString(legacy[:]),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "sha512", digest.algorithm)
+}
+
+// The core of the fix: a response with no hash at all must be refused, not
+// silently accepted. Previously this reached downloadAndExtract and skipped
+// verification entirely.
+func TestResolveExpectedDigest_NeitherField_Errors(t *testing.T) {
+	digest, err := resolveExpectedDigest("", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither dist.integrity nor dist.shasum")
+	assert.Nil(t, digest.hash)
+}
+
+func TestResolveExpectedDigest_WhitespaceOnly_Errors(t *testing.T) {
+	_, err := resolveExpectedDigest("   ", "\t")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "neither dist.integrity nor dist.shasum")
+}
+
+// An algorithm we cannot compute must fail closed instead of skipping.
+func TestResolveExpectedDigest_UnsupportedAlgorithm_Errors(t *testing.T) {
+	for _, integrity := range []string{
+		"sha256-abc123",
+		"md5-abc123",
+		"blake2b-abc123",
+	} {
+		t.Run(integrity, func(t *testing.T) {
+			_, err := resolveExpectedDigest(integrity, "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unsupported integrity algorithm")
+		})
+	}
+}
+
+func TestResolveExpectedDigest_MissingPrefix_Errors(t *testing.T) {
+	_, err := resolveExpectedDigest("abcdef123456", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing algorithm prefix")
+}
+
+func TestResolveExpectedDigest_MalformedBase64_Errors(t *testing.T) {
+	_, err := resolveExpectedDigest("sha512-!!!not-base64!!!", "")
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to decode integrity hash")
 }
 
-func TestVerifyIntegrity_HashMismatch(t *testing.T) {
+func TestResolveExpectedDigest_WrongHashLength_Errors(t *testing.T) {
+	// Valid base64, but not the 64 bytes a sha512 digest must be.
+	short := base64.StdEncoding.EncodeToString([]byte("too short"))
+
+	_, err := resolveExpectedDigest("sha512-"+short, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 64")
+}
+
+func TestResolveExpectedDigest_MalformedShasum_Errors(t *testing.T) {
+	_, err := resolveExpectedDigest("", "not-hex-zzzz")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to decode shasum")
+}
+
+func TestResolveExpectedDigest_ShortShasum_Errors(t *testing.T) {
+	_, err := resolveExpectedDigest("", "abcd")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 20")
+}
+
+// --- expectedDigest.verify ---
+
+func TestExpectedDigest_VerifyMatch(t *testing.T) {
+	sum := sha512.Sum512([]byte("payload"))
+	digest := expectedDigest{algorithm: "sha512", hash: sum[:]}
+
 	hasher := sha512.New()
-	hasher.Write([]byte("actual data"))
+	_, _ = hasher.Write([]byte("payload"))
 
-	// Build integrity from different data
-	wrongHasher := sha512.New()
-	wrongHasher.Write([]byte("wrong data"))
-	wrongHash := wrongHasher.Sum(nil)
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(wrongHash)
+	assert.NoError(t, digest.verify(hasher))
+}
 
-	err := verifyIntegrity(hasher, integrity)
-	assert.Error(t, err)
+func TestExpectedDigest_VerifyMismatch(t *testing.T) {
+	sum := sha512.Sum512([]byte("expected"))
+	digest := expectedDigest{algorithm: "sha512", hash: sum[:]}
+
+	hasher := sha512.New()
+	_, _ = hasher.Write([]byte("actual"))
+
+	err := digest.verify(hasher)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hash mismatch")
+}
+
+func TestExpectedDigest_VerifySHA1Mismatch(t *testing.T) {
+	sum := sha1.Sum([]byte("expected"))
+	digest := expectedDigest{algorithm: "sha1", hash: sum[:]}
+
+	hasher := sha1.New()
+	_, _ = hasher.Write([]byte("actual"))
+
+	err := digest.verify(hasher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hash mismatch")
+}
+
+func TestExpectedDigest_NewHasherSelectsAlgorithm(t *testing.T) {
+	assert.Equal(t, sha512.Size, expectedDigest{algorithm: "sha512"}.newHasher().Size())
+	assert.Equal(t, sha1.Size, expectedDigest{algorithm: "sha1"}.newHasher().Size())
+}
+
+// --- shortHash / truncateForLog ---
+
+func TestShortHash_TruncatesLongHash(t *testing.T) {
+	long := bytes.Repeat([]byte{0xAB}, 32)
+	assert.Equal(t, long[:8], shortHash(long))
+}
+
+func TestShortHash_KeepsShortInput(t *testing.T) {
+	short := []byte{1, 2, 3}
+	assert.Equal(t, short, shortHash(short))
+}
+
+func TestTruncateForLog_TruncatesLongValue(t *testing.T) {
+	long := strings.Repeat("a", 50)
+	got := truncateForLog(long)
+	assert.Equal(t, long[:20]+"...", got)
+	assert.Len(t, got, 23)
+}
+
+func TestTruncateForLog_KeepsShortValue(t *testing.T) {
+	assert.Equal(t, "sha256", truncateForLog("sha256"))
 }
 
 // --- equalHashes ---
@@ -659,7 +794,7 @@ func TestFetchUpgradeInfo_Success(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -740,7 +875,7 @@ func TestFetchUpgradeInfo_NPMMirrorTarballRewrite(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -832,12 +967,70 @@ func TestDownloadAndExtract_Success(t *testing.T) {
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, integrity, destPath)
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, integrity, ""), destPath)
 	require.NoError(t, err)
 
 	got, err := os.ReadFile(destPath)
 	require.NoError(t, err)
 	assert.Equal(t, binContent, got)
+}
+
+// A tarball delivered with a legacy hex sha1 shasum and no dist.integrity must
+// still be verified (npm's own fallback behavior).
+func TestDownloadAndExtract_SHA1ShasumFallback(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	binContent := []byte("#!/bin/sh\necho legacy")
+	tarball, integrity := buildTarball(t, binContent)
+	require.True(t, strings.HasPrefix(integrity, "sha512-"))
+
+	// The real sha1 of the tarball, hex-encoded as npm's dist.shasum is.
+	sum := sha1.Sum(tarball)
+	shasum := hex.EncodeToString(sum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", shasum), destPath)
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(destPath)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
+}
+
+// A shasum that does not match the served tarball must be rejected.
+func TestDownloadAndExtract_ShasumMismatch(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	tarball, _ := buildTarball(t, []byte("binary data"))
+
+	wrongSum := sha1.Sum([]byte("something else entirely"))
+	wrongShasum := hex.EncodeToString(wrongSum[:])
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
+		w.Write(tarball)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", wrongShasum), destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "dest file should be removed on integrity failure")
 }
 
 func TestDownloadAndExtract_NonOKStatus(t *testing.T) {
@@ -852,7 +1045,7 @@ func TestDownloadAndExtract_NonOKStatus(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "sha512-"+base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)), ""), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "download returned status 403")
 }
@@ -880,7 +1073,7 @@ func TestDownloadAndExtract_IntegrityMismatch(t *testing.T) {
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, wrongIntegrity, destPath)
+	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, wrongIntegrity, ""), destPath)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "integrity verification failed")
 
@@ -918,7 +1111,7 @@ func TestDownloadAndExtract_BinaryNotFoundInTarball(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err = downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err = downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in tarball")
 }
@@ -936,7 +1129,7 @@ func TestDownloadAndExtract_InvalidGzip(t *testing.T) {
 	upgradeHTTPClient = ts.Client()
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "gzip decompress failed")
 }
@@ -958,7 +1151,7 @@ func TestDownloadAndExtract_CancelledContext(t *testing.T) {
 	cancel() // cancel immediately
 
 	destDir := t.TempDir()
-	err := downloadAndExtract(ctx, ts.URL, "", filepath.Join(destDir, "out"))
+	err := downloadAndExtract(ctx, ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
 	assert.Error(t, err)
 }
 
@@ -985,8 +1178,37 @@ func TestDownloadAndExtract_DestNotWritable(t *testing.T) {
 	require.NoError(t, os.Chmod(destDir, 0o444))
 	defer os.Chmod(destDir, 0o755)
 
-	err := downloadAndExtract(context.Background(), ts.URL, "", filepath.Join(destDir, "clawbench-new"))
+	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "clawbench-new"))
 	assert.Error(t, err)
+}
+
+// --- helper: mustDigest resolves registry fields into an expectedDigest,
+// failing the test if they are unusable.
+func mustDigest(t *testing.T, integrity, shasum string) expectedDigest {
+	t.Helper()
+	digest, err := resolveExpectedDigest(integrity, shasum)
+	require.NoError(t, err, "resolveExpectedDigest(%q, %q)", integrity, shasum)
+	return digest
+}
+
+// wellFormedIntegrity is a syntactically valid sha512 SRI string (64 zero
+// bytes). Tests whose subject is not verification need digest resolution to
+// succeed so they reach the code path under test; it deliberately does not
+// match any real tarball.
+var wellFormedIntegrity = "sha512-" + base64.StdEncoding.EncodeToString(make([]byte, sha512.Size))
+
+// --- helper: dummyDigest returns a well-formed digest for tests whose subject
+// is a failure that occurs before or independently of verification (bad HTTP
+// status, corrupt gzip, missing binary, unwritable dest).
+func dummyDigest(t *testing.T) expectedDigest {
+	t.Helper()
+	return mustDigest(t, "sha512-"+base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)), "")
+}
+
+// --- helper: sha512SRI builds a "sha512-<base64>" SRI string for data.
+func sha512SRI(data []byte) string {
+	sum := sha512.Sum512(data)
+	return "sha512-" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 // --- helper: buildTarball creates a .tgz containing a single binary file
@@ -1021,17 +1243,6 @@ func buildTarball(t *testing.T, binContent []byte) ([]byte, string) {
 
 	integrity := "sha512-" + base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 	return buf.Bytes(), integrity
-}
-
-// --- verifyIntegrity with hash.Hash interface ---
-
-func TestVerifyIntegrity_EmptyIntegrity(t *testing.T) {
-	// Empty integrity string → hasher is nil at call site, but verifyIntegrity
-	// may still be called if both hasher and integrity are non-nil.
-	// Test with non-empty integrity and non-sha512 prefix: should skip verification.
-	hasher := sha512.New()
-	err := verifyIntegrity(hasher, "")
-	assert.NoError(t, err) // empty string has no sha512- prefix → skip
 }
 
 // --- equalHashes edge cases ---
@@ -1146,50 +1357,133 @@ func TestCleanStaleUpgradeTempDirs_SkipsFiles(t *testing.T) {
 	assert.NoError(t, err, "regular file matching pattern should not be removed")
 }
 
-// --- verifyIntegrity: correct hash with real sha512 ---
+// --- expectedDigest.verify with a real sha512 digest ---
 
-func TestVerifyIntegrity_CorrectHash(t *testing.T) {
+func TestExpectedDigest_VerifyRealSHA512(t *testing.T) {
 	data := []byte("test content for integrity")
+	digest := mustDigest(t, sha512SRI(data), "")
+
 	hasher := sha512.New()
 	_, _ = hasher.Write(data)
-	actualHash := hasher.Sum(nil)
 
-	integrity := "sha512-" + base64.StdEncoding.EncodeToString(actualHash)
-
-	// Create a new hasher that has the same data fed to it
-	testHasher := sha512.New()
-	_, _ = testHasher.Write(data)
-
-	err := verifyIntegrity(testHasher, integrity)
-	assert.NoError(t, err)
+	assert.NoError(t, digest.verify(hasher))
 }
 
-// --- downloadAndExtract without integrity (empty string) ---
+// --- downloadAndExtract refuses a tarball it cannot verify ---
 
-func TestDownloadAndExtract_NoIntegrity(t *testing.T) {
+// The regression test for the fail-open bug: a registry response with neither
+// dist.integrity nor dist.shasum must abort the whole upgrade before anything
+// is downloaded. Previously the empty integrity string caused verification to
+// be skipped and the binary was installed unverified.
+func TestPerformUpgrade_NoUsableHashRefusesInstall(t *testing.T) {
+	dir := withTempDataDir(t)
+
+	// A real file stands in for the on-disk binary, and a version behind the
+	// target defeats the short-circuit so the download path is reached.
+	live := filepath.Join(dir, "bin", "clawbench")
+	require.NoError(t, os.MkdirAll(filepath.Dir(live), 0o755))
+	require.NoError(t, os.WriteFile(live, []byte("binary"), 0o755))
+	require.NoError(t, WriteSelfPath(live))
+
+	origVer := selfBinaryVersion
+	selfBinaryVersion = func(string) (string, error) { return "0.10.0", nil }
+	t.Cleanup(func() { selfBinaryVersion = origVer })
+
+	// The registry advertises an upgrade but supplies no hash at all.
+	var tarballHits int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, ".tgz") {
+			atomic.AddInt32(&tarballHits, 1)
+			http.Error(w, "must not be downloaded", http.StatusInternalServerError)
+			return
+		}
+		resp := npmRegistryResponse{}
+		resp.Version = "99.0.0"
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		// Both dist.integrity and dist.shasum deliberately left empty.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(ts.Close)
+
+	origClient := upgradeHTTPClient
+	upgradeHTTPClient = &http.Client{Transport: &failoverTransport{defaultBase: ts.URL}}
+	t.Cleanup(func() { upgradeHTTPClient = origClient })
+
+	origChina := platform.ChinaMirrorChecked.Load()
+	platform.ChinaMirrorChecked.Store(2) // non-China → default base
+	t.Cleanup(func() { platform.ChinaMirrorChecked.Store(origChina) })
+
+	ResetUpgradeState()
+	t.Cleanup(ResetUpgradeState)
+
+	performUpgrade(context.Background())
+
+	s := GetUpgradeState()
+	require.Equal(t, UpgradePhaseFailed, s.Phase, "an unverifiable upgrade must fail, not proceed")
+	assert.Contains(t, s.Error, "unverified binary")
+	assert.Equal(t, int32(0), atomic.LoadInt32(&tarballHits),
+		"no tarball may be fetched when the registry supplied no usable hash")
+}
+
+// downloadAndExtract itself always verifies: there is no longer a code path
+// that reaches extraction without a digest.
+func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 	origClient := upgradeHTTPClient
 	defer func() { upgradeHTTPClient = origClient }()
 
-	binContent := []byte("binary without integrity check")
-	tarball := buildTarballNoIntegrity(t, binContent)
+	binContent := []byte("binary")
+	tarball, _ := buildTarball(t, binContent)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tarball)))
 		w.Write(tarball)
 	}))
 	defer ts.Close()
-
 	upgradeHTTPClient = ts.Client()
 
-	destDir := t.TempDir()
-	destPath := filepath.Join(destDir, "clawbench-new")
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 
-	err := downloadAndExtract(context.Background(), ts.URL, "", destPath)
-	require.NoError(t, err)
+	// A deliberately wrong sha1 digest must be rejected even though the tarball
+	// itself is perfectly well-formed.
+	wrong := sha1.Sum([]byte("not the tarball"))
+	err := downloadAndExtract(context.Background(), ts.URL,
+		mustDigest(t, "", hex.EncodeToString(wrong[:])), destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
 
-	got, err := os.ReadFile(destPath)
-	require.NoError(t, err)
-	assert.Equal(t, binContent, got)
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "binary must not remain on disk after failed verification")
+}
+
+// The digest is checked against the bytes actually served, so a tarball that is
+// swapped after the metadata was fetched is still caught.
+func TestDownloadAndExtract_DetectsSwappedTarball(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	// The registry's hash was computed for the honest tarball...
+	honest := buildTarballNoIntegrity(t, []byte("the real binary"))
+	digest := mustDigest(t, sha512SRI(honest), "")
+
+	// ...but the server is serving a different one.
+	swapped := buildTarballNoIntegrity(t, []byte("the tampered binary"))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(swapped)))
+		w.Write(swapped)
+	}))
+	defer ts.Close()
+	upgradeHTTPClient = ts.Client()
+
+	destPath := filepath.Join(t.TempDir(), "clawbench-new")
+
+	err := downloadAndExtract(context.Background(), ts.URL, digest, destPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity verification failed")
+
+	_, statErr := os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "tampered binary must be removed")
 }
 
 func buildTarballNoIntegrity(t *testing.T, binContent []byte) []byte {
@@ -1237,7 +1531,7 @@ func TestCheckForUpgrade_Success(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -1269,7 +1563,7 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "2.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-2.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
@@ -1585,7 +1879,7 @@ func TestPerformUpgrade_InstallDirNotWritable(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -1718,7 +2012,7 @@ func TestFetchUpgradeInfo_NormalizesMalformedMirrorTarball(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "0.91.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/@scope/pkg@latest/-/pkg-0.91.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))

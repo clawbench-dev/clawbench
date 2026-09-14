@@ -9,7 +9,7 @@
  */
 
 import { isAbsolutePath, normalizeSlashes } from '@/utils/path'
-import { clampRanges, type LineRange } from '@/utils/lineRanges'
+import { clampRanges, parseLineRanges, type LineRange } from '@/utils/lineRanges'
 import { toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 
 // ── Resource limits & constants ─────────────────────────────────────────────
@@ -74,6 +74,16 @@ export interface FileContentResponse {
   isBinary?: boolean
   truncated?: boolean
   size: number
+  /**
+   * Line-window metadata, present only when the request carried lineStart/
+   * lineEnd. `totalLines` is the file's full line count; `windowStart`/
+   * `windowEnd` bound `content` (1-based inclusive, `windowEnd < windowStart`
+   * when no lines were captured).
+   */
+  totalLines?: number
+  windowStart?: number
+  windowEnd?: number
+  windowTruncated?: boolean
 }
 
 export interface CachedFileContent extends FileContentResponse {
@@ -143,41 +153,48 @@ export interface SliceCodeOptions {
   expandBelowLines?: number
   /** Full multi-range target (overrides lineStart/lineEnd for highlighting). */
   lineRanges?: LineRange[]
+  /**
+   * Absolute 1-based line number of `content`'s first line. Set when content is
+   * a server-side line window rather than the whole file, so the slice still
+   * reports real file line numbers. Defaults to 1 (whole file).
+   */
+  baseLineOffset?: number
+  /**
+   * The file's total line count when `content` holds only a window of it.
+   * Derived from content when omitted, which is only correct for a whole file.
+   */
+  totalLines?: number
+}
+
+/** The absolute line range a preview wants to render, before content limits. */
+export interface RenderWindow {
+  startLine: number
+  endLine: number
+  highlightStart?: number
+  highlightEnd?: number
+  lineOutOfRange: boolean
+  renderTruncated: boolean
+  truncateReason?: TruncateReason
 }
 
 /**
- * Slice file content for preview with real line numbers, context, and hard resource limits.
+ * Decide which absolute file lines a preview should show, independent of the
+ * content actually available. Pure line arithmetic over `totalLines`, so the
+ * same call plans a server fetch and drives the render slice — one source of
+ * truth for both.
  *
  * Slicing constraints:
  * - When target line is given: show [start - 30, end + 30], clamped to file.
  * - When no target line: show first 30 lines.
- * - When lineStart > totalLines: show last up to 30 lines and mark lineOutOfRange = true.
+ * - When lineStart > totalLines: show last up to 30 lines and mark lineOutOfRange.
  * - Hard limit MAX_RENDER_LINES (200 lines).
- * - Hard limit MAX_RENDER_BYTES (512 KiB).
- * - Hard limit MAX_LINE_BYTES (128 KiB) per line.
- * - Returns renderTruncated and truncateReason ('lines' | 'bytes' | 'line').
  */
-export function sliceCodeForPreview(
-  content: string,
-  lineStart?: number,
-  lineEnd?: number,
+export function computeRenderWindow(
+  lineStart: number | undefined,
+  lineEnd: number | undefined,
+  totalLines: number,
   options: SliceCodeOptions = {}
-): CodeSliceResult {
-  if (content === '') {
-    return {
-      code: '',
-      startLine: 1,
-      endLine: 0,
-      totalLines: 0,
-      lineOutOfRange: false,
-      renderTruncated: false,
-    }
-  }
-
-  // Split preserving exact physical lines (compatible with LF and CRLF)
-  const lines = content.split(/\r\n|\r|\n/)
-  const totalLines = lines.length
-
+): RenderWindow {
   // A multi-range annotation overrides the single (lineStart,lineEnd) pair:
   // the overall min/max drives the window, and the full list is kept for
   // per-line highlighting. normalizePreviewRange stays the single-range path.
@@ -264,17 +281,93 @@ export function sliceCodeForPreview(
     }
   }
 
+  return {
+    startLine,
+    endLine,
+    highlightStart,
+    highlightEnd,
+    lineOutOfRange,
+    renderTruncated,
+    truncateReason,
+  }
+}
+
+/**
+ * Slice file content for preview with real line numbers, context, and hard resource limits.
+ *
+ * `content` is normally the whole file. When it is a server-side line window
+ * instead, pass `baseLineOffset` (the window's first absolute line) and
+ * `totalLines` so line numbers, the out-of-range check, and the "N lines
+ * remaining" hints all stay in file coordinates.
+ *
+ * Additional limits applied here (on top of computeRenderWindow):
+ * - Hard limit MAX_RENDER_BYTES (512 KiB).
+ * - Hard limit MAX_LINE_BYTES (128 KiB) per line.
+ */
+export function sliceCodeForPreview(
+  content: string,
+  lineStart?: number,
+  lineEnd?: number,
+  options: SliceCodeOptions = {}
+): CodeSliceResult {
+  const baseLineOffset = Math.max(1, options.baseLineOffset ?? 1)
+
+  // Split preserving exact physical lines (compatible with LF and CRLF)
+  const lines = content.split(/\r\n|\r|\n/)
+  // Whole-file mode derives the count from content; window mode is told it, since
+  // content only covers part of the file. An empty whole file has 0 lines.
+  const totalLines = options.totalLines
+    ?? (baseLineOffset === 1 ? (content === '' ? 0 : lines.length) : baseLineOffset + lines.length - 1)
+
+  if (totalLines === 0) {
+    return {
+      code: '',
+      startLine: 1,
+      endLine: 0,
+      totalLines: 0,
+      lineOutOfRange: false,
+      renderTruncated: false,
+    }
+  }
+
+  const win = computeRenderWindow(lineStart, lineEnd, totalLines, options)
+  const { lineOutOfRange } = win
+  let { renderTruncated, truncateReason } = win
+
+  // Clamp the wanted window onto the content actually held. For a whole file
+  // these bounds are the file itself, so nothing changes; for a line window they
+  // keep startLine/endLine describing lines that really exist.
+  //
+  // When the wanted window does not overlap the held content at all (a far-away
+  // annotation, or context expanded past the fetched edge), fall back to the
+  // nearest edge of what we do hold. Those are real lines with real numbers, so
+  // the pane keeps showing valid content while the caller widens the fetch —
+  // strictly better than blanking out mid-read.
+  const availStart = baseLineOffset
+  const availEnd = baseLineOffset + lines.length - 1
+  let effStart = Math.max(win.startLine, availStart)
+  let effEnd = Math.min(win.endLine, availEnd)
+  if (effStart > effEnd) {
+    if (win.startLine > availEnd) {
+      effStart = availEnd
+      effEnd = availEnd
+    } else {
+      effStart = availStart
+      effEnd = availStart
+    }
+  }
+
   const renderedLines: string[] = []
   let totalBytes = 0
 
-  for (let i = startLine - 1; i < endLine; i++) {
+  for (let lineNo = effStart; lineNo <= effEnd; lineNo++) {
     if (renderedLines.length >= MAX_RENDER_LINES) {
       renderTruncated = true
       truncateReason = 'lines'
       break
     }
 
-    const lineText = lines[i]
+    const lineText = lines[lineNo - baseLineOffset]
     const lineByteLength = getUtf8ByteLength(lineText)
 
     if (lineByteLength > MAX_LINE_BYTES) {
@@ -294,21 +387,24 @@ export function sliceCodeForPreview(
     totalBytes = nextBytes
   }
 
-  const actualEndLine = renderedLines.length > 0 ? startLine + renderedLines.length - 1 : startLine
+  // endLine < startLine means "nothing rendered" (the window had no lines to
+  // back, or the byte/line caps tripped immediately).
+  const actualEndLine = renderedLines.length > 0 ? effStart + renderedLines.length - 1 : effStart - 1
 
   // Ranges are clamped to the rendered window (the 200-line cap means far-apart
   // ranges can fall outside); only ranges that intersect are highlighted.
+  const requestedRanges = options.lineRanges && options.lineRanges.length > 0 ? options.lineRanges : undefined
   const highlightRanges = requestedRanges && !lineOutOfRange
-    ? clampRanges(requestedRanges, startLine, actualEndLine)
+    ? clampRanges(requestedRanges, effStart, actualEndLine)
     : undefined
 
   return {
     code: renderedLines.join('\n'),
-    startLine,
+    startLine: effStart,
     endLine: actualEndLine,
     totalLines,
-    highlightStart,
-    highlightEnd,
+    highlightStart: win.highlightStart,
+    highlightEnd: win.highlightEnd,
     highlightRanges,
     lineOutOfRange,
     renderTruncated,
@@ -316,19 +412,95 @@ export function sliceCodeForPreview(
   }
 }
 
+// ── Line-window fetching ────────────────────────────────────────────────────
+
+/**
+ * Extra lines fetched on each side of the render window, so expanding context
+ * stays a local re-slice instead of a round-trip. Comfortably above the 200-line
+ * render cap, keeping the request well under the server's own window limit.
+ */
+export const FETCH_WINDOW_MARGIN = 200
+
+/** Hard cap on a single requested window, mirroring the server's limit. */
+export const MAX_FETCH_WINDOW_LINES = 800
+
+/** The absolute line range to request from GET /api/file. */
+export interface FetchWindow {
+  start: number
+  end: number
+}
+
+/**
+ * Plan the line window to request for `target`. Derived from the render window
+ * (so a far-apart multi-range annotation does not balloon the request past the
+ * 200-line render cap), widened by `margin` on each side so expanding context
+ * stays a local re-slice instead of a round-trip.
+ *
+ * `totalLines` is null before the first response (the client cannot know the
+ * file's length yet); planning then assumes a long file and relies on the server
+ * to report the real count, after which the window is clamped to the file.
+ */
+export function computeFetchWindow(
+  target: { lineStart?: number; lineEnd?: number; lineRanges?: string } | null,
+  totalLines: number | null,
+  margin = FETCH_WINDOW_MARGIN
+): FetchWindow {
+  const ranges = target?.lineRanges ? parseLineRanges(target.lineRanges) : undefined
+  // A long-file sentinel: only start/end planning is needed here, and clamping at
+  // EOF is re-done once the server reports the true line count.
+  const planTotal = totalLines !== null && totalLines > 0 ? totalLines : PLANNING_TOTAL_LINES
+  const render = computeRenderWindow(target?.lineStart, target?.lineEnd, planTotal, { lineRanges: ranges })
+
+  const start = Math.max(1, render.startLine - margin)
+  let end = render.endLine + margin
+
+  if (totalLines !== null && totalLines > 0) {
+    end = Math.min(end, totalLines)
+  }
+  if (end - start + 1 > MAX_FETCH_WINDOW_LINES) {
+    end = start + MAX_FETCH_WINDOW_LINES - 1
+  }
+  if (end < start) end = start
+
+  return { start, end }
+}
+
+/** Assumed file length when planning a window before the server reports one. */
+const PLANNING_TOTAL_LINES = 1_000_000_000
+
+/** Whether `[startLine, endLine]` is fully covered by a fetched window. */
+export function windowCovers(
+  fetched: FetchWindow | null,
+  startLine: number,
+  endLine: number
+): boolean {
+  if (!fetched) return false
+  return startLine >= fetched.start && endLine <= fetched.end
+}
+
 // ── URL Construction ────────────────────────────────────────────────────────
 
 /**
  * Build URL to fetch file content, matching store.selectFile convention.
  * Absolute paths use /api/file?path=..., relative paths use /api/file/...
+ *
+ * Pass `window` to request only that line range (1-based inclusive): the server
+ * then returns just those lines plus the file's total line count instead of the
+ * whole file. The query params are appended after the path so both the
+ * absolute-path and project-relative forms carry them.
  */
-export function buildPreviewUrl(path: string): string {
+export function buildPreviewUrl(path: string, window?: FetchWindow | null): string {
   const normalized = normalizeSlashes(path)
+  let url: string
   if (isAbsolutePath(normalized)) {
-    return `/api/file?path=${encodeURIComponent(normalized)}`
+    url = `/api/file?path=${encodeURIComponent(normalized)}`
+  } else {
+    const cleanPath = normalized.replace(/^\/+/, '')
+    url = `/api/file/${encodeURIComponent(cleanPath)}`
   }
-  const cleanPath = normalized.replace(/^\/+/, '')
-  return `/api/file/${encodeURIComponent(cleanPath)}`
+  if (!window) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}lineStart=${window.start}&lineEnd=${window.end}`
 }
 
 export const DEFAULT_SAFE_AREA_TOP = 36
@@ -545,8 +717,11 @@ export class CodeLinkPreviewCache {
     public readonly largeFileThreshold = LARGE_FILE_THRESHOLD_BYTES
   ) {}
 
-  public buildKey(projectRoot: string, normalizedPath: string): string {
-    return `${normalizeSlashes(projectRoot)}::${normalizeSlashes(normalizedPath)}`
+  public buildKey(projectRoot: string, normalizedPath: string, window?: FetchWindow | null): string {
+    const base = `${normalizeSlashes(projectRoot)}::${normalizeSlashes(normalizedPath)}`
+    // Windowed responses hold only a slice of the file, so two windows of the
+    // same path are different cache entries.
+    return window ? `${base}::${window.start}-${window.end}` : base
   }
 
   public get(key: string, now = Date.now()): CachedFileContent | undefined {
@@ -566,9 +741,12 @@ export class CodeLinkPreviewCache {
   }
 
   public set(key: string, response: FileContentResponse, now = Date.now()): boolean {
-    const contentBytes = response.size ?? getUtf8ByteLength(response.content || '')
+    // Budget against the content actually held, not the file's size on disk: a
+    // windowed response for a huge file holds only a few hundred lines and is
+    // perfectly cacheable.
+    const contentBytes = getUtf8ByteLength(response.content || '')
 
-    // Files exceeding 2 MiB threshold are NOT cached
+    // Content above the threshold is NOT cached
     if (contentBytes > this.largeFileThreshold) {
       return false
     }

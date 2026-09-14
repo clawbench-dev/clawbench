@@ -23,12 +23,16 @@ import type { NavigationSurface } from '@/composables/useNavigationContext'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import {
   sliceCodeForPreview,
+  computeRenderWindow,
+  computeFetchWindow,
+  windowCovers,
   buildPreviewUrl,
   placeNearAnchor,
   previewCache,
   LARGE_FILE_THRESHOLD_BYTES,
   type CodeSliceResult,
   type FileContentResponse,
+  type FetchWindow,
   type CardPlacementResult,
 } from '@/utils/codeLinkPreview'
 
@@ -177,19 +181,89 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     return false
   }
 
+  // The line window the currently-held fileContent covers (null when it is the
+  // whole file). Expanding context past it triggers a wider re-fetch.
+  const fetchedWindow = ref<FetchWindow | null>(null)
+  /** Total lines in the file, known once a windowed response arrives. */
+  const fileTotalLines = ref<number | null>(null)
+  /**
+   * The server hit its own byte cap while collecting the window, so the returned
+   * content is short (or empty, when a single line exceeded the cap). Widening
+   * cannot help — the pane surfaces a notice instead.
+   */
+  const windowTruncated = ref(false)
+  /** Guards the "widen the window" re-fetch so it converges in one extra round. */
+  let pendingWiden = false
+
   const updateSlice = () => {
     if (!fileContent.value) return
-    slicedCode.value = sliceCodeForPreview(
-      fileContent.value.content,
-      target.value?.lineStart,
-      target.value?.lineEnd,
-      {
-        contextExpansion: contextExpansion.value,
-        expandAboveLines: extraAboveLines.value,
-        expandBelowLines: extraBelowLines.value,
-        lineRanges: target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined,
+    const lineRanges = target.value?.lineRanges ? parseLineRanges(target.value.lineRanges) : undefined
+    const sliceOptions = {
+      contextExpansion: contextExpansion.value,
+      expandAboveLines: extraAboveLines.value,
+      expandBelowLines: extraBelowLines.value,
+      lineRanges,
+    }
+    const win = fetchedWindow.value
+    if (win && win.end < win.start) {
+      // The server captured no lines at all (its byte cap tripped, or the range
+      // starts past EOF). `content` is empty, so slicing it would yield a bogus
+      // blank line — report the empty window instead, and the pane shows the
+      // truncation / out-of-range notice.
+      slicedCode.value = {
+        code: '',
+        startLine: win.start,
+        endLine: win.start - 1,
+        totalLines: fileTotalLines.value ?? win.start,
+        lineOutOfRange: !windowTruncated.value,
+        renderTruncated: false,
       }
-    )
+      return
+    }
+    if (win) {
+      slicedCode.value = sliceCodeForPreview(
+        fileContent.value.content,
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        {
+          ...sliceOptions,
+          baseLineOffset: win.start,
+          // A windowed response reports the true file length; prefer it over the
+          // locally-derived count, which only sees the window.
+          totalLines: fileTotalLines.value ?? undefined,
+        }
+      )
+    } else {
+      slicedCode.value = sliceCodeForPreview(
+        fileContent.value.content,
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        sliceOptions
+      )
+    }
+
+    // The slice wanted lines outside the fetched window (it stops at the window
+    // edge). Widen once to cover them; pendingWiden makes this converge even if
+    // the server clamps the request. A server-truncated window is not widened —
+    // the cap would just trip again.
+    if (!pendingWiden && win && !windowTruncated.value && slicedCode.value) {
+      const wanted = computeRenderWindow(
+        target.value?.lineStart,
+        target.value?.lineEnd,
+        slicedCode.value.totalLines,
+        sliceOptions
+      )
+      if (!windowCovers(win, wanted.startLine, wanted.endLine)) {
+        pendingWiden = true
+        // Request exactly the wanted render window. It is bounded by
+        // MAX_RENDER_LINES (200), well under the server's window cap, so no
+        // further clamping is needed.
+        const wider: FetchWindow = { start: wanted.startLine, end: wanted.endLine }
+        fetchPreview(target.value as PreviewTarget, true, wider, { silent: true }).finally(() => {
+          pendingWiden = false
+        })
+      }
+    }
   }
 
   const updatePlacement = (anchorEl?: HTMLElement, customWidth?: number, customHeight?: number) => {
@@ -208,7 +282,12 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     placement.value = placeNearAnchor(rect, cardWidth, cardHeight)
   }
 
-  const fetchPreview = async (newTarget: PreviewTarget, forceRefresh = false) => {
+  const fetchPreview = async (
+    newTarget: PreviewTarget,
+    forceRefresh = false,
+    windowOverride: FetchWindow | null = null,
+    opts: { silent?: boolean } = {}
+  ) => {
     const reqId = ++currentRequestId
     if (currentAbortController) {
       currentAbortController.abort()
@@ -216,10 +295,15 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     currentAbortController = new AbortController()
     const signal = currentAbortController.signal
 
-    status.value = 'loading'
-    errorCode.value = null
-    errorMessage.value = null
-    isLargeFile.value = false
+    // A silent fetch (widening the window after an expand) keeps the current
+    // slice on screen instead of flipping back to the loading spinner — the
+    // expand handler is anchoring scroll around the existing content.
+    if (!opts.silent) {
+      status.value = 'loading'
+      errorCode.value = null
+      errorMessage.value = null
+      isLargeFile.value = false
+    }
 
     // Media files are served as raw bytes by /api/local-file/ and rendered
     // straight from that URL — there is no JSON content to fetch, and /api/file
@@ -228,12 +312,21 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     if (isMediaTarget.value) {
       fileContent.value = null
       slicedCode.value = null
+      fetchedWindow.value = null
+      fileTotalLines.value = null
+      windowTruncated.value = false
       status.value = 'ready'
       return
     }
 
+    // Ask for just the lines this preview can render (plus margin), so a large
+    // file is never transferred in full. A widen re-fetch passes the exact
+    // window it needs; otherwise the window is planned from the target.
+    const win: FetchWindow = windowOverride
+      ?? computeFetchWindow(newTarget, fileTotalLines.value)
+
     const projectRoot = store.state.projectRoot || ''
-    const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath)
+    const cacheKey = previewCache.buildKey(projectRoot, newTarget.filePath, win)
 
     if (forceRefresh) {
       previewCache.delete(cacheKey)
@@ -243,6 +336,9 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         if (reqId !== currentRequestId) return
         fileContent.value = cached
         isLargeFile.value = (cached.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
+        fetchedWindow.value = cached.windowStart ? { start: cached.windowStart, end: cached.windowEnd ?? cached.windowStart } : null
+        fileTotalLines.value = cached.totalLines ?? null
+        windowTruncated.value = cached.windowTruncated === true
         updateSlice()
         status.value = 'ready'
         return
@@ -250,7 +346,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     }
 
     try {
-      const url = buildPreviewUrl(newTarget.filePath)
+      const url = buildPreviewUrl(newTarget.filePath, win)
       const resp = await apiGet<FileContentResponse>(url, { signal, timeoutMs: 10_000 })
       if (reqId !== currentRequestId) return
 
@@ -262,9 +358,13 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
       fileContent.value = resp
       isLargeFile.value = (resp.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
-      if (!isLargeFile.value) {
-        previewCache.set(cacheKey, resp)
-      }
+      fetchedWindow.value = resp.windowStart ? { start: resp.windowStart, end: resp.windowEnd ?? resp.windowStart } : null
+      fileTotalLines.value = resp.totalLines ?? null
+      windowTruncated.value = resp.windowTruncated === true
+      // Large files ARE cached now: only the window is held, not the whole file,
+      // so the 2 MiB guard (which existed to keep whole-file content out of the
+      // LRU) no longer applies.
+      previewCache.set(cacheKey, resp)
 
       updateSlice()
       status.value = 'ready'
@@ -276,6 +376,10 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
         return
       }
       appLog.w('CodeLinkPreview', 'Failed to fetch file content for preview', { path: newTarget.filePath, error: err })
+      // A silent widen must not destroy the slice the user is reading: keep the
+      // current content and status, and let pendingWiden reset so a later expand
+      // can retry.
+      if (opts.silent) return
       status.value = 'error'
       const msgKey = errObj?.msgKey || ''
       const msg = errObj?.message || ''
@@ -305,6 +409,11 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
     const wasPinned = mode.value === 'pinned'
     target.value = newTarget
+    // A new target is a different file: drop the previous window/length so the
+    // first request is planned from the annotation alone.
+    fetchedWindow.value = null
+    fileTotalLines.value = null
+    windowTruncated.value = false
     mode.value = wasPinned && previewMode !== 'sheet' ? 'pinned' : previewMode
     contextExpansion.value = 0
     extraAboveLines.value = 0
@@ -342,6 +451,9 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     target.value = null
     fileContent.value = null
     slicedCode.value = null
+    fetchedWindow.value = null
+    fileTotalLines.value = null
+    windowTruncated.value = false
     errorCode.value = null
     errorMessage.value = null
     isLargeFile.value = false
@@ -585,6 +697,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
     errorCode,
     errorMessage,
     isLargeFile,
+    windowTruncated,
     contextExpansion,
     extraAboveLines,
     extraBelowLines,

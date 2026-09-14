@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -1816,6 +1817,285 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 		assert.False(t, fc.IsSymlink, "regular file should not be marked isSymlink")
 		assert.Empty(t, fc.LinkTarget, "regular file should have no linkTarget")
+	})
+}
+
+// TestGetFileLineWindow covers the ?lineStart/?lineEnd path used by the quick
+// preview pane to fetch only the lines it can render.
+func TestGetFileLineWindow(t *testing.T) {
+	t.Run("ReturnsOnlyRequestedLinesPlusTotal", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		var lines []string
+		for i := 1; i <= 1000; i++ {
+			lines = append(lines, fmt.Sprintf("line %d", i))
+		}
+		createTestFile(t, env.ProjectDir, "big.txt", strings.Join(lines, "\n"))
+
+		req := newRequest(t, http.MethodGet, "/api/file/big.txt?lineStart=101&lineEnd=105", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "line 101\nline 102\nline 103\nline 104\nline 105", fc.Content)
+		assert.Equal(t, 1000, fc.TotalLines, "total line count must reflect the whole file")
+		assert.Equal(t, 101, fc.WindowStart)
+		assert.Equal(t, 105, fc.WindowEnd)
+		assert.False(t, fc.WindowTruncated)
+	})
+
+	t.Run("LoneLineStartMeansSingleLine", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
+
+		req := newRequest(t, http.MethodGet, "/api/file/a.txt?lineStart=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "two", fc.Content)
+		assert.Equal(t, 3, fc.TotalLines)
+		assert.Equal(t, 2, fc.WindowStart)
+		assert.Equal(t, 2, fc.WindowEnd)
+	})
+
+	t.Run("CRLFCountsAsOneSeparator", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "crlf.txt", "a\r\nb\r\nc")
+
+		req := newRequest(t, http.MethodGet, "/api/file/crlf.txt?lineStart=2&lineEnd=3", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "b\nc", fc.Content)
+		assert.Equal(t, 3, fc.TotalLines, "CRLF must not be counted as two lines")
+	})
+
+	t.Run("TrailingNewlineYieldsTrailingEmptyLine", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// "a\n" splits to ["a", ""] in JS — 2 lines, matching the frontend.
+		createTestFile(t, env.ProjectDir, "trail.txt", "a\n")
+
+		req := newRequest(t, http.MethodGet, "/api/file/trail.txt?lineStart=2&lineEnd=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, 2, fc.TotalLines)
+		assert.Equal(t, "", fc.Content)
+		assert.Equal(t, 2, fc.WindowStart)
+		assert.Equal(t, 2, fc.WindowEnd)
+	})
+
+	t.Run("WindowPastEOFReportsNoLines", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "short.txt", "a\nb\nc")
+
+		req := newRequest(t, http.MethodGet, "/api/file/short.txt?lineStart=500&lineEnd=510", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, 3, fc.TotalLines)
+		assert.Equal(t, "", fc.Content)
+		// windowEnd < windowStart signals "no lines captured".
+		assert.Less(t, fc.WindowEnd, fc.WindowStart)
+	})
+
+	t.Run("EmptyFileHasZeroLines", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "empty.txt", "")
+
+		req := newRequest(t, http.MethodGet, "/api/file/empty.txt?lineStart=1&lineEnd=10", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, 0, fc.TotalLines)
+		assert.Equal(t, "", fc.Content)
+	})
+
+	t.Run("WindowIsCappedAtMaxWindowLines", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		var lines []string
+		for i := 1; i <= 5000; i++ {
+			lines = append(lines, fmt.Sprintf("line %d", i))
+		}
+		createTestFile(t, env.ProjectDir, "huge.txt", strings.Join(lines, "\n"))
+
+		req := newRequest(t, http.MethodGet, "/api/file/huge.txt?lineStart=1&lineEnd=5000", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, maxWindowLines, strings.Count(fc.Content, "\n")+1)
+		assert.Equal(t, 5000, fc.TotalLines)
+	})
+
+	t.Run("ByteCapTripsOnOversizedFirstLine_StillReportsEmptyWindow", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Line 1 alone exceeds maxWindowBytes; the rest are short. The window
+		// starts at line 1, so "no lines captured" is windowEnd == 0 — which must
+		// survive JSON encoding (windowEnd is deliberately not omitempty) or the
+		// frontend would mistake an empty window for a successful one.
+		giant := strings.Repeat("x", maxWindowBytes+1)
+		createTestFile(t, env.ProjectDir, "giant.txt", giant+"\nshort\nlines")
+
+		req := newRequest(t, http.MethodGet, "/api/file/giant.txt?lineStart=1&lineEnd=3", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		// Assert on the raw JSON: the whole point is that the key is present.
+		assert.Contains(t, w.Body.String(), `"windowEnd":0`)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "", fc.Content)
+		assert.True(t, fc.WindowTruncated)
+		assert.Equal(t, 1, fc.WindowStart)
+		assert.Less(t, fc.WindowEnd, fc.WindowStart, "empty window must be signalled")
+	})
+
+	t.Run("BareCarriageReturnIsASeparator", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Old-Mac line endings: JS split(/\r\n|\r|\n/) treats each lone \r as one
+		// separator, and the Go reader must agree.
+		createTestFile(t, env.ProjectDir, "cr.txt", "a\rb\rc")
+
+		req := newRequest(t, http.MethodGet, "/api/file/cr.txt?lineStart=2&lineEnd=3", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "b\nc", fc.Content)
+		assert.Equal(t, 3, fc.TotalLines)
+	})
+
+	t.Run("OnlyNewlineIsTwoEmptyLines", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// "\n".split(/\r\n|\r|\n/) === ["", ""] — two empty lines.
+		createTestFile(t, env.ProjectDir, "nl.txt", "\n")
+
+		req := newRequest(t, http.MethodGet, "/api/file/nl.txt?lineStart=1&lineEnd=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, 2, fc.TotalLines)
+		assert.Equal(t, "\n", fc.Content)
+	})
+
+	t.Run("InvalidRangesReturn400", func(t *testing.T) {
+		cases := []string{
+			"lineStart=0",
+			"lineStart=-1",
+			"lineStart=abc",
+			"lineStart=10&lineEnd=5",
+			"lineEnd=10",
+			"lineStart=1&lineEnd=xyz",
+		}
+		for _, q := range cases {
+			t.Run(q, func(t *testing.T) {
+				env, teardown := setupTestEnv(t)
+				defer teardown()
+
+				createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
+
+				req := newRequest(t, http.MethodGet, "/api/file/a.txt?"+q, nil)
+				withProjectCookie(req, env.ProjectDir)
+
+				w := callHandler(GetFile, req)
+				assertStatus(t, w, http.StatusBadRequest)
+			})
+		}
+	})
+
+	t.Run("NoParamsStillReturnsWholeFile", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "a.txt", "one\ntwo\nthree")
+
+		req := newRequest(t, http.MethodGet, "/api/file/a.txt", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "one\ntwo\nthree", fc.Content)
+		assert.Equal(t, 0, fc.TotalLines, "whole-file responses omit window metadata")
+		assert.Equal(t, 0, fc.WindowStart)
+	})
+
+	t.Run("ForceTextIgnoresWindow", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Non-text extension: forceText takes the sanitize path, which must not
+		// be line-windowed (sanitization rewrites bytes, not lines).
+		createTestFile(t, env.ProjectDir, "data.bin", "one\ntwo\nthree")
+
+		req := newRequest(t, http.MethodGet, "/api/file/data.bin?forceText=1&lineStart=2&lineEnd=2", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var fc FileContent
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+		assert.Equal(t, "one\ntwo\nthree", fc.Content)
+		assert.Equal(t, 0, fc.TotalLines)
 	})
 }
 

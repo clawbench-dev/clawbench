@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -233,6 +235,11 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 }
 
 // GetFile returns the content of a single file.
+//
+// Supports an optional line window (?lineStart=&lineEnd=, 1-based inclusive)
+// for the quick-preview pane: only those lines are returned, along with the
+// file's total line count. Without the params the whole file is returned, so
+// existing callers are unaffected.
 func GetFile(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
@@ -290,7 +297,48 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	content, err := os.ReadFile(absPath)
+	// Line-window requests (quick-preview pane) are only meaningful for real
+	// text files: forceText/binary sanitization rewrites the byte stream, so the
+	// window is ignored there and the full sanitized content is returned.
+	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
+	if hasWindow && winErr != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
+		return
+	}
+	useWindow := hasWindow && isText
+	// Subtype detection (OpenAPI → ReDoc) needs the whole document, and so does
+	// sanitization. Both are skipped on the window path, which only ever serves
+	// the plain-text preview pane.
+	var (
+		content   []byte
+		truncated bool
+	)
+	if useWindow {
+		windowText, totalLines, wStart, wEnd, wTruncated, readErr := readFileLineWindow(absPath, winStart, winEnd)
+		if readErr != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
+			return
+		}
+		respPath := responsePath(absPath, projectPath, isExternal)
+		linkTarget, isSymlink := resolveLinkTarget(absPath, projectPath, isExternal)
+		writeJSON(w, http.StatusOK, FileContent{
+			Content:         windowText,
+			Name:            info.Name(),
+			Path:            respPath,
+			Supported:       model.IsSupportedFile(info.Name()),
+			Size:            info.Size(),
+			Truncated:       wTruncated,
+			LinkTarget:      linkTarget,
+			IsSymlink:       isSymlink,
+			TotalLines:      totalLines,
+			WindowStart:     wStart,
+			WindowEnd:       wEnd,
+			WindowTruncated: wTruncated,
+		})
+		return
+	}
+
+	content, err = os.ReadFile(absPath)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
 		return
@@ -298,7 +346,6 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 
 	// Sanitize content for non-text files when forceText is used,
 	// or when the file passed binary sniffing (non-text ext but actually text).
-	var truncated bool
 	if !isText {
 		content, truncated = sanitizeTextContent(content)
 	}
@@ -847,6 +894,20 @@ type FileContent struct {
 	SpecJSON   string `json:"specJson,omitempty"`
 	LinkTarget string `json:"linkTarget,omitempty"`
 	IsSymlink  bool   `json:"isSymlink,omitempty"`
+
+	// Line-window metadata, present only on ?lineStart/?lineEnd responses.
+	// TotalLines is the file's full line count (so the preview can compute how
+	// much context remains above/below), while WindowStart/WindowEnd bound the
+	// returned Content (1-based inclusive; WindowEnd < WindowStart means no lines
+	// were captured, e.g. the requested range starts past EOF).
+	TotalLines  int `json:"totalLines,omitempty"`
+	WindowStart int `json:"windowStart,omitempty"`
+	// WindowEnd is deliberately NOT omitempty: "no lines captured" is encoded as
+	// WindowEnd == WindowStart-1, which is 0 when the window starts at line 1.
+	// Omitting that 0 would make an empty window indistinguishable from a
+	// response that carried no window metadata at all.
+	WindowEnd       int  `json:"windowEnd"`
+	WindowTruncated bool `json:"windowTruncated,omitempty"`
 }
 
 // buildDirEntries builds a sorted list of directory entries
@@ -1126,4 +1187,148 @@ func truncateAtUTF8Boundary(data []byte) []byte {
 		cut--
 	}
 	return data[:cut]
+}
+
+const (
+	// maxWindowLines bounds a single ?lineStart/?lineEnd window. The preview
+	// pane renders at most 200 lines plus context, so this is generous
+	// headroom while still rejecting a pathological "give me everything".
+	maxWindowLines = 2000
+	// maxWindowBytes bounds the window's serialized size for the same reason.
+	maxWindowBytes = 2 * 1024 * 1024
+)
+
+// parseLineWindow extracts the optional ?lineStart/?lineEnd window from the
+// request. present is false when neither param is supplied (whole-file request);
+// when present is true the range is validated and start/end are usable, so a
+// malformed or inverted range is reported via err for the caller to answer 400
+// rather than silently returning the whole file.
+func parseLineWindow(r *http.Request) (start, end int, present bool, err error) {
+	rawStart := r.URL.Query().Get("lineStart")
+	rawEnd := r.URL.Query().Get("lineEnd")
+	if rawStart == "" && rawEnd == "" {
+		return 0, 0, false, nil
+	}
+	if rawStart == "" {
+		return 0, 0, true, errors.New("lineStart is required when lineEnd is set")
+	}
+
+	start, err = strconv.Atoi(rawStart)
+	if err != nil || start < 1 {
+		return 0, 0, true, errors.New("lineStart must be a positive integer")
+	}
+
+	// A lone lineStart means "just that line".
+	end = start
+	if rawEnd != "" {
+		end, err = strconv.Atoi(rawEnd)
+		if err != nil || end < start {
+			return 0, 0, true, errors.New("lineEnd must be an integer >= lineStart")
+		}
+	}
+	if end-start+1 > maxWindowLines {
+		end = start + maxWindowLines - 1
+	}
+	return start, end, true, nil
+}
+
+// readFileLineWindow streams absPath and returns lines [startLine, endLine]
+// (1-based, inclusive) joined by "\n", plus the file's total line count and the
+// last line actually included. Only the requested window is materialized, so a
+// large file costs a sequential scan but no large allocation — the whole point
+// of the line-window path for the quick-preview pane.
+//
+// Line splitting mirrors the frontend's /\r\n|\r|\n/: "\r\n" counts as a single
+// separator, a bare "\r" or "\n" each count as one, and a file ending in a
+// separator has a trailing empty line (so "a\n" is 2 lines). An empty file has 0
+// lines, matching sliceCodeForPreview's empty-content special case.
+func readFileLineWindow(absPath string, startLine, endLine int) (text string, totalLines, windowStart, windowEnd int, truncated bool, err error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return "", 0, 0, 0, false, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", 0, 0, 0, false, err
+	}
+	if info.Size() == 0 {
+		return "", 0, 0, 0, false, nil
+	}
+
+	var (
+		lines     []string
+		cur       []byte
+		lineNo    = 1
+		bytesUsed int
+		crPending bool
+		buf       = make([]byte, 64*1024)
+	)
+
+	// appendLine captures the current line when it falls inside the window.
+	// It is called for every line boundary, including empty ones.
+	appendLine := func() {
+		if truncated || lineNo < startLine || lineNo > endLine {
+			cur = cur[:0]
+			return
+		}
+		if bytesUsed+len(cur) > maxWindowBytes {
+			truncated = true
+			cur = cur[:0]
+			return
+		}
+		lines = append(lines, string(cur))
+		bytesUsed += len(cur)
+		if len(lines) > 1 {
+			bytesUsed++ // the joining "\n"
+		}
+		cur = cur[:0]
+	}
+
+	for {
+		n, readErr := f.Read(buf)
+		for _, b := range buf[:n] {
+			if crPending {
+				crPending = false
+				if b == '\n' {
+					continue // the LF half of a CRLF: same single separator
+				}
+			}
+			switch b {
+			case '\n':
+				appendLine()
+				lineNo++
+			case '\r':
+				appendLine()
+				lineNo++
+				crPending = true
+			default:
+				cur = append(cur, b)
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				return "", 0, 0, 0, false, readErr
+			}
+			break
+		}
+	}
+
+	// Finalize the last line. When the file ended on a separator this is the
+	// trailing empty line JS split() also yields; lineNo already counts it, and
+	// starts at 1, so lineNo is exactly the file's line count either way.
+	appendLine()
+	totalLines = lineNo
+
+	// windowEnd < windowStart signals "no lines captured" (range starts past EOF,
+	// or the byte cap tripped on the very first line). The caller renders that as
+	// the out-of-range notice rather than an empty body.
+	windowStart = startLine
+	windowEnd = startLine - 1
+	if len(lines) > 0 {
+		windowEnd = startLine + len(lines) - 1
+	}
+
+	return strings.Join(lines, "\n"), totalLines, windowStart, windowEnd, truncated, nil
 }

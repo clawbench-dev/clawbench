@@ -83,7 +83,7 @@ func (h *shortCircuitHarness) setup(t *testing.T, diskVersion string) {
 		resp := npmRegistryResponse{}
 		resp.Version = h.targetVersion
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-" + h.targetVersion + ".tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -197,7 +197,7 @@ func TestPerformUpgrade_SelfPathUnresolved(t *testing.T) {
 		resp := npmRegistryResponse{}
 		resp.Version = "99.0.0"
 		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
-		resp.Dist.Integrity = "sha512-abcdef"
+		resp.Dist.Integrity = wellFormedIntegrity
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))

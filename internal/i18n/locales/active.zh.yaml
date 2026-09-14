@@ -46,6 +46,7 @@ FileNotFoundShort: 文件未找到
 BrokenSymlink: "符号链接损坏：目标未找到 ({{.Target}})"
 DirectoryNotFound: 目录未找到
 InvalidFilePath: 无效的文件路径
+InvalidLineRange: 无效的行范围
 InvalidURLAttachment: URL 附件必须是 http(s) 地址
 FileTooLargeOrInvalid: 文件过大或格式无效
 NoFileProvided: 未提供文件

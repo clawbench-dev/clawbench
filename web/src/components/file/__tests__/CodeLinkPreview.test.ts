@@ -96,6 +96,7 @@ const i18n = createI18n({
           retry: 'Retry',
           largeFileNotice: 'Large file: preview shows partial content and may load slower',
           truncatedNotice: 'Preview truncated (up to {n} lines / {size})',
+          windowTruncatedNotice: 'File has an oversized line; only part of it can be shown',
           lineOutOfRange: 'Requested line is out of file range',
           binaryNotSupported: 'Binary file cannot be previewed',
           mediaLoadError: 'Failed to load media file',
@@ -164,6 +165,7 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
   const errorCode = ref<any>(null)
   const errorMessage = ref<string | null>(null)
   const isLargeFile = ref(false)
+  const windowTruncated = ref(false)
   const contextExpansion = ref(0)
   const placement = ref<any>({
     viewportX: 100,
@@ -215,6 +217,7 @@ function createMockPreviewController(overrides: Partial<ReturnType<typeof useCod
     errorCode,
     errorMessage,
     isLargeFile,
+    windowTruncated,
     contextExpansion,
     placement,
     renderMode,
@@ -380,6 +383,18 @@ describe('CodeLinkPreview.vue', () => {
     const notice = document.querySelector('.code-preview-notice.notice-warning')
     expect(notice).not.toBeNull()
     expect(notice?.textContent).toContain('Large file')
+  })
+
+  it('renders the window-truncated notice when the server capped the window', () => {
+    const preview = createMockPreviewController({
+      windowTruncated: ref(true),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    expect(document.body.textContent).toContain('oversized line')
   })
 
   it('renders binary file error with open full file button', () => {

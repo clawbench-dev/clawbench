@@ -109,33 +109,126 @@ describe('openPendingSessionWhenReady', () => {
     expect(switchSession).toHaveBeenCalledWith('target-session', undefined)
   })
 
-  it('opens a resolved session without surfacing a watcher error', () => {
+  it('opens a resolved session without throwing a TDZ error', () => {
     // Guards the exact defect this composable exists to avoid: a
     // self-referencing stop handle inside an `immediate` watcher throws
     // `ReferenceError: Cannot access 'stop' before initialization` on the first,
-    // synchronous invocation. Vue routes that through callWithErrorHandling and
-    // (in dev) rethrows after console.error, so the caller sees a crash instead
-    // of the session opening. Identity is resolved here — the branch that the
-    // cross-project jump actually takes.
+    // synchronous invocation, so the session never opens. Identity is resolved
+    // here — the branch the cross-project jump actually takes.
+    //
+    // Deliberately asserts on the throw only. An earlier revision also asserted
+    // `console.error` was never called, which was vacuous: this path reaches no
+    // console.error at all (measured 0 on the buggy shape too), so it could
+    // never fail. The throw is the real, load-bearing signal.
     const currentSessionId = ref('resolved-session')
     const switchSession = vi.fn()
-    const errors: unknown[] = []
-    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args) })
 
-    try {
-      expect(() =>
-        openPendingSessionWhenReady({
-          currentSessionId,
-          sessionId: 'target-session',
-          switchTab: vi.fn(),
-          switchSession,
-        }),
-      ).not.toThrow()
-    } finally {
-      spy.mockRestore()
-    }
+    expect(() =>
+      openPendingSessionWhenReady({
+        currentSessionId,
+        sessionId: 'target-session',
+        switchTab: vi.fn(),
+        switchSession,
+      }),
+    ).not.toThrow()
 
-    expect(errors).toEqual([])
     expect(switchSession).toHaveBeenCalledWith('target-session', undefined)
+  })
+
+  it('does not open a stale session after the user switches to an unrelated project', async () => {
+    // Regression for a residual hazard: when identity is unresolved at Phase 7 a
+    // fallback watcher must be armed (ChatPanel's loadHistory recovery resolves
+    // identity slightly later). Without a relevance guard that watcher outlives
+    // its navigation, so switching to an UNRELATED project and resolving ITS
+    // identity would open the stale session there.
+    const currentSessionId = ref('')   // initSessionFromAPI failed/aborted
+    const switchSession = vi.fn()
+    let project = '/project/B'
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'session-in-B',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      isStillRelevant: () => project === '/project/B',
+    })
+
+    // Nothing yet — identity is unresolved, as designed.
+    expect(switchSession).not.toHaveBeenCalled()
+
+    // User navigates to an unrelated project C, whose identity then resolves.
+    project = '/project/C'
+    currentSessionId.value = 'session-in-C'
+    await nextTick()
+
+    expect(switchSession).not.toHaveBeenCalled()
+  })
+
+  it('stops watching after being disarmed by the relevance guard', async () => {
+    // Once the guard has fired, the watcher must be fully dead — not merely
+    // inert for one tick.
+    const currentSessionId = ref('')
+    const switchSession = vi.fn()
+    let project = '/project/B'
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'session-in-B',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      isStillRelevant: () => project === '/project/B',
+    })
+
+    project = '/project/C'
+    currentSessionId.value = 'c-1'
+    await nextTick()
+    expect(switchSession).not.toHaveBeenCalled()
+
+    // Even if the user comes back to project B and identity changes again, the
+    // stale navigation must not resurrect.
+    project = '/project/B'
+    currentSessionId.value = 'b-2'
+    await nextTick()
+    expect(switchSession).not.toHaveBeenCalled()
+  })
+
+  it('still opens the pending session when the project is still relevant', async () => {
+    // The guard must not break the legitimate path it wraps.
+    const currentSessionId = ref('')
+    const switchSession = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'session-in-B',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      isStillRelevant: () => true,
+    })
+
+    currentSessionId.value = 'resolved-in-B'
+    await nextTick()
+
+    expect(switchSession).toHaveBeenCalledTimes(1)
+    expect(switchSession).toHaveBeenCalledWith('session-in-B', '/project/B')
+  })
+
+  it('does not open when relevance already fails on the resolved path', () => {
+    // The direct (identity-already-resolved) branch consults the guard too.
+    const currentSessionId = ref('resolved-session')
+    const switchSession = vi.fn()
+
+    openPendingSessionWhenReady({
+      currentSessionId,
+      sessionId: 'session-in-B',
+      projectPath: '/project/B',
+      switchTab: vi.fn(),
+      switchSession,
+      isStillRelevant: () => false,
+    })
+
+    expect(switchSession).not.toHaveBeenCalled()
   })
 })
