@@ -848,9 +848,11 @@ function switchTab(tab: string, force = false) {
     loadSessionsOnce()
   }
   if (tab === 'tasks') {
-    // Only stop dock button flash — don't clear per-task unread badges.
-    // Per-task badges are cleared when the user enters that task's execution history.
-    store.state.taskUnreadCount = 0
+    // Opening the tab deliberately does NOT zero the badge. Read state is per
+    // execution now: opening a run clears that run, and "mark all read" clears
+    // the rest. Zeroing here also stuck permanently whenever loadTasks() failed
+    // (it returns early on a non-OK response), leaving a badge that said "all
+    // read" while unread runs were still there.
     loadTasks()
   }
   // Close overflow menu on any tab switch
@@ -2025,7 +2027,9 @@ registerWideScreenCallbacks({
   setActiveTab: (tab) => { activeTab.value = tab },
   sideEffects: (tab) => {
     if (tab === 'browse') store.loadFiles(store.state.currentDir, false, 0, true)
-    if (tab === 'tasks') { store.state.taskUnreadCount = 0; loadTasks() }
+    // No zeroing here: see the narrow-mode switchTab note. The badge is
+    // re-derived from the server by loadTasks().
+    if (tab === 'tasks') loadTasks()
   },
 })
 
